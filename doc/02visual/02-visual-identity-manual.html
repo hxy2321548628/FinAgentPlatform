@@ -9,6 +9,7 @@
       @import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700;900&display=swap");
 
       :root {
+        --logo-red: #A61B29;
         --bg: #edf0f5;
         --surface: #ffffff;
         --border: #d4dce8;
@@ -90,25 +91,13 @@
         margin-bottom: 60px;
       }
       .cover-logo-icon {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        width: 32px;
+        height: 40px;
+        color: #fff;
       }
-      .cover-logo-icon span {
+      .cover-logo-icon svg {
+        height: 100%;
+        width: auto;
         display: block;
-        height: 3.5px;
-        background: #fff;
-        border-radius: 2px;
-      }
-      .cover-logo-icon span:nth-child(1) {
-        width: 100%;
-      }
-      .cover-logo-icon span:nth-child(2) {
-        width: 72%;
-      }
-      .cover-logo-icon span:nth-child(3) {
-        width: 50%;
       }
       .cover-logo-text {
         font-size: 24px;
@@ -402,24 +391,13 @@
         gap: 10px;
       }
       .logo-icon-wrap {
-        display: flex;
-        flex-direction: column;
-        gap: 3.5px;
-        width: 22px;
+        height: 26px;
+        color: inherit;
       }
-      .logo-icon-wrap span {
+      .logo-icon-wrap svg {
+        height: 100%;
+        width: auto;
         display: block;
-        height: 2.5px;
-        border-radius: 1.5px;
-      }
-      .logo-icon-wrap span:nth-child(1) {
-        width: 100%;
-      }
-      .logo-icon-wrap span:nth-child(2) {
-        width: 72%;
-      }
-      .logo-icon-wrap span:nth-child(3) {
-        width: 50%;
       }
       .logo-wordmark {
         font-size: 17px;
@@ -584,25 +562,13 @@
         flex-shrink: 0;
       }
       .demo-logo-icon {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-        width: 18px;
+        height: 22px;
+        color: var(--logo-red);
       }
-      .demo-logo-icon span {
+      .demo-logo-icon svg {
+        height: 100%;
+        width: auto;
         display: block;
-        height: 2px;
-        border-radius: 1px;
-        background: var(--brand);
-      }
-      .demo-logo-icon span:nth-child(1) {
-        width: 100%;
-      }
-      .demo-logo-icon span:nth-child(2) {
-        width: 72%;
-      }
-      .demo-logo-icon span:nth-child(3) {
-        width: 50%;
       }
       .demo-logo-text {
         font-size: 14px;
@@ -1057,25 +1023,13 @@
         margin-bottom: 12px;
       }
       .footer-logo-icon {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-        width: 18px;
+        height: 22px;
+        color: rgba(255, 255, 255, 0.6);
       }
-      .footer-logo-icon span {
+      .footer-logo-icon svg {
+        height: 100%;
+        width: auto;
         display: block;
-        height: 2px;
-        border-radius: 1px;
-        background: rgba(255, 255, 255, 0.6);
-      }
-      .footer-logo-icon span:nth-child(1) {
-        width: 100%;
-      }
-      .footer-logo-icon span:nth-child(2) {
-        width: 72%;
-      }
-      .footer-logo-icon span:nth-child(3) {
-        width: 50%;
       }
       .footer-brand {
         font-size: 15px;
@@ -1119,9 +1073,7 @@
       <div class="cover-version">VI MANUAL · v1.0</div>
       <div class="cover-label">Visual Identity System</div>
       <div class="cover-logo">
-        <div class="cover-logo-icon">
-          <span></span><span></span><span></span>
-        </div>
+        <div class="cover-logo-icon"><svg viewBox="12 3 24 34" fill="currentColor" aria-hidden="true"><path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/><path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/></svg></div>
         <div class="cover-logo-text">FinAgentPlatform</div>
       </div>
       <div class="cover-title">视觉识别<br />规范手册</div>
@@ -1139,7 +1091,7 @@
         </div>
         <div class="cover-meta-item">
           <div class="cover-meta-label">更新日期</div>
-          <div class="cover-meta-value">2026-06-04</div>
+          <div class="cover-meta-value">2026-07-30</div>
         </div>
       </div>
       <div class="cover-deco" id="coverDeco">ANALYSIS · 14:25</div>
@@ -1531,7 +1483,7 @@
         <div class="section-id">SECTION 03 · LOGO</div>
         <div class="section-title">标志 <span>规范</span></div>
         <div class="section-desc">
-          品牌标志由「三横线图标」与「粗体品牌文字」组成。三条横线宽度递减，象形报告文档的标题层级结构，传递「分析报告」的核心品牌联想。
+          品牌标志由「学院塔形图标」与「粗体品牌文字」组成。图标取自中南财经政法大学金融学院院徽，使用学校红 <code>#A61B29</code>，是本设计系统中唯一允许的暖色，不参与界面配色。
         </div>
 
         <div class="logo-grid">
@@ -1539,11 +1491,7 @@
           <div>
             <div class="logo-demo" style="background: var(--surface)">
               <div class="logo-unit">
-                <div class="logo-icon-wrap">
-                  <span style="background: var(--brand)"></span>
-                  <span style="background: var(--brand)"></span>
-                  <span style="background: var(--brand)"></span>
-                </div>
+                <div class="logo-icon-wrap" style="color: var(--logo-red)"><svg viewBox="12 3 24 34" fill="currentColor" aria-hidden="true"><path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/><path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/></svg></div>
                 <div class="logo-wordmark" style="color: var(--text-primary)">
                   FinAgentPlatform
                 </div>
@@ -1555,11 +1503,7 @@
           <div>
             <div class="logo-demo" style="background: var(--brand)">
               <div class="logo-unit">
-                <div class="logo-icon-wrap">
-                  <span style="background: #fff"></span>
-                  <span style="background: #fff"></span>
-                  <span style="background: #fff"></span>
-                </div>
+                <div class="logo-icon-wrap" style="color: #fff"><svg viewBox="12 3 24 34" fill="currentColor" aria-hidden="true"><path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/><path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/></svg></div>
                 <div class="logo-wordmark" style="color: #fff">
                   FinAgentPlatform
                 </div>
@@ -1582,57 +1526,18 @@
               "
             >
               <div class="logo-unit">
-                <div class="logo-icon-wrap">
-                  <span style="background: var(--action)"></span>
-                  <span style="background: var(--action)"></span>
-                  <span style="background: var(--action)"></span>
-                </div>
+                <div class="logo-icon-wrap" style="color: var(--logo-red)"><svg viewBox="12 3 24 34" fill="currentColor" aria-hidden="true"><path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/><path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/></svg></div>
                 <div class="logo-wordmark" style="color: var(--action)">
                   FinAgentPlatform
                 </div>
               </div>
-              <div class="logo-demo-label">ACTION · 浅蓝背景</div>
+              <div class="logo-demo-label">ON TINT · 浅色底</div>
             </div>
           </div>
           <!-- Icon only -->
           <div>
             <div class="logo-demo" style="background: var(--surface)">
-              <div
-                style="
-                  display: flex;
-                  flex-direction: column;
-                  gap: 5px;
-                  width: 32px;
-                "
-              >
-                <span
-                  style="
-                    display: block;
-                    height: 4px;
-                    border-radius: 2px;
-                    background: var(--brand);
-                    width: 100%;
-                  "
-                ></span>
-                <span
-                  style="
-                    display: block;
-                    height: 4px;
-                    border-radius: 2px;
-                    background: var(--brand);
-                    width: 72%;
-                  "
-                ></span>
-                <span
-                  style="
-                    display: block;
-                    height: 4px;
-                    border-radius: 2px;
-                    background: var(--brand);
-                    width: 50%;
-                  "
-                ></span>
-              </div>
+              <div style="height: 44px; color: var(--logo-red)"><svg style="height:100%;width:auto;display:block" viewBox="12 3 24 34" fill="currentColor" aria-hidden="true"><path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/><path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/></svg></div>
               <div class="logo-demo-label">ICON ONLY · 单独使用</div>
             </div>
           </div>
@@ -1643,11 +1548,7 @@
                 class="logo-unit"
                 style="transform: scale(0.7); transform-origin: center"
               >
-                <div class="logo-icon-wrap">
-                  <span style="background: var(--brand)"></span>
-                  <span style="background: var(--brand)"></span>
-                  <span style="background: var(--brand)"></span>
-                </div>
+                <div class="logo-icon-wrap" style="color: var(--logo-red)"><svg viewBox="12 3 24 34" fill="currentColor" aria-hidden="true"><path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/><path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/></svg></div>
                 <div class="logo-wordmark" style="color: var(--text-primary)">
                   FinAgentPlatform
                 </div>
@@ -1674,11 +1575,7 @@
                 class="logo-unit"
                 style="filter: grayscale(0.3); opacity: 0.5"
               >
-                <div class="logo-icon-wrap">
-                  <span style="background: #f87171"></span>
-                  <span style="background: #f87171"></span>
-                  <span style="background: #f87171"></span>
-                </div>
+                <div class="logo-icon-wrap" style="color: #f87171"><svg viewBox="12 3 24 34" fill="currentColor" aria-hidden="true"><path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/><path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/></svg></div>
                 <div
                   class="logo-wordmark"
                   style="color: #ef4444; transform: skewX(-10deg)"
@@ -1700,11 +1597,7 @@
             >
             <span class="clearspace-label left">CLEAR SPACE</span>
             <div class="clearspace-inner">
-              <div class="logo-icon-wrap">
-                <span style="background: var(--action)"></span>
-                <span style="background: var(--action)"></span>
-                <span style="background: var(--action)"></span>
-              </div>
+              <div class="logo-icon-wrap" style="color: var(--logo-red)"><svg viewBox="12 3 24 34" fill="currentColor" aria-hidden="true"><path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/><path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/></svg></div>
               <div
                 class="logo-wordmark"
                 style="color: var(--action); font-size: 17px; font-weight: 700"
@@ -1954,9 +1847,7 @@
           <div class="card-label">NAVBAR · 导航栏</div>
           <div class="navbar-demo">
             <div class="demo-logo">
-              <div class="demo-logo-icon">
-                <span></span><span></span><span></span>
-              </div>
+              <div class="demo-logo-icon"><svg viewBox="12 3 24 34" fill="currentColor" aria-hidden="true"><path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/><path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/></svg></div>
               <div class="demo-logo-text">FinAgentPlatform</div>
             </div>
             <div class="nav-link active">导航项一</div>
@@ -2687,42 +2578,7 @@
                 margin-right: 24px;
               "
             >
-              <div
-                style="
-                  display: flex;
-                  flex-direction: column;
-                  gap: 3px;
-                  width: 18px;
-                "
-              >
-                <span
-                  style="
-                    display: block;
-                    height: 2px;
-                    border-radius: 1px;
-                    background: var(--brand);
-                    width: 100%;
-                  "
-                ></span>
-                <span
-                  style="
-                    display: block;
-                    height: 2px;
-                    border-radius: 1px;
-                    background: var(--brand);
-                    width: 72%;
-                  "
-                ></span>
-                <span
-                  style="
-                    display: block;
-                    height: 2px;
-                    border-radius: 1px;
-                    background: var(--brand);
-                    width: 50%;
-                  "
-                ></span>
-              </div>
+              <div style="height: 24px; color: var(--logo-red)"><svg style="height:100%;width:auto;display:block" viewBox="12 3 24 34" fill="currentColor" aria-hidden="true"><path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/><path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/></svg></div>
               <span
                 style="
                   font-size: 15px;
@@ -2946,9 +2802,7 @@
     <div class="vi-footer">
       <div>
         <div class="footer-logo">
-          <div class="footer-logo-icon">
-            <span></span><span></span><span></span>
-          </div>
+          <div class="footer-logo-icon"><svg viewBox="12 3 24 34" fill="currentColor" aria-hidden="true"><path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/><path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/></svg></div>
           <div class="footer-brand">FinAgentPlatform</div>
         </div>
         <div class="footer-copy">Visual Identity Manual · v1.0.0 · 2026</div>

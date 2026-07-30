@@ -34,7 +34,8 @@
 
 | 变量名 | 色值 | 用途 |
 |--------|------|------|
-| `--brand`       | `#0B2E5C` | 品牌深海军蓝，用于 Logo 图标、重要强调 |
+| `--brand`       | `#0B2E5C` | 品牌深海军蓝，用于导航激活态、重要强调 |
+| `--logo-red`    | `#A61B29` | 学校红，**仅用于 Logo**，不参与界面配色 |
 | `--action`      | `#1749C4` | 主交互色：按钮、链接、选中态（比亮蓝更沉稳） |
 | `--action-hover`| `#1239A6` | 按钮 hover 态 |
 | `--action-light`| `#EAF0FC` | 轻量填充背景（选中卡片、标签 active 态） |
@@ -62,6 +63,7 @@
   --text-muted:    #8E9BB0;
 
   --brand:         #0B2E5C;
+  --logo-red:      #A61B29;   /* 仅 Logo，见 §6 */
   --action:        #1749C4;
   --action-hover:  #1239A6;
   --action-light:  #EAF0FC;
@@ -79,6 +81,7 @@
 - `--action`（`#1749C4`）用于所有可交互元素，不要用在纯装饰上
 - Hero 大标题可用 `--action` 大面积着色（这是全站蓝色最集中的位置）
 - 严禁引入暖色系（红、橙、黄）作为主调，仅限警告状态
+- **唯一例外**：Logo 使用学校红 `--logo-red`，作为机构标识独立存在。该色不得扩散到按钮、链接、图表或任何界面元素上——界面配色仍以深海军蓝为唯一品牌色
 - 不使用渐变作为主视觉，仅用于细节装饰
 
 ---
@@ -251,19 +254,19 @@ setInterval(updateDecoStamps, 60 * 1000);
 
 ## 六、Logo 规范
 
-**三横线图标（报告象形）+ 粗体品牌文字**
+**学院塔形图标 + 粗体品牌文字**
 
-三条横线宽度递减，象形报告文档的标题层级结构。
+图标取自中南财经政法大学金融学院院徽，使用学校红 `--logo-red`（`#A61B29`）。这是本设计系统中唯一的暖色，作为机构标识独立存在——它标示平台的归属，不参与界面配色（见 §2 配色原则的例外条款）。
+
+资产文件：`doc/02visual/logo.svg`，`viewBox="12 3 24 34"`，**竖版**，宽高比约 5:7。
 
 ```html
-<div class="logo">
-  <div class="logo-icon" aria-hidden="true">
-    <span></span>
-    <span></span>
-    <span></span>
-  </div>
-  <span class="logo-text">品牌名称</span>
-</div>
+<a class="logo" href="/">
+  <svg class="logo-icon" viewBox="12 3 24 34" fill="currentColor" aria-hidden="true">
+    <path d="…" /><path d="…" />   <!-- 路径见 logo.svg -->
+  </svg>
+  <span class="logo-text">FinAgentPlatform</span>
+</a>
 ```
 
 ```css
@@ -275,23 +278,12 @@ setInterval(updateDecoStamps, 60 * 1000);
 }
 
 .logo-icon {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 3.5px;
-  width: 22px;
-  height: 16px;
-}
-.logo-icon span {
+  height: 24px;             /* 54px navbar 内的推荐高度 */
+  width: auto;              /* 竖版，宽度按比例约 17px */
+  color: var(--logo-red);
   display: block;
-  height: 2.5px;
-  background: var(--brand);   /* #0B2E5C 深海军蓝 */
-  border-radius: 1.5px;
-  transition: width 0.2s;
+  flex-shrink: 0;
 }
-.logo-icon span:nth-child(1) { width: 100%; }   /* 第一行：最长 */
-.logo-icon span:nth-child(2) { width: 72%;  }   /* 第二行：中等 */
-.logo-icon span:nth-child(3) { width: 50%;  }   /* 第三行：最短 */
 
 .logo-text {
   font-size: 17px;
@@ -300,6 +292,21 @@ setInterval(updateDecoStamps, 60 * 1000);
   letter-spacing: 0.02em;
 }
 ```
+
+**SVG 必须使用 `fill="currentColor"`**，颜色一律通过 CSS `color` 控制。深色背景反白时只需覆盖 `color: #fff`，不要维护多份 SVG 文件。
+
+### 使用规则
+
+| 场景 | 图标高度 | 颜色 |
+|---|---|---|
+| Navbar | 24px | `--logo-red` |
+| 登录页 / 页面级标识 | 40–48px | `--logo-red` |
+| 深色背景反白 | 同上 | `#FFFFFF` |
+| 页脚 | 22px | `rgba(255,255,255,0.6)` |
+
+最小安全距离 = Logo 高度 × 1。
+
+**禁止**：改变图标颜色（含改为交互蓝或警告色）、拉伸变形、旋转、添加投影或描边、改变图标与文字的相对比例。
 
 ---
 

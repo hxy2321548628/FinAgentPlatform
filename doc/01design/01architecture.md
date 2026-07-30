@@ -54,7 +54,7 @@
              │            │              │
         ┌────▼────┐  ┌────▼──────────┐   │
         │Postgres │  │Redis Streams  │   │
-        │元数据 + │  │ 任务队列        │   │
+        │元数据 +  │  │ 任务队列        │   │
         │checkpoint│ │ + 事件日志 ────┼───┘
         └────▲────┘  └────┬──────────┘
              │            │ consumer group
@@ -257,7 +257,7 @@ SSE 的优势：协议简单、自带断线重连与 `Last-Event-ID`、走标准
 ## 8. 数据模型草案
 
 ```
-users          (id, name, role, quota_tokens, quota_concurrent, ...)
+users          (id, name, role, quota_tokens, quota_concurrent, ...) (RBCA角色)
 threads        (id, user_id, title, agent_config, created_at)      -- 会话
 runs           (id, thread_id, status, checkpoint_id, error,
                 started_at, ended_at)                              -- 一次执行
@@ -348,4 +348,3 @@ CPU / 内存 / 磁盘规格未确认。内存直接决定沙箱并发上限
 
 同样，P0 不要跳过直接做分布式：如果 agent 本身效果不行，队列和 checkpoint 都是无用功。
 
-# RBAC角色
