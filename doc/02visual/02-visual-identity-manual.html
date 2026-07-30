@@ -1,0 +1,2986 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FinAgentPlatform · Visual Identity Manual</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700;900&display=swap");
+
+      :root {
+        --bg: #edf0f5;
+        --surface: #ffffff;
+        --border: #d4dce8;
+        --border-light: #e8edf4;
+        --text-primary: #0d1829;
+        --text-secondary: #5a6a7e;
+        --text-muted: #8e9bb0;
+        --brand: #0b2e5c;
+        --action: #1749c4;
+        --action-hover: #1239a6;
+        --action-light: #eaf0fc;
+        --action-border: #bbcef5;
+        --status-done: #10b981;
+        --status-active: #1749c4;
+        --status-pending: #8e9bb0;
+        --status-warn: #d97706;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: "Noto Sans SC", "PingFang SC", "微软雅黑", sans-serif;
+        background: var(--bg);
+        background-image:
+          linear-gradient(rgba(11, 46, 92, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(11, 46, 92, 0.035) 1px, transparent 1px);
+        background-size: 40px 40px;
+        color: var(--text-primary);
+        line-height: 1.6;
+      }
+
+      /* ── COVER ── */
+      .cover {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 80px 120px;
+        position: relative;
+        overflow: hidden;
+        background: var(--brand);
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+        background-size: 40px 40px;
+      }
+      .cover::before {
+        content: "";
+        position: absolute;
+        right: -100px;
+        top: -100px;
+        width: 600px;
+        height: 600px;
+        border-radius: 50%;
+        background: radial-gradient(
+          circle,
+          rgba(23, 73, 196, 0.4) 0%,
+          transparent 70%
+        );
+        pointer-events: none;
+      }
+      .cover-label {
+        font-size: 11px;
+        font-family: "JetBrains Mono", monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.3em;
+        color: rgba(255, 255, 255, 0.45);
+        margin-bottom: 48px;
+      }
+      .cover-logo {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 60px;
+      }
+      .cover-logo-icon {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        width: 32px;
+      }
+      .cover-logo-icon span {
+        display: block;
+        height: 3.5px;
+        background: #fff;
+        border-radius: 2px;
+      }
+      .cover-logo-icon span:nth-child(1) {
+        width: 100%;
+      }
+      .cover-logo-icon span:nth-child(2) {
+        width: 72%;
+      }
+      .cover-logo-icon span:nth-child(3) {
+        width: 50%;
+      }
+      .cover-logo-text {
+        font-size: 24px;
+        font-weight: 700;
+        color: #fff;
+        letter-spacing: 0.04em;
+      }
+      .cover-title {
+        font-size: 64px;
+        font-weight: 900;
+        color: #ffffff;
+        line-height: 1.1;
+        margin-bottom: 24px;
+        max-width: 700px;
+      }
+      .cover-subtitle {
+        font-size: 16px;
+        color: rgba(255, 255, 255, 0.55);
+        letter-spacing: 0.05em;
+        margin-bottom: 80px;
+      }
+      .cover-meta {
+        display: flex;
+        gap: 48px;
+      }
+      .cover-meta-item {
+      }
+      .cover-meta-label {
+        font-size: 10px;
+        font-family: "JetBrains Mono", monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.25em;
+        color: rgba(255, 255, 255, 0.35);
+        margin-bottom: 6px;
+      }
+      .cover-meta-value {
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.7);
+        font-weight: 500;
+      }
+      .cover-deco {
+        position: absolute;
+        bottom: 60px;
+        right: 120px;
+        font-size: 11px;
+        font-family: "JetBrains Mono", monospace;
+        letter-spacing: 0.2em;
+        color: rgba(255, 255, 255, 0.1);
+        transform: rotate(-45deg);
+        white-space: nowrap;
+      }
+      .cover-version {
+        position: absolute;
+        top: 40px;
+        right: 120px;
+        font-size: 11px;
+        font-family: "JetBrains Mono", monospace;
+        letter-spacing: 0.2em;
+        color: rgba(255, 255, 255, 0.3);
+      }
+
+      /* ── LAYOUT ── */
+      .main {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 80px 40px;
+      }
+
+      /* ── SECTION ── */
+      .vi-section {
+        margin-bottom: 100px;
+        position: relative;
+      }
+      .section-id {
+        font-size: 10px;
+        font-family: "JetBrains Mono", monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.3em;
+        color: var(--text-muted);
+        margin-bottom: 12px;
+      }
+      .section-title {
+        font-size: 32px;
+        font-weight: 900;
+        color: var(--text-primary);
+        margin-bottom: 8px;
+        line-height: 1.2;
+      }
+      .section-title span {
+        color: var(--action);
+      }
+      .section-desc {
+        font-size: 14px;
+        color: var(--text-secondary);
+        max-width: 560px;
+        line-height: 1.75;
+        margin-bottom: 48px;
+        padding-bottom: 32px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      /* ── CARD BASE ── */
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 32px;
+        box-shadow:
+          0 1px 4px rgba(11, 46, 92, 0.05),
+          0 4px 16px rgba(11, 46, 92, 0.06);
+      }
+      .card-label {
+        font-size: 10px;
+        font-family: "JetBrains Mono", monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.25em;
+        color: var(--text-muted);
+        margin-bottom: 20px;
+      }
+
+      /* ── TOC ── */
+      .toc {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-bottom: 80px;
+      }
+      .toc-item {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 20px 24px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .toc-num {
+        font-size: 22px;
+        font-weight: 900;
+        color: var(--action-border);
+        font-family: "JetBrains Mono", monospace;
+        line-height: 1;
+        min-width: 36px;
+      }
+      .toc-name {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .toc-sub {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 2px;
+      }
+
+      /* ── COLOR SECTION ── */
+      .color-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+      }
+      .color-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .color-swatch {
+        height: 80px;
+      }
+      .color-info {
+        padding: 16px;
+      }
+      .color-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 4px;
+      }
+      .color-hex {
+        font-size: 12px;
+        font-family: "JetBrains Mono", monospace;
+        color: var(--text-muted);
+        margin-bottom: 6px;
+      }
+      .color-desc {
+        font-size: 11px;
+        color: var(--text-secondary);
+        line-height: 1.5;
+      }
+      .color-divider {
+        grid-column: 1 / -1;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.25em;
+        color: var(--text-muted);
+        padding: 16px 0 4px;
+        border-top: 1px solid var(--border);
+        margin-top: 8px;
+        font-family: "JetBrains Mono", monospace;
+      }
+      .usage-rule {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        padding: 14px 0;
+        border-bottom: 1px solid var(--border-light);
+      }
+      .usage-rule:last-child {
+        border-bottom: none;
+      }
+      .usage-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        margin-top: 6px;
+      }
+      .usage-text {
+        font-size: 13px;
+        color: var(--text-secondary);
+        line-height: 1.6;
+      }
+
+      /* ── TYPOGRAPHY ── */
+      .type-scale {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+      }
+      .type-row {
+        display: grid;
+        grid-template-columns: 220px 1fr 180px;
+        align-items: center;
+        padding: 20px 0;
+        border-bottom: 1px solid var(--border-light);
+      }
+      .type-row:last-child {
+        border-bottom: none;
+      }
+      .type-meta {
+      }
+      .type-level {
+        font-size: 11px;
+        font-family: "JetBrains Mono", monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        color: var(--text-muted);
+        margin-bottom: 4px;
+      }
+      .type-spec {
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .type-sample {
+        overflow: hidden;
+      }
+      .type-sample-usage {
+        font-size: 11px;
+        color: var(--text-muted);
+        text-align: right;
+      }
+
+      /* ── LOGO ── */
+      .logo-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+      .logo-demo {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 40px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        min-height: 160px;
+      }
+      .logo-demo-label {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.2em;
+        color: var(--text-muted);
+        font-family: "JetBrains Mono", monospace;
+      }
+      .logo-unit {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .logo-icon-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 3.5px;
+        width: 22px;
+      }
+      .logo-icon-wrap span {
+        display: block;
+        height: 2.5px;
+        border-radius: 1.5px;
+      }
+      .logo-icon-wrap span:nth-child(1) {
+        width: 100%;
+      }
+      .logo-icon-wrap span:nth-child(2) {
+        width: 72%;
+      }
+      .logo-icon-wrap span:nth-child(3) {
+        width: 50%;
+      }
+      .logo-wordmark {
+        font-size: 17px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      /* ── SPACING & CLEARSPACE ── */
+      .clearspace-demo {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 60px;
+        border: 1.5px dashed var(--border);
+        border-radius: 10px;
+        position: relative;
+        background: var(--surface);
+      }
+      .clearspace-inner {
+        padding: 24px;
+        border: 1px solid var(--action-border);
+        background: var(--action-light);
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .clearspace-label {
+        position: absolute;
+        font-size: 10px;
+        font-family: "JetBrains Mono", monospace;
+        color: var(--text-muted);
+        letter-spacing: 0.15em;
+      }
+      .clearspace-label.top {
+        top: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+      .clearspace-label.left {
+        left: 16px;
+        top: 50%;
+        transform: translateY(-50%) rotate(-90deg);
+      }
+
+      /* ── BUTTON DEMOS ── */
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: center;
+        padding: 32px;
+      }
+      .btn-primary {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 48px;
+        padding: 0 28px;
+        background: var(--action);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: default;
+        letter-spacing: 0.02em;
+      }
+      .btn-outline {
+        display: inline-flex;
+        align-items: center;
+        height: 48px;
+        padding: 0 24px;
+        background: transparent;
+        color: var(--text-primary);
+        border: 1.5px solid var(--border);
+        border-radius: 8px;
+        font-size: 15px;
+        font-weight: 500;
+        cursor: default;
+      }
+      .btn-dark {
+        display: inline-flex;
+        align-items: center;
+        height: 44px;
+        padding: 0 28px;
+        background: var(--brand);
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: default;
+        letter-spacing: 0.03em;
+      }
+      .btn-sm {
+        display: inline-flex;
+        align-items: center;
+        height: 32px;
+        padding: 0 16px;
+        background: var(--action);
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: default;
+      }
+      .btn-label {
+        font-size: 11px;
+        font-family: "JetBrains Mono", monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        color: var(--text-muted);
+      }
+
+      /* ── STATUS BADGES ── */
+      .status-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 32px;
+        align-items: center;
+      }
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 4px 12px;
+        border: 1px solid var(--border);
+        border-radius: 100px;
+        font-size: 11px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        background: var(--surface);
+      }
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      /* ── NAVBAR DEMO ── */
+      .navbar-demo {
+        background: rgba(255, 255, 255, 0.96);
+        backdrop-filter: blur(10px);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        height: 54px;
+        display: flex;
+        align-items: center;
+        padding: 0 24px;
+        gap: 4px;
+      }
+      .demo-logo {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-right: 24px;
+        flex-shrink: 0;
+      }
+      .demo-logo-icon {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        width: 18px;
+      }
+      .demo-logo-icon span {
+        display: block;
+        height: 2px;
+        border-radius: 1px;
+        background: var(--brand);
+      }
+      .demo-logo-icon span:nth-child(1) {
+        width: 100%;
+      }
+      .demo-logo-icon span:nth-child(2) {
+        width: 72%;
+      }
+      .demo-logo-icon span:nth-child(3) {
+        width: 50%;
+      }
+      .demo-logo-text {
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--text-primary);
+      }
+      .nav-link {
+        font-size: 13px;
+        color: var(--text-secondary);
+        padding: 5px 10px;
+        border-radius: 6px;
+        white-space: nowrap;
+      }
+      .nav-link.active {
+        background: var(--brand);
+        color: #fff;
+        font-weight: 500;
+      }
+      .nav-avatar {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--action-light);
+        border: 1.5px solid var(--action-border);
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        color: var(--action);
+        font-weight: 600;
+      }
+
+      /* ── CARD DEMO ── */
+      .research-card-demo {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+      }
+      .card-icon-area {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px 0 16px;
+        gap: 8px;
+      }
+      .card-svg {
+        width: 36px;
+        height: 36px;
+        color: var(--action-border);
+      }
+      .card-icon-label {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        color: var(--text-muted);
+        font-family: "JetBrains Mono", monospace;
+      }
+      .card-dimension {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-bottom: 4px;
+      }
+      .card-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 8px;
+      }
+      .card-desc {
+        font-size: 13px;
+        color: var(--text-secondary);
+        line-height: 1.65;
+      }
+      .card-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border-light);
+      }
+      .card-tag {
+        padding: 3px 8px;
+        font-size: 10px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--text-secondary);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        font-family: "JetBrains Mono", monospace;
+      }
+
+      /* ── MOTION TABLE ── */
+      .motion-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .motion-table th {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.2em;
+        color: var(--text-muted);
+        padding: 12px 16px;
+        text-align: left;
+        border-bottom: 1.5px solid var(--border);
+        font-family: "JetBrains Mono", monospace;
+        background: #f7f9fc;
+      }
+      .motion-table td {
+        padding: 12px 16px;
+        font-size: 13px;
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border-light);
+      }
+      .motion-table td:first-child {
+        color: var(--text-primary);
+        font-weight: 500;
+      }
+      .mono {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        color: var(--action);
+      }
+
+      /* ── INPUT DEMO ── */
+      .form-demo {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        padding: 32px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+      }
+      .field-label {
+        display: block;
+        font-size: 11px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        color: var(--text-muted);
+        margin-bottom: 8px;
+      }
+      .input-demo {
+        width: 100%;
+        height: 40px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0 12px;
+        font-size: 14px;
+        color: var(--text-muted);
+        background: #f7f9fc;
+        outline: none;
+        font-family: inherit;
+      }
+      .input-focus {
+        border-color: var(--action);
+        background: var(--surface);
+        box-shadow: 0 0 0 3px rgba(23, 73, 196, 0.1);
+      }
+
+      /* ── DO / DON'T ── */
+      .do-dont {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .do-box {
+        background: var(--surface);
+        border: 1.5px solid var(--status-done);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .dont-box {
+        background: var(--surface);
+        border: 1.5px solid #f87171;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .do-header {
+        background: rgba(16, 185, 129, 0.08);
+        padding: 12px 20px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        color: var(--status-done);
+        font-family: "JetBrains Mono", monospace;
+      }
+      .dont-header {
+        background: rgba(248, 113, 113, 0.08);
+        padding: 12px 20px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        color: #ef4444;
+        font-family: "JetBrains Mono", monospace;
+      }
+      .rule-list {
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .rule-item {
+        font-size: 13px;
+        color: var(--text-secondary);
+        line-height: 1.6;
+        display: flex;
+        gap: 10px;
+      }
+      .rule-item::before {
+        content: "—";
+        color: var(--text-muted);
+        flex-shrink: 0;
+      }
+
+      /* ── PAGE DIVIDER ── */
+      .page-divider {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        margin: 60px 0;
+        opacity: 0.5;
+      }
+      .page-divider::before,
+      .page-divider::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--border);
+      }
+      .page-divider-text {
+        font-size: 10px;
+        font-family: "JetBrains Mono", monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.3em;
+        color: var(--text-muted);
+        white-space: nowrap;
+      }
+
+      /* ── HERO PREVIEW ── */
+      .hero-preview {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        overflow: hidden;
+        padding: 48px;
+        background-image:
+          linear-gradient(rgba(11, 46, 92, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(11, 46, 92, 0.035) 1px, transparent 1px);
+        background-size: 40px 40px;
+      }
+      .hero-inner {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 48px;
+        align-items: center;
+      }
+      .hero-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 14px;
+        border: 1px solid var(--border);
+        border-radius: 100px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        background: var(--surface);
+        margin-bottom: 28px;
+      }
+      .hero-badge-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--status-done);
+        box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+        flex-shrink: 0;
+      }
+      .hero-h1 {
+        font-size: 44px;
+        font-weight: 900;
+        line-height: 1.15;
+        margin-bottom: 16px;
+      }
+      .hero-h1 .blue {
+        color: var(--action);
+      }
+      .cursor {
+        display: inline-block;
+        width: 3px;
+        height: 0.85em;
+        background: var(--action);
+        vertical-align: text-bottom;
+        margin-left: 4px;
+        animation: blink 1.1s step-end infinite;
+      }
+      @keyframes blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0;
+        }
+      }
+      .hero-p {
+        font-size: 14px;
+        color: var(--text-secondary);
+        line-height: 1.75;
+        margin-bottom: 28px;
+        max-width: 360px;
+      }
+      .hero-btns {
+        display: flex;
+        gap: 12px;
+      }
+      .dashboard-card-demo {
+        background: var(--surface);
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        box-shadow:
+          0 4px 8px rgba(11, 46, 92, 0.06),
+          0 12px 40px rgba(11, 46, 92, 0.1);
+        overflow: hidden;
+      }
+      .window-titlebar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 12px 16px;
+        background: #f7f9fc;
+        border-bottom: 1px solid var(--border-light);
+      }
+      .window-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--border);
+      }
+      .window-title {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-left: 8px;
+        letter-spacing: 0.05em;
+        font-family: "JetBrains Mono", monospace;
+      }
+      .dash-table {
+        width: 100%;
+        font-size: 12px;
+        border-collapse: collapse;
+      }
+      .dash-table th {
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-size: 10px;
+        color: var(--text-muted);
+        padding: 8px 16px;
+        text-align: left;
+        border-bottom: 1px solid var(--border-light);
+        font-weight: 500;
+      }
+      .dash-table td {
+        padding: 9px 16px;
+        border-bottom: 1px solid #f5f7fa;
+        color: var(--text-secondary);
+      }
+      .row-id {
+        color: var(--action);
+        font-weight: 500;
+        font-family: "JetBrains Mono", monospace;
+      }
+      .s-complete {
+        color: var(--status-done);
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .s-active {
+        color: var(--status-active);
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .s-pending {
+        color: var(--status-pending);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      /* ── TICKER DEMO ── */
+      .ticker-demo {
+        background: var(--surface);
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+        padding: 20px 0;
+        overflow: hidden;
+      }
+      .ticker-label-t {
+        text-align: center;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.28em;
+        color: var(--text-muted);
+        margin-bottom: 14px;
+        font-family: "JetBrains Mono", monospace;
+      }
+      .ticker-track {
+        display: flex;
+        animation: ticker 30s linear infinite;
+        width: max-content;
+      }
+      .ticker-item {
+        padding: 0 28px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        border-right: 1px solid var(--border);
+        white-space: nowrap;
+      }
+      @keyframes ticker {
+        from {
+          transform: translateX(0);
+        }
+        to {
+          transform: translateX(-50%);
+        }
+      }
+
+      /* ── PRINT / FOOTER ── */
+      .vi-footer {
+        background: var(--brand);
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+        background-size: 40px 40px;
+        padding: 60px 120px;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+      }
+      .footer-logo {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .footer-logo-icon {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        width: 18px;
+      }
+      .footer-logo-icon span {
+        display: block;
+        height: 2px;
+        border-radius: 1px;
+        background: rgba(255, 255, 255, 0.6);
+      }
+      .footer-logo-icon span:nth-child(1) {
+        width: 100%;
+      }
+      .footer-logo-icon span:nth-child(2) {
+        width: 72%;
+      }
+      .footer-logo-icon span:nth-child(3) {
+        width: 50%;
+      }
+      .footer-brand {
+        font-size: 15px;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.8);
+      }
+      .footer-copy {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.35);
+        letter-spacing: 0.05em;
+      }
+      .footer-meta {
+        text-align: right;
+        font-size: 11px;
+        font-family: "JetBrains Mono", monospace;
+        color: rgba(255, 255, 255, 0.3);
+        letter-spacing: 0.1em;
+        line-height: 2;
+      }
+
+      @media print {
+        .vi-section {
+          page-break-inside: avoid;
+        }
+        .cover {
+          min-height: auto;
+          padding: 60px;
+        }
+      }
+    </style>
+    <style id="__web-inspector-hide-shortcut-style__">
+      .__web-inspector-hide-shortcut__,
+      .__web-inspector-hide-shortcut__ * {
+        visibility: hidden !important;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ══════════════ COVER ══════════════ -->
+    <div class="cover">
+      <div class="cover-version">VI MANUAL · v1.0</div>
+      <div class="cover-label">Visual Identity System</div>
+      <div class="cover-logo">
+        <div class="cover-logo-icon">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="cover-logo-text">FinAgentPlatform</div>
+      </div>
+      <div class="cover-title">视觉识别<br />规范手册</div>
+      <div class="cover-subtitle">
+        Intelligence-Minimal · Brand Design System
+      </div>
+      <div class="cover-meta">
+        <div class="cover-meta-item">
+          <div class="cover-meta-label">项目</div>
+          <div class="cover-meta-value">金融学院智能体平台</div>
+        </div>
+        <div class="cover-meta-item">
+          <div class="cover-meta-label">版本</div>
+          <div class="cover-meta-value">1.0.0</div>
+        </div>
+        <div class="cover-meta-item">
+          <div class="cover-meta-label">更新日期</div>
+          <div class="cover-meta-value">2026-06-04</div>
+        </div>
+      </div>
+      <div class="cover-deco" id="coverDeco">ANALYSIS · 14:25</div>
+    </div>
+
+    <div class="main">
+      <!-- ══ TOC ══ -->
+      <div class="vi-section">
+        <div class="section-id">CONTENTS</div>
+        <div class="section-title">目录 <span>索引</span></div>
+        <div class="section-desc">
+          本手册共收录九大视觉规范模块，涵盖品牌核心元素至界面应用的完整体系。所有设计决策均以「冷静、可靠、高技术感」为核心调性依据。
+        </div>
+        <div class="toc">
+          <div class="toc-item">
+            <div class="toc-num">01</div>
+            <div>
+              <div class="toc-name">品牌定位</div>
+              <div class="toc-sub">Intelligence-Minimal</div>
+            </div>
+          </div>
+          <div class="toc-item">
+            <div class="toc-num">02</div>
+            <div>
+              <div class="toc-name">色彩系统</div>
+              <div class="toc-sub">深海军蓝 · 冷灰底色</div>
+            </div>
+          </div>
+          <div class="toc-item">
+            <div class="toc-num">03</div>
+            <div>
+              <div class="toc-name">标志规范</div>
+              <div class="toc-sub">Logo 构成与使用</div>
+            </div>
+          </div>
+          <div class="toc-item">
+            <div class="toc-num">04</div>
+            <div>
+              <div class="toc-name">排版系统</div>
+              <div class="toc-sub">字体 · 字号 · 层级</div>
+            </div>
+          </div>
+          <div class="toc-item">
+            <div class="toc-num">05</div>
+            <div>
+              <div class="toc-name">界面组件</div>
+              <div class="toc-sub">按钮 · 表单 · 导航</div>
+            </div>
+          </div>
+          <div class="toc-item">
+            <div class="toc-num">06</div>
+            <div>
+              <div class="toc-name">装饰系统</div>
+              <div class="toc-sub">网格 · 时间戳 · 光标</div>
+            </div>
+          </div>
+          <div class="toc-item">
+            <div class="toc-num">07</div>
+            <div>
+              <div class="toc-name">卡片规范</div>
+              <div class="toc-sub">功能模块卡片</div>
+            </div>
+          </div>
+          <div class="toc-item">
+            <div class="toc-num">08</div>
+            <div>
+              <div class="toc-name">动效规范</div>
+              <div class="toc-sub">时长 · 缓动 · 原则</div>
+            </div>
+          </div>
+          <div class="toc-item">
+            <div class="toc-num">09</div>
+            <div>
+              <div class="toc-name">页面预览</div>
+              <div class="toc-sub">Hero · Ticker · 整体</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ 01 BRAND POSITIONING ══ -->
+      <div class="vi-section">
+        <div class="section-id">SECTION 01 · BRAND</div>
+        <div class="section-title">品牌 <span>定位</span></div>
+        <div class="section-desc">
+          Intelligence-Minimal（情报极简风）——整体气质是「冷静、可靠的高技术感」，面向需要做专业分析决策的用户，传递分析深度、数据可信、系统专业的品牌调性。
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px">
+          <div class="card">
+            <div class="card-label">STYLE NAME</div>
+            <div
+              style="
+                font-size: 28px;
+                font-weight: 900;
+                color: var(--text-primary);
+                margin-bottom: 12px;
+              "
+            >
+              Intelligence<br /><span style="color: var(--action)"
+                >Minimal</span
+              >
+            </div>
+            <div
+              style="
+                font-size: 13px;
+                color: var(--text-secondary);
+                line-height: 1.8;
+              "
+            >
+              情报极简风，以深海军蓝作为锚色，冷灰调底色，配合工程 /
+              终端美学的细节装饰。不追求视觉冲击，而是传递<strong>分析深度、数据可信、系统专业</strong>的品牌调性。
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-label">CORE KEYWORDS</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 10px">
+              <span
+                style="
+                  padding: 8px 16px;
+                  background: var(--brand);
+                  color: #fff;
+                  border-radius: 6px;
+                  font-size: 13px;
+                  font-weight: 600;
+                "
+                >深海军蓝</span
+              >
+              <span
+                style="
+                  padding: 8px 16px;
+                  background: var(--action-light);
+                  color: var(--action);
+                  border: 1px solid var(--action-border);
+                  border-radius: 6px;
+                  font-size: 13px;
+                  font-weight: 600;
+                "
+                >冷灰底色</span
+              >
+              <span
+                style="
+                  padding: 8px 16px;
+                  background: var(--surface);
+                  color: var(--text-secondary);
+                  border: 1px solid var(--border);
+                  border-radius: 6px;
+                  font-size: 13px;
+                "
+                >报告感排版</span
+              >
+              <span
+                style="
+                  padding: 8px 16px;
+                  background: var(--surface);
+                  color: var(--text-secondary);
+                  border: 1px solid var(--border);
+                  border-radius: 6px;
+                  font-size: 13px;
+                "
+                >装饰克制</span
+              >
+              <span
+                style="
+                  padding: 8px 16px;
+                  background: var(--surface);
+                  color: var(--text-secondary);
+                  border: 1px solid var(--border);
+                  border-radius: 6px;
+                  font-size: 13px;
+                "
+                >数据化视觉</span
+              >
+            </div>
+            <div
+              style="
+                margin-top: 24px;
+                padding-top: 20px;
+                border-top: 1px solid var(--border-light);
+              "
+            >
+              <div class="card-label" style="margin-bottom: 10px">
+                TARGET AUDIENCE
+              </div>
+              <div
+                style="
+                  font-size: 13px;
+                  color: var(--text-secondary);
+                  line-height: 1.75;
+                "
+              >
+                金融学院教师。对分析结果准确性、过程可追溯与系统稳定性有较高要求的教学与研究用户群体。
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-divider">
+        <span class="page-divider-text">SECTION 02 · COLOR SYSTEM</span>
+      </div>
+
+      <!-- ══ 02 COLOR ══ -->
+      <div class="vi-section">
+        <div class="section-id">SECTION 02 · COLOR</div>
+        <div class="section-title">色彩 <span>系统</span></div>
+        <div class="section-desc">
+          全站采用「75% 冷灰无色系 + 25%
+          深海军蓝调」的配色比例。所有灰色均含蓝色底调，避免中性暖灰。严禁将暖色系引入主调。
+        </div>
+
+        <div class="color-grid">
+          <div class="color-divider">基础色板 · BASE PALETTE</div>
+
+          <div class="color-card">
+            <div class="color-swatch" style="background: #edf0f5"></div>
+            <div class="color-info">
+              <div class="color-name">Background</div>
+              <div class="color-hex">--bg · #EDF0F5</div>
+              <div class="color-desc">页面背景，冷蓝灰色调，非纯白</div>
+            </div>
+          </div>
+          <div class="color-card">
+            <div
+              class="color-swatch"
+              style="background: #ffffff; border-bottom: 1px solid #e8edf4"
+            ></div>
+            <div class="color-info">
+              <div class="color-name">Surface</div>
+              <div class="color-hex">--surface · #FFFFFF</div>
+              <div class="color-desc">卡片、面板背景</div>
+            </div>
+          </div>
+          <div class="color-card">
+            <div class="color-swatch" style="background: #d4dce8"></div>
+            <div class="color-info">
+              <div class="color-name">Border</div>
+              <div class="color-hex">--border · #D4DCE8</div>
+              <div class="color-desc">
+                分割线、输入框、卡片边框（带蓝色底调）
+              </div>
+            </div>
+          </div>
+          <div class="color-card">
+            <div class="color-swatch" style="background: #0d1829"></div>
+            <div class="color-info">
+              <div class="color-name">Text Primary</div>
+              <div class="color-hex">--text-primary · #0D1829</div>
+              <div class="color-desc">
+                主文字，近黑，含蓝色底调，比纯黑更冷静
+              </div>
+            </div>
+          </div>
+          <div class="color-card">
+            <div class="color-swatch" style="background: #5a6a7e"></div>
+            <div class="color-info">
+              <div class="color-name">Text Secondary</div>
+              <div class="color-hex">--text-secondary · #5A6A7E</div>
+              <div class="color-desc">次级文字，蓝灰调，替代中性灰</div>
+            </div>
+          </div>
+          <div class="color-card">
+            <div class="color-swatch" style="background: #8e9bb0"></div>
+            <div class="color-info">
+              <div class="color-name">Text Muted</div>
+              <div class="color-hex">--text-muted · #8E9BB0</div>
+              <div class="color-desc">占位符、禁用、注释文字</div>
+            </div>
+          </div>
+
+          <div class="color-divider">品牌色与强调色 · BRAND &amp; ACTION</div>
+
+          <div class="color-card">
+            <div class="color-swatch" style="background: #0b2e5c"></div>
+            <div class="color-info">
+              <div class="color-name">Brand Navy</div>
+              <div class="color-hex">--brand · #0B2E5C</div>
+              <div class="color-desc">品牌深海军蓝，Logo 图标、重要强调</div>
+            </div>
+          </div>
+          <div class="color-card">
+            <div class="color-swatch" style="background: #1749c4"></div>
+            <div class="color-info">
+              <div class="color-name">Action Blue</div>
+              <div class="color-hex">--action · #1749C4</div>
+              <div class="color-desc">主交互色：按钮、链接、选中态</div>
+            </div>
+          </div>
+          <div class="color-card">
+            <div
+              class="color-swatch"
+              style="background: #eaf0fc; border-bottom: 1px solid #d4dce8"
+            ></div>
+            <div class="color-info">
+              <div class="color-name">Action Light</div>
+              <div class="color-hex">--action-light · #EAF0FC</div>
+              <div class="color-desc">
+                轻量填充背景，选中卡片、标签 active 态
+              </div>
+            </div>
+          </div>
+          <div class="color-card">
+            <div class="color-swatch" style="background: #bbcef5"></div>
+            <div class="color-info">
+              <div class="color-name">Action Border</div>
+              <div class="color-hex">--action-border · #BBCEF5</div>
+              <div class="color-desc">选中态边框，图标描边色</div>
+            </div>
+          </div>
+
+          <div class="color-divider">状态色 · STATUS COLORS</div>
+
+          <div class="color-card">
+            <div class="color-swatch" style="background: #10b981"></div>
+            <div class="color-info">
+              <div class="color-name">Status Done</div>
+              <div class="color-hex">--status-done · #10B981</div>
+              <div class="color-desc">完成 / COMPLETE</div>
+            </div>
+          </div>
+          <div class="color-card">
+            <div class="color-swatch" style="background: #1749c4"></div>
+            <div class="color-info">
+              <div class="color-name">Status Active</div>
+              <div class="color-hex">--status-active · #1749C4</div>
+              <div class="color-desc">进行中 / IN PROGRESS</div>
+            </div>
+          </div>
+          <div class="color-card">
+            <div class="color-swatch" style="background: #8e9bb0"></div>
+            <div class="color-info">
+              <div class="color-name">Status Pending</div>
+              <div class="color-hex">--status-pending · #8E9BB0</div>
+              <div class="color-desc">待处理 / PENDING</div>
+            </div>
+          </div>
+          <div class="color-card">
+            <div class="color-swatch" style="background: #d97706"></div>
+            <div class="color-info">
+              <div class="color-name">Status Warn</div>
+              <div class="color-hex">--status-warn · #D97706</div>
+              <div class="color-desc">警告 / WARN，谨慎使用</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Color rules -->
+        <div class="card" style="margin-top: 24px">
+          <div class="card-label">COLOR USAGE RULES · 配色原则</div>
+          <div class="usage-rule">
+            <div class="usage-dot" style="background: var(--action)"></div>
+            <div class="usage-text">
+              <strong>75% 冷灰无色系 + 25% 深海军蓝调：</strong
+              >品牌色不应超过页面视觉重量的四分之一，确保「冷静」的整体气质。
+            </div>
+          </div>
+          <div class="usage-rule">
+            <div class="usage-dot" style="background: var(--action)"></div>
+            <div class="usage-text">
+              <strong>--action（#1749C4）仅用于可交互元素：</strong
+              >按钮、链接、选中态。不用于纯装饰性色块。Hero
+              大标题是例外，可大面积使用。
+            </div>
+          </div>
+          <div class="usage-rule">
+            <div class="usage-dot" style="background: #ef4444"></div>
+            <div class="usage-text">
+              <strong>严禁引入暖色系作为主调：</strong
+              >红、橙、黄系颜色仅限警告状态（--status-warn），且每个页面使用不超过
+              2 处。
+            </div>
+          </div>
+          <div class="usage-rule">
+            <div class="usage-dot" style="background: var(--border)"></div>
+            <div class="usage-text">
+              <strong>不使用渐变作为主视觉：</strong
+              >渐变仅用于细节装饰（如封面背景光晕）。主要内容区域保持扁平色块。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-divider">
+        <span class="page-divider-text">SECTION 03 · LOGO</span>
+      </div>
+
+      <!-- ══ 03 LOGO ══ -->
+      <div class="vi-section">
+        <div class="section-id">SECTION 03 · LOGO</div>
+        <div class="section-title">标志 <span>规范</span></div>
+        <div class="section-desc">
+          品牌标志由「三横线图标」与「粗体品牌文字」组成。三条横线宽度递减，象形报告文档的标题层级结构，传递「分析报告」的核心品牌联想。
+        </div>
+
+        <div class="logo-grid">
+          <!-- Primary on white -->
+          <div>
+            <div class="logo-demo" style="background: var(--surface)">
+              <div class="logo-unit">
+                <div class="logo-icon-wrap">
+                  <span style="background: var(--brand)"></span>
+                  <span style="background: var(--brand)"></span>
+                  <span style="background: var(--brand)"></span>
+                </div>
+                <div class="logo-wordmark" style="color: var(--text-primary)">
+                  FinAgentPlatform
+                </div>
+              </div>
+              <div class="logo-demo-label">PRIMARY · 白底正色</div>
+            </div>
+          </div>
+          <!-- Reversed on dark -->
+          <div>
+            <div class="logo-demo" style="background: var(--brand)">
+              <div class="logo-unit">
+                <div class="logo-icon-wrap">
+                  <span style="background: #fff"></span>
+                  <span style="background: #fff"></span>
+                  <span style="background: #fff"></span>
+                </div>
+                <div class="logo-wordmark" style="color: #fff">
+                  FinAgentPlatform
+                </div>
+              </div>
+              <div
+                class="logo-demo-label"
+                style="color: rgba(255, 255, 255, 0.4)"
+              >
+                REVERSED · 深底白色
+              </div>
+            </div>
+          </div>
+          <!-- Action on light -->
+          <div>
+            <div
+              class="logo-demo"
+              style="
+                background: var(--action-light);
+                border-color: var(--action-border);
+              "
+            >
+              <div class="logo-unit">
+                <div class="logo-icon-wrap">
+                  <span style="background: var(--action)"></span>
+                  <span style="background: var(--action)"></span>
+                  <span style="background: var(--action)"></span>
+                </div>
+                <div class="logo-wordmark" style="color: var(--action)">
+                  FinAgentPlatform
+                </div>
+              </div>
+              <div class="logo-demo-label">ACTION · 浅蓝背景</div>
+            </div>
+          </div>
+          <!-- Icon only -->
+          <div>
+            <div class="logo-demo" style="background: var(--surface)">
+              <div
+                style="
+                  display: flex;
+                  flex-direction: column;
+                  gap: 5px;
+                  width: 32px;
+                "
+              >
+                <span
+                  style="
+                    display: block;
+                    height: 4px;
+                    border-radius: 2px;
+                    background: var(--brand);
+                    width: 100%;
+                  "
+                ></span>
+                <span
+                  style="
+                    display: block;
+                    height: 4px;
+                    border-radius: 2px;
+                    background: var(--brand);
+                    width: 72%;
+                  "
+                ></span>
+                <span
+                  style="
+                    display: block;
+                    height: 4px;
+                    border-radius: 2px;
+                    background: var(--brand);
+                    width: 50%;
+                  "
+                ></span>
+              </div>
+              <div class="logo-demo-label">ICON ONLY · 单独使用</div>
+            </div>
+          </div>
+          <!-- Small size -->
+          <div>
+            <div class="logo-demo" style="background: var(--bg)">
+              <div
+                class="logo-unit"
+                style="transform: scale(0.7); transform-origin: center"
+              >
+                <div class="logo-icon-wrap">
+                  <span style="background: var(--brand)"></span>
+                  <span style="background: var(--brand)"></span>
+                  <span style="background: var(--brand)"></span>
+                </div>
+                <div class="logo-wordmark" style="color: var(--text-primary)">
+                  FinAgentPlatform
+                </div>
+              </div>
+              <div class="logo-demo-label">MINIMUM SIZE · 最小使用</div>
+            </div>
+          </div>
+          <!-- Forbidden -->
+          <div>
+            <div
+              class="logo-demo"
+              style="
+                background: #fef2f2;
+                border-color: #fecaca;
+                position: relative;
+              "
+            >
+              <div
+                style="position:absolute;top:12px;right:12px;font-size:10px;color:#EF4444;font-family:&#39;JetBrains Mono&#39;,monospace;letter-spacing:0.1em;"
+              >
+                FORBIDDEN
+              </div>
+              <div
+                class="logo-unit"
+                style="filter: grayscale(0.3); opacity: 0.5"
+              >
+                <div class="logo-icon-wrap">
+                  <span style="background: #f87171"></span>
+                  <span style="background: #f87171"></span>
+                  <span style="background: #f87171"></span>
+                </div>
+                <div
+                  class="logo-wordmark"
+                  style="color: #ef4444; transform: skewX(-10deg)"
+                >
+                  FinAgentPlatform
+                </div>
+              </div>
+              <div class="logo-demo-label" style="color: #ef4444">
+                错误示范：变形 / 改色
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top: 24px">
+          <div class="clearspace-demo">
+            <span class="clearspace-label top"
+              >最小安全距离 = Logo 高度 × 1</span
+            >
+            <span class="clearspace-label left">CLEAR SPACE</span>
+            <div class="clearspace-inner">
+              <div class="logo-icon-wrap">
+                <span style="background: var(--action)"></span>
+                <span style="background: var(--action)"></span>
+                <span style="background: var(--action)"></span>
+              </div>
+              <div
+                class="logo-wordmark"
+                style="color: var(--action); font-size: 17px; font-weight: 700"
+              >
+                FinAgentPlatform
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-divider">
+        <span class="page-divider-text">SECTION 04 · TYPOGRAPHY</span>
+      </div>
+
+      <!-- ══ 04 TYPOGRAPHY ══ -->
+      <div class="vi-section">
+        <div class="section-id">SECTION 04 · TYPOGRAPHY</div>
+        <div class="section-title">排版 <span>系统</span></div>
+        <div class="section-desc">
+          字体栈以 PingFang SC / Noto Sans SC 承担中文展示，Inter
+          承担英文标签，JetBrains Mono 用于数据与终端美学场景。字号跨度从 11px
+          到 60px，层级清晰，无需依赖颜色区分。
+        </div>
+
+        <div class="card">
+          <div class="card-label">FONT STACK · 字体栈</div>
+          <div
+            style="
+              display: grid;
+              grid-template-columns: repeat(3, 1fr);
+              gap: 20px;
+              margin-bottom: 32px;
+              padding-bottom: 32px;
+              border-bottom: 1px solid var(--border-light);
+            "
+          >
+            <div>
+              <div
+                style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.15em;margin-bottom:8px;font-family:&#39;JetBrains Mono&#39;,monospace;"
+              >
+                PRIMARY
+              </div>
+              <div
+                style="
+                  font-size: 20px;
+                  font-weight: 700;
+                  color: var(--text-primary);
+                  margin-bottom: 4px;
+                "
+              >
+                PingFang SC
+              </div>
+              <div style="font-size: 12px; color: var(--text-muted)">
+                中文正文 / 标题
+              </div>
+              <div style="font-size: 12px; color: var(--text-muted)">
+                Noto Sans SC · 微软雅黑
+              </div>
+            </div>
+            <div>
+              <div
+                style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.15em;margin-bottom:8px;font-family:&#39;JetBrains Mono&#39;,monospace;"
+              >
+                SECONDARY
+              </div>
+              <div
+                style="
+                  font-size: 20px;
+                  font-weight: 600;
+                  color: var(--text-primary);
+                  margin-bottom: 4px;
+                  letter-spacing: 0.05em;
+                "
+              >
+                Inter
+              </div>
+              <div style="font-size: 12px; color: var(--text-muted)">
+                英文标签 / 大写装饰
+              </div>
+              <div style="font-size: 12px; color: var(--text-muted)">
+                SF Pro Display · system-ui
+              </div>
+            </div>
+            <div>
+              <div
+                style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.15em;margin-bottom:8px;font-family:&#39;JetBrains Mono&#39;,monospace;"
+              >
+                MONO
+              </div>
+              <div
+                style="font-size:20px;font-weight:500;color:var(--action);margin-bottom:4px;font-family:&#39;JetBrains Mono&#39;,monospace;"
+              >
+                JetBrains Mono
+              </div>
+              <div style="font-size: 12px; color: var(--text-muted)">
+                数据 / 代码 / 终端美学
+              </div>
+              <div style="font-size: 12px; color: var(--text-muted)">
+                Fira Code · monospace
+              </div>
+            </div>
+          </div>
+
+          <div class="card-label">TYPE SCALE · 字号层级</div>
+          <div class="type-scale">
+            <div class="type-row">
+              <div class="type-meta">
+                <div class="type-level">Hero Display</div>
+                <div class="type-spec">48–60px · Black/900 · lh 1.15</div>
+              </div>
+              <div class="type-sample">
+                <span
+                  style="
+                    font-size: 52px;
+                    font-weight: 900;
+                    color: var(--text-primary);
+                    line-height: 1.15;
+                  "
+                  >标题文字示例</span
+                >
+              </div>
+              <div class="type-sample-usage">Hero 主标题</div>
+            </div>
+            <div class="type-row">
+              <div class="type-meta">
+                <div class="type-level">Page Title</div>
+                <div class="type-spec">28–36px · Bold/700</div>
+              </div>
+              <div class="type-sample">
+                <span
+                  style="
+                    font-size: 32px;
+                    font-weight: 700;
+                    color: var(--text-primary);
+                  "
+                  >页面标题</span
+                >
+              </div>
+              <div class="type-sample-usage">页面级标题</div>
+            </div>
+            <div class="type-row">
+              <div class="type-meta">
+                <div class="type-level">Section Label</div>
+                <div class="type-spec">11–12px · 500 · ls 0.22em</div>
+              </div>
+              <div class="type-sample">
+                <span
+                  style="font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:0.22em;color:var(--text-muted);font-family:&#39;JetBrains Mono&#39;,monospace;"
+                  >SECTION LABEL</span
+                >
+              </div>
+              <div class="type-sample-usage">区块标签</div>
+            </div>
+            <div class="type-row">
+              <div class="type-meta">
+                <div class="type-level">Card Title</div>
+                <div class="type-spec">16–18px · SemiBold/600</div>
+              </div>
+              <div class="type-sample">
+                <span
+                  style="
+                    font-size: 17px;
+                    font-weight: 600;
+                    color: var(--text-primary);
+                  "
+                  >卡片标题示例</span
+                >
+              </div>
+              <div class="type-sample-usage">卡片 / 模块标题</div>
+            </div>
+            <div class="type-row">
+              <div class="type-meta">
+                <div class="type-level">Body</div>
+                <div class="type-spec">14–15px · Regular/400</div>
+              </div>
+              <div class="type-sample">
+                <span
+                  style="
+                    font-size: 14px;
+                    font-weight: 400;
+                    color: var(--text-secondary);
+                  "
+                  >这里是正文描述文字占位，用于演示该字号的行高与灰度表现。</span
+                >
+              </div>
+              <div class="type-sample-usage">正文 / 描述</div>
+            </div>
+            <div class="type-row">
+              <div class="type-meta">
+                <div class="type-level">Tag / Badge</div>
+                <div class="type-spec">10–11px · 500 · ls 0.12em</div>
+              </div>
+              <div class="type-sample">
+                <span
+                  style="font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--text-secondary);font-family:&#39;JetBrains Mono&#39;,monospace;"
+                  >IN PROGRESS</span
+                >
+              </div>
+              <div class="type-sample-usage">标签 / 状态徽章</div>
+            </div>
+            <div class="type-row">
+              <div class="type-meta">
+                <div class="type-level">Caption</div>
+                <div class="type-spec">11px · Regular</div>
+              </div>
+              <div class="type-sample">
+                <span style="font-size: 11px; color: var(--text-muted)"
+                  >底部注释文字占位 · 用于说明来源或更新时间</span
+                >
+              </div>
+              <div class="type-sample-usage">底部注释</div>
+            </div>
+            <div class="type-row">
+              <div class="type-meta">
+                <div class="type-level">Decoration</div>
+                <div class="type-spec">11–12px · opacity 0.12–0.16</div>
+              </div>
+              <div class="type-sample">
+                <span
+                  style="font-size:11px;font-family:&#39;JetBrains Mono&#39;,monospace;letter-spacing:0.2em;color:rgba(11,46,92,0.25);transform:rotate(-45deg);display:inline-block;"
+                  >ANALYSIS · 14:32</span
+                >
+              </div>
+              <div class="type-sample-usage">旋转装饰时间戳</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-divider">
+        <span class="page-divider-text">SECTION 05 · COMPONENTS</span>
+      </div>
+
+      <!-- ══ 05 COMPONENTS ══ -->
+      <div class="vi-section">
+        <div class="section-id">SECTION 05 · COMPONENTS</div>
+        <div class="section-title">界面 <span>组件</span></div>
+        <div class="section-desc">
+          核心 UI
+          组件的视觉规范，涵盖导航栏、按钮、状态徽章、表单输入框。所有交互反馈遵循「快而精准」原则，时长
+          150–200ms。
+        </div>
+
+        <!-- NAVBAR -->
+        <div class="card" style="margin-bottom: 16px">
+          <div class="card-label">NAVBAR · 导航栏</div>
+          <div class="navbar-demo">
+            <div class="demo-logo">
+              <div class="demo-logo-icon">
+                <span></span><span></span><span></span>
+              </div>
+              <div class="demo-logo-text">FinAgentPlatform</div>
+            </div>
+            <div class="nav-link active">导航项一</div>
+            <div class="nav-link">导航项二</div>
+            <div class="nav-link">导航项三</div>
+            <div class="nav-link">导航项四</div>
+            <div class="nav-avatar">A</div>
+          </div>
+          <div
+            style="
+              margin-top: 20px;
+              padding-top: 20px;
+              border-top: 1px solid var(--border-light);
+              display: grid;
+              grid-template-columns: repeat(3, 1fr);
+              gap: 16px;
+            "
+          >
+            <div>
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  text-transform: uppercase;
+                  letter-spacing: 0.15em;
+                  margin-bottom: 6px;
+                "
+              >
+                HEIGHT
+              </div>
+              <div style="font-size: 13px; color: var(--text-secondary)">
+                54px · sticky top
+              </div>
+            </div>
+            <div>
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  text-transform: uppercase;
+                  letter-spacing: 0.15em;
+                  margin-bottom: 6px;
+                "
+              >
+                BACKGROUND
+              </div>
+              <div style="font-size: 13px; color: var(--text-secondary)">
+                rgba(255,255,255,0.96) + blur(10px)
+              </div>
+            </div>
+            <div>
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  text-transform: uppercase;
+                  letter-spacing: 0.15em;
+                  margin-bottom: 6px;
+                "
+              >
+                ACTIVE STATE
+              </div>
+              <div style="font-size: 13px; color: var(--text-secondary)">
+                --brand #0B2E5C 药丸，白字
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BUTTONS -->
+        <div class="card" style="margin-bottom: 16px">
+          <div class="card-label">BUTTONS · 按钮</div>
+          <div class="button-row">
+            <div>
+              <div class="btn-primary">主要操作 →</div>
+              <div
+                class="btn-label"
+                style="text-align: center; margin-top: 8px"
+              >
+                Primary
+              </div>
+            </div>
+            <div>
+              <div class="btn-outline">次要操作</div>
+              <div
+                class="btn-label"
+                style="text-align: center; margin-top: 8px"
+              >
+                Outline
+              </div>
+            </div>
+            <div>
+              <div class="btn-dark">登录系统</div>
+              <div
+                class="btn-label"
+                style="text-align: center; margin-top: 8px"
+              >
+                Dark CTA
+              </div>
+            </div>
+            <div>
+              <div class="btn-sm">筛选</div>
+              <div
+                class="btn-label"
+                style="text-align: center; margin-top: 8px"
+              >
+                Small
+              </div>
+            </div>
+          </div>
+          <div
+            style="
+              margin-top: 8px;
+              padding: 16px 32px;
+              border-top: 1px solid var(--border-light);
+              display: grid;
+              grid-template-columns: repeat(3, 1fr);
+              gap: 16px;
+              font-size: 12px;
+              color: var(--text-secondary);
+            "
+          >
+            <div>
+              <span
+                style="font-family:&#39;JetBrains Mono&#39;,monospace;color:var(--action);"
+                >Primary</span
+              >：background --action · h-48 · r-8
+            </div>
+            <div>
+              <span
+                style="font-family:&#39;JetBrains Mono&#39;,monospace;color:var(--action);"
+                >Outline</span
+              >：border --border · h-48 · r-8
+            </div>
+            <div>
+              <span
+                style="font-family:&#39;JetBrains Mono&#39;,monospace;color:var(--action);"
+                >Dark CTA</span
+              >：background --brand · h-44 · r-6
+            </div>
+          </div>
+        </div>
+
+        <!-- STATUS BADGES -->
+        <div class="card" style="margin-bottom: 16px">
+          <div class="card-label">STATUS BADGES · 状态徽章</div>
+          <div class="status-row">
+            <div>
+              <div class="status-badge">
+                <div
+                  class="status-dot"
+                  style="
+                    background: var(--status-done);
+                    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+                  "
+                ></div>
+                Complete
+              </div>
+              <div
+                class="btn-label"
+                style="text-align: center; margin-top: 8px"
+              >
+                Done
+              </div>
+            </div>
+            <div>
+              <div
+                class="status-badge"
+                style="border-color: var(--action-border)"
+              >
+                <div
+                  class="status-dot"
+                  style="
+                    background: var(--status-active);
+                    box-shadow: 0 0 0 2px rgba(23, 73, 196, 0.2);
+                  "
+                ></div>
+                In Progress
+              </div>
+              <div
+                class="btn-label"
+                style="text-align: center; margin-top: 8px"
+              >
+                Active
+              </div>
+            </div>
+            <div>
+              <div class="status-badge">
+                <div
+                  class="status-dot"
+                  style="background: var(--status-pending)"
+                ></div>
+                Pending
+              </div>
+              <div
+                class="btn-label"
+                style="text-align: center; margin-top: 8px"
+              >
+                Pending
+              </div>
+            </div>
+            <div>
+              <div class="status-badge" style="border-color: #fde68a">
+                <div
+                  class="status-dot"
+                  style="background: var(--status-warn)"
+                ></div>
+                Warning
+              </div>
+              <div
+                class="btn-label"
+                style="text-align: center; margin-top: 8px"
+              >
+                Warn
+              </div>
+            </div>
+            <div>
+              <div class="status-badge">
+                <div
+                  class="status-dot"
+                  style="
+                    background: var(--status-done);
+                    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+                  "
+                ></div>
+                智能体系统运行中 · 状态提示占位
+              </div>
+              <div
+                class="btn-label"
+                style="text-align: center; margin-top: 8px"
+              >
+                System Status
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- FORM -->
+        <div>
+          <div class="card-label" style="margin-bottom: 12px">
+            FORM INPUTS · 表单输入
+          </div>
+          <div class="form-demo">
+            <div>
+              <label class="field-label">用户账号</label>
+              <input
+                class="input-demo"
+                type="text"
+                placeholder="请输入邮箱地址"
+                disabled=""
+              />
+            </div>
+            <div>
+              <label class="field-label">访问密码</label>
+              <input
+                class="input-demo input-focus"
+                type="password"
+                placeholder="请输入密码"
+                value="••••••••"
+                disabled=""
+              />
+            </div>
+            <div>
+              <label class="field-label">搜索关键词</label>
+              <input
+                class="input-demo"
+                type="text"
+                placeholder="请输入关键词..."
+                disabled=""
+              />
+            </div>
+            <div
+              style="
+                display: flex;
+                flex-direction: column;
+                justify-content: flex-end;
+                gap: 8px;
+              "
+            >
+              <div
+                style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.15em;font-family:&#39;JetBrains Mono&#39;,monospace;"
+              >
+                FOCUS STATE（右侧）
+              </div>
+              <div style="font-size: 12px; color: var(--text-secondary)">
+                border-color → --action<br />box-shadow → 0 0 0 3px
+                rgba(23,73,196,0.1)
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-divider">
+        <span class="page-divider-text">SECTION 06 · DECORATION</span>
+      </div>
+
+      <!-- ══ 06 DECORATION ══ -->
+      <div class="vi-section">
+        <div class="section-id">SECTION 06 · DECORATION</div>
+        <div class="section-title">装饰 <span>系统</span></div>
+        <div class="section-desc">
+          装饰元素承担「系统运行中」的氛围营造职责，而非视觉冲击。所有装饰
+          opacity 低于 0.16，永远不抢夺主内容视线。
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px">
+          <div class="card">
+            <div class="card-label">GRID BACKGROUND · 网格底纹</div>
+            <div
+              style="
+                height: 160px;
+                border-radius: 8px;
+                background: #edf0f5;
+                background-image:
+                  linear-gradient(rgba(11, 46, 92, 0.05) 1px, transparent 1px),
+                  linear-gradient(
+                    90deg,
+                    rgba(11, 46, 92, 0.05) 1px,
+                    transparent 1px
+                  );
+                background-size: 40px 40px;
+                border: 1px solid var(--border);
+              "
+            ></div>
+            <div
+              style="
+                margin-top: 16px;
+                font-size: 12px;
+                color: var(--text-secondary);
+                line-height: 1.75;
+              "
+            >
+              蓝调网格线，使用品牌深蓝色
+              rgba(11,46,92,0.035)。比纯黑网格更契合整体冷色调。网格尺寸：40×40px。
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-label">DECO STAMP · 时间戳装饰</div>
+            <div
+              style="
+                height: 160px;
+                border-radius: 8px;
+                background: var(--bg);
+                border: 1px solid var(--border);
+                position: relative;
+                overflow: hidden;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+              "
+            >
+              <span
+                style="font-size:11px;font-family:&#39;JetBrains Mono&#39;,monospace;letter-spacing:0.2em;color:rgba(11,46,92,0.15);transform:rotate(-45deg);white-space:nowrap;font-size:14px;"
+                id="decoStamp"
+                >ANALYSIS · 14:25</span
+              >
+            </div>
+            <div
+              style="
+                margin-top: 16px;
+                font-size: 12px;
+                color: var(--text-secondary);
+                line-height: 1.75;
+              "
+            >
+              位置：Section 左上角 / 右下角各一枚。旋转 -45°，透明度
+              0.12–0.16。每分钟 JS 自动更新时间。
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-label">TERMINAL CURSOR · 光标效果</div>
+            <div
+              style="
+                padding: 20px;
+                background: #0d1829;
+                border-radius: 8px;
+                font-size: 36px;
+                font-weight: 900;
+                color: #fff;
+                line-height: 1.2;
+              "
+            >
+              智能分析引擎<span class="cursor"></span>
+            </div>
+            <div
+              style="
+                margin-top: 16px;
+                font-size: 12px;
+                color: var(--text-secondary);
+                line-height: 1.75;
+              "
+            >
+              用于 Hero 大标题末尾，宽 3px，高 0.85em，颜色 --action，闪烁周期
+              1.1s，step-end 缓动。
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-label">UPPERCASE LABELS · 大写标签</div>
+            <div
+              style="
+                padding: 20px;
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+              "
+            >
+              <div
+                style="font-size:11px;text-transform:uppercase;letter-spacing:0.22em;color:var(--text-muted);font-family:&#39;JetBrains Mono&#39;,monospace;"
+              >
+                SECTION LABEL
+              </div>
+              <div
+                style="font-size:11px;text-transform:uppercase;letter-spacing:0.22em;color:var(--text-muted);font-family:&#39;JetBrains Mono&#39;,monospace;"
+              >
+                SECTION 02 · COLOR
+              </div>
+              <div
+                style="font-size:10px;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);font-family:&#39;JetBrains Mono&#39;,monospace;"
+              >
+                TAG · BADGE · LABEL
+              </div>
+            </div>
+            <div
+              style="
+                margin-top: 8px;
+                font-size: 12px;
+                color: var(--text-secondary);
+                line-height: 1.75;
+              "
+            >
+              等宽字体，全大写，宽字距。用于区块标签、标签组件、分类标注。替代
+              icon 起到功能标识作用。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-divider">
+        <span class="page-divider-text">SECTION 07 · CARDS</span>
+      </div>
+
+      <!-- ══ 07 CARDS ══ -->
+      <div class="vi-section">
+        <div class="section-id">SECTION 07 · CARDS</div>
+        <div class="section-title">卡片 <span>规范</span></div>
+        <div class="section-desc">
+          功能模块卡片是产品核心内容载体。卡片遵循「图标 → 分类 → 标题 → 描述 →
+          标签」的信息层级，激活态通过边框与背景色变化传递选中状态。
+        </div>
+
+        <div
+          style="
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+          "
+        >
+          <!-- Default card -->
+          <div>
+            <div
+              style="font-size:10px;font-family:&#39;JetBrains Mono&#39;,monospace;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:8px;"
+            >
+              DEFAULT STATE
+            </div>
+            <div class="research-card-demo">
+              <div class="card-icon-area">
+                <svg
+                  class="card-svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                  <path d="M7 8h10M7 12h6M7 16h8"></path>
+                </svg>
+                <div class="card-icon-label">CATEGORY</div>
+              </div>
+              <div class="card-dimension">分析维度示例</div>
+              <div class="card-title">卡片标题示例</div>
+              <div class="card-desc">
+                这里是卡片描述文字占位，用于演示多行正文在卡片内的排版节奏与留白。
+              </div>
+              <div class="card-tags">
+                <span class="card-tag">标签一</span>
+                <span class="card-tag">标签二</span>
+                <span class="card-tag">标签三</span>
+              </div>
+            </div>
+          </div>
+          <!-- Hover card -->
+          <div>
+            <div
+              style="font-size:10px;font-family:&#39;JetBrains Mono&#39;,monospace;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:8px;"
+            >
+              HOVER STATE
+            </div>
+            <div
+              class="research-card-demo"
+              style="
+                border-color: var(--action-border);
+                box-shadow: 0 4px 16px rgba(23, 73, 196, 0.08);
+              "
+            >
+              <div class="card-icon-area">
+                <svg
+                  class="card-svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <path
+                    d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"
+                  ></path>
+                </svg>
+                <div class="card-icon-label">CATEGORY</div>
+              </div>
+              <div class="card-dimension">分析维度示例</div>
+              <div class="card-title">卡片标题示例</div>
+              <div class="card-desc">
+                这里是卡片描述文字占位，用于演示多行正文在卡片内的排版节奏与留白。
+              </div>
+              <div class="card-tags">
+                <span class="card-tag">标签一</span>
+                <span class="card-tag">标签二</span>
+                <span class="card-tag">标签三</span>
+              </div>
+            </div>
+          </div>
+          <!-- Active card -->
+          <div>
+            <div
+              style="font-size:10px;font-family:&#39;JetBrains Mono&#39;,monospace;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:8px;"
+            >
+              ACTIVE STATE
+            </div>
+            <div
+              class="research-card-demo"
+              style="
+                border-color: var(--action);
+                border-width: 1.5px;
+                box-shadow: 0 4px 20px rgba(23, 73, 196, 0.12);
+                background: #fafcff;
+              "
+            >
+              <div class="card-icon-area">
+                <svg
+                  class="card-svg"
+                  style="color: var(--action)"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path
+                    d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                  ></path>
+                </svg>
+                <div class="card-icon-label" style="color: var(--action)">
+                  CATEGORY
+                </div>
+              </div>
+              <div class="card-dimension" style="color: var(--action-border)">分析维度示例</div>
+              <div class="card-title" style="color: var(--action)">卡片标题示例</div>
+              <div class="card-desc">
+                这里是卡片描述文字占位，用于演示多行正文在卡片内的排版节奏与留白。
+              </div>
+              <div class="card-tags">
+                <span
+                  class="card-tag"
+                  style="
+                    color: var(--action);
+                    border-color: var(--action-border);
+                    background: var(--action-light);
+                  "
+                  >标签一</span
+                >
+                <span
+                  class="card-tag"
+                  style="
+                    color: var(--action);
+                    border-color: var(--action-border);
+                    background: var(--action-light);
+                  "
+                  >标签二</span
+                >
+                <span
+                  class="card-tag"
+                  style="
+                    color: var(--action);
+                    border-color: var(--action-border);
+                    background: var(--action-light);
+                  "
+                  >标签三</span
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-divider">
+        <span class="page-divider-text">SECTION 08 · MOTION</span>
+      </div>
+
+      <!-- ══ 08 MOTION ══ -->
+      <div class="vi-section">
+        <div class="section-id">SECTION 08 · MOTION</div>
+        <div class="section-title">动效 <span>规范</span></div>
+        <div class="section-desc">
+          装饰性动画慢而优雅，交互反馈快而精准。不使用弹跳、旋转等夸张动效。所有运动感服务于「系统正在思考与工作」的感知，而非娱乐化炫技。
+        </div>
+
+        <div class="card">
+          <table class="motion-table">
+            <thead>
+              <tr>
+                <th>场景</th>
+                <th>属性</th>
+                <th>时长</th>
+                <th>缓动函数</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>按钮 hover</td>
+                <td><span class="mono">background, color</span></td>
+                <td>150ms</td>
+                <td><span class="mono">ease</span></td>
+                <td>交互反馈，快而精准</td>
+              </tr>
+              <tr>
+                <td>输入框 focus</td>
+                <td><span class="mono">border-color, box-shadow</span></td>
+                <td>200ms</td>
+                <td><span class="mono">ease</span></td>
+                <td>focus ring 展开</td>
+              </tr>
+              <tr>
+                <td>卡片 hover</td>
+                <td><span class="mono">border-color, box-shadow</span></td>
+                <td>200ms</td>
+                <td><span class="mono">ease</span></td>
+                <td>边框提亮，阴影加深</td>
+              </tr>
+              <tr>
+                <td>卡片入场</td>
+                <td><span class="mono">opacity + translateY(16px→0)</span></td>
+                <td>400ms</td>
+                <td><span class="mono">ease-out</span></td>
+                <td>滚动进入视口时触发</td>
+              </tr>
+              <tr>
+                <td>终端光标闪烁</td>
+                <td><span class="mono">opacity 0↔1</span></td>
+                <td>1.1s</td>
+                <td><span class="mono">step-end, infinite</span></td>
+                <td>Hero 标题末尾</td>
+              </tr>
+              <tr>
+                <td>Ticker 滚动</td>
+                <td><span class="mono">translateX</span></td>
+                <td>35s</td>
+                <td><span class="mono">linear, infinite</span></td>
+                <td>内容复制两份实现无缝</td>
+              </tr>
+              <tr>
+                <td>导航 active 切换</td>
+                <td><span class="mono">background, color</span></td>
+                <td>200ms</td>
+                <td><span class="mono">ease</span></td>
+                <td>药丸样式切换</td>
+              </tr>
+              <tr>
+                <td>时间戳更新</td>
+                <td>JS textContent 替换</td>
+                <td>每 60s</td>
+                <td>—</td>
+                <td>无过渡，突然切换</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="page-divider">
+        <span class="page-divider-text">SECTION 09 · PAGE PREVIEW</span>
+      </div>
+
+      <!-- ══ 09 PREVIEW ══ -->
+      <div class="vi-section">
+        <div class="section-id">SECTION 09 · PREVIEW</div>
+        <div class="section-title">页面 <span>预览</span></div>
+        <div class="section-desc">
+          完整页面规范下的 Hero Section 及 Ticker
+          条实际效果演示。所有元素均使用本手册规范中的色彩、字体、间距与组件体系。
+        </div>
+
+        <!-- FULL NAVBAR -->
+        <div
+          style="
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            box-shadow: 0 8px 32px rgba(11, 46, 92, 0.1);
+          "
+        >
+          <div
+            style="
+              background: rgba(255, 255, 255, 0.96);
+              border-bottom: 1px solid var(--border);
+              height: 54px;
+              display: flex;
+              align-items: center;
+              padding: 0 32px;
+              gap: 4px;
+            "
+          >
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-right: 24px;
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  flex-direction: column;
+                  gap: 3px;
+                  width: 18px;
+                "
+              >
+                <span
+                  style="
+                    display: block;
+                    height: 2px;
+                    border-radius: 1px;
+                    background: var(--brand);
+                    width: 100%;
+                  "
+                ></span>
+                <span
+                  style="
+                    display: block;
+                    height: 2px;
+                    border-radius: 1px;
+                    background: var(--brand);
+                    width: 72%;
+                  "
+                ></span>
+                <span
+                  style="
+                    display: block;
+                    height: 2px;
+                    border-radius: 1px;
+                    background: var(--brand);
+                    width: 50%;
+                  "
+                ></span>
+              </div>
+              <span
+                style="
+                  font-size: 15px;
+                  font-weight: 700;
+                  color: var(--text-primary);
+                "
+                >FinAgentPlatform</span
+              >
+            </div>
+            <div class="nav-link active">导航项一</div>
+            <div class="nav-link">导航项二</div>
+            <div class="nav-link">导航项三</div>
+            <div class="nav-link">导航项四</div>
+            <div
+              style="
+                margin-left: auto;
+                width: 30px;
+                height: 30px;
+                border-radius: 50%;
+                background: var(--action-light);
+                border: 1.5px solid var(--action-border);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 12px;
+                color: var(--action);
+                font-weight: 600;
+              "
+            >
+              A
+            </div>
+          </div>
+
+          <!-- HERO -->
+          <div class="hero-preview" style="border-radius: 0; border: none">
+            <div class="hero-inner">
+              <div>
+                <div class="hero-badge">
+                  <div class="hero-badge-dot"></div>
+                  智能体系统运行中 · 状态提示占位
+                </div>
+                <div class="hero-h1">
+                  标题文字示例<br /><span class="blue">副标题文字示例</span
+                  ><span class="cursor"></span>
+                </div>
+                <div class="hero-p">
+                  这里是 Hero 区的描述文字占位，用于演示该字号在多行排版下的行高、字距与次级灰度表现。
+                </div>
+                <div class="hero-btns">
+                  <div class="btn-primary">主要操作 →</div>
+                  <div class="btn-outline">次要操作</div>
+                </div>
+              </div>
+              <div class="dashboard-card-demo">
+                <div class="window-titlebar">
+                  <div class="window-dot"></div>
+                  <div class="window-dot"></div>
+                  <div class="window-dot"></div>
+                  <div class="window-title">ANALYSIS_PROGRESS.SYS</div>
+                </div>
+                <table class="dash-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>任务</th>
+                      <th>状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="row-id">#A-001</td>
+                      <td>任务项一</td>
+                      <td class="s-complete">Complete</td>
+                    </tr>
+                    <tr>
+                      <td class="row-id">#A-002</td>
+                      <td>任务项二</td>
+                      <td class="s-active">In Progress</td>
+                    </tr>
+                    <tr>
+                      <td class="row-id">#A-003</td>
+                      <td>任务项三</td>
+                      <td class="s-pending">Pending</td>
+                    </tr>
+                    <tr>
+                      <td class="row-id">#A-004</td>
+                      <td>任务项四</td>
+                      <td class="s-pending">Pending</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div
+                  style="
+                    padding: 12px 16px;
+                    border-top: 1px solid var(--border-light);
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                  "
+                >
+                  <div
+                    style="
+                      height: 3px;
+                      flex: 1;
+                      background: var(--border-light);
+                      border-radius: 2px;
+                      overflow: hidden;
+                    "
+                  >
+                    <div
+                      style="
+                        width: 35%;
+                        height: 100%;
+                        background: var(--action);
+                        border-radius: 2px;
+                      "
+                    ></div>
+                  </div>
+                  <span
+                    style="font-size:11px;font-family:&#39;JetBrains Mono&#39;,monospace;color:var(--text-muted);"
+                    >35%</span
+                  >
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- TICKER -->
+          <div class="ticker-demo">
+            <div class="ticker-label-t">SECTION LABEL</div>
+            <div class="ticker-track" id="tickerTrack">
+              <div class="ticker-item">领域一</div>
+              <div class="ticker-item">领域二</div>
+              <div class="ticker-item">领域三</div>
+              <div class="ticker-item">领域四</div>
+              <div class="ticker-item">领域五</div>
+              <div class="ticker-item">领域六</div>
+              <div class="ticker-item">领域七</div>
+              <div class="ticker-item">领域八</div>
+              <div class="ticker-item">领域九</div>
+              <div class="ticker-item">领域十</div>
+              <div class="ticker-item">领域十一</div>
+              <div class="ticker-item">领域十二</div>
+              <div class="ticker-item">领域一</div>
+              <div class="ticker-item">领域二</div>
+              <div class="ticker-item">领域三</div>
+              <div class="ticker-item">领域四</div>
+              <div class="ticker-item">领域五</div>
+              <div class="ticker-item">领域六</div>
+              <div class="ticker-item">领域七</div>
+              <div class="ticker-item">领域八</div>
+              <div class="ticker-item">领域九</div>
+              <div class="ticker-item">领域十</div>
+              <div class="ticker-item">领域十一</div>
+              <div class="ticker-item">领域十二</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ DO / DON'T ══ -->
+      <div class="vi-section">
+        <div class="section-id">SECTION 10 · PRINCIPLES</div>
+        <div class="section-title">设计 <span>原则</span></div>
+        <div class="section-desc">
+          七条核心设计原则，是所有视觉决策的终极依据。当设计方案存在争议时，以原则为准则进行评判。
+        </div>
+
+        <div class="do-dont">
+          <div class="do-box">
+            <div class="do-header">✓ DO · 应当做到</div>
+            <div class="rule-list">
+              <div class="rule-item">
+                留白即设计：大量空白让核心内容「呼吸」，padding 充足，不拥挤。
+              </div>
+              <div class="rule-item">
+                深海军蓝定调：用 #0B2E5C 传递可靠、权威、专业的学术机构气质。
+              </div>
+              <div class="rule-item">
+                冷色系贯通：所有灰色带蓝色底调（#5A6A7E、#8E9BB0），而非中性灰。
+              </div>
+              <div class="rule-item">
+                终端美学点缀：等宽字体、全大写标签、网格底纹、实时时间戳、光标闪烁。
+              </div>
+              <div class="rule-item">
+                数据即设计：用数据表格、状态徽章、进度指标传递分析系统的专业感。
+              </div>
+              <div class="rule-item">
+                排版建立层次：字号跨度大（11px~56px），层级清晰，无需依赖颜色区分。
+              </div>
+            </div>
+          </div>
+          <div class="dont-box">
+            <div class="dont-header">✕ DON'T · 严格禁止</div>
+            <div class="rule-list">
+              <div class="rule-item">
+                严禁引入暖色系（红、橙、黄）作为主调，仅限警告状态使用。
+              </div>
+              <div class="rule-item">
+                不使用渐变作为主视觉，仅用于细节装饰（如封面光晕）。
+              </div>
+              <div class="rule-item">
+                --action 色不用于纯装饰，仅限可交互元素和 Hero 标题。
+              </div>
+              <div class="rule-item">
+                不用中性灰（如 #888888），所有灰色必须含蓝色底调。
+              </div>
+              <div class="rule-item">
+                背景装饰 opacity 不超过 0.16，装饰不能抢夺内容视线。
+              </div>
+              <div class="rule-item">
+                不做弹跳、旋转、放大缩小等夸张动效，一切动效服务于功能感知。
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FOOTER -->
+    <div class="vi-footer">
+      <div>
+        <div class="footer-logo">
+          <div class="footer-logo-icon">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="footer-brand">FinAgentPlatform</div>
+        </div>
+        <div class="footer-copy">Visual Identity Manual · v1.0.0 · 2026</div>
+        <div
+          style="
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.25);
+            margin-top: 8px;
+          "
+        >
+          本手册仅供授权设计师与合作供应商使用，请勿对外传播。
+        </div>
+      </div>
+      <div class="footer-meta">
+        <div>INTELLIGENCE-MINIMAL</div>
+        <div>BRAND DESIGN SYSTEM</div>
+        <div id="footerTime">ANALYSIS · 14:25</div>
+      </div>
+    </div>
+
+    <script>
+      function updateTime() {
+        const now = new Date();
+        const hh = String(now.getHours()).padStart(2, "0");
+        const mm = String(now.getMinutes()).padStart(2, "0");
+        const text = `ANALYSIS · ${hh}:${mm}`;
+        document.getElementById("coverDeco").textContent = text;
+        document.getElementById("decoStamp").textContent = text;
+        document.getElementById("footerTime").textContent = text;
+      }
+      updateTime();
+      setInterval(updateTime, 60000);
+    </script>
+  </body>
+</html>
