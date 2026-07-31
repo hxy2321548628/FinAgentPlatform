@@ -3,7 +3,7 @@
 | 项 | 值 |
 |---|---|
 | 文档状态 | **草稿**（§1–§7 已定稿，§8 部分待补） |
-| 当前版本 | v0.9 |
+| 当前版本 | v0.10 |
 | 作者 | hxy |
 | 评审人 | 待定 |
 | 批准人 | 待定 |
@@ -21,6 +21,7 @@
 | v0.7 | 2026-07-31 | hxy | 依据 LangGraph 文档确认重放边界，定案工具幂等键 |
 | v0.8 | 2026-07-31 | hxy | 新增磁盘与 tmpfs 配额，§7 全章完成 |
 | v0.9 | 2026-07-31 | hxy | **结构整理**：选型论证下沉至 [`adr/`](./adr/)（新增 ADR-0010–0015），主文档只保留契约与现状，净减约 90 行；小节重编号 §7.2.x |
+| v0.10 | 2026-07-31 | hxy | 新增下游[智能体设计](./03agent-design.md)与 ADR-0016；据此**改正 §5.6 工具集**（改用 DeepAgents 内置 8 工具）与 §5.5 文件系统映射；§8.5 补两条部署前提 |
 
 > **本文档的分工**：主文档回答**「系统是什么样」** —— 结构、契约、参数、现状。**「为什么这样选、否掉了什么」**在 [`adr/`](./adr/)，本文只在相应位置给出链接。
 >
@@ -37,6 +38,7 @@
 | 学院 / 项目负责人 | §1、§2、§10、§11 | 这东西解决什么问题？要花多少资源？有什么风险？什么时候能用？ |
 | 架构 / 技术负责人 | 全文，重点 §3、§4、§7 | 为什么这样设计？边界在哪？哪里会先撑不住？ |
 | 开发者 | §4、§5、§6、[`adr/`](./adr/) | 模块怎么划分？数据怎么流？我的模块和谁通信？ |
+| Agent 开发者 | §5.5、§5.6 + [智能体设计](./03agent-design.md) | 工具怎么定义？文件落在哪？上下文怎么管？ |
 | 运维 | §4.4、§8 | 怎么部署？怎么监控？出事怎么恢复？ |
 
 | 章节 | 内容 | 完成度 |
@@ -49,7 +51,7 @@
 | §6 数据架构 | 存储选型、数据模型、隔离与配额 | **已完成**（配额数值待 P0 回填） |
 | §7 安全设计 | 威胁模型、认证、沙箱隔离 | **已完成**（仅余审计日志待定） |
 | §8 运行与运维 | 容量、可用性、可观测性、发布 | 部分 |
-| §9 架构决策记录 | 索引（15 条），正文见 [`adr/`](./adr/) | **已完成** |
+| §9 架构决策记录 | 索引（16 条），正文见 [`adr/`](./adr/) | **已完成** |
 | §10 风险与未决事项 | 阻塞项、风险登记、技术债 | **已完成** |
 | §11 落地路线 | P0–P4 分期与验证标准 | **已完成** |
 
@@ -87,7 +89,7 @@
 
 - 前端技术选型与实现 → [前端技术选型](./02Frontend%20Technology%20Selection.md.md)
 - 视觉与交互规范 → [设计风格文档 DSD](../02visual/01-DSD.md)
-- 智能体的提示词工程、工具集设计、评测方案 → **尚无文档，见 §10.3**
+- 智能体的工具集、文件系统语义、上下文与提示词 → [智能体设计](./03agent-design.md)
 
 **本期明确不做**（已评估，非遗漏，见[附录 B](#附录-b已评估但本期不采用)）：用户自定义系统提示词、自定义 skill、MCP 接入。这些是确定的后续方向，但本期不实现，以免推高复杂度。§7.2 会先把角色与共享边界定下来，使将来加入时不必推翻数据模型。
 
@@ -521,8 +523,8 @@ worker ──XADD──▶ stream:run:{run_id} ──XREAD──▶ 网关 ─�
     "actions": [
       {
         "index": 0,
-        "tool_name": "execute_python",
-        "args": { "code": "..." },
+        "tool_name": "execute",
+        "args": { "command": "python analysis.py" },
         "allowed_decisions": ["approve", "reject", "edit"]
       }
     ]
@@ -582,7 +584,7 @@ astream() 正常消费  →  中断使执行暂停，流自然结束
 
 ```python
 Interrupt(value={
-    'action_requests': [{'name': 'execute_python', 'args': {...}}],
+    'action_requests': [{'name': 'execute', 'args': {...}}],
     'review_configs':  [{'action_name': ..., 'allowed_decisions': [...]}]
 })
 ```
@@ -620,7 +622,7 @@ interrupt_on = {
 
 > **TODO** ｜ 待回答：**本平台到底哪些操作需要审批？**
 > §5.3 把 HITL 称为核心价值，但没界定触发范围，而 `interrupt_on` 要求逐个工具声明。
-> 需要注意的张力：沙箱隔离已经很强（§7.3），代码执行本身**未必**算敏感操作；若给 `execute_python` 全量加审批，agent 每跑一段代码就要教师点一次，平台会变得没法用。
+> 需要注意的张力：沙箱隔离已经很强（§7.3），代码执行本身**未必**算敏感操作；若给 `execute` 全量加审批，agent 每跑一段代码就要教师点一次，平台会变得没法用。
 > 倾向用 `when` 谓词做**条件拦截**（如仅在代码涉及删除文件、或单次执行预估 token 超阈值时），而非按工具名全量拦截。
 > 阻塞：需要 P0 跑出真实的 agent 行为模式才知道哪些操作值得拦。HITL 本就排在 P3（§11），不急于定。
 
@@ -709,38 +711,33 @@ stateDiagram-v2
 MinIO tenant/{user_id}/thread/{thread_id}/
 ```
 
-DeepAgents 的虚拟文件系统直接映射到这个 workspace。容器本身是无状态可抛弃的。
+DeepAgents 的文件工具由自实现的 `SandboxBackend` 接到这个 workspace 上：**文件操作由 broker 直接读写宿主机的 bind-mount 目录，只有 `execute` 进容器**（[ADR-0016](./adr/0016-sandbox-filesystem-backend.md)、[智能体设计 §4](./03agent-design.md)）。因此容器是无状态可抛弃的，且上图的回收不影响文件读写。
 
 ### 5.6 Agent 侧的工具接口
 
-```
-execute_python(code)      → {stdout, stderr, artifacts[], exit_code}
-read_file(path)
-write_file(path, content)
-list_files(path)
-```
+工具集就是 DeepAgents 内置的 8 个，**不自定义工具** —— 只把驱动它们的 backend 换成自实现的 `SandboxBackend`（[ADR-0016](./adr/0016-sandbox-filesystem-backend.md)）。完整契约见[智能体设计 §3](./03agent-design.md)：
+
+| 工具 | 需要活跃容器 | broker 去重 |
+|---|---|---|
+| `ls` / `read_file` / `glob` / `grep` | ❌ | 否（纯读） |
+| `write_file` / `edit_file` / `delete` | ❌ | **是** |
+| `execute` | ✅ | **是** |
 
 这些工具在 worker 进程里全部是 `async`，内部通过 HTTP 调用 sandbox-broker，**worker 只是在等 IO**。这一性质是 §8.1 并发模型成立的前提。
 
 #### 幂等性
 
-按 §3.2 的重放分析工具会被重复调用。逐个检查后，**只有 `execute_python` 有问题**：
+按 §3.2 的重放分析工具会被重复调用。换用内置工具集后，不幂等的**不止 `execute`**：`edit_file` 重放时 `old_string` 已不存在、`delete` 重放时文件已不存在，都会返回一个首次执行时没有的错误，使 LLM 的后续行为偏离。
 
-| 工具 | 幂等 | 说明 |
-|---|---|---|
-| `read_file` / `list_files` | ✅ | 纯读 |
-| `write_file(path, content)` | ✅ | 全量覆盖写。**为保持幂等，不提供追加语义** |
-| **`execute_python(code)`** | ❌ | 代码由 LLM 生成，不可控 —— 可能追加写、`pip install`、删文件、累加计数 |
-
-**方案：worker 传 `tool_call_id`，broker 侧去重**，命中已执行记录则直接返回缓存结果，不进沙箱。
+**方案：worker 传 `tool_call_id`，broker 对全部写操作去重**，命中已执行记录则直接返回缓存结果（含错误结果），不进沙箱。
 
 ```
-worker ──POST /sandbox/exec { tool_call_id, code } ──▶ broker
+worker ──POST /sandbox/{op} { tool_call_id, ... } ──▶ broker
                               已执行过该 id？ ──是──▶ 返回缓存结果
-                                    否 ──▶ 进沙箱执行 → 记录 → 返回
+                                    否 ──▶ 执行 → 记录 → 返回
 ```
 
-论证、备选与残留风险见 [ADR-0014](./adr/0014-tool-idempotency-key.md)。
+这样**单个工具是否幂等就不再是正确性的前提**。论证、备选与残留风险见 [ADR-0014](./adr/0014-tool-idempotency-key.md)。
 
 > **待验证**：该方案的支点是「`tool_call_id` 在重放中稳定」，LangGraph 文档未明说。已并入 P0 探针（§11）。
 
@@ -1219,6 +1216,8 @@ location /api/runs/ {
 - **Postgres 定时备份** —— checkpoint 丢失意味着中断的任务无法恢复。这不只是数据备份，也是功能可用性的一部分
 - **MinIO 磁盘容量监控** —— 产物只增不减，需配合 §6.5 的保留策略
 - **镜像分发方式** —— 内网可能拉不到 Docker Hub，需要私有 registry 或离线导入。**这一条容易被漏到上线当天才发现**
+- **`/data/sandbox` 所在文件系统须为 XFS 且以 `prjquota` 挂载** —— §7.3.5 的磁盘配额依赖它，[ADR-0015](./adr/0015-sandbox-disk-quota-xfs.md)。挂载选项改动要重启，事后补代价高
+- **沙箱运行用户的 uid/gid 须与 broker 进程对齐** —— 容器内代码写出的文件 broker 要能读写（[ADR-0016](./adr/0016-sandbox-filesystem-backend.md)）。不对齐会表现为「agent 写得进、读不出」，且症状不指向权限
 
 ---
 
@@ -1245,6 +1244,7 @@ location /api/runs/ {
 | [ADR-0013](./adr/0013-event-anticorruption-layer-v2-stream.md) | 事件契约做防腐层，worker 消费 v2 `astream` | 已接受 |
 | [ADR-0014](./adr/0014-tool-idempotency-key.md) | 工具幂等键用 `tool_call_id`，broker 侧去重 | 已接受（支点待验证） |
 | [ADR-0015](./adr/0015-sandbox-disk-quota-xfs.md) | 沙箱磁盘配额用 XFS project quota | 已接受 |
+| [ADR-0016](./adr/0016-sandbox-filesystem-backend.md) | 自实现 DeepAgents 沙箱后端，不用内置 StateBackend | 已接受 |
 
 ---
 
@@ -1277,16 +1277,16 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 | **单人开发，架构决策无人复核** | 错误决策可能拖到实现阶段才暴露，返工成本高 | §9 的 ADR 是唯一的自我审查手段，决策变更须同步更新（§2.3） |
 | **会话凭据明文传输** | 走 HTTP（§4.4），Session Cookie 无 `Secure` 标志，同网段抓包可窃取会话 | 已按 §7.1 威胁模型接受。触发重估的条件见 §4.4 |
 | **用户范围被悄悄放开到全院学生** | 基数增一个数量级，§3.2 权衡、§8.1 容量、ADR-0001 单机结论同时失效 | §2.2 已明确边界为「课题组研究生」。放开前必须重审这三处，不能当作纯运营决定 |
-| **`execute_python` 重复执行** | HITL 每次审批恢复都会整节点重跑（§3.2），重复执行 LLM 生成的代码会造成数据污染 | §5.6 幂等键方案，**必须在 P3 的 HITL 之前或同期落地**。在那之前 §5.4 的 run 级自动重试上限压到 1 次 |
+| **写操作重复执行** | HITL 每次审批恢复都会整节点重跑（§3.2），重复执行 `execute` / `edit_file` / `delete` 会造成数据污染或使 LLM 看到虚假错误 | §5.6 幂等键方案，**必须在 P3 的 HITL 之前或同期落地**。在那之前 §5.4 的 run 级自动重试上限压到 1 次 |
 | **`tool_call_id` 重放稳定性未经验证** | 若不稳定，§5.6 的幂等键方案失效，需退到 worker 侧自构造确定性键 | 已并入 P0 探针（§11），验证成本几分钟 |
 | ~~`interrupt` 的流式表示无文档依据~~ | **已关闭**（2026-07-31）。官方文档确认 HITL 在工具调用边界暂停而非流式事件，改为流结束后查 `aget_state()`，不依赖未文档化行为 | §5.3 已定机制与 payload |
-| **HITL 的触发范围未定** | 若给 `execute_python` 全量加审批，agent 每跑一段代码就要教师点一次，平台不可用 | §5.3 TODO。倾向用 `when` 谓词做条件拦截；P0 跑出真实行为模式后再定，HITL 本就排 P3 |
+| **HITL 的触发范围未定** | 若给 `execute` 全量加审批，agent 每跑一段代码就要教师点一次，平台不可用 | §5.3 TODO。倾向用 `when` 谓词做条件拦截；P0 跑出真实行为模式后再定，HITL 本就排 P3 |
 | **LLM 服务商 rate limit** | 并发高峰时集中报错 | 需在 worker 侧做退避重试与降级；尚未设计 |
 | **checkpoint 表膨胀** | 长期运行后 Postgres 体积失控 | §6.5 保留策略待定 |
 
 ### 10.3 技术债与文档缺口
 
-- **智能体本身尚无设计文档** —— 提示词、工具集边界、子 agent 划分、效果评测方案全部空白。这是当前**最大的文档缺口**：本文档写的是「承载智能体的平台」，但平台的价值完全取决于智能体本身好不好用（§10.2 风险二）。建议单独立 `03agent-design.md`。
+- **智能体设计文档已建**（[`03agent-design.md`](./03agent-design.md)），但**只覆盖了与平台契约耦合的部分**（工具集、文件系统、产物判定、上下文截断）。提示词工程、子 agent 划分、效果评测**仍然空白，刻意推迟到下期** —— 它们只在 worker 进程内部生效，改了不影响别的模块。需要清醒的是：平台的价值完全取决于智能体好不好用（§10.2 风险二），这块债只是被安排了，不是被还了。
 - **P0 的裸 Docker 沙箱是刻意欠下的债**，P1 必须偿还，不可带入上线（§11）。
 - 文件名 `02Frontend Technology Selection.md.md` 有重复扩展名，且与 `01architecture.md` 的命名风格不一致（中英混杂、空格）。建议统一为 `02frontend-selection.md`，但会影响已有引用，**待确认后再改**。
 
@@ -1296,10 +1296,10 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 
 | 阶段 | 内容 | 验证标准 |
 |---|---|---|
-| **P0** | FastAPI in-process 跑 DeepAgents + **裸 Docker 沙箱**（先跑通，加固后置）+ SSE 流式输出 | 教师能对话；agent 能写 Python 读 CSV、算出结果并返回图表。**另加三个探针**：① 记录 DeepAgents 实际吐出的 `StreamPart` 结构，回填 §5.2 中 Agent 层事件的 payload；② 记录一次典型分析的真实 token 消耗与 agent 行为模式，供 §6.4 定配额、§5.3 定 HITL 触发范围；③ **跑一次 `interrupt()`，比对恢复前后的 `tool_call_id` 是否一致**（§5.6 幂等键方案的支点） |
+| **P0** | FastAPI in-process 跑 DeepAgents + **裸 Docker 沙箱**（先跑通，加固后置）+ SSE 流式输出 | 教师能对话；agent 能写 Python 读 CSV、算出结果并返回图表。**另加三个探针**：① 记录 DeepAgents 实际吐出的 `StreamPart` 结构，回填 §5.2 中 Agent 层事件的 payload；② 记录一次典型分析的真实 token 消耗与 agent 行为模式，供 §6.4 定配额、§5.3 定 HITL 触发范围；③ **跑一次 `interrupt()`，比对恢复前后的 `tool_call_id` 是否一致**（§5.6 幂等键方案的支点）；④ 验证 `write_file` 对已存在文件是覆盖还是报错（[智能体设计 §3.3](./03agent-design.md)）。更完整的观察项见[智能体设计 §7.3](./03agent-design.md) |
 | **P1** | 沙箱加固（gVisor + 完整参数 + `/workspace` 5GB 配额 + `/tmp` 限容）+ sandbox-broker 拆分 + 生命周期管理 | 沙箱内运行 `while True` / fork 炸弹 / **写满 `/workspace`** / **写满 `/tmp`**，宿主机均不受影响 |
 | **P2** | 拆分 worker：Redis Streams + Postgres checkpointer | `kill -9` worker 后，任务能从 checkpoint 恢复继续 |
-| **P3** | **§5.6 工具幂等键**（HITL 的前置）+ HITL 审批 + 取消 + 多用户隔离 + 配额限流 | 审批流程走通，且**审批恢复后 `execute_python` 不重复执行**；30 并发压测不崩溃、不串数据 |
+| **P3** | **§5.6 工具幂等键**（HITL 的前置）+ HITL 审批 + 取消 + 多用户隔离 + 配额限流 | 审批流程走通，且**审批恢复后写操作不重复执行**；30 并发压测不崩溃、不串数据 |
 | **P4** | 可观测性（OpenTelemetry）、产物存储完善、成本看板 | 能定位单个 run 的完整 trace 与 token 花费 |
 
 ### 关于 P0 与 P1 的顺序
@@ -1322,7 +1322,7 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 | 设计风格文档 DSD | [`doc/02visual/01-DSD.md`](../02visual/01-DSD.md) | 平行，视觉规范 |
 | 视觉识别手册 | [`doc/02visual/02-visual-identity-manual.html`](../02visual/02-visual-identity-manual.html) | 平行 |
 | 架构决策记录 | [`doc/01design/adr/`](./adr/) | 下游，本文档 §9 的展开 |
-| 智能体设计文档 | *尚未创建* | 见 §10.3 |
+| 智能体设计 | [`doc/01design/03agent-design.md`](./03agent-design.md) | 下游，展开本文档 §5.5、§5.6 的 Agent 侧细节 |
 
 ## 附录 B：已评估但本期不采用
 

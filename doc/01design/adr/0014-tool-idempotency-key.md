@@ -16,6 +16,8 @@
 
 四个工具中 `read_file` / `list_files` 纯读、`write_file` 全量覆盖写，均已幂等；只有 **`execute_python` 不可控** —— 代码由 LLM 生成，可能追加写、`pip install`、删文件、累加计数。
 
+> **补记（2026-07-31，[ADR-0016](./0016-sandbox-filesystem-backend.md)）**：工具集已改为 DeepAgents 内置的 8 个，上面这段对工具集的描述不再成立 —— 不幂等的还有 `edit_file` 与 `delete`。**本 ADR 的决策与理由不变，只是适用范围从「`execute_python` 一个工具」扩大到「全部写操作」**。逐工具的分析见[智能体设计 §3.3](../03agent-design.md)。
+
 ## 决策
 
 worker 调 broker 时带上该次工具调用的 **`tool_call_id`**，**broker 侧去重**：命中已执行记录则直接返回缓存结果，不进沙箱。

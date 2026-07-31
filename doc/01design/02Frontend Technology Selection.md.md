@@ -186,7 +186,7 @@ src/
 ## 6. 下一步
 
 1. **扩写 DSD 第二章「工作台组件规范」**（已确认采用此路径，先文档后实现）
-   需覆盖：消息气泡（用户/assistant 区分）、会话侧边栏、`execute_python` 的代码与 stdout/stderr 折叠块、todo 与子 agent 嵌套展示、HITL 审批卡片、Toast / Modal / Dropdown / Tooltip、代码高亮配色主题。
+   需覆盖：消息气泡（用户/assistant 区分）、会话侧边栏、`execute` 的命令与 stdout/stderr 折叠块、`write_file` 的代码块（[智能体设计 §6](./03agent-design.md) 要求代码先写成 `.py` 再执行，因此代码渲染挂在 `write_file` 而非执行工具上）、todo 与子 agent 嵌套展示、HITL 审批卡片、Toast / Modal / Dropdown / Tooltip、代码高亮配色主题。
    这些 DSD 现有章节完全没有覆盖 —— 它写的是落地页与登录页。
 2. 规范评审通过后初始化工程，先落 §4.1 的 token 层
 3. 按架构文档 §11 的 P0 目标接通 SSE 流式输出

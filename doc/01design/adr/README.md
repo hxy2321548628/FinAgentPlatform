@@ -1,6 +1,6 @@
 # 架构决策记录（ADR）
 
-本目录存放金融学院智能体平台的架构决策记录。上游文档：[总体架构设计](../01architecture.md)。
+本目录存放金融学院智能体平台的架构决策记录。上游文档：[总体架构设计](../01architecture.md)、[智能体设计](../03agent-design.md)。
 
 ## 这个目录是干什么的
 
@@ -27,6 +27,7 @@
 | [0013](./0013-event-anticorruption-layer-v2-stream.md) | 事件契约做防腐层，worker 消费 v2 `astream` | 已接受 | §5.2 |
 | [0014](./0014-tool-idempotency-key.md) | 工具幂等键用 `tool_call_id`，broker 侧去重 | 已接受（支点待验证） | §3.2、§5.6 |
 | [0015](./0015-sandbox-disk-quota-xfs.md) | 沙箱磁盘配额用 XFS project quota | 已接受 | §7.3.5 |
+| [0016](./0016-sandbox-filesystem-backend.md) | 自实现 DeepAgents 沙箱后端，不用内置 StateBackend | 已接受 | §5.5、§5.6 |
 
 **状态取值**：`提议中` → `已接受` / `已否决` → （后续可能）`已废弃`（被某条新 ADR 取代）
 
