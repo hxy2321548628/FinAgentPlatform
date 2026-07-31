@@ -3,7 +3,7 @@
 | 项 | 值 |
 |---|---|
 | 文档状态 | **草稿**（骨架已定，部分章节待补） |
-| 当前版本 | v0.5 |
+| 当前版本 | v0.6 |
 | 作者 | hxy |
 | 评审人 | 待定 |
 | 批准人 | 待定 |
@@ -17,6 +17,7 @@
 | v0.3 | 2026-07-31 | hxy | 回填外部确认结论（合规 / 出网 / 服务器规格 / 人力）；**§10.1 三项阻塞全部解除**，ADR-0009 转「已接受」；§7.4 大幅简化 |
 | v0.4 | 2026-07-31 | hxy | 定案：自建账号 + 三角色 RBAC（含 `student`）+ 多组归属、Cookie/Session 认证、走 HTTP 不启用 TLS、沙箱排队策略、沙箱上限 20 |
 | v0.5 | 2026-07-31 | hxy | 补齐前后端契约：§6.2 ER 图与索引、§5.7 REST API 与错误码、§5.2 事件契约（含 DeepAgents 映射与防腐层）、§5.4 重试策略与审批超时 |
+| v0.6 | 2026-07-31 | hxy | 依据 DeepAgents HITL 文档补 §5.3 中断机制与 §5.7 审批 payload；`interrupt` 事件 payload 定案；关闭「interrupt 机制未知」风险 |
 
 > **本文档的 TODO 约定**：形如 `> **TODO** ｜ 待回答：……` 的引用块表示该节骨架已就位但内容未定，并写明「这一节要回答什么问题」与「被什么阻塞」。全文可用 `grep -n "TODO"` 检索剩余缺口。
 
@@ -513,7 +514,27 @@ worker ──XADD──▶ stream:run:{run_id} ──XREAD──▶ 网关 ─�
 | `tool_result` | 同上 | 待定 |
 | `todo.updated` | `updates` 的 todo 节点 | 待定 |
 | `subagent.started` / `subagent.finished` | `ns` 深度变化 | 待定 |
-| `interrupt` | **机制未知，见下方风险** | **待验证** |
+| `interrupt` | 流结束后查 `aget_state()`，见 §5.3 | **已定，见下** |
+
+`interrupt` 的 payload 现已可定死（依据见 §5.3）：
+
+```json
+{
+  "type": "interrupt",
+  "data": {
+    "actions": [
+      {
+        "index": 0,
+        "tool_name": "execute_python",
+        "args": { "code": "..." },
+        "allowed_decisions": ["approve", "reject", "edit"]
+      }
+    ]
+  }
+}
+```
+
+DeepAgents 给的是 `action_requests` 与 `review_configs` **两个平行数组**。我们在 worker 侧合并成一个数组并加 `index` —— 前端不该被迫自己对齐两个数组的下标，那是典型的易错契约。
 
 #### worker 侧消费哪套 API
 
@@ -542,11 +563,9 @@ v3 的投影（`.tool_calls` 带 `.completed` / `.error` / `.output`）确实已
 - **前端必须忽略未知 `type`**，不能报错。后端加新事件类型时不应要求前端同步发版
 - **`data` 只增字段，不改已有字段的语义**。前端的 Zod schema 用 `.passthrough()`，不要 `.strict()`
 
-> **风险 ｜ `interrupt` 的流式表示尚无文档依据。** DeepAgents 的 streaming 与 event-streaming 两篇文档都**没有**说明 `interrupt()` 如何出现在事件流里。唯一线索是 v3 中 subagent 的 `.status` 枚举包含 `"interrupted"`，暗示子 agent 层面有表示，但主 agent 的 interrupt 在 v2 `StreamPart` 中如何呈现，完全无记载。
+> **注**：`interrupt` **不经过事件流检测**。官方文档明确 HITL「pauses at tool-call boundaries before execution, **not during streaming events**」—— 中断会让执行暂停、流自然结束，因此改为在流结束后查一次图状态。机制与依据见 §5.3。
 >
-> 这不是「细节待补」，是**机制未知**。若最终发现 v2 的 StreamPart 表达不了 interrupt（只能靠轮询 checkpoint 状态），则 §5.3 的 HITL 设计与 §5.4 状态机的 `waiting_approval` 转移都要改。
->
-> **应对**：把「跑一次 `interrupt()` 看流里吐出什么」从 P3 前移到 **P0 的验证清单**（§11）。不实现 HITL，只做一次探针，成本很小。已登记入 §10.2。
+> 这也意味着我们**不依赖**「v2 的 `updates` 模式是否吐 `__interrupt__`」这个 DeepAgents 文档未确认的行为。LangGraph 惯例上会吐，但不该把 HITL 建在没写进文档的行为上。
 
 ### 5.3 中断恢复：三种不同语义
 
@@ -563,6 +582,54 @@ DeepAgents 构建在 LangGraph 之上：`create_deep_agent()` / `async_create_de
 | **主动取消 / 暂停** | 教师点击「停止」 | Redis 中打 cancel flag，worker 在 step 边界检查后抛 `CancelledError`；已写入的 checkpoint 保留，可从该点恢复 |
 
 第二种是长任务平台的核心价值：**任务可以挂起数小时等人，期间不占用任何 worker 资源**。
+
+#### HITL 的具体机制
+
+DeepAgents 的中断**发生在工具调用边界之前**，不是流式过程中的某个事件。这决定了检测方式：
+
+```
+astream() 正常消费  →  中断使执行暂停，流自然结束
+                    →  查 aget_state() 是否有 pending interrupt
+                    →  有则映射成 interrupt 事件，run → waiting_approval
+```
+
+**为什么不从流里检测**：DeepAgents 文档只在 v3 的 stream 对象上给了 `.interrupted` / `.interrupts`，而我们按 §5.2 选用 v2。v2 的 `updates` 模式是否吐 `__interrupt__` 是 LangGraph 的惯例行为但**文档未确认** —— 查状态这条路两套 API 都成立，不依赖任何未文档化的行为。
+
+**中断的数据结构**（DeepAgents 侧）：
+
+```python
+Interrupt(value={
+    'action_requests': [{'name': 'execute_python', 'args': {...}}],
+    'review_configs':  [{'action_name': ..., 'allowed_decisions': [...]}]
+})
+```
+
+**恢复**用 `Command(resume={"decisions": [...]})`，四种决策：
+
+| 决策 | payload | 语义 |
+|---|---|---|
+| `approve` | `{"type": "approve"}` | 照原样执行 |
+| `reject` | `{"type": "reject", "message": "..."}` | 拒绝，message 回给 agent |
+| `edit` | `{"type": "edit", "edited_action": {"name": ..., "args": {...}}}` | 改参数后执行 |
+| `respond` | `{"type": "respond", "message": "..."}` | 不执行，直接把人的回复作为工具结果 |
+
+**决策数组的顺序必须与 `action_requests` 对齐** —— 这是 DeepAgents 的硬性要求。因此 §5.7 的审批接口对前端**用显式 `index` 而非依赖数组顺序**，由 worker 负责重排。让前端保证顺序是个迟早会出错的契约。
+
+**哪些工具触发审批**由 `interrupt_on` 声明，支持 `when` 谓词做条件拦截：
+
+```python
+interrupt_on = {
+    "tool_name": {"allowed_decisions": ["approve", "reject"], "when": predicate}
+}
+```
+
+**checkpointer 是 HITL 的硬前提** —— 官方明确要求。这与 [ADR-0008](./adr/0008-langgraph-checkpointer.md) 的选择互为印证：checkpointer 不只服务崩溃恢复，也是 HITL 成立的基础。
+
+> **TODO** ｜ 待回答：**本平台到底哪些操作需要审批？**
+> §5.3 把 HITL 称为核心价值，但没界定触发范围，而 `interrupt_on` 要求逐个工具声明。
+> 需要注意的张力：沙箱隔离已经很强（§7.3），代码执行本身**未必**算敏感操作；若给 `execute_python` 全量加审批，agent 每跑一段代码就要教师点一次，平台会变得没法用。
+> 倾向用 `when` 谓词做**条件拦截**（如仅在代码涉及删除文件、或单次执行预估 token 超阈值时），而非按工具名全量拦截。
+> 阻塞：需要 P0 跑出真实的 agent 行为模式才知道哪些操作值得拦。HITL 本就排在 P3（§11），不急于定。
 
 ### 5.4 Run 状态机
 
@@ -685,13 +752,30 @@ list_files(path)
 | GET | `/runs/{id}` | run 详情与当前状态 | 200 |
 | **GET** | **`/runs/{id}/events`** | **SSE 事件流，见 §5.2** | **200 `text/event-stream`** |
 | POST | `/runs/{id}/cancel` | 主动取消（§5.3） | 202 |
-| POST | `/runs/{id}/approve` | HITL 审批回传（§5.3） | 202 |
+| POST | `/runs/{id}/approve` | HITL 审批回传，见下 | 202 |
 | GET | `/artifacts/{id}` | 产物下载 | 302 → MinIO 预签名 URL |
 | GET | `/admin/users` | 用户列表（仅 `admin`） | 200 |
 | PATCH | `/admin/users/{id}` | 改角色 / 配额 / 启禁用 | 200 |
 | GET | `/admin/usage` | 用量与成本聚合（§8.3） | 200 |
 
 产物走 **302 跳预签名 URL**，不由网关代理二进制流 —— 否则大文件下载会长时间占住网关的 worker，而网关还要同时扛所有 SSE 长连接。
+
+#### 审批接口的 payload
+
+对应 §5.2 的 `interrupt` 事件，每个 `action` 回一个决策：
+
+```json
+{
+  "decisions": [
+    { "index": 0, "type": "approve" },
+    { "index": 1, "type": "reject",  "message": "这段代码会删掉原始数据" },
+    { "index": 2, "type": "edit",    "edited_action": { "name": "…", "args": { } } },
+    { "index": 3, "type": "respond", "message": "直接用去年的口径即可" }
+  ]
+}
+```
+
+**用显式 `index`，不依赖数组顺序。** DeepAgents 的 `Command(resume=...)` 要求决策顺序与 `action_requests` 严格对齐（§5.3），但把这个约束透给前端是个迟早出错的契约 —— 由 worker 按 `index` 重排。缺失或重复的 `index` 一律 `VALIDATION_ERROR`。
 
 #### 分页：游标，不用 offset
 
@@ -1178,7 +1262,8 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 | **会话凭据明文传输** | 走 HTTP（§4.4），Session Cookie 无 `Secure` 标志，同网段抓包可窃取会话 | 已按 §7.1 威胁模型接受。触发重估的条件见 §4.4 |
 | **用户范围被悄悄放开到全院学生** | 基数增一个数量级，§3.2 权衡、§8.1 容量、ADR-0001 单机结论同时失效 | §2.2 已明确边界为「课题组研究生」。放开前必须重审这三处，不能当作纯运营决定 |
 | **至少一次投递 vs 工具幂等** | 重复投递可能导致工具副作用重复执行 | §3.2 权衡三，P2 需实测验证。在验证通过前，§5.4 的 run 级自动重试上限压到 1 次 |
-| **`interrupt` 的流式表示无文档依据** | 若 DeepAgents 的 v2 StreamPart 表达不了 interrupt，§5.3 的 HITL 设计与 §5.4 状态机的 `waiting_approval` 转移都要改 | §5.2 已登记。**已把探针前移到 P0**（§11），只跑一次 `interrupt()` 看流里吐什么，不实现 HITL |
+| ~~`interrupt` 的流式表示无文档依据~~ | **已关闭**（2026-07-31）。官方文档确认 HITL 在工具调用边界暂停而非流式事件，改为流结束后查 `aget_state()`，不依赖未文档化行为 | §5.3 已定机制与 payload |
+| **HITL 的触发范围未定** | 若给 `execute_python` 全量加审批，agent 每跑一段代码就要教师点一次，平台不可用 | §5.3 TODO。倾向用 `when` 谓词做条件拦截；P0 跑出真实行为模式后再定，HITL 本就排 P3 |
 | **LLM 服务商 rate limit** | 并发高峰时集中报错 | 需在 worker 侧做退避重试与降级；尚未设计 |
 | **checkpoint 表膨胀** | 长期运行后 Postgres 体积失控 | §6.5 保留策略待定 |
 
@@ -1194,7 +1279,7 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 
 | 阶段 | 内容 | 验证标准 |
 |---|---|---|
-| **P0** | FastAPI in-process 跑 DeepAgents + **裸 Docker 沙箱**（先跑通，加固后置）+ SSE 流式输出 | 教师能对话；agent 能写 Python 读 CSV、算出结果并返回图表。**另加两个探针**：① 跑一次 `interrupt()`，记录它在事件流中的实际表示（§5.2 风险）；② 记录一次典型分析的真实 token 消耗，供 §6.4 定配额 |
+| **P0** | FastAPI in-process 跑 DeepAgents + **裸 Docker 沙箱**（先跑通，加固后置）+ SSE 流式输出 | 教师能对话；agent 能写 Python 读 CSV、算出结果并返回图表。**另加两个探针**：① 记录 DeepAgents 实际吐出的 `StreamPart` 结构，回填 §5.2 中 Agent 层事件的 payload；② 记录一次典型分析的真实 token 消耗与 agent 行为模式，供 §6.4 定配额、§5.3 定 HITL 触发范围 |
 | **P1** | 沙箱加固（gVisor + 完整参数 + 磁盘配额）+ sandbox-broker 拆分 + 生命周期管理 | 沙箱内运行 `while True` / fork 炸弹 / 写满磁盘，宿主机不受影响 |
 | **P2** | 拆分 worker：Redis Streams + Postgres checkpointer | `kill -9` worker 后，任务能从 checkpoint 恢复继续 |
 | **P3** | HITL 审批 + 取消 + 多用户隔离 + 配额限流 | 审批流程走通；30 并发压测不崩溃、不串数据 |
