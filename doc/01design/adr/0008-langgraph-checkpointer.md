@@ -29,7 +29,7 @@ DeepAgents 构建在 LangGraph 之上：`create_deep_agent()` / `async_create_de
 
 | 类型 | 触发场景 | 机制 |
 |---|---|---|
-| **崩溃恢复** | worker OOM / 被 kill / 滚动发布 | 队列消息未 ack，pending 超时后重投给其他 worker；LangGraph 从最后一个 checkpoint 继续，已完成的步骤不重跑 |
+| **崩溃恢复** | worker OOM / 被 kill / 滚动发布 | 队列消息未 ack，pending 超时后重投给其他 worker；LangGraph 从最后一个 checkpoint 继续，已完成的节点不重跑（边界见「代价」一节） |
 | **人工介入 (HITL)** | agent 执行敏感操作前暂停等教师确认 | LangGraph `interrupt()` → 状态落盘，run 转 `waiting_approval`，worker 释放；批准后用 `Command(resume=...)` 重新入队 |
 | **主动取消 / 暂停** | 教师点击「停止」 | Redis 中打 cancel flag，worker 在 step 边界检查后抛 `CancelledError`；已写入的 checkpoint 保留，可从该点恢复 |
 
@@ -54,10 +54,17 @@ DeepAgents 构建在 LangGraph 之上：`create_deep_agent()` / `async_create_de
 - **强绑定 LangGraph 的状态模型**。若将来更换智能体框架，这一层要重做
 - **checkpoint 表会持续膨胀**，需要保留策略与清理机制，否则 Postgres 体积失控（见主文档 §6.5、§10.2）
 - **Postgres 成为恢复能力的单点** —— checkpoint 丢失意味着中断的任务无法恢复。这让 Postgres 备份不只是数据保护，也是功能可用性的一部分（§8.5）
-- **「已完成的步骤不重跑」这一保证的实际边界尚未验证**。至少一次投递意味着重复投递可能发生，若 checkpoint 的步骤粒度与工具副作用不对齐（如 `write_file` 被重放），会产生副作用重复。见主文档 §3.2 权衡三 —— **这是当前设计中最需要动手验证的假设，P2 必须实测**
+- **「已完成的步骤不重跑」成立，但保护不到两种情况**（2026-07-31 依据 LangGraph 文档确认，见主文档 §3.2）：
+
+  保护粒度实际是**节点级**而非超步级 —— 每个节点执行完即写 `checkpoint_writes`（pending writes），同超步内其他节点失败时，已完成节点不重跑。但：
+
+  1. 崩溃发生在**工具执行途中**时，该节点无 pending write，整节点重跑
+  2. **HITL 恢复时整个节点从头重跑** —— 官方明确 *"any code that ran before the `interrupt()` will execute again"*。这不是异常路径，**每次审批通过都会发生**
+
+  因此**必须在工具层做幂等键**，不能只依赖 checkpointer。方案见主文档 §5.6，排在 P3 且必须先于 HITL 落地
 
 ## 重新评估的触发条件
 
-- P2 实测发现 checkpoint 重放边界与预期不符，需要在工具层补幂等键
+- ~~P2 实测发现 checkpoint 重放边界与预期不符，需要在工具层补幂等键~~ → **已确认需要幂等键**（2026-07-31），方案见主文档 §5.6。剩余待验证项是 `tool_call_id` 在重放中是否稳定，已并入 P0 探针
 - 更换智能体框架
 - checkpoint 表膨胀失控且清理策略无法解决

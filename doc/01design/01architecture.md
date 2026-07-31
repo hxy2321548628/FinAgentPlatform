@@ -3,7 +3,7 @@
 | 项 | 值 |
 |---|---|
 | 文档状态 | **草稿**（骨架已定，部分章节待补） |
-| 当前版本 | v0.6 |
+| 当前版本 | v0.7 |
 | 作者 | hxy |
 | 评审人 | 待定 |
 | 批准人 | 待定 |
@@ -18,6 +18,7 @@
 | v0.4 | 2026-07-31 | hxy | 定案：自建账号 + 三角色 RBAC（含 `student`）+ 多组归属、Cookie/Session 认证、走 HTTP 不启用 TLS、沙箱排队策略、沙箱上限 20 |
 | v0.5 | 2026-07-31 | hxy | 补齐前后端契约：§6.2 ER 图与索引、§5.7 REST API 与错误码、§5.2 事件契约（含 DeepAgents 映射与防腐层）、§5.4 重试策略与审批超时 |
 | v0.6 | 2026-07-31 | hxy | 依据 DeepAgents HITL 文档补 §5.3 中断机制与 §5.7 审批 payload；`interrupt` 事件 payload 定案；关闭「interrupt 机制未知」风险 |
+| v0.7 | 2026-07-31 | hxy | 依据 LangGraph checkpointer/interrupts 文档确认重放边界（§3.2）；§5.6 新增工具幂等键方案；幂等键排入 P3 且先于 HITL |
 
 > **本文档的 TODO 约定**：形如 `> **TODO** ｜ 待回答：……` 的引用块表示该节骨架已就位但内容未定，并写明「这一节要回答什么问题」与「被什么阻塞」。全文可用 `grep -n "TODO"` 检索剩余缺口。
 
@@ -38,7 +39,7 @@
 |---|---|---|
 | §1 引言与背景 | 目标、范围、名词表 | **已完成** |
 | §2 约束与前提 | 技术方向、规模、合规 | **已完成** |
-| §3 架构驱动因素 | 质量属性优先级、核心权衡 | 部分 |
+| §3 架构驱动因素 | 质量属性优先级、核心权衡 | **已完成** |
 | §4 系统总体视图 | 逻辑架构、模块、技术栈、部署 | **已完成** |
 | §5 核心流程与交互 | 时序、事件流、审批、沙箱生命周期 | **已完成**（Agent 层事件 payload 待 P0 回填） |
 | §6 数据架构 | 存储选型、数据模型、隔离与配额 | **已完成**（配额数值待 P0 回填） |
@@ -217,10 +218,24 @@ P0 刻意使用裸 Docker 沙箱（不加固）跑通全流程，把加固推到
 
 **权衡三：一致性上选择「最终一致 + 至少一次投递」。**
 
-任务队列采用至少一次投递（at-least-once），这意味着**极端情况下同一个 run 可能被投递两次**。之所以可以接受，是因为真正的状态在 LangGraph checkpointer 里，重复投递会从同一个 checkpoint 继续，已完成的步骤不重跑。
+任务队列采用至少一次投递（at-least-once），这意味着**极端情况下同一个 run 可能被投递两次**。之所以可以接受，是因为真正的状态在 LangGraph checkpointer 里，重复投递会从同一个 checkpoint 继续。
 
-> **TODO** ｜ 待回答：「已完成的步骤不重跑」需要工具本身幂等才成立。`write_file`、`execute_python` 若被重复执行会产生副作用（覆盖文件、重复写数据）。需明确：是依赖 checkpointer 的步骤粒度保证不重放，还是要在工具层做幂等键？
-> 阻塞：需在 P2 拆分 worker 时验证 LangGraph checkpoint 的实际重放边界。**这是当前设计中最需要动手验证的一个假设。**
+**重放边界（2026-07-31 依据 LangGraph 文档确认）**
+
+checkpoint 写在超步（super-step）边界，但还有一层更细的保护：每个节点执行完，其输出立即写入 `checkpoint_writes` 表（pending writes）。官方原文：*"if another node in the same super-step fails, the successful nodes' writes are already durable and **don't need to be re-run on resume**"*。
+
+因此**保护粒度是节点，不是超步** —— 「已完成的步骤不重跑」这句话成立。真正的暴露面是另外两处：
+
+| 场景 | checkpointer 是否保护 | 频率 |
+|---|---|---|
+| 崩溃，工具**已完成** | ✅ pending write 已落，不重跑 | — |
+| 崩溃，工具**执行到一半** | ❌ 该节点无 pending write，整节点重跑 | 低，异常路径 |
+| 队列重复投递 | 同上，取决于崩溃点 | 低 |
+| **HITL 审批恢复** | ❌ **整节点从头重跑** | **每次审批必然发生**（§5.3） |
+
+**最后一行才是重点。** LangGraph 的 interrupt 恢复不是从 `interrupt()` 那一行继续，而是重跑整个节点 —— 崩溃是异常路径，而这个是**正常路径，每次审批都发生**。
+
+**结论：必须在工具层做幂等键，不能只依赖 checkpointer。** 方案见 §5.6。
 
 ---
 
@@ -615,6 +630,15 @@ Interrupt(value={
 
 **决策数组的顺序必须与 `action_requests` 对齐** —— 这是 DeepAgents 的硬性要求。因此 §5.7 的审批接口对前端**用显式 `index` 而非依赖数组顺序**，由 worker 负责重排。让前端保证顺序是个迟早会出错的契约。
 
+#### 恢复时整个节点从头重跑
+
+这是 HITL 最容易被忽略的一条，官方文档原文：
+
+> *"it does not resume from the exact line where `interrupt()` was called. This means **any code that ran before the `interrupt()` will execute again**."*
+> *"**Do not perform non-idempotent operations before `interrupt()`**"*
+
+**崩溃是异常路径，而 interrupt 重跑是正常路径 —— 每次审批通过都会发生。** 这直接要求工具幂等，方案见 §5.6 的幂等键设计。§3.2 的重放边界分析已把这一条列为主要暴露面。
+
 **哪些工具触发审批**由 `interrupt_on` 声明，支持 `when` 谓词做条件拦截：
 
 ```python
@@ -622,6 +646,10 @@ interrupt_on = {
     "tool_name": {"allowed_decisions": ["approve", "reject"], "when": predicate}
 }
 ```
+
+> **`when` 谓词必须是工具调用的纯函数。** 多个 interrupt 靠**位置索引**匹配 resume 值，官方警告：*"Do not conditionally skip interrupt calls or loop them with **non-deterministic logic**, as this breaks the index-based matching"*。
+>
+> 举例：「代码涉及删除文件时拦截」✅ 只看 args，是纯函数；「单次执行预估 token 超阈值时拦截」⚠️ 仅当估算只依赖 args 才安全，若掺入外部状态或时间，重放时索引会错位。
 
 **checkpointer 是 HITL 的硬前提** —— 官方明确要求。这与 [ADR-0008](./adr/0008-langgraph-checkpointer.md) 的选择互为印证：checkpointer 不只服务崩溃恢复，也是 HITL 成立的基础。
 
@@ -674,11 +702,11 @@ stateDiagram-v2
 
 #### run 级自动重试上限定为 1 次
 
-这个数字比通常的 3 次保守得多，是**故意的**：run 级重试会从 checkpoint 恢复，而「已完成的步骤不重跑」这一假设**依赖工具幂等，尚未验证**（§3.2 权衡三）。在幂等性验证之前，每多一次自动重试就多一次副作用重复执行的机会（重复写文件、重复装包）。
+这个数字比通常的 3 次保守得多，是**故意的**：run 级重试会从 checkpoint 恢复，而崩溃若发生在工具执行途中，该节点会整个重跑（§3.2）。在 §5.6 的幂等键落地之前，每多一次自动重试就多一次副作用重复执行的机会。
 
 超过上限转 `failed` 终态，由教师手动决定是否重试 —— 把判断交给人，比让系统盲目重试安全。
 
-> §3.2 的幂等验证在 P2 完成后，可以重新评估这个上限。**验证通过前不要调高。**
+> **§5.6 的幂等键落地后可以放开这个上限**（调到 3 次比较合理）。在那之前不要调高。
 
 #### `waiting_approval` 超时
 
@@ -728,6 +756,42 @@ list_files(path)
 ```
 
 这些工具在 worker 进程里全部是 `async`，内部通过 HTTP 调用 sandbox-broker，**worker 只是在等 IO**。这一性质是 §8.1 并发模型成立的前提。
+
+#### 幂等性：只有一个工具真有问题
+
+按 §3.2 的重放分析，工具会被重复调用，因此逐个检查：
+
+| 工具 | 幂等 | 说明 |
+|---|---|---|
+| `read_file` / `list_files` | ✅ | 纯读 |
+| `write_file(path, content)` | ✅ | 全量覆盖写，同输入同结果。**追加写则不幂等，故不提供追加语义** |
+| **`execute_python(code)`** | ❌ | 代码由 LLM 生成，完全不可控 —— 可能 `mode='a'` 追加、`pip install`、删文件、累加计数 |
+
+问题因此收敛成一句：**只需要保证 `execute_python` 不被重复执行。**
+
+#### 幂等键方案
+
+worker 调 broker 时带上该次工具调用的 `tool_call_id`，**broker 侧去重**：
+
+```
+worker ──POST /sandbox/exec { tool_call_id, code } ──▶ broker
+                                                        │
+                              已执行过该 id？ ──是──▶ 直接返回缓存结果，不进沙箱
+                                    │
+                                    否
+                                    ▼
+                              进沙箱执行 → 记录 (tool_call_id → 结果) → 返回
+```
+
+**为什么 `tool_call_id` 可以作键**：它来自 LLM 响应中的 `AIMessage.tool_calls[].id`。重放时这条 AIMessage 是**从 checkpoint 读出来的**，而不是重新调 LLM 生成的，因此同一次工具调用在任何次重放中 id 都相同。
+
+> **待验证**：上一段推理是整个方案的支点，但 LangGraph 文档**没有明说** `tool_call_id` 在重放中稳定。验证很便宜 —— 跑一次 interrupt，比对恢复前后的 `tool_call_id` 是否一致。已并入 P0 探针（§11）。
+>
+> 若不稳定，退路是 worker 侧用 `(thread_id, checkpoint_id, 节点内序号)` 自行构造确定性键，成本略高但可行。
+
+**存储**：Redis hash，per-thread 几十到几百条，TTL 跟随沙箱生命周期（§5.5）。结果体积大的（artifacts）存引用不存内容。
+
+**残留风险**：崩溃发生在执行途中时没有缓存结果（只在完成时写缓存），仍会重跑，且部分副作用已落盘。这个通用方案解决不了。可选的加强是额外记 `started` 标记、重放时识别出「启动过但未完成」并提示教师而非静默重跑 —— **P0 不做**，先接受。
 
 ### 5.7 对外接口概要
 
@@ -1261,7 +1325,8 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 | **单人开发，架构决策无人复核** | 错误决策可能拖到实现阶段才暴露，返工成本高 | §9 的 ADR 是唯一的自我审查手段，决策变更须同步更新（§2.3） |
 | **会话凭据明文传输** | 走 HTTP（§4.4），Session Cookie 无 `Secure` 标志，同网段抓包可窃取会话 | 已按 §7.1 威胁模型接受。触发重估的条件见 §4.4 |
 | **用户范围被悄悄放开到全院学生** | 基数增一个数量级，§3.2 权衡、§8.1 容量、ADR-0001 单机结论同时失效 | §2.2 已明确边界为「课题组研究生」。放开前必须重审这三处，不能当作纯运营决定 |
-| **至少一次投递 vs 工具幂等** | 重复投递可能导致工具副作用重复执行 | §3.2 权衡三，P2 需实测验证。在验证通过前，§5.4 的 run 级自动重试上限压到 1 次 |
+| **`execute_python` 重复执行** | HITL 每次审批恢复都会整节点重跑（§3.2），重复执行 LLM 生成的代码会造成数据污染 | §5.6 幂等键方案，**必须在 P3 的 HITL 之前或同期落地**。在那之前 §5.4 的 run 级自动重试上限压到 1 次 |
+| **`tool_call_id` 重放稳定性未经验证** | 若不稳定，§5.6 的幂等键方案失效，需退到 worker 侧自构造确定性键 | 已并入 P0 探针（§11），验证成本几分钟 |
 | ~~`interrupt` 的流式表示无文档依据~~ | **已关闭**（2026-07-31）。官方文档确认 HITL 在工具调用边界暂停而非流式事件，改为流结束后查 `aget_state()`，不依赖未文档化行为 | §5.3 已定机制与 payload |
 | **HITL 的触发范围未定** | 若给 `execute_python` 全量加审批，agent 每跑一段代码就要教师点一次，平台不可用 | §5.3 TODO。倾向用 `when` 谓词做条件拦截；P0 跑出真实行为模式后再定，HITL 本就排 P3 |
 | **LLM 服务商 rate limit** | 并发高峰时集中报错 | 需在 worker 侧做退避重试与降级；尚未设计 |
@@ -1279,10 +1344,10 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 
 | 阶段 | 内容 | 验证标准 |
 |---|---|---|
-| **P0** | FastAPI in-process 跑 DeepAgents + **裸 Docker 沙箱**（先跑通，加固后置）+ SSE 流式输出 | 教师能对话；agent 能写 Python 读 CSV、算出结果并返回图表。**另加两个探针**：① 记录 DeepAgents 实际吐出的 `StreamPart` 结构，回填 §5.2 中 Agent 层事件的 payload；② 记录一次典型分析的真实 token 消耗与 agent 行为模式，供 §6.4 定配额、§5.3 定 HITL 触发范围 |
+| **P0** | FastAPI in-process 跑 DeepAgents + **裸 Docker 沙箱**（先跑通，加固后置）+ SSE 流式输出 | 教师能对话；agent 能写 Python 读 CSV、算出结果并返回图表。**另加三个探针**：① 记录 DeepAgents 实际吐出的 `StreamPart` 结构，回填 §5.2 中 Agent 层事件的 payload；② 记录一次典型分析的真实 token 消耗与 agent 行为模式，供 §6.4 定配额、§5.3 定 HITL 触发范围；③ **跑一次 `interrupt()`，比对恢复前后的 `tool_call_id` 是否一致**（§5.6 幂等键方案的支点） |
 | **P1** | 沙箱加固（gVisor + 完整参数 + 磁盘配额）+ sandbox-broker 拆分 + 生命周期管理 | 沙箱内运行 `while True` / fork 炸弹 / 写满磁盘，宿主机不受影响 |
 | **P2** | 拆分 worker：Redis Streams + Postgres checkpointer | `kill -9` worker 后，任务能从 checkpoint 恢复继续 |
-| **P3** | HITL 审批 + 取消 + 多用户隔离 + 配额限流 | 审批流程走通；30 并发压测不崩溃、不串数据 |
+| **P3** | **§5.6 工具幂等键**（HITL 的前置）+ HITL 审批 + 取消 + 多用户隔离 + 配额限流 | 审批流程走通，且**审批恢复后 `execute_python` 不重复执行**；30 并发压测不崩溃、不串数据 |
 | **P4** | 可观测性（OpenTelemetry）、产物存储完善、成本看板 | 能定位单个 run 的完整 trace 与 token 花费 |
 
 ### 关于 P0 与 P1 的顺序
