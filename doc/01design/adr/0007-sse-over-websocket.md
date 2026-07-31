@@ -43,7 +43,7 @@ SSE 的具体优势：
 
 **代价**：
 - **Nginx 必须改配置**，否则流式输出会被缓冲到响应结束才吐出（见主文档 §8.4）：`proxy_buffering off` + `proxy_read_timeout 3600s`。这是一个不改就完全不工作、改了就好的坑
-- **前端不能用原生 `EventSource`**。平台是多租户带鉴权的，而原生 `EventSource` 不支持自定义请求头，无法携带 Authorization。需改用 `@microsoft/fetch-event-source`，代价是 `Last-Event-ID` 的维护从浏览器转到应用侧（详见[前端技术选型 §3.3](../02Frontend%20Technology%20Selection.md.md)）
+- **前端不能用原生 `EventSource`**。断线重连时需要自行控制 `Last-Event-ID` 的续读位置，而原生 `EventSource` 不暴露这个能力。需改用 `@microsoft/fetch-event-source`（详见[前端技术选型 §3.3](../02Frontend%20Technology%20Selection.md.md)）。**由此引出一个坑**：该库默认不携带 cookie，而认证走 Cookie Session（[ADR-0011](./0011-cookie-session-not-oauth2.md)），必须显式配置 `credentials: 'include'`，否则 SSE 请求会 401
 - 每个 SSE 连接占用一个 HTTP 连接与网关侧一个 `XREAD` 循环，需关注连接数上限
 - 若将来出现高频双向交互需求，需要重新评估
 

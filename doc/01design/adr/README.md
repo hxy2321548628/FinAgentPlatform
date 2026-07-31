@@ -21,6 +21,12 @@
 | [0007](./0007-sse-over-websocket.md) | 实时推送用 SSE，不用 WebSocket | 已接受 | §4.2、§5.2 |
 | [0008](./0008-langgraph-checkpointer.md) | 中断恢复复用 LangGraph Checkpointer，不自建 | 已接受 | §5.3 |
 | [0009](./0009-default-model-selection.md) | 默认模型 deepseek-v4-pro + 辅助模型下沉 | 已接受 | §4.3 |
+| [0010](./0010-self-hosted-accounts-rbac.md) | 自建账号体系与三角色 RBAC | 已接受 | §7.2、§6.2 |
+| [0011](./0011-cookie-session-not-oauth2.md) | 认证用 Cookie + Redis Session，不用 OAuth2 / JWT | 已接受 | §7.2.2 |
+| [0012](./0012-plain-http-intranet.md) | 内网走 HTTP，不启用 TLS | 已接受 | §4.4、§7.4 |
+| [0013](./0013-event-anticorruption-layer-v2-stream.md) | 事件契约做防腐层，worker 消费 v2 `astream` | 已接受 | §5.2 |
+| [0014](./0014-tool-idempotency-key.md) | 工具幂等键用 `tool_call_id`，broker 侧去重 | 已接受（支点待验证） | §3.2、§5.6 |
+| [0015](./0015-sandbox-disk-quota-xfs.md) | 沙箱磁盘配额用 XFS project quota | 已接受 | §7.3.5 |
 
 **状态取值**：`提议中` → `已接受` / `已否决` → （后续可能）`已废弃`（被某条新 ADR 取代）
 
