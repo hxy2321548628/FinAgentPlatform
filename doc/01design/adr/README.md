@@ -20,7 +20,7 @@
 | [0006](./0006-event-channel-streams-not-pubsub.md) | 事件通道用 Redis Streams，不用 Pub/Sub | 已接受 | §5.2 |
 | [0007](./0007-sse-over-websocket.md) | 实时推送用 SSE，不用 WebSocket | 已接受 | §4.2、§5.2 |
 | [0008](./0008-langgraph-checkpointer.md) | 中断恢复复用 LangGraph Checkpointer，不自建 | 已接受 | §5.3 |
-| [0009](./0009-default-model-selection.md) | 默认模型 deepseek-v4-pro + 辅助模型下沉 | **待确认** | §4.3 |
+| [0009](./0009-default-model-selection.md) | 默认模型 deepseek-v4-pro + 辅助模型下沉 | 已接受 | §4.3 |
 
 **状态取值**：`提议中` → `已接受` / `已否决` → （后续可能）`已废弃`（被某条新 ADR 取代）
 
