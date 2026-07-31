@@ -87,7 +87,7 @@
 
 **本文档不覆盖**（见各自文档）：
 
-- 前端技术选型与实现 → [前端技术选型](./02Frontend%20Technology%20Selection.md.md)
+- 前端技术选型与实现 → [前端技术选型](./02frontend-selection.md)
 - 视觉与交互规范 → [设计风格文档 DSD](../02visual/01-DSD.md)
 - 智能体的工具集、文件系统语义、上下文与提示词 → [智能体设计](./03agent-design.md)
 
@@ -311,7 +311,7 @@ flowchart TB
 
 | 层 | 选择 | 说明 |
 |---|---|---|
-| 前端 | React + Vite + TypeScript | 详见[前端技术选型](./02Frontend%20Technology%20Selection.md.md) |
+| 前端 | React + Vite + TypeScript | 详见[前端技术选型](./02frontend-selection.md) |
 | 接入 | Nginx | 静态托管 + 反代 + SSE 透传 |
 | 接口层 | FastAPI（Python） | 异步框架，与 asyncio worker 同栈 |
 | 智能体 | DeepAgents / LangGraph | `async_create_deep_agent()` |
@@ -455,7 +455,7 @@ worker ──XADD──▶ stream:run:{run_id} ──XREAD──▶ 网关 ─�
 
 前端 SSE 天然携带 `Last-Event-ID` 请求头，断线重连时从上次的 event id 继续读，中间产生的事件全部补齐。Stream 设 `MAXLEN` 或 TTL 控制内存，同时异步归档到 Postgres 做长期存储。
 
-> 前端侧的实现约束（原生 `EventSource` 不支持自定义 header，需改用 `@microsoft/fetch-event-source` 自行维护 `Last-Event-ID`）详见[前端技术选型 §3.3](./02Frontend%20Technology%20Selection.md.md)。
+> 前端侧的实现约束（原生 `EventSource` 不支持自定义 header，需改用 `@microsoft/fetch-event-source` 自行维护 `Last-Event-ID`）详见[前端技术选型 §3.3](./02frontend-selection.md)。
 
 #### 事件契约
 
@@ -1288,7 +1288,7 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 
 - **智能体设计文档已建**（[`03agent-design.md`](./03agent-design.md)），但**只覆盖了与平台契约耦合的部分**（工具集、文件系统、产物判定、上下文截断）。提示词工程、子 agent 划分、效果评测**仍然空白，刻意推迟到下期** —— 它们只在 worker 进程内部生效，改了不影响别的模块。需要清醒的是：平台的价值完全取决于智能体好不好用（§10.2 风险二），这块债只是被安排了，不是被还了。
 - **P0 的裸 Docker 沙箱是刻意欠下的债**，P1 必须偿还，不可带入上线（§11）。
-- 文件名 `02Frontend Technology Selection.md.md` 有重复扩展名，且与 `01architecture.md` 的命名风格不一致（中英混杂、空格）。建议统一为 `02frontend-selection.md`，但会影响已有引用，**待确认后再改**。
+- ~~文件名 `02Frontend Technology Selection.md.md` 命名风格不一致~~ —— 已于 2026-07-31 重命名为 `02frontend-selection.md`，引用同步更新。
 
 ---
 
@@ -1318,7 +1318,7 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 
 | 文档 | 位置 | 关系 |
 |---|---|---|
-| 前端技术选型 | [`doc/01design/02Frontend Technology Selection.md.md`](./02Frontend%20Technology%20Selection.md.md) | 下游，依据本文档 §4.2、§5.2、§7.2 |
+| 前端技术选型 | [`doc/01design/02frontend-selection.md`](./02frontend-selection.md) | 下游，依据本文档 §4.2、§5.2、§7.2 |
 | 设计风格文档 DSD | [`doc/02visual/01-DSD.md`](../02visual/01-DSD.md) | 平行，视觉规范 |
 | 视觉识别手册 | [`doc/02visual/02-visual-identity-manual.html`](../02visual/02-visual-identity-manual.html) | 平行 |
 | 架构决策记录 | [`doc/01design/adr/`](./adr/) | 下游，本文档 §9 的展开 |
