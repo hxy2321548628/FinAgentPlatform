@@ -3,7 +3,7 @@
 | 项 | 值 |
 |---|---|
 | 文档状态 | **草稿**（骨架已定，部分章节待补） |
-| 当前版本 | v0.4 |
+| 当前版本 | v0.5 |
 | 作者 | hxy |
 | 评审人 | 待定 |
 | 批准人 | 待定 |
@@ -16,6 +16,7 @@
 | v0.2 | 2026-07-31 | hxy | 重构为标准架构文档结构；架构决策拆分至 [`adr/`](./adr/)；补齐空缺章节占位；图改用 Mermaid |
 | v0.3 | 2026-07-31 | hxy | 回填外部确认结论（合规 / 出网 / 服务器规格 / 人力）；**§10.1 三项阻塞全部解除**，ADR-0009 转「已接受」；§7.4 大幅简化 |
 | v0.4 | 2026-07-31 | hxy | 定案：自建账号 + 三角色 RBAC（含 `student`）+ 多组归属、Cookie/Session 认证、走 HTTP 不启用 TLS、沙箱排队策略、沙箱上限 20 |
+| v0.5 | 2026-07-31 | hxy | 补齐前后端契约：§6.2 ER 图与索引、§5.7 REST API 与错误码、§5.2 事件契约（含 DeepAgents 映射与防腐层）、§5.4 重试策略与审批超时 |
 
 > **本文档的 TODO 约定**：形如 `> **TODO** ｜ 待回答：……` 的引用块表示该节骨架已就位但内容未定，并写明「这一节要回答什么问题」与「被什么阻塞」。全文可用 `grep -n "TODO"` 检索剩余缺口。
 
@@ -38,8 +39,8 @@
 | §2 约束与前提 | 技术方向、规模、合规 | **已完成** |
 | §3 架构驱动因素 | 质量属性优先级、核心权衡 | 部分 |
 | §4 系统总体视图 | 逻辑架构、模块、技术栈、部署 | **已完成** |
-| §5 核心流程与交互 | 时序、事件流、审批、沙箱生命周期 | 部分 |
-| §6 数据架构 | 存储选型、数据模型、隔离与配额 | 部分 |
+| §5 核心流程与交互 | 时序、事件流、审批、沙箱生命周期 | **已完成**（Agent 层事件 payload 待 P0 回填） |
+| §6 数据架构 | 存储选型、数据模型、隔离与配额 | **已完成**（配额数值待 P0 回填） |
 | §7 安全设计 | 威胁模型、认证、沙箱隔离 | 部分 |
 | §8 运行与运维 | 容量、可用性、可观测性、发布 | 部分 |
 | §9 架构决策记录 | 索引，正文见 [`adr/`](./adr/) | **已完成** |
@@ -452,11 +453,100 @@ worker ──XADD──▶ stream:run:{run_id} ──XREAD──▶ 网关 ─�
 
 > 前端侧的实现约束（原生 `EventSource` 不支持自定义 header，需改用 `@microsoft/fetch-event-source` 自行维护 `Last-Event-ID`）详见[前端技术选型 §3.3](./02Frontend%20Technology%20Selection.md.md)。
 
-> **TODO** ｜ 待回答：SSE 事件类型的完整定义（type 枚举 + 各自 payload schema）。
-> 这是前后端之间最关键的契约，前端要用 Zod 校验，后端要保证兼容。当前只知道大类：`run.started` / `token` / `tool_call` / `tool_result` / `todo.updated` / `subagent.*` / `interrupt` / `run.finished` / `error`。
-> 除上述大类外，还需包含 §8.1 确认的 `sandbox.queued`（payload 含当前排位，排位变化时重复推送）。
+#### 事件契约
+
+**核心原则：不把 DeepAgents 的事件透传给前端。** worker 消费 DeepAgents 的流，映射成**平台自己的事件词汇**再 `XADD`。
+
+这一层映射（防腐层）值得付出，理由有四：
+
+1. DeepAgents 的 `ns` 是 LangGraph 的内部节点路径（形如 `("tools:abc123", "model_request:def456")`），含随机 task id。透传等于让前端耦合 LangGraph 的节点命名
+2. DeepAgents 同时存在 `stream()`（v2 `StreamPart`）与 `stream_events()`（v3 投影）两套 API，都还在演进。直接暴露任一套，将来迁移就是前端重写
+3. 我们的事件里有 DeepAgents 根本不知道的东西：`sandbox.queued`（§8.1）、run 生命周期、配额错误
+4. `Last-Event-ID` 重放依赖一个我们自己掌控的单调序号
+
+#### 事件信封
+
+所有事件共用一个信封，**`type` 之外的字段与事件种类无关**：
+
+```json
+{
+  "id": "1753948800123-0",
+  "type": "token",
+  "ts": 1753948800123,
+  "run_id": "8f3a…",
+  "path": [],
+  "data": { }
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `id` | **直接用 Redis Stream ID**。天然单调递增，天然可做 `Last-Event-ID`，不需要另造序号 |
+| `type` | 事件类型，见下方枚举 |
+| `ts` | 服务端毫秒时间戳 |
+| `run_id` | 冗余，便于前端在多 run 并存时路由 |
+| `path` | 子 agent 归属。`[]` 为主 agent，`["research"]` 为该名字的子 agent。**由 DeepAgents 的 `ns` 映射而来，剥掉 task id 只留可读名字** |
+| `data` | 按 `type` 定义 |
+
+#### 事件类型：两层
+
+**平台层** —— 由我们自己产生，DeepAgents 不参与，**payload 现在即可定死**：
+
+| type | `data` | 触发时机 |
+|---|---|---|
+| `run.started` | `{ thread_id }` | worker 领取任务 |
+| `run.finished` | `{ status: "succeeded", tokens_used }` | 正常完成 |
+| `run.failed` | `{ code, message, retryable }` | 异常终止。`retryable` 由 §5.4 的错误分类决定 |
+| `run.cancelled` | `{}` | 教师取消或审批超时 |
+| `sandbox.queued` | `{ position }` | 沙箱排队中。**排位每次变化都推**（§8.1） |
+| `sandbox.ready` | `{}` | 拿到沙箱，排队结束 |
+| `error` | `{ code, message }` | 不终止 run 的非致命错误（如单次工具调用失败但 agent 会重试） |
+
+`run.failed` 与 `error` 的区别是**是否终止 run**。前者是终态，后者是过程中的告警。
+
+**Agent 层** —— 映射自 DeepAgents，**payload 待 P0 跑通后按实际输出定**：
+
+| type | 来源 | payload 状态 |
+|---|---|---|
+| `token` | `stream_mode="messages"` 的 `AIMessageChunk` | 待定 |
+| `tool_call` | `stream_mode="updates"` 的工具节点 | 待定 |
+| `tool_result` | 同上 | 待定 |
+| `todo.updated` | `updates` 的 todo 节点 | 待定 |
+| `subagent.started` / `subagent.finished` | `ns` 深度变化 | 待定 |
+| `interrupt` | **机制未知，见下方风险** | **待验证** |
+
+#### worker 侧消费哪套 API
+
+**用 `agent.astream(stream_mode=["updates","messages","custom"], subgraphs=True, version="v2")`，不用 `astream_events(version="v3")`。**
+
+v3 的投影（`.tool_calls` 带 `.completed` / `.error` / `.output`）确实已经帮忙组装好了工具调用的生命周期，看起来更省事。但：
+
+- **v2 是单条有序序列，直接对应「往一条 Redis Stream 里顺序 XADD」。** v3 的多个投影要靠 `interleave()` 合流，而 `Last-Event-ID` 重放的正确性**完全依赖顺序** —— 在核心恢复路径上引入一个顺序不由我们掌控的合流层，风险不值得
+- **`custom` 模式是注入平台事件的通道。** 沙箱工具内部用 `get_stream_writer()` 就能把 `sandbox.queued` 推进同一条有序流，排位更新与 token 流之间不会乱序，也不必另开旁路
+
+代价是要自己配对 `tool_call` 与 `tool_result`（v3 帮你做了）。这个代价是一次性且可控的，而顺序保证不是。
+
+#### 映射表
+
+| DeepAgents `StreamPart` | 平台事件 |
+|---|---|
+| `type="messages"`, `data=(AIMessageChunk, meta)` | `token` |
+| `type="updates"`, `data={<工具节点>: …}` | `tool_call` / `tool_result` |
+| `type="custom"`, `data={…}`（工具内 `get_stream_writer()` 写入） | `sandbox.*` |
+| `ns` 由 `()` 变深 / 变浅 | `subagent.started` / `subagent.finished` |
+
+#### 兼容性规则
+
+前后端各守一条，否则这个契约撑不过第一次迭代：
+
+- **前端必须忽略未知 `type`**，不能报错。后端加新事件类型时不应要求前端同步发版
+- **`data` 只增字段，不改已有字段的语义**。前端的 Zod schema 用 `.passthrough()`，不要 `.strict()`
+
+> **风险 ｜ `interrupt` 的流式表示尚无文档依据。** DeepAgents 的 streaming 与 event-streaming 两篇文档都**没有**说明 `interrupt()` 如何出现在事件流里。唯一线索是 v3 中 subagent 的 `.status` 枚举包含 `"interrupted"`，暗示子 agent 层面有表示，但主 agent 的 interrupt 在 v2 `StreamPart` 中如何呈现，完全无记载。
 >
-> 阻塞：需先确定 DeepAgents 实际吐出的事件结构，建议在 P0 跑通后照实际输出反向定义。
+> 这不是「细节待补」，是**机制未知**。若最终发现 v2 的 StreamPart 表达不了 interrupt（只能靠轮询 checkpoint 状态），则 §5.3 的 HITL 设计与 §5.4 状态机的 `waiting_approval` 转移都要改。
+>
+> **应对**：把「跑一次 `interrupt()` 看流里吐出什么」从 P3 前移到 **P0 的验证清单**（§11）。不实现 HITL，只做一次探针，成本很小。已登记入 §10.2。
 
 ### 5.3 中断恢复：三种不同语义
 
@@ -484,7 +574,7 @@ stateDiagram-v2
     waiting_approval --> running: Command(resume=…) 重新入队
     running --> succeeded: 正常完成
     running --> failed: 异常终止
-    failed --> queued: 重试
+    failed --> queued: 重试（自动上限 1 次，或教师手动）
     queued --> cancelled: 教师取消
     running --> cancelled: 教师取消
     waiting_approval --> cancelled: 教师取消 / 审批超时
@@ -497,8 +587,41 @@ stateDiagram-v2
     end note
 ```
 
-> **TODO** ｜ 待回答：`failed → queued` 的重试策略。哪些错误可自动重试（LLM 限流、网络抖动），哪些必须人工介入（代码逻辑错、配额耗尽）？重试上限与退避？
-> 另需确认 `waiting_approval` 是否设超时 —— 教师若一直不点确认，run 是否永久挂起、是否占用配额。
+#### 重试分两层，不要混
+
+| 层 | 对象 | 是否改 run 状态 | 机制 |
+|---|---|---|---|
+| **调用级** | 单次 LLM 调用、单次 broker 请求 | 否 | worker 内部指数退避重试。**这是主要手段**，绝大部分瞬时故障在这一层就消化了 |
+| **run 级** | 整个 run（`failed → queued`） | 是 | 重新入队，从 checkpoint 续跑 |
+
+#### 错误分类
+
+| 类别 | 例子 | 调用级重试 | run 级重试 |
+|---|---|---|---|
+| **瞬时** | LLM 429 / 5xx、网络超时、broker 暂时不可达 | 指数退避 1s → 2s → 4s，上限 3 次 | 允许，**上限 1 次** |
+| **资源** | 沙箱排队超时（§8.1） | 不适用 | 允许，**上限 1 次**，固定延迟 30s |
+| **永久** | 配额耗尽、参数校验失败、agent 代码逻辑错 | 否 | **否** |
+| **未知** | 未分类异常 | 否 | **否**，按永久处理 |
+
+分类结果同时决定 §5.2 中 `run.failed` 事件的 `retryable` 字段，前端据此决定要不要显示「重试」按钮。
+
+#### run 级自动重试上限定为 1 次
+
+这个数字比通常的 3 次保守得多，是**故意的**：run 级重试会从 checkpoint 恢复，而「已完成的步骤不重跑」这一假设**依赖工具幂等，尚未验证**（§3.2 权衡三）。在幂等性验证之前，每多一次自动重试就多一次副作用重复执行的机会（重复写文件、重复装包）。
+
+超过上限转 `failed` 终态，由教师手动决定是否重试 —— 把判断交给人，比让系统盲目重试安全。
+
+> §3.2 的幂等验证在 P2 完成后，可以重新评估这个上限。**验证通过前不要调高。**
+
+#### `waiting_approval` 超时
+
+| 项 | 取值 | 理由 |
+|---|---|---|
+| 超时时长 | **24 小时**，超时后转 `cancelled` | 教师可能下班后才看到，几小时太短；但也不能永久挂着 |
+| 是否占用**并发 run 配额** | **不占用** | 并发配额限制的是资源占用，而 `waiting_approval` 不占 worker 也不占沙箱（§5.3）。若占用，教师忘了点确认就会把自己的配额锁死一整天 |
+| 是否占用**待审批数上限** | 占用，上限 5 个 | 不占并发配额不等于可以无限堆积。这是防堆积的那道闸，与资源无关 |
+
+这个区分是刻意的：**「占资源」和「占名额」是两回事**，用同一个配额同时管两者会让其中一个失效。
 
 ### 5.5 沙箱生命周期
 
@@ -541,12 +664,72 @@ list_files(path)
 
 ### 5.7 对外接口概要
 
-> **TODO** ｜ 待回答：REST API 的关键路径定义。当前散落在 §5.1 时序图里，需要收敛成一张表（method / path / 入参 / 出参 / 错误码），并明确：
-> - 认证方式（Bearer token？Cookie？）
-> - 分页约定
-> - 错误响应的统一结构
->
-> 建议 P0 后期直接由 FastAPI 自动生成 OpenAPI 文档，本节只保留关键路径清单 + 指向 `/docs` 的链接，避免手写文档与代码脱节。
+**本节只定关键路径与全局约定。** 完整的请求/响应 schema 由 FastAPI 自动生成的 OpenAPI 文档（`/docs`）为准 —— 手写字段级文档必然与代码脱节。
+
+所有路径前缀 `/api`。**认证一律靠 §7.2.3 的 Session Cookie**，没有 `Authorization` 头。
+
+#### 关键路径
+
+| Method | Path | 说明 | 成功响应 |
+|---|---|---|---|
+| POST | `/auth/login` | 登录 | 200 + `Set-Cookie` |
+| POST | `/auth/logout` | 登出，销毁 Redis session | 204 |
+| GET | `/auth/me` | 当前用户（含 role 与所属组） | 200 |
+| GET | `/threads` | 会话列表，分页 | 200 |
+| POST | `/threads` | 新建会话 | 201 `{id}` |
+| GET | `/threads/{id}` | 会话详情 | 200 |
+| PATCH | `/threads/{id}` | 改标题 / `agent_config` | 200 |
+| DELETE | `/threads/{id}` | 删除会话（连带沙箱销毁） | 204 |
+| POST | `/threads/{id}/files` | 上传数据文件（multipart）到 workspace | 201 |
+| **POST** | **`/threads/{id}/runs`** | **提交一次分析，立即返回** | **202 `{run_id}`** |
+| GET | `/runs/{id}` | run 详情与当前状态 | 200 |
+| **GET** | **`/runs/{id}/events`** | **SSE 事件流，见 §5.2** | **200 `text/event-stream`** |
+| POST | `/runs/{id}/cancel` | 主动取消（§5.3） | 202 |
+| POST | `/runs/{id}/approve` | HITL 审批回传（§5.3） | 202 |
+| GET | `/artifacts/{id}` | 产物下载 | 302 → MinIO 预签名 URL |
+| GET | `/admin/users` | 用户列表（仅 `admin`） | 200 |
+| PATCH | `/admin/users/{id}` | 改角色 / 配额 / 启禁用 | 200 |
+| GET | `/admin/usage` | 用量与成本聚合（§8.3） | 200 |
+
+产物走 **302 跳预签名 URL**，不由网关代理二进制流 —— 否则大文件下载会长时间占住网关的 worker，而网关还要同时扛所有 SSE 长连接。
+
+#### 分页：游标，不用 offset
+
+```
+GET /threads?cursor=<opaque>&limit=20
+→ { "items": [...], "next_cursor": "..." | null }
+```
+
+会话列表按 `updated_at DESC` 排序，而这个字段**会因为新消息而变动**。offset 分页在翻页过程中若有会话被顶到首页，就会漏掉或重复条目。游标用 `(updated_at, id)` 复合值编码，避免这个问题。
+
+#### 统一错误结构
+
+```json
+{
+  "error": {
+    "code": "QUOTA_EXCEEDED",
+    "message": "今日 token 配额已用尽，明日 0 点重置",
+    "details": { "used": 120000, "limit": 120000 }
+  }
+}
+```
+
+`code` 是**稳定的机器可读枚举**，前端据此决定行为；`message` 是中文，前端可直接展示。二者职责不能混 —— 改 `message` 的措辞不应该导致前端逻辑失效。
+
+| code | HTTP | 场景 |
+|---|---|---|
+| `UNAUTHENTICATED` | 401 | 未登录或 session 过期 |
+| `FORBIDDEN` | 403 | 越权访问他人资源，或非 admin 调管理接口 |
+| `NOT_FOUND` | 404 | 资源不存在。**越权时也返回 404 而非 403**，避免探测他人资源是否存在 |
+| `VALIDATION_ERROR` | 422 | 参数校验失败 |
+| `RATE_LIMITED` | 429 | 接口频率限制（§7.5） |
+| `QUOTA_EXCEEDED` | 429 | token 日配额耗尽（§6.4） |
+| `CONCURRENCY_LIMIT` | 429 | 并发 run 数超限（§6.4） |
+| `INTERNAL` | 500 | 未分类错误 |
+
+**三个 429 必须用 code 区分。** 它们的用户提示语和前端行为完全不同：频率限制该自动退避重试，配额耗尽该提示明天再来，并发超限该提示先等已有任务跑完。只给 HTTP 429 的话前端无法区分。
+
+> `NOT_FOUND` 覆盖越权这一条与 §6.3 的数据层隔离配合：repository 层注入 `user_id` 过滤后，他人的资源本来就查不出来，自然落到 404 分支 —— 不需要额外写鉴权判断，这是把隔离做在数据层的一个副产品。
 
 ---
 
@@ -562,28 +745,111 @@ list_files(path)
 
 ### 6.2 数据模型草案
 
-```
-users          (id, name, role, quota_tokens, quota_concurrent, ...)
-                                                       -- role: admin | teacher | student（§7.2.2）
-groups         (id, name, created_at)                  -- 课题组，组内共享配置类资源
-user_groups    (user_id, group_id)                     -- 多对多：一个用户可属多个组（§7.2.2）
-threads        (id, user_id, title, agent_config, created_at)         -- 会话，严格私有
-runs           (id, thread_id, status, checkpoint_id, error,
-                started_at, ended_at)                                 -- 一次执行
-run_events     (run_id, seq, type, payload, ts)                       -- 事件归档
-artifacts      (id, run_id, s3_key, mime, size)                       -- 产物
-sandboxes      (thread_id, container_id, status, last_active_at)      -- 沙箱状态
--- checkpoints / checkpoint_writes 由 AsyncPostgresSaver 自建
+```mermaid
+erDiagram
+    users ||--o{ user_groups : "属于"
+    groups ||--o{ user_groups : "包含"
+    users ||--o{ threads : "拥有"
+    threads ||--o{ runs : "包含"
+    runs ||--o{ run_events : "产生"
+    runs ||--o{ artifacts : "产出"
+    threads ||--o| sandboxes : "绑定"
+
+    users {
+        uuid id PK
+        text name UK
+        text password_hash
+        text role "admin|teacher|student"
+        int quota_tokens_daily
+        int quota_concurrent_runs
+        bool is_active
+        timestamptz created_at
+    }
+    groups {
+        uuid id PK
+        text name
+        timestamptz created_at
+    }
+    user_groups {
+        uuid user_id PK,FK
+        uuid group_id PK,FK
+    }
+    threads {
+        uuid id PK
+        uuid user_id FK
+        text title
+        jsonb agent_config
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    runs {
+        uuid id PK
+        uuid thread_id FK
+        uuid user_id FK "反范式，见下"
+        text status "见 §5.4 状态机"
+        text checkpoint_id
+        text error_code
+        text error_message
+        int tokens_used
+        timestamptz started_at
+        timestamptz ended_at
+    }
+    run_events {
+        uuid run_id PK,FK
+        bigint seq PK
+        text type
+        jsonb payload
+        timestamptz ts
+    }
+    artifacts {
+        uuid id PK
+        uuid run_id FK
+        text s3_key
+        text mime
+        bigint size
+    }
+    sandboxes {
+        uuid thread_id PK,FK
+        text container_id
+        text status
+        timestamptz last_active_at
+    }
 ```
 
-> **TODO** ｜ 待回答（§7.2 已解除本节阻塞，剩下的是纯设计工作）：
-> - ER 图（当前只有表清单，缺关系与基数标注）
-> - 索引设计（至少 `runs(thread_id, started_at)`、`run_events(run_id, seq)`、`user_groups(user_id)`）
-> - `agent_config` 存什么、用 JSONB 还是拆列
-> - **配额字段是否要按角色给默认值**，还是全部 per-user 显式存 —— 见 §6.4
-> - 组内共享的 skill / 提示词本期不实现（§1.2），是否要提前预留表结构。若预留，需带 `created_by`（学生与教师同权可写，来源要可追溯，见 §7.2.2）；**不需要**审核状态字段
->
-> **已解除**：`users.role` 枚举定为 `admin | teacher | student`；组关系定为 `user_groups` 多对多关联表（§7.2.2）。
+LangGraph 的 `checkpoints` / `checkpoint_writes` 表由 `AsyncPostgresSaver` 自建，不在此图中，也**不要手工改动**。
+
+**Session 不落 Postgres** —— 按 §7.2.3 存在 Redis，因此没有 `sessions` 表。
+
+#### 三个需要说明的设计选择
+
+**1. `runs.user_id` 是有意的反范式。**
+
+严格范式下 run 的归属应经 `threads` 推导。冗余这一列是因为两条高频路径都要按用户聚合：§6.4 的 token 配额统计、§6.3 的隔离过滤。每次都 join `threads` 不值得。代价是写入时要保证与 `threads.user_id` 一致 —— 由创建 run 的唯一入口（§5.7 的 `POST /threads/{id}/runs`）保证，不做触发器。
+
+**2. `run_events` 不冗余 `user_id`。**
+
+它是全库最大的表，且唯一的查询模式是「按 `run_id` 顺序重放」，已由主键 `(run_id, seq)` 覆盖。越权检查在**上一层**做：先验证 run 属于当前用户，再读事件。
+
+**3. `agent_config` 用 JSONB，不拆列。**
+
+它是整体读写的配置块，从不按字段查询；且 §1.2 的后续方向（自定义提示词、skill、MCP）会持续往里加字段。拆列意味着每次加功能都要迁移。
+
+#### 索引
+
+| 索引 | 支撑的查询 |
+|---|---|
+| `threads(user_id, updated_at DESC)` | 用户的会话列表（§5.7 分页） |
+| `runs(thread_id, started_at DESC)` | 会话内的执行历史 |
+| `runs(user_id, started_at)` | per-user token 用量统计（§6.4） |
+| `runs(status) WHERE status IN ('queued','running')` | 部分索引。崩溃后扫描待恢复的 run |
+| `run_events(run_id, seq)` | 主键。事件重放与 `Last-Event-ID` 续读 |
+| `user_groups(group_id)` | 反查组成员（`user_id` 方向已由主键前缀覆盖） |
+| `artifacts(run_id)` | 列出一次执行的产物 |
+| `sandboxes(last_active_at)` | LRU 回收扫描（§5.5） |
+
+> **TODO** ｜ 待回答：组内共享的 skill / 提示词表本期不实现（§1.2），是否要提前预留。
+> 若预留，需带 `created_by`（学生与教师同权可写，来源要可追溯，§7.2.2），**不需要**审核状态字段。
+> 倾向不预留 —— 现在猜它的字段，和将来照实际需求建表，成本差不多，但猜错要迁移。
 
 ### 6.3 多租户隔离
 
@@ -911,7 +1177,8 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 | **单人开发，架构决策无人复核** | 错误决策可能拖到实现阶段才暴露，返工成本高 | §9 的 ADR 是唯一的自我审查手段，决策变更须同步更新（§2.3） |
 | **会话凭据明文传输** | 走 HTTP（§4.4），Session Cookie 无 `Secure` 标志，同网段抓包可窃取会话 | 已按 §7.1 威胁模型接受。触发重估的条件见 §4.4 |
 | **用户范围被悄悄放开到全院学生** | 基数增一个数量级，§3.2 权衡、§8.1 容量、ADR-0001 单机结论同时失效 | §2.2 已明确边界为「课题组研究生」。放开前必须重审这三处，不能当作纯运营决定 |
-| **至少一次投递 vs 工具幂等** | 重复投递可能导致工具副作用重复执行 | §3.2 权衡三，P2 需实测验证 |
+| **至少一次投递 vs 工具幂等** | 重复投递可能导致工具副作用重复执行 | §3.2 权衡三，P2 需实测验证。在验证通过前，§5.4 的 run 级自动重试上限压到 1 次 |
+| **`interrupt` 的流式表示无文档依据** | 若 DeepAgents 的 v2 StreamPart 表达不了 interrupt，§5.3 的 HITL 设计与 §5.4 状态机的 `waiting_approval` 转移都要改 | §5.2 已登记。**已把探针前移到 P0**（§11），只跑一次 `interrupt()` 看流里吐什么，不实现 HITL |
 | **LLM 服务商 rate limit** | 并发高峰时集中报错 | 需在 worker 侧做退避重试与降级；尚未设计 |
 | **checkpoint 表膨胀** | 长期运行后 Postgres 体积失控 | §6.5 保留策略待定 |
 
@@ -927,7 +1194,7 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 
 | 阶段 | 内容 | 验证标准 |
 |---|---|---|
-| **P0** | FastAPI in-process 跑 DeepAgents + **裸 Docker 沙箱**（先跑通，加固后置）+ SSE 流式输出 | 教师能对话；agent 能写 Python 读 CSV、算出结果并返回图表 |
+| **P0** | FastAPI in-process 跑 DeepAgents + **裸 Docker 沙箱**（先跑通，加固后置）+ SSE 流式输出 | 教师能对话；agent 能写 Python 读 CSV、算出结果并返回图表。**另加两个探针**：① 跑一次 `interrupt()`，记录它在事件流中的实际表示（§5.2 风险）；② 记录一次典型分析的真实 token 消耗，供 §6.4 定配额 |
 | **P1** | 沙箱加固（gVisor + 完整参数 + 磁盘配额）+ sandbox-broker 拆分 + 生命周期管理 | 沙箱内运行 `while True` / fork 炸弹 / 写满磁盘，宿主机不受影响 |
 | **P2** | 拆分 worker：Redis Streams + Postgres checkpointer | `kill -9` worker 后，任务能从 checkpoint 恢复继续 |
 | **P3** | HITL 审批 + 取消 + 多用户隔离 + 配额限流 | 审批流程走通；30 并发压测不崩溃、不串数据 |
