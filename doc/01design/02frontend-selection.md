@@ -2,7 +2,7 @@
 
 > 状态：已确认
 > 日期：2026-07-30
-> 上游依据：[总体架构设计](../doc/01design/01architecture.md) · [设计风格文档 DSD](../doc/02visual/01-DSD.md)
+> 上游依据：[总体架构设计](./01architecture.md) · [设计风格文档 DSD](../02visual/01-DSD.md)
 
 ---
 
