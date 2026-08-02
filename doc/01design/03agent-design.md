@@ -3,7 +3,7 @@
 | 项 | 值 |
 |---|---|
 | 文档状态 | **草稿**（本期范围内已定稿，下期内容为占位） |
-| 当前版本 | v0.1 |
+| 当前版本 | v0.2 |
 | 作者 | hxy |
 | 上游文档 | [总体架构设计](./01architecture.md) |
 
@@ -12,6 +12,7 @@
 | 版本 | 日期 | 修改人 | 说明 |
 |---|---|---|---|
 | v0.1 | 2026-07-31 | hxy | 初稿。只覆盖「与平台契约耦合、改起来贵」的部分，其余显式推迟 |
+| v0.2 | 2026-08-02 | hxy | **依 P0 探针实测回填**：改正 `async_create_deep_agent` 与模型 ID 笔误；`write_file` 存疑项定案为覆盖；回填 §5.2 的 N 与 §7.3 全部观察项；§6 新增中文字体约束 |
 
 > **本文档的分工**：[总体架构](./01architecture.md)写的是**承载智能体的平台**，本文写**智能体本身**。二者的交界面是 §3 工具集与 §4 文件系统 —— 那也是本文的重点。
 >
@@ -55,7 +56,9 @@
 
 ### 2.1 本期形态：单 agent，无嵌套
 
-用 `async_create_deep_agent()` 构建**一个** agent，不划分子 agent。
+用 `create_deep_agent()` 构建**一个** agent，不划分子 agent，直接 `await agent.ainvoke(...)` / `agent.astream(...)` 驱动。
+
+> **v0.1 写的是 `async_create_deep_agent()`，实测不存在**（deepagents 0.7.1 只导出 `create_deep_agent`，也没有 `is_async` 参数）。异步改由 `AsyncSubAgent` / `AsyncSubAgentMiddleware` 表达，只影响子 agent，本期不开子 agent 故不受影响 —— P0 探针已用全 async 路径跑通完整分析。
 
 理由：子 agent 的价值是并行分解与上下文隔离，而本期的目标任务（读一份 CSV、算指标、出图）是线性的，拆了只增加调用轮次与 token。同时它会让事件流出现嵌套渲染需求，前端本期无必要承担。
 
@@ -72,7 +75,7 @@
 
 ### 2.3 模型
 
-沿用 [ADR-0009](./adr/0009-default-model-selection.md)：主模型 `deepseek-v4-pro`，辅模型 `deepseek-v4-flush`。
+沿用 [ADR-0009](./adr/0009-default-model-selection.md)：主模型 `deepseek-v4-pro`，辅模型 `deepseek-v4-flash`（v0.1 写的 `flush` 是笔误，2026-08-02 经 `GET /models` 核对改正）。
 
 > **需要说明**：**本期辅模型实际上无处可用。** 辅模型的用武之地是子 agent 与上下文摘要压缩，而这两项本期都不做（§2.1、§5.2）。ADR-0009 的「辅助模型下沉」要到下期才真正生效 —— 现在把它写进配置只是占位，不要误以为已在省钱。
 
@@ -90,7 +93,7 @@
 | `read_file` | `read(file_path, offset=0, limit=2000)` | ✅ | ❌ | 否 |
 | `glob` | `glob(pattern, path=None)` | ✅ | ❌ | 否 |
 | `grep` | `grep(pattern, path=None, glob=None)` | ✅ | ❌ | 否 |
-| `write_file` | `write(file_path, content)` | ⚠️ 待验证 | ❌ | **是** |
+| `write_file` | `write(file_path, content)` | ✅ 覆盖写 | ❌ | **是** |
 | `edit_file` | `edit(file_path, old_string, new_string, replace_all=False)` | ❌ | ❌ | **是** |
 | `delete` | `delete(file_path)` | ❌ | ❌ | **是** |
 | `execute` | `execute(command)` | ❌ | ✅ | **是** |
@@ -105,15 +108,24 @@
 
 主文档 §5.6 的结论是「只有 `execute_python` 有问题」。换成真实工具集后这条不再成立：
 
-- **`edit_file` 不幂等** —— 重放时 `old_string` 已被替换掉，第二次执行返回 0 occurrences 或错误。虽不破坏数据，但 **LLM 会看到一个第一次没看到的错误**，行为随之偏离。
-- **`delete` 不幂等** —— 同理，第二次报文件不存在。
-- **`write_file` 存疑** —— DeepAgents 文档把 `WriteResult` 标注为 create-only，未明确对已存在文件的行为是覆盖还是报错。**并入 P0 探针验证**（§11）。
+以下三条均已由 P0 探针实测（2026-08-02，`FilesystemBackend` 与容器后端结果一致）：
 
-**因此 broker 的去重范围是「全部写操作」，而不只是 `execute`。**
+| 操作 | 首次 | 重放 | v0.1 的判断 |
+|---|---|---|---|
+| `edit_file` | `occurrences=1` | `Error: String not found in file: '…'` | ❌ 不幂等 —— **正确** |
+| `delete` | `path='/workspace/x.txt'` | `Error: '/workspace/x.txt' not found` | ❌ 不幂等 —— **正确** |
+| `write_file` | `error=None` | `error=None`，内容被覆盖 | ⚠️ 存疑 → **定案为覆盖** |
+
+- **`edit_file` / `delete` 不幂等** —— 重放返回一个首次没有的错误。虽不破坏数据，但 **LLM 会看到一个第一次没看到的错误**，行为随之偏离。
+- **`write_file` 单次幂等** —— DeepAgents 的 `BackendProtocol.write` 文档字符串写明 *"creating it or overwriting it if it already exists"*，实测确为覆盖，此前「create-only」的读法不成立。
+
+**broker 的去重范围仍是「全部写操作」，`write_file` 不因单次幂等而豁免** —— 它防的是另一种情况：重放时文件内容已被后续步骤改过，此时覆盖写同样污染数据。
 
 这样做的额外好处是：**单个工具是否幂等不再是正确性的前提**。去重命中即返回首次执行的缓存结果，包括错误结果 —— 重放看到的东西与首次完全一致。这比逐个工具论证幂等更稳，也更省心。
 
 去重键与机制见 [ADR-0014](./adr/0014-tool-idempotency-key.md)。
+
+> **2026-08-02 修订**：P0 探针发现 **HITL 审批恢复不会导致工具重复执行**（中断落在 middleware 钩子节点，工具在另一个节点执行，实测全程只调用 1 次）。因此本节要防的场景从「每次审批必然发生」缩回「崩溃路径」，去重仍要做但**不再是 HITL 的前置条件**。同时 ADR-0014 暴露出一个落点问题：**backend 拿不到 `tool_call_id`**，去重键怎么传尚未定案。
 
 ### 3.4 错误语义：返回，不抛
 
@@ -154,6 +166,8 @@ execute() → 无空闲沙箱 → async 等待，不阻塞事件循环
 
 DeepAgents 目前没有 Docker 后端（内置的 `LocalShellBackend` 直接 `subprocess.run(shell=True)` 跑在宿主机上，官方标注 development-only，本平台绝不能用）。论证、备选与代价见 [ADR-0016](./adr/0016-sandbox-filesystem-backend.md)。
 
+> **不要用 `BaseSandbox` 抄近路**（2026-08-02，P0 探针）。框架提供的这个基类只要求实现 4 个成员，但其余文件方法它会转成 shell 命令**进容器**执行 —— 那样 §4.2 下面的性质 2「文件工具不需要容器在跑」就不成立了。须直接实现 `SandboxBackendProtocol`（位于 `deepagents.backends.protocol`，未从 `deepagents.backends` 导出）。
+
 ### 4.2 路径映射
 
 ```
@@ -185,6 +199,8 @@ execute 执行完 → broker 列出 outputs/ 下本次调用后 mtime 变化的�
 
 **风险与退路**：这依赖 §6 的提示词要求 agent 把图存进该目录，而 LLM 不保证遵守。P0 记录实际遵守率；若不可靠，退到「diff 整个 workspace 但按扩展名白名单过滤」。
 
+> **P0 首次观测（2026-08-02）**：遵守。完整验收 case 的唯一产物 `industry_volatility.png` 落在 `outputs/` 下，workspace 根目录只有 agent 自己写的两个 `.py` 与输入 CSV，无散落产物。**样本量只有 1 次，不足以下结论**，退路暂不启用，继续观察。
+
 ### 4.4 新增的攻击面
 
 **broker 从「只 exec」变成「要碰文件」**，多出两件事必须做：
@@ -213,7 +229,11 @@ execute 执行完 → broker 列出 outputs/ 下本次调用后 mtime 变化的�
 
 **本期不做摘要压缩。** 摘要每次要多花一次 LLM 调用，且必然丢信息；在「先跑通」的定位下不值得。下期做，届时辅模型（§2.3）才有用武之地。
 
-> **TODO** ｜ 待回答：N 的取值。阻塞于 P0 探针②（§11）——需要先知道一次典型分析的真实轮次与 token 分布。在那之前取一个保守值即可。
+**N 的取值：先取 20 轮**（2026-08-02，依 P0 探针②回填）。
+
+实测一次典型分析（持仓 CSV → 按行业算年化波动率 → 出图）：**17 次模型调用、16 次工具调用**，即约 17 轮就跑完一个完整任务。N 取 20 能容纳一次完整分析不触发截断，同时挡住多轮追问后的无限增长。
+
+> 这是单次观测得出的起始值，不是定论。真正该盯的是 token 而非轮数 —— 同一次分析里 `input_tokens` 从首轮 2,916 涨到末轮上万，轮数相同而上下文长度差一个量级。**若后续出现单轮上下文过长导致的失败，截断口径应从「最近 N 轮」改为「按 token 预算倒推轮数」。**
 
 ---
 
@@ -229,6 +249,7 @@ execute 执行完 → broker 列出 outputs/ 下本次调用后 mtime 变化的�
 | 图表等产物必须存到 `/workspace/outputs/` | §4.3，否则产物丢失 |
 | 沙箱无公网。装包走内网 pypi 镜像，不要用 `requests` 从公网拉数据 | §7.3.4 |
 | 代码先 `write_file` 成 `.py` 文件再 `execute` 运行，不要写成 shell 里的长 heredoc | 便于复查与重跑；P3 上 HITL 后，教师审批时需要看到完整脚本 |
+| **画图直接用中文，不要自己找字体、不要 `pip install` 或 `apt` 装字体** | 见下方观测。镜像已预装中文字体并配好 matplotlib |
 
 骨架：
 
@@ -246,7 +267,17 @@ execute 执行完 → broker 列出 outputs/ 下本次调用后 mtime 变化的�
 - 对数据中的异常值、缺失值要明确指出如何处理的
 ```
 
-> **TODO** ｜ 待回答：提示词工程整体待下期。包括金融领域术语与常用指标口径的注入、few-shot 示例、错误恢复引导。阻塞于 P0 积累真实的失败案例 —— 现在猜 agent 会在哪里出错，多半猜错。
+> **P0 观测到的第一个真实失败模式（2026-08-02）**：agent 画中文标题的图时发现字体缺失，自行执行了
+> `pip install matplotlib --upgrade; apt-cache search chinese font; apt list --installed | grep -i font`
+> 来找中文字体。**这在零出网的沙箱里必然全部失败**，纯浪费轮次与 token。
+>
+> 两条应对，缺一不可：
+> 1. **镜像预装中文字体**并配好 matplotlib 默认字体（记入[主文档 §7.3.5](./01architecture.md) 的预装清单）；
+> 2. **提示词显式禁止 agent 自己找字体**（已加入上表硬约束）。
+>
+> 只做 1 不做 2 仍会浪费轮次 —— agent 不知道字体已装好，还是会先去查。
+
+> **TODO** ｜ 待回答：提示词工程整体待下期。包括金融领域术语与常用指标口径的注入、few-shot 示例、错误恢复引导。阻塞于 P0 积累真实的失败案例 —— 上面这条是第一个，继续积累。
 
 ---
 
@@ -262,17 +293,25 @@ execute 执行完 → broker 列出 outputs/ 下本次调用后 mtime 变化的�
 
 > 给一份持仓 CSV，要求按行业分组计算年化波动率并画图 —— agent 能写出 Python、在沙箱中跑通、返回结果与图表，即通过。
 
+**✅ 已通过**（2026-08-02）。agent 自行 `write_file` 写出 `explore_data.py` 与 `volatility_analysis.py`，`execute` 运行，产出 `outputs/industry_volatility.png`。
+
 ### 7.3 同时要记录的观察项
 
-这些**不是通过条件**，是给后续章节回填数据用的：
+这些**不是通过条件**，是给后续章节回填数据用的。**首轮结果（2026-08-02，单次观测）**：
 
-| 观察项 | 回填到 |
-|---|---|
-| 完成一次分析的轮次与 token 分布 | §5.2 的 N、§6.4 配额 |
-| agent 实际调用了哪些工具、频率如何 | §5.3 HITL 触发范围 |
-| 是否把产物存进了 `outputs/` | §4.3 的退路是否要启用 |
-| 是否触发 `pip install`、装了什么 | §7.3.5 的镜像预装清单 |
-| `tool_call_id` 在 `interrupt` 恢复前后是否一致 | [ADR-0014](./adr/0014-tool-idempotency-key.md) 的支点 |
+| 观察项 | 结果 | 回填到 |
+|---|---|---|
+| 完成一次分析的轮次与 token 分布 | 17 次模型调用、16 次工具调用；共 313,341 token（input 304,640 / output 8,701）。**input 中 62.1% 是 prompt cache 命中** | §5.2 的 N（已回填为 20）、[§6.4 配额](./01architecture.md) |
+| agent 实际调用了哪些工具、频率如何 | `ls` / `read_file` / `write_file` / `execute`，未调 `write_todos`、`edit_file`、`delete`、`glob`、`grep` | [§5.3 HITL 触发范围](./01architecture.md) |
+| 是否把产物存进了 `outputs/` | ✅ 遵守，无散落产物 | §4.3 的退路是否要启用 → 暂不启用 |
+| 是否触发 `pip install`、装了什么 | ⚠️ 1 次。**不是为了装分析库，是为了找中文字体**（见 §6） | [§7.3.5 的镜像预装清单](./01architecture.md) → 须含中文字体 |
+| `tool_call_id` 在 `interrupt` 恢复前后是否一致 | ✅ 完全一致 | [ADR-0014](./adr/0014-tool-idempotency-key.md) 的支点 → 已关闭 |
+
+三条需要留意的：
+
+- **本期不做 HITL（§2.2），但顺带发现审批恢复并不会让工具重复执行** —— 这削弱了 [ADR-0014](./adr/0014-tool-idempotency-key.md) 的紧迫性，详见 §3.3 的修订说明。
+- **agent 一次都没调 `write_todos`**。§2.2 把它标为「开」且 [§5.2 已定义 `todo.updated` 事件](./01architecture.md)，但线性任务下框架不会触发它。该事件的 payload 仍无实测样本，前端渲染分支暂时无从对照。
+- **prompt cache 命中率高达 62%**，直接影响 §6.4 的配额口径，详见主文档。
 
 > **TODO** ｜ 待回答：评测方案。需要一组金标准用例（输入数据 + 期望结论）与打分方式。下期做，阻塞于提示词定型。
 

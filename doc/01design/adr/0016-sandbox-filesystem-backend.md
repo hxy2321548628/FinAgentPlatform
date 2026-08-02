@@ -25,6 +25,12 @@ DeepAgents 官方内置的后端有 `StateBackend` / `FilesystemBackend` / `Loca
 
 工具层不动 —— 不自定义工具，仍用框架内置的那 8 个。
 
+> **实现方式补充（2026-08-02，P0 探针）**：框架另提供一个基类 `BaseSandbox`，只要求实现 `execute` / `upload_files` / `download_files` / `id` 四个成员，其余文件方法它会**转成 shell 命令进容器执行**。这比直接实现协议省事得多。
+>
+> **但本 ADR 明确不用它** —— 走 `BaseSandbox` 就等于放弃了上面那条分工，「文件操作不依赖容器存活」这条理由随之作废。**要直接实现 `SandboxBackendProtocol`。**
+>
+> 另注：`SandboxBackendProtocol` 位于 `deepagents.backends.protocol`，**没有从 `deepagents.backends` 导出**，须写全路径 import。
+
 ## 理由
 
 **排除 `StateBackend` 的理由是决定性的，不是偏好问题**：文件只存在于 LangGraph state 中，磁盘上没有实体，所以沙箱里的 `pd.read_csv('/workspace/data.csv')` 会 FileNotFound。而「agent 写代码分析文件」正是本平台的全部业务（§1.1），这个组合根本不成立。
@@ -44,6 +50,7 @@ DeepAgents 官方内置的后端有 `StateBackend` / `FilesystemBackend` / `Loca
 | **`LocalShellBackend`** | 它的 `execute` 是宿主机上的 `subprocess.run(shell=True)`，**零隔离**，官方标注 development-only。与 §3.1 的 P0 质量属性「安全隔离」正面冲突 |
 | **`StoreBackend` / `ContextHubBackend`** | 面向跨 thread 持久化与 LangSmith 托管，与本平台的 per-thread 卷模型（[ADR-0003](./0003-sandbox-per-thread-lifecycle.md)）不匹配，且 ContextHub 依赖外部服务（§2.2 内网部署） |
 | **`CompositeBackend` 混合路由** | 本期没有需要分流的第二类路径。将来做跨 thread 记忆时可以用它把 `/memories/` 路由到 `StoreBackend`，那时再引入 |
+| **继承 `BaseSandbox` 只补 4 个方法** | 省事，但它把 `ls` / `read` / `glob` / `grep` 全转成进容器的 shell 命令，直接推翻本决策「文件操作不依赖容器存活」那条理由。**代价换来的省事不值** —— 七个方法本就是薄封装 |
 | **不用 backend，自定义 4 个工具**（主文档 §5.6 原方案） | 要重写框架的工具描述与配套提示词；失去 `edit_file` / `glob` / `grep`；且 `execute_python(code)` 这种「代码作为参数」的形态不如「先写文件再执行」可复查 —— P3 审批时教师看不到完整脚本 |
 
 ## 后果

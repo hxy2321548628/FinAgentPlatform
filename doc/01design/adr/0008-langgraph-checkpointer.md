@@ -19,7 +19,9 @@
 
 ## 理由
 
-DeepAgents 构建在 LangGraph 之上：`create_deep_agent()` / `async_create_deep_agent()` 返回编译好的 LangGraph graph，并**接受 `checkpointer` 参数**。（`async_create_deep_agent` 的区别是传 `is_async=True`，影响 SubAgentMiddleware 的工具执行与子 agent 调用方式。）
+DeepAgents 构建在 LangGraph 之上：`create_deep_agent()` 返回编译好的 LangGraph graph，并**接受 `checkpointer` 参数**。
+
+> **改正（2026-08-02，P0 探针）**：原文写的 `async_create_deep_agent()` 与 `is_async=True` 在 deepagents 0.7.1 中不存在。异步直接用 `ainvoke` / `astream` 即可。**本 ADR 的决策不受影响** —— `checkpointer` 参数确实存在，探针已用 `InMemorySaver` 跑通中断与恢复。
 
 也就是说，**线程级的状态持久化与恢复是框架已经提供的能力**，传一个参数即可启用。自建等于重新实现一遍状态快照、版本管理、恢复语义，而且要跟 DeepAgents 内部的状态结构保持同步 —— 框架一升级就可能失效。
 
