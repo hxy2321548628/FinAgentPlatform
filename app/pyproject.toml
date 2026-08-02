@@ -7,4 +7,87 @@ requires-python = ">=3.13"
 dependencies = [
     "deepagents>=0.7.1",
     "langchain-deepseek>=1.1.0",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.2",
 ]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.1",
+]
+
+# 以下工具配置落地 .claude/python-constitution.md 第四条与 python-style.md。
+# 门禁入口是仓库根的 Makefile，不要绕过它单独调工具。
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+# spike/ 是 P0 一次性验证代码，写在技术章程之前，不追溯改造也不作为代码范例。
+# 探针跑完、结论回填文档后整个目录删除，届时这条 exclude 一并删掉。
+extend-exclude = ["spike"]
+
+[tool.ruff.lint]
+select = [
+    "F",      # pyflakes
+    "E", "W", # pycodestyle
+    "I",      # isort：import 顺序
+    "N",      # pep8-naming：snake_case / PascalCase / UPPER_CASE
+    "D",      # pydocstyle：docstring 规范
+    "ANN",    # flake8-annotations：公开签名必带注解、禁止 Any 兜底
+    "B",      # bugbear：可变默认参数等
+    "UP",     # pyupgrade
+    "SIM",    # 可简化的写法
+    "RUF",
+]
+ignore = [
+    "D203",  # 与 D211 冲突，二选一
+    "D213",  # 与 D212 冲突，二选一
+    "D107",  # __init__ 的说明允许写在类 docstring 里（python-style.md 三）
+    # 以下四条与「注释和 docstring 一律中文」冲突，不是放松标准而是规则不适用：
+    "D400",  # 要求首行以 . 结尾，中文句号是 。
+    "D415",  # 同上，扩展到 ? !
+    "RUF002",  # 把 docstring 里的全角标点（，。）判为歧义字符
+    "RUF003",  # 同上，针对注释
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-annotations]
+# 禁止用 Any 兜底
+allow-star-arg-any = false
+
+[tool.ruff.lint.per-file-ignores]
+# 测试文件不强制 docstring：测试函数名本身就是说明（python-constitution.md 第一条）
+"*_test.py" = ["D100", "D103"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.13"
+files = ["."]
+exclude = ["^spike/", "^\\.venv/"]
+strict = true
+# 三方库缺 stub 时不阻塞门禁，但本项目自己的代码仍按 strict 检查
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+# 测试文件命名为 {module}_test.py（python-style.md 一）
+python_files = ["*_test.py"]
+testpaths = ["."]
+norecursedirs = ["spike", ".venv"]
+asyncio_mode = "auto"
+
+[tool.coverage.report]
+# 核心逻辑覆盖率下限 80%（python-constitution.md 第一条）
+fail_under = 80
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]
+
+[tool.coverage.run]
+omit = ["spike/*", "*_test.py"]
