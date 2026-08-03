@@ -26,7 +26,7 @@
 
 **目标**（[架构 §1.1](../01design/01architecture.md)）：端到端跑通，不设量化业务指标。教师提问 → agent 写 Python → 沙箱执行 → 返回结果与图表。
 
-**当前进度**：[架构 §11](../01design/01architecture.md) 列的四个探针已全部完成（2026-08-02），另补做探针⑤定案幂等键（08-03）。结论见 [`app/spike/FINDINGS.md`](../../app/spike/FINDINGS.md)。契约、工具名、事件结构、幂等键均已定案，**P0 剩下的是构造工作，没有未知**。
+**当前进度**：[架构 §11](../01design/01architecture.md) 列的四个探针已全部完成（2026-08-02），另补做探针⑤定案幂等键（08-03）。结论已全部回填[架构 v0.11](../01design/01architecture.md)，原始探针结论存于 git 历史（`git show 30b0fa6:app/spike/FINDINGS.md`）。契约、工具名、事件结构、幂等键均已定案，**P0 剩下的是构造工作，没有未知**。
 
 ### 1.1 做什么
 
@@ -55,7 +55,7 @@
 | **前端** | 只能用 curl 验收，没有教师视角的界面 | **另行排期**，见 §4 |
 | 可观测性、成本看板 | — | P4 |
 
-> **`app/spike/` 是已经欠下的一笔**：它继承了 `BaseSandbox`（文件操作进容器），与[智能体设计 §4.2](../01design/03agent-design.md) 相反，且不符合[技术章程](../../.claude/python-constitution.md)。**它是验证工具，不是实现起点**，步骤二要重写而非改造。
+> **`app/spike/` 已于 2026-08-03 删除**（结论回填完毕）。它曾继承 `BaseSandbox`（文件操作进容器），与[智能体设计 §4.2](../01design/03agent-design.md) 相反，且不符合[技术章程](../../.claude/python-constitution.md)。**它是验证工具，不是实现起点** —— 步骤二按 [ADR-0016](../01design/adr/0016-sandbox-filesystem-backend.md) 重写，不要从 git 捞回它改造。
 
 ---
 

@@ -24,9 +24,6 @@ data/
 tmp/
 *.log
 
-# 探针输出：结论已汇总进 app/spike/FINDINGS.md，原始产物不进库
-app/spike/out/
-
 # ---- 编辑器与系统 ----
 .vscode/
 .idea/

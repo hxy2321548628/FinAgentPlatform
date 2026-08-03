@@ -121,6 +121,6 @@ P0 探针暴露了一个本 ADR 原先没有考虑的问题：**worker 侧唯一
 
 - ~~P0 探针发现 `tool_call_id` 在重放中不稳定 → 转退路方案~~（2026-08-02 已验证稳定）
 - ~~验证 `checkpoint_ns` 是否稳定~~（2026-08-03 已验证稳定且按调用唯一）
-- **LangGraph 改变工具调用的任务扇出粒度** —— 若同一轮的多个工具调用不再各占一个 task，`checkpoint_ns` 将不再按调用唯一，去重会静默误判。**升级 langgraph 时须重跑 `app/spike/probe5_replay_key_stability.py` 的并行场景复验**
+- **LangGraph 改变工具调用的任务扇出粒度** —— 若同一轮的多个工具调用不再各占一个 task，`checkpoint_ns` 将不再按调用唯一，去重会静默误判。**升级 langgraph 时须重跑并行场景复验**：探针已随 `app/spike/` 删除，从 git 取回后即可跑 —— `git show 30b0fa6:app/spike/probe5_replay_key_stability.py`（同目录 `_common.py` 一并取回，不依赖 Docker）
 - 出现「执行到一半」造成实际数据损坏 → 补 `started` 标记与人工提示
 - DeepAgents 开始把 `tool_call_id` 透传给 backend → 届时可换回语义更清晰的键

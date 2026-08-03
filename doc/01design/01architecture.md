@@ -1357,7 +1357,7 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 | **写操作重复执行** | ~~HITL 每次审批恢复都会整节点重跑~~ **（2026-08-02 实测改正：HITL 不致工具重复执行，§3.2）**。仅余崩溃路径：崩溃在工具执行途中时重复执行 `execute` / `edit_file` / `delete`，造成数据污染或使 LLM 看到虚假错误 | §5.6 幂等键方案。**降级**：不再是 P3 HITL 的前置条件，可与 HITL 解耦排期。§5.4 的 run 级自动重试上限维持 1 次（该理由不受影响） |
 | ~~**`tool_call_id` 重放稳定性未经验证**~~ | **已关闭**（2026-08-02）。实测中断前后 `tool_call_id` 完全一致 | — |
 | ~~**ADR-0014 的幂等键无落点**~~ | **已关闭**（2026-08-03）。改用 `(thread_id, checkpoint_ns)`，两个条件均实测满足 | — |
-| **幂等键与 LangGraph 的任务扇出方式耦合** | `checkpoint_ns` 是框架编排细节，不是本平台的领域概念。若 LangGraph 改变扇出粒度（同一轮多个工具调用合成一个 task），键将不再按调用唯一，去重**静默误判**而不报错 | 升级 langgraph 时须重跑 `app/spike/probe5_replay_key_stability.py` 的并行场景复验。已写入 [ADR-0014](./adr/0014-tool-idempotency-key.md) 的重估触发条件 |
+| **幂等键与 LangGraph 的任务扇出方式耦合** | `checkpoint_ns` 是框架编排细节，不是本平台的领域概念。若 LangGraph 改变扇出粒度（同一轮多个工具调用合成一个 task），键将不再按调用唯一，去重**静默误判**而不报错 | 升级 langgraph 时须重跑并行场景复验（探针已随 `app/spike/` 删除，取回：`git show 30b0fa6:app/spike/probe5_replay_key_stability.py`）。已写入 [ADR-0014](./adr/0014-tool-idempotency-key.md) 的重估触发条件 |
 | **LLM 供应商的 prompt cache 影响成本模型** | 实测 62% 的 input token 是 cache 命中，按总量计费/扣配额会高估约 1.6 倍，且方向性地惩罚长会话 | §6.4 已定口径：分开记 `cache_read` 与未命中。**若换模型供应商需重新测这个比例**，它不是 DeepSeek 独有但比例各不相同 |
 | ~~`interrupt` 的流式表示无文档依据~~ | **已关闭**（2026-07-31）。官方文档确认 HITL 在工具调用边界暂停而非流式事件，改为流结束后查 `aget_state()`，不依赖未文档化行为 | §5.3 已定机制与 payload |
 | **HITL 的触发范围未定** | 若给 `execute` 全量加审批，agent 每跑一段代码就要教师点一次，平台不可用 | §5.3 TODO。倾向用 `when` 谓词做条件拦截；P0 跑出真实行为模式后再定，HITL 本就排 P3 |
@@ -1367,7 +1367,7 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 ### 10.3 技术债与文档缺口
 
 - **智能体设计文档已建**（[`03agent-design.md`](./03agent-design.md)），但**只覆盖了与平台契约耦合的部分**（工具集、文件系统、产物判定、上下文截断）。提示词工程、子 agent 划分、效果评测**仍然空白，刻意推迟到下期** —— 它们只在 worker 进程内部生效，改了不影响别的模块。需要清醒的是：平台的价值完全取决于智能体好不好用（§10.2 风险二），这块债只是被安排了，不是被还了。
-- **P0 的裸 Docker 沙箱是刻意欠下的债**，P1 必须偿还，不可带入上线（§11）。P0 探针里的 `app/spike/docker_sandbox.py` 是这笔债的实体：无 gVisor、无资源限制、无网络白名单、无磁盘配额，且为省事继承了 `BaseSandbox`（文件操作进容器，与[智能体设计 §4.2](./03agent-design.md) 相反）。**它是验证工具，不是实现起点** —— 正式 backend 要按 [ADR-0016](./adr/0016-sandbox-filesystem-backend.md) 直接实现 `SandboxBackendProtocol`。
+- **P0 的裸 Docker 沙箱是刻意欠下的债**，P1 必须偿还，不可带入上线（§11）。P0 探针里的 `docker_sandbox.py`（已随 `app/spike/` 删除，存于 git 历史 `30b0fa6`）是这笔债的实体：无 gVisor、无资源限制、无网络白名单、无磁盘配额，且为省事继承了 `BaseSandbox`（文件操作进容器，与[智能体设计 §4.2](./03agent-design.md) 相反）。**它是验证工具，不是实现起点** —— 正式 backend 要按 [ADR-0016](./adr/0016-sandbox-filesystem-backend.md) 直接实现 `SandboxBackendProtocol`。
 - **`todo.updated` 与 `subagent.*` 两个事件仍无实测样本**（§5.2）。前者是因为实测中 agent 一次都没调 `write_todos`，后者是因为本期不开子 agent。契约位置已留好，但**前端的对应渲染分支没有真实数据可对照**，等到真正触发时可能要改。
 - ~~文件名 `02Frontend Technology Selection.md.md` 命名风格不一致~~ —— 已于 2026-07-31 重命名为 `02frontend-selection.md`，引用同步更新。
 
@@ -1385,7 +1385,7 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 
 ### P0 探针的结果（2026-08-02）
 
-四个探针全部跑完，代码与完整结论在 `app/spike/`（一次性验证代码，回填完文档即可删除）。
+四个探针全部跑完，结论已全部回填本文档。探针代码与完整结论 `FINDINGS.md` 已于 2026-08-03 删除，仅存于 git 历史：`git ls-tree 30b0fa6 app/spike/` 列出全部文件，`git show 30b0fa6:app/spike/FINDINGS.md` 取回结论。
 
 | 探针 | 问题 | 结果 |
 |---|---|---|
@@ -1422,7 +1422,7 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 | 视觉识别手册 | [`doc/02visual/02-visual-identity-manual.html`](../02visual/02-visual-identity-manual.html) | 平行 |
 | 架构决策记录 | [`doc/01design/adr/`](./adr/) | 下游，本文档 §9 的展开 |
 | 智能体设计 | [`doc/01design/03agent-design.md`](./03agent-design.md) | 下游，展开本文档 §5.5、§5.6 的 Agent 侧细节 |
-| P0 探针结论 | [`app/spike/FINDINGS.md`](../../app/spike/FINDINGS.md) | 输入，v0.11 的全部实测数据来源。一次性验证代码，回填完即可删除 |
+| P0 探针结论 | `git show 30b0fa6:app/spike/FINDINGS.md` | 输入，v0.11 的全部实测数据来源。已回填本文档后于 2026-08-03 删除，仅存于 git 历史 |
 | P0 实施计划 | [`doc/03plan/P0-plan.md`](../03plan/P0-plan.md) | 下游，把 §11 的 P0 一行展开为可执行的步骤与验收标准 |
 
 ## 附录 B：已评估但本期不采用

@@ -7,7 +7,7 @@
 
 | 项 | 值 |
 |---|---|
-| 生成命令 | `app/spike/probe2_stream_dump.py --fixture` |
+| 生成命令 | `probe2_stream_dump.py --fixture`（探针已删，取回：`git show 30b0fa6:app/spike/probe2_stream_dump.py`，另需同目录 `_common.py` `docker_sandbox.py` 与沙箱镜像） |
 | 日期 | 2026-08-03 |
 | 环境 | deepagents 0.7.1 · langgraph 1.2.10 · langchain 1.3.14 · `deepseek-v4-pro` |
 | 消费方式 | `astream(stream_mode=["updates","messages","custom"], subgraphs=True)` |

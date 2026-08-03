@@ -19,7 +19,6 @@
 ```
 zuel-platform/
 ├── app/            # Python 后端（uv 工程，虚拟环境在 app/.venv）
-│   └── spike/      # P0 验证探针 + 结论 FINDINGS.md。一次性代码，回填完文档即可删
 ├── frontend/       # React 前端（未开始）
 ├── deploy/         # Docker Compose 与部署配置（未开始）
 ├── doc/            # 设计文档，见上方文档地图
@@ -38,7 +37,7 @@ Python 3.13 + uv。虚拟环境在 `app/.venv`，**不在仓库根**：
 
 ```bash
 cd app && uv sync                      # 装依赖
-cd app && uv run python spike/probe1_api_surface.py
+cd app && uv run pytest                # 跑脚本一律走 uv run；门禁入口仍是仓库根的 make
 ```
 
 `.env` 在**仓库根**（不在 `app/`），业务代码一律走 `pydantic_settings.BaseSettings` 读取，不直接 `os.getenv`。
