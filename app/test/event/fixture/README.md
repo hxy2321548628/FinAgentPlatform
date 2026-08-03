@@ -1,7 +1,7 @@
 # 事件映射器的测试样本
 
 `stream_chunk.jsonl` 是 DeepAgents 真实吐出的流式 chunk，用来离线驱动事件防腐层的测试
-（[P0 计划 · 步骤一](../../../doc/03plan/P0-plan.md)）。**离线跑真实数据，不需要调模型、不花 token。**
+（[P0 计划 · 步骤一](../../../../doc/03plan/P0-plan.md)）。**离线跑真实数据，不需要调模型、不花 token。**
 
 ## 来源
 

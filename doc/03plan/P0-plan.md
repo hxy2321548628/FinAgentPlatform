@@ -113,23 +113,26 @@ app/
 ├── config.py              # Settings
 ├── event/
 │   ├── model.py           # 平台事件信封与类型枚举
-│   ├── mapper.py          # StreamPart → 平台事件
-│   └── mapper_test.py
+│   └── mapper.py          # StreamPart → 平台事件
 ├── sandbox/
 │   ├── container.py       # Docker 容器生命周期
-│   ├── backend.py         # SandboxBackendProtocol 实现
-│   └── backend_test.py
+│   └── backend.py         # SandboxBackendProtocol 实现
 ├── agent/
 │   ├── prompt.py          # 系统提示词
 │   └── factory.py         # create_deep_agent 装配
 ├── run/
 │   ├── log.py             # 事件日志（内存，接口按 Redis Stream 形状）
-│   ├── executor.py        # 驱动 agent、写事件
-│   └── executor_test.py
-└── api/
-    ├── app.py             # FastAPI 实例
-    └── route/
+│   └── executor.py        # 驱动 agent、写事件
+├── api/
+│   ├── app.py             # FastAPI 实例
+│   └── route/
+└── test/                  # 测试树，按源码结构镜像
+    └── event/
+        ├── mapper_test.py
+        └── fixture/       # 已入库，见下方步骤一
 ```
+
+测试放独立的 `app/test/` 树并镜像源码结构，不与源码同放。测试文件名 `{module}_test.py`（[风格指南 §一](../../.claude/python-style.md)）。
 
 ### 步骤一：事件防腐层
 
@@ -139,7 +142,7 @@ app/
 |---|---|
 | 产出 | 平台事件的 pydantic 模型 + `StreamPart` → 事件的映射函数 |
 | 依据 | [架构 §5.2](../01design/01architecture.md) 的信封、类型枚举、映射表（均已按实测定案） |
-| 前置 | ~~把 chunk 收窄成 fixture 入库~~ **已完成** → [`app/event/fixture/`](../../app/event/fixture/)，359 条完整未裁剪的真实 chunk，覆盖映射器要区分的全部结构分支（含 `status="error"` 的 `tool_result`）。来源与空缺见该目录的 README |
+| 前置 | ~~把 chunk 收窄成 fixture 入库~~ **已完成** → [`app/event/fixture/`](../../app/test/event/fixture/)，359 条完整未裁剪的真实 chunk，覆盖映射器要区分的全部结构分支（含 `status="error"` 的 `tool_result`）。来源与空缺见该目录的 README |
 | 验证 | ① 真实 chunk 全量回放，无未知类型漏网、无异常；② 每种事件类型有独立单测；③ `id` 单调递增 |
 
 **两个容易做错的地方**（都是探针里发现的）：
@@ -203,5 +206,5 @@ app/
 | 项 | 状态 |
 |---|---|
 | ~~P0 是否连最小前端一起做~~ | **已定案（2026-08-03）：不做，用 curl 验收。** 理由：P0 存在的唯一目的是拿到「agent 到底好不好用」的结论（[架构 §10.2](../01design/01architecture.md) 风险二），界面对这个结论没有贡献；且事件契约先在真实流量下跑过一轮再动前端，可避免契约微调时前后端一起返工。**遗留问题**：[架构 §11](../01design/01architecture.md) 的 P0–P4 分期只覆盖后端，**从未给前端排过期**。本次只决定「P0 不做」，没有决定「哪一期做」—— 后者要等 P0 跑完、事件契约被真实流量验证过之后，连同[前端选型](../01design/02frontend-selection.md)一并排进架构文档的路线图 |
-| ~~探针 fixture 的入库范围~~ | **已关闭**（2026-08-03）。没有裁剪，直接入库一条完整未删减的短流（359 条，[`app/event/fixture/`](../../app/event/fixture/)）。裁剪会破坏时序真实性，而完整流只有 360 KB，不值得为省体积牺牲保真 |
+| ~~探针 fixture 的入库范围~~ | **已关闭**（2026-08-03）。没有裁剪，直接入库一条完整未删减的短流（359 条，[`app/event/fixture/`](../../app/test/event/fixture/)）。裁剪会破坏时序真实性，而完整流只有 360 KB，不值得为省体积牺牲保真 |
 | ~~`checkpoint_ns` 重放稳定性~~ | **已关闭**（2026-08-03，探针⑤）。重放稳定，且因 LangGraph 把每个工具调用扇出成独立 task 而按调用唯一。[ADR-0014](../01design/adr/0014-tool-idempotency-key.md) 的去重键据此定为 `(thread_id, checkpoint_ns)` |
