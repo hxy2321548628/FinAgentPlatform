@@ -18,7 +18,7 @@
 
 ```
 zuel-platform/
-├── app/            # Python 后端（uv 工程，虚拟环境在 app/.venv）
+├── app/            # Python 后端（uv 工程，虚拟环境在 app/.venv）。入口 api.app:app
 ├── frontend/       # React 前端（未开始）
 ├── deploy/         # 部署配置。目前只有 sandbox.Dockerfile；Compose 未开始
 ├── doc/            # 设计文档，见上方文档地图
@@ -41,9 +41,14 @@ cd app && uv run pytest                # 跑脚本一律走 uv run；门禁入�
 
 # 沙箱镜像。**新克隆的仓库要跑一次**，否则沙箱测试会静默跳过而门禁照样绿
 docker build -f deploy/sandbox.Dockerfile -t zuel-sandbox:latest .
+
+# 起网关。cwd 必须在 app/ —— 模块路径是 api.app，从仓库根起会 ModuleNotFoundError
+cd app && uv run uvicorn api.app:app --reload
 ```
 
 `.env` 在**仓库根**（不在 `app/`），业务代码一律走 `pydantic_settings.BaseSettings` 读取，不直接 `os.getenv`。
+
+沙箱 workspace 的宿主目录由 `SANDBOX_WORKSPACE_ROOT` 决定，默认落在仓库内的 `data/sandbox/`（已 gitignore）。
 
 ### 两个会浪费时间的坑
 

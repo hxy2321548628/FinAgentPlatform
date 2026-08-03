@@ -3,7 +3,7 @@
 | 项 | 值 |
 |---|---|
 | 文档状态 | 草稿 |
-| 当前版本 | v0.5 |
+| 当前版本 | v0.6 |
 | 作者 | hxy |
 | 日期 | 2026-08-03 |
 | 上游文档 | [总体架构设计](../01design/01architecture.md) · [智能体设计](../01design/03agent-design.md) |
@@ -17,6 +17,7 @@
 | v0.3 | 2026-08-03 | hxy | **P0 不做前端，用 curl 验收**。待决事项全部关闭，可以开工 |
 | v0.4 | 2026-08-03 | hxy | 改正步骤一验证标准③：事件 `id` 由步骤三的事件日志分配（[架构 §5.2](../01design/01architecture.md) 定的是 Redis Stream ID），映射层不发号，步骤一验的是顺序 |
 | v0.5 | 2026-08-03 | hxy | **沙箱池并入步骤三**（原先无人认领的范围空白），补验证标准④；步骤三改名并补上智能体装配这项产出 |
+| v0.6 | 2026-08-03 | hxy | 步骤四完成，**验收四条全过**，回填实测数据；改正启动命令（cwd 必须在 `app/`）；补记会话无独立存储、SSE 无心跳两条 |
 
 > **本文档的职责**：回答 **「P0 具体怎么做、做到什么程度算完」**。
 >
@@ -67,13 +68,18 @@
 
 ```bash
 make all                                    # 门禁全绿
-uv run --project app uvicorn api.app:app    # 启动
+cd app && uv run uvicorn api.app:app        # 启动（cwd 必须在 app/，模块路径是 api.app）
 
 # 1. 建会话 → 2. 上传持仓 CSV → 3. 提交分析 → 4. 订阅事件流
 curl -X POST localhost:8000/api/threads
 curl -X POST localhost:8000/api/threads/{tid}/files -F 'file=@holdings.csv'
-curl -X POST localhost:8000/api/threads/{tid}/runs -d '{"content":"按行业分组算年化波动率并画图"}'
+curl -X POST localhost:8000/api/threads/{tid}/runs -H 'Content-Type: application/json' \
+     -d '{"content":"按行业分组算年化波动率并画图"}'
 curl -N localhost:8000/api/runs/{rid}/events
+
+# 5. 断开后带 Last-Event-ID 重连 → 6. 取回产物
+curl -N localhost:8000/api/runs/{rid}/events -H 'Last-Event-ID: {id}'
+curl -o chart.png localhost:8000/api/artifacts/{tid}/{产物文件名}
 ```
 
 **通过条件**（四条全中才算完）：
@@ -82,6 +88,15 @@ curl -N localhost:8000/api/runs/{rid}/events
 2. agent 自行写出 `.py` 文件并 `execute` 运行，产物落在 `/workspace/outputs/` 下
 3. 断开 SSE 连接后带 `Last-Event-ID` 重连，中间产生的事件被补齐、不重不漏
 4. 能取回产物图片并正常显示
+
+> **✅ 四条全过（2026-08-03）**。一次真实验收：2,775 条事件，`run.started` → `sandbox.ready` →
+> `reasoning`(2,021) / `token`(733) / `tool_call`(9) / `tool_result`(9) → `run.finished`；agent 自写
+> `volatility_analysis.py` 并 `execute`，产物落在 `outputs/`；10 秒后掐断连接收到 223 条，带
+> `Last-Event-ID` 重连补齐 2,552 条，id 全唯一、单调递增、首尾严丝合缝；产物以
+> `image/png` 取回并正常显示。
+>
+> **产物标识**的形状是 `{thread_id}/{outputs 下的相对路径}`，由 `run.finished` 的 `artifacts`
+> 字段给出 —— 本期没有 artifacts 表，产物的唯一身份就是「哪个会话的哪个文件」。
 
 ---
 
@@ -198,12 +213,18 @@ app/
 
 | Method | Path | P0 的简化 |
 |---|---|---|
-| POST | `/api/threads` | 无认证，`user_id` 用固定假值 |
+| POST | `/api/threads` | 无认证，不记 `user_id` —— 没有消费方，存了也是空占位 |
 | POST | `/api/threads/{id}/files` | 直接落 workspace |
 | POST | `/api/threads/{id}/runs` | 202 立即返回 |
 | GET | `/api/runs/{id}` | — |
 | GET | `/api/runs/{id}/events` | SSE |
 | GET | `/api/artifacts/{id}` | **直接返回字节**，不做 302 → MinIO 预签名 |
+
+**会话没有独立的存储**：本期没有 threads 表，一个会话在服务端的全部实体就是 workspace
+下的一个目录，「会话存不存在」问的就是「目录在不在」。
+
+**SSE 没有心跳**。事件密集时不成问题，但排队等沙箱那几分钟是静默的 —— 本期直连 uvicorn
+且 curl 不会超时，**上 Nginx（P1）之前必须补一条注释行做心跳**，否则反代会先掐断连接。
 
 ---
 

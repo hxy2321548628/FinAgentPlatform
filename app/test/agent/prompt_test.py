@@ -5,8 +5,7 @@
 """
 
 from agent.prompt import SYSTEM_PROMPT
-from sandbox.backend import OUTPUT_DIR
-from sandbox.path import SANDBOX_ROOT
+from sandbox.path import OUTPUT_DIR, SANDBOX_ROOT
 
 
 def test_the_prompt_names_the_working_directory() -> None:

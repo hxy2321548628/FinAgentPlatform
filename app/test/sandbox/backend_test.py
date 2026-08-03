@@ -3,8 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from sandbox.backend import OUTPUT_DIR, SandboxBackend
+from sandbox.backend import SandboxBackend
 from sandbox.container import CommandResult, ContainerError
+from sandbox.path import OUTPUT_DIR
 
 WORKSPACE_FILE = "/workspace/data.csv"
 

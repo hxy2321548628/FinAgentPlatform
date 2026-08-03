@@ -106,17 +106,10 @@ class SandboxPool:
         """当前存活的容器数。"""
         return len(self._slot)
 
-    def workspace_for(self, thread_id: str) -> Path:
-        """返回一个 thread 的 workspace 目录，不存在则创建。
+    def _workspace_for(self, thread_id: str) -> Path:
+        """给出容器要 bind-mount 的目录，不存在则创建。
 
-        Args:
-            thread_id: 会话标识。
-
-        Returns:
-            宿主机上的目录路径。
-
-        Raises:
-            PathEscapeError: thread_id 会让路径落到 workspace 根之外。
+        目录留给 Docker 创建会是 root 属主，而容器以宿主 uid 运行，写不进去。
         """
         workspace = thread_workspace(self._root, thread_id)
         workspace.mkdir(parents=True, exist_ok=True)
@@ -137,7 +130,7 @@ class SandboxPool:
             ContainerError: 容器启动失败。
             PathEscapeError: thread_id 会让 workspace 落到根目录之外。
         """
-        workspace = self.workspace_for(thread_id)
+        workspace = self._workspace_for(thread_id)
 
         async with self._lock:
             container = await self._take(thread_id, workspace)

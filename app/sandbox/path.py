@@ -16,6 +16,10 @@ SANDBOX_ROOT = "/workspace"
 
 VIRTUAL_ROOT = "/"
 
+# 产物的约定目录，位于 workspace 下。提示词、产物判定与产物下载认的是同一个名字，
+# 因此定义在这里而不是其中任何一方
+OUTPUT_DIR = "outputs"
+
 
 class PathEscapeError(ValueError):
     """路径不在 `/workspace` 下。

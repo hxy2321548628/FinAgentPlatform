@@ -283,3 +283,31 @@ async def test_follow_wakes_up_without_polling() -> None:
 
     assert len(received) == 1
     assert elapsed < 0.1
+
+
+async def test_following_a_finished_run_from_its_last_id_returns_at_once() -> None:
+    """跑完之后再订阅、且游标已在末尾 —— 这个 run 不会再有事件了，等下去就是永远挂着。"""
+    log = EventLog()
+    last = log.append(finished())
+
+    received = [one async for one in log.follow("run-1", after=last.id)]
+
+    assert received == []
+
+
+async def test_following_a_finished_run_from_the_middle_replays_the_rest() -> None:
+    log = EventLog()
+    first = log.append(token("一"))
+    log.append(token("二"))
+    log.append(finished())
+
+    received = [one async for one in log.follow("run-1", after=first.id)]
+
+    assert [one.event.model_dump()["type"] for one in received] == ["token", "run.finished"]
+
+
+async def test_following_a_failed_run_from_its_last_id_returns_at_once() -> None:
+    log = EventLog()
+    last = log.append(failed())
+
+    assert [one async for one in log.follow("run-1", after=last.id)] == []

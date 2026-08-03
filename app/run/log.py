@@ -58,6 +58,9 @@ class _Stream:
     last_sequence: int = 0
     # 追加时唤醒所有在等新事件的 follower。没人在等时它也存在，代价是一个空对象。
     arrival: asyncio.Event = field(default_factory=asyncio.Event)
+    # run 已经走到终态。跑完之后再来订阅的连接靠它收尾 —— 否则读不到新事件就一直等，
+    # 而这个 run 再也不会有新事件了
+    ended: bool = False
 
 
 class EventLog:
@@ -93,6 +96,8 @@ class EventLog:
             )
         stream.entry.append(logged)
 
+        if event.type in TERMINAL_EVENT_TYPE:
+            stream.ended = True
         stream.arrival.set()
         stream.arrival = asyncio.Event()
         return logged
@@ -133,11 +138,15 @@ class EventLog:
         """
         cursor = after
         while True:
-            # 必须先取 waiter 再读：反过来的话，读完到开始等待之间追加的事件
+            # 必须先取这两样再读：反过来的话，读完到开始等待之间追加的事件
             # 会唤醒一个已经被换掉的 waiter，这一轮就白等了。
-            arrival = self._stream_for(run_id).arrival
+            stream = self._stream_for(run_id)
+            arrival, ended = stream.arrival, stream.ended
             pending = self.read(run_id, after=cursor)
             if not pending:
+                # 已经终结且没有更多可读，说明订阅者的游标已经走到了流的末尾
+                if ended:
+                    return
                 await arrival.wait()
                 continue
             for logged in pending:

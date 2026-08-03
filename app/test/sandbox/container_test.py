@@ -13,8 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from sandbox.backend import OUTPUT_DIR, SandboxBackend
+from sandbox.backend import SandboxBackend
 from sandbox.container import DEFAULT_IMAGE, ContainerError, DockerContainer
+from sandbox.path import OUTPUT_DIR
 
 
 def _docker_ready() -> bool:

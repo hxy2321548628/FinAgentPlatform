@@ -6,13 +6,17 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "deepagents>=0.7.1",
+    "fastapi>=0.141.1",
     "langchain-deepseek>=1.1.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
+    "python-multipart>=0.0.32",
+    "uvicorn>=0.52.1",
 ]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "mypy>=2.3.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
@@ -62,7 +66,9 @@ allow-star-arg-any = false
 [tool.ruff.lint.per-file-ignores]
 # 测试文件不强制 docstring：测试函数名本身就是说明（python-constitution.md 第一条）。
 # D101 / D102 一并豁免是因为测试里的假对象（fake / stub）名字即职责，写 docstring 只是噪音。
+# conftest.py 是测试的一部分，同一套标准。
 "*_test.py" = ["D100", "D101", "D102", "D103"]
+"conftest.py" = ["D101", "D102", "D103"]
 
 [tool.ruff.format]
 docstring-code-format = true

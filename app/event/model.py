@@ -97,6 +97,10 @@ class RunFinishedData(BaseModel):
         description="正常完成才发这个事件，失败走 run.failed",
     )
     tokens_used: int = Field(ge=0, description="本次 run 消耗的 token 总量")
+    artifacts: list[str] = Field(
+        default_factory=list,
+        description="本次 run 产出的产物标识，拼上产物端点即可下载",
+    )
 
 
 class RunFailedData(BaseModel):

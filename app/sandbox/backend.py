@@ -32,10 +32,7 @@ from deepagents.backends.protocol import (
 )
 
 from sandbox.container import ContainerError, ContainerProtocol
-from sandbox.path import to_sandbox_path, to_virtual_path
-
-# 产物的约定目录。只认这一个目录，否则中间文件与输入数据都会被当成产物
-OUTPUT_DIR = "outputs"
+from sandbox.path import OUTPUT_DIR, to_sandbox_path, to_virtual_path
 
 DEFAULT_EXECUTE_TIMEOUT = 120
 

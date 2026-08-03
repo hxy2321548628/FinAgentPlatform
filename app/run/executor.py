@@ -9,6 +9,7 @@
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,7 +38,9 @@ from event.model import (
 from run.log import EventLog
 from sandbox.backend import SandboxBackend
 from sandbox.container import ContainerProtocol
+from sandbox.path import OUTPUT_DIR
 from sandbox.pool import QueuePositionCallback, SandboxQueueTimeoutError
+from sandbox.workspace import Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +52,6 @@ UPDATES_MODE = "updates"
 
 class SandboxPoolProtocol(Protocol):
     """执行器对沙箱池的全部要求。"""
-
-    def workspace_for(self, thread_id: str) -> Path:
-        """返回一个 thread 的 workspace 目录，不存在则创建。"""
-        ...
 
     async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> ContainerProtocol:
         """取得容器，必要时排队等待。"""
@@ -78,12 +77,21 @@ class RunExecutor:
 
     Args:
         pool: 沙箱池。
+        workspace: 各会话的文件空间。
         log: 事件日志，执行过程中产生的一切都往这里写。
         runner: 驱动一次智能体执行并产出 chunk 流的函数。
     """
 
-    def __init__(self, *, pool: SandboxPoolProtocol, log: EventLog, runner: AgentRunner) -> None:
+    def __init__(
+        self,
+        *,
+        pool: SandboxPoolProtocol,
+        workspace: Workspace,
+        log: EventLog,
+        runner: AgentRunner,
+    ) -> None:
         self._pool = pool
+        self._workspace = workspace
         self._log = log
         self._runner = runner
         self._run: dict[str, Run] = {}
@@ -161,8 +169,11 @@ class RunExecutor:
 
     async def _consume(self, run: Run, container: ContainerProtocol) -> None:
         """消费智能体的流，逐个 chunk 映射成事件。"""
-        backend = SandboxBackend(workspace=self._pool.workspace_for(run.thread_id), container=container)
+        workspace = self._workspace.path(run.thread_id)
+        backend = SandboxBackend(workspace=workspace, container=container)
         tokens_used = 0
+        # 产物按 mtime 判定，基准要在 agent 动手之前取，否则本次的产出会被漏掉
+        started_at = time.time()
 
         async for ns, mode, payload in self._runner(backend, run.thread_id, run.content):
             tokens_used += _token_usage(mode, payload)
@@ -170,7 +181,19 @@ class RunExecutor:
                 self._log.append(event)
 
         run.status = RunStatus.SUCCEEDED
-        self._emit(RunFinishedEvent(ts=now_ms(), run_id=run.id, path=(), data=RunFinishedData(tokens_used=tokens_used)))
+        self._emit(
+            RunFinishedEvent(
+                ts=now_ms(),
+                run_id=run.id,
+                path=(),
+                data=RunFinishedData(
+                    tokens_used=tokens_used,
+                    artifacts=[
+                        artifact_id(run.thread_id, workspace, path) for path in backend.artifact_since(started_at)
+                    ],
+                ),
+            )
+        )
 
     def _fail(self, run: Run, code: RunErrorCode, message: str, *, retryable: bool) -> None:
         run.status = RunStatus.FAILED
@@ -185,6 +208,23 @@ class RunExecutor:
 
     def _emit(self, event: Event) -> None:
         self._log.append(event)
+
+
+def artifact_id(thread_id: str, workspace: Path, path: Path) -> str:
+    """给一个产物文件编出可下载的标识。
+
+    形状是 `{thread_id}/{outputs 下的相对路径}` —— 本期没有 artifacts 表，
+    产物的唯一身份就是「哪个会话的哪个文件」。
+
+    Args:
+        thread_id: 产出它的会话。
+        workspace: 该会话的 workspace 目录。
+        path: 宿主机上的产物路径。
+
+    Returns:
+        产物标识。
+    """
+    return f"{thread_id}/{path.relative_to(workspace / OUTPUT_DIR).as_posix()}"
 
 
 def _token_usage(mode: str, payload: object) -> int:

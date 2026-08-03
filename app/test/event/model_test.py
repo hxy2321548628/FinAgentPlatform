@@ -147,7 +147,23 @@ def test_run_finished_carries_the_token_usage() -> None:
     """§6.4 的配额要按 run 计量，这个字段是它唯一的来源。"""
     event = RunFinishedEvent(ts=1, run_id="r", path=(), data=RunFinishedData(tokens_used=313341))
 
-    assert event.model_dump(mode="json")["data"] == {"status": "succeeded", "tokens_used": 313341}
+    assert event.model_dump(mode="json")["data"] == {
+        "status": "succeeded",
+        "tokens_used": 313341,
+        "artifacts": [],
+    }
+
+
+def test_run_finished_carries_the_artifact_ids() -> None:
+    """前端拿这些标识拼产物下载的 URL。"""
+    event = RunFinishedEvent(
+        ts=1,
+        run_id="r",
+        path=(),
+        data=RunFinishedData(tokens_used=0, artifacts=["8f3a/industry_volatility.png"]),
+    )
+
+    assert event.model_dump(mode="json")["data"]["artifacts"] == ["8f3a/industry_volatility.png"]
 
 
 def test_run_failed_tells_the_frontend_whether_retrying_is_worth_it() -> None:
