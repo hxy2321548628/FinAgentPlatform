@@ -44,6 +44,22 @@ def to_virtual_path(sandbox_path: str) -> str:
     return VIRTUAL_ROOT + sandbox_path.removeprefix(SANDBOX_ROOT).lstrip("/")
 
 
+def to_sandbox_path(virtual_path: str) -> str:
+    """把虚拟路径翻译回 agent 视角的路径。
+
+    `ls` / `glob` / `grep` 的结果里带着路径，不翻译回去 agent 就会拿到 `/data.csv`
+    这样的路径，再拿它去 `read_file` 时又会被判为越界 —— 它没有别的办法知道该加前缀。
+
+    Args:
+        virtual_path: 以 workspace 为根的虚拟路径，形如 `/data.csv`。
+
+    Returns:
+        容器内的绝对路径，形如 `/workspace/data.csv`。
+    """
+    relative = virtual_path.lstrip("/")
+    return f"{SANDBOX_ROOT}{VIRTUAL_ROOT}{relative}" if relative else SANDBOX_ROOT
+
+
 def thread_workspace(root: Path, thread_id: str) -> Path:
     """给出某个 thread 在宿主机上的 workspace 目录。
 

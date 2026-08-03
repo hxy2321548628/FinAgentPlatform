@@ -9,7 +9,6 @@
 """
 
 import logging
-import time
 from dataclasses import dataclass
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
@@ -24,6 +23,7 @@ from event.model import (
     ToolCallEvent,
     ToolResultData,
     ToolResultEvent,
+    now_ms,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ def map_chunk(ns: tuple[str, ...], mode: str, payload: object, *, run_id: str) -
     Returns:
         按发生顺序排列的事件；该 chunk 不对应任何平台事件时为空列表。
     """
-    stamp = _Stamp(ts=_now_ms(), run_id=run_id, path=_map_path(ns))
+    stamp = _Stamp(ts=now_ms(), run_id=run_id, path=_map_path(ns))
     match mode:
         case "messages":
             return _map_streamed(payload, stamp)
@@ -192,7 +192,3 @@ def _map_path(ns: tuple[str, ...]) -> tuple[str, ...]:
     本期不开子 agent，实测 ns 全程为空，这条剥离逻辑没有真实子图样本验证过。
     """
     return tuple(segment.split(":", 1)[0] for segment in ns)
-
-
-def _now_ms() -> int:
-    return time.time_ns() // 1_000_000

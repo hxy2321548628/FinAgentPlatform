@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from sandbox.path import SANDBOX_ROOT, PathEscapeError, thread_workspace, to_virtual_path
+from sandbox.path import SANDBOX_ROOT, PathEscapeError, thread_workspace, to_sandbox_path, to_virtual_path
 
 THREAD_ID = "8f3a2b1c"
 
@@ -72,3 +72,13 @@ def test_thread_id_with_separator_is_rejected(tmp_path: Path) -> None:
 def test_empty_thread_id_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(PathEscapeError):
         thread_workspace(tmp_path, "")
+
+
+def test_the_workspace_root_survives_the_round_trip() -> None:
+    assert to_sandbox_path(to_virtual_path(SANDBOX_ROOT)) == SANDBOX_ROOT
+
+
+@pytest.mark.parametrize("path", [f"{SANDBOX_ROOT}/data.csv", f"{SANDBOX_ROOT}/outputs/chart.png"])
+def test_a_path_survives_the_round_trip(path: str) -> None:
+    """翻译过去再翻译回来必须是原路径，否则 agent 照抄结果就会被判越界。"""
+    assert to_sandbox_path(to_virtual_path(path)) == path

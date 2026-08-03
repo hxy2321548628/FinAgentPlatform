@@ -37,10 +37,11 @@ DeepAgents 官方内置的后端有 `StateBackend` / `FilesystemBackend` / `Loca
 >
 > 成立的前提是 **P0 不拆 broker**（[P0 计划 §1.2](../../03plan/P0-plan.md) 已登记为 P1 欠债）：worker 进程直接持有 bind-mount 目录，因此「它操作的是 worker 的文件系统，不是沙箱的」这条排除理由不成立 —— P0 形态下两者是同一个目录。**P1 拆出 broker 时本补充随之失效**，届时文件操作改走 HTTP，需重新评估。
 >
-> 包装层必须补两件它不做的事，缺一条就违反[智能体设计 §3.4](../03agent-design.md)：
+> 包装层必须补三件它不做的事，缺一条就违反[智能体设计 §3.4](../03agent-design.md)或让 agent 白跑：
 >
 > - **越界时它抛 `ValueError` 而非返回 `error` 字段** —— 不捕获就会让整个 run 失败
 > - 它的虚拟根是 `/`，agent 视角的 `/workspace/x` 须先剥掉前缀
+> - **`ls` / `glob` / `grep` 结果里的路径要翻译回去**（2026-08-03 步骤三实跑发现）。只做入向翻译的话，`ls('/workspace')` 会返回 `['/holdings.csv']`，而 agent 只能照抄这个路径 —— 下一步 `read_file('/holdings.csv')` 就被判越界，它没有别的办法知道该补前缀。**翻译必须是双向的**
 >
 > 其 `virtual_mode` 的防护已实测：`..`、workspace 外的绝对路径、**指向外部的符号链接**（规范化后校验，含符号链接目录）均被拦下，且穿越写入不落盘。
 

@@ -20,8 +20,10 @@ from deepagents.backends.protocol import (
     EditResult,
     ExecuteResponse,
     FileDownloadResponse,
+    FileInfo,
     FileUploadResponse,
     GlobResult,
+    GrepMatch,
     GrepResult,
     LsResult,
     ReadResult,
@@ -30,7 +32,7 @@ from deepagents.backends.protocol import (
 )
 
 from sandbox.container import ContainerError, ContainerProtocol
-from sandbox.path import to_virtual_path
+from sandbox.path import to_sandbox_path, to_virtual_path
 
 # 产物的约定目录。只认这一个目录，否则中间文件与输入数据都会被当成产物
 OUTPUT_DIR = "outputs"
@@ -66,9 +68,10 @@ class SandboxBackend(SandboxBackendProtocol):
     def ls(self, path: str) -> LsResult:
         """列出目录内容。"""
         try:
-            return self._disk.ls(to_virtual_path(path))
+            result = self._disk.ls(to_virtual_path(path))
         except FILE_ERROR as exc:
             return LsResult(error=str(exc))
+        return LsResult(error=result.error, entries=_relocate_file(result.entries))
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         """读取文件的一段。"""
@@ -101,18 +104,28 @@ class SandboxBackend(SandboxBackendProtocol):
     def glob(self, pattern: str, path: str | None = None) -> GlobResult:
         """按通配符找文件。"""
         try:
-            return self._disk.glob(pattern, _optional_virtual_path(path))
+            result = self._disk.glob(pattern, _optional_virtual_path(path))
         except FILE_ERROR as exc:
             return GlobResult(error=str(exc))
+        return GlobResult(
+            error=result.error,
+            matches=_relocate_file(result.matches),
+            truncated=result.truncated,
+        )
 
     def grep(
         self, pattern: str, path: str | None = None, glob: str | None = None, *, max_count: int | None = None
     ) -> GrepResult:
         """在文件内容里找字面串。"""
         try:
-            return self._disk.grep(pattern, _optional_virtual_path(path), glob, max_count=max_count)
+            result = self._disk.grep(pattern, _optional_virtual_path(path), glob, max_count=max_count)
         except FILE_ERROR as exc:
             return GrepResult(error=str(exc))
+        return GrepResult(
+            error=result.error,
+            matches=None if result.matches is None else [_relocate_match(one) for one in result.matches],
+            truncated=result.truncated,
+        )
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
         """把字节写进 workspace。批量操作允许部分成功。"""
@@ -172,3 +185,14 @@ class SandboxBackend(SandboxBackendProtocol):
 def _optional_virtual_path(path: str | None) -> str | None:
     """翻译 glob 与 grep 的可选 path，不传就是整个 workspace。"""
     return None if path is None else to_virtual_path(path)
+
+
+def _relocate_file(entry: list[FileInfo] | None) -> list[FileInfo] | None:
+    """把结果里的虚拟路径换成 agent 视角的路径。"""
+    if entry is None:
+        return None
+    return [{**one, "path": to_sandbox_path(one["path"])} for one in entry]
+
+
+def _relocate_match(match: GrepMatch) -> GrepMatch:
+    return {**match, "path": to_sandbox_path(match["path"])}

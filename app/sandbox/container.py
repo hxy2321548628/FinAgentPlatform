@@ -74,6 +74,30 @@ class ContainerProtocol(Protocol):
         ...
 
 
+class ManagedContainerProtocol(ContainerProtocol, Protocol):
+    """沙箱池对容器的全部要求，比 backend 多出生命周期与健康探测。
+
+    分成两个协议是刻意的：backend 只该知道「怎么执行命令」，
+    什么时候起、什么时候销毁、还活着没有，都不是它的事。
+    """
+
+    def start(self) -> None:
+        """启动容器，已启动则什么都不做。
+
+        Raises:
+            ContainerError: 启动失败。
+        """
+        ...
+
+    def stop(self) -> None:
+        """销毁容器。未启动或已销毁时什么都不做。"""
+        ...
+
+    def alive(self) -> bool:
+        """容器是否仍在运行。"""
+        ...
+
+
 class DockerContainer:
     """跑在 Docker 上的沙箱容器，一个 thread 一个。
 
@@ -159,6 +183,24 @@ class DockerContainer:
             logger.warning("容器清理失败，可能有残留：%s", self._container_id, exc_info=True)
         finally:
             self._container_id = None
+
+    def alive(self) -> bool:
+        """容器是否仍在运行。
+
+        问的是 Docker 而不是自己的记录：容器可能被 OOM killer 干掉、被运维手动删掉，
+        或因 `--rm` 在崩溃后自动消失，这些情况本进程都收不到通知。
+        """
+        if self._container_id is None:
+            return False
+        try:
+            output = _run_docker(
+                ["inspect", "-f", "{{.State.Running}}", self._container_id],
+                timeout=DOCKER_CLI_TIMEOUT,
+            )
+        except ContainerError:
+            # 容器已被删除时 inspect 直接失败，这与「没在跑」是同一个结论
+            return False
+        return output.strip() == "true"
 
     def exec(self, command: str, *, timeout: int) -> CommandResult:
         """在容器内执行一条 shell 命令。

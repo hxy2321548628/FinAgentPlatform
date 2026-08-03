@@ -71,7 +71,7 @@ def test_ls_lists_workspace_entries(backend: SandboxBackend, workspace: Path) ->
 
     assert result.error is None
     assert result.entries is not None
-    assert [entry["path"] for entry in result.entries] == ["/data.csv"]
+    assert [entry["path"] for entry in result.entries] == ["/workspace/data.csv"]
 
 
 def test_edit_replaces_the_string(backend: SandboxBackend) -> None:
@@ -100,7 +100,7 @@ def test_glob_matches_by_pattern(backend: SandboxBackend) -> None:
 
     assert result.error is None
     assert result.matches is not None
-    assert [match["path"] for match in result.matches] == ["/a.py"]
+    assert [match["path"] for match in result.matches] == ["/workspace/a.py"]
 
 
 def test_grep_finds_the_literal(backend: SandboxBackend) -> None:
@@ -111,6 +111,7 @@ def test_grep_finds_the_literal(backend: SandboxBackend) -> None:
     assert result.error is None
     assert result.matches is not None
     assert result.matches[0]["line"] == 1
+    assert result.matches[0]["path"] == "/workspace/a.py"
 
 
 def test_upload_then_download_round_trips(backend: SandboxBackend) -> None:
@@ -295,3 +296,30 @@ async def test_awrite_escape_returns_error_instead_of_raising(backend: SandboxBa
     result = await backend.awrite("/etc/passwd", "x")
 
     assert result.error is not None
+
+
+# ------------------------------------------------ 结果里的路径回到 agent 视角
+def test_a_path_from_ls_can_be_fed_straight_back_to_read(backend: SandboxBackend, workspace: Path) -> None:
+    """结果里的路径只能被照抄。返回虚拟路径的话，agent 下一步读文件就会被判越界。"""
+    (workspace / "data.csv").write_text("x", encoding="utf-8")
+    listed = backend.ls("/workspace")
+
+    assert listed.entries is not None
+    assert backend.read(listed.entries[0]["path"]).error is None
+
+
+def test_a_path_from_glob_can_be_fed_straight_back_to_read(backend: SandboxBackend) -> None:
+    backend.write("/workspace/a.py", "x")
+    found = backend.glob("*.py")
+
+    assert found.matches is not None
+    assert backend.read(found.matches[0]["path"]).error is None
+
+
+def test_nested_paths_keep_their_directories(backend: SandboxBackend) -> None:
+    backend.write("/workspace/outputs/chart.png", "x")
+
+    found = backend.glob("**/*.png")
+
+    assert found.matches is not None
+    assert [match["path"] for match in found.matches] == ["/workspace/outputs/chart.png"]

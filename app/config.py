@@ -9,6 +9,9 @@ from pathlib import Path
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from sandbox.container import DEFAULT_IMAGE
+from sandbox.pool import DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONTAINER, DEFAULT_QUEUE_TIMEOUT
+
 # .env 在仓库根而不在 app/，且门禁（cwd=app/）与 uvicorn（cwd 不定）的工作目录并不一致，
 # 因此按本文件位置解析成绝对路径 —— 相对路径或向上搜索都会在某种场景下静默读到别的文件。
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -43,6 +46,31 @@ class Settings(BaseSettings):
     model_aux: str = Field(
         default="deepseek-v4-flash",
         description="辅助模型，承担意图分类等轻量调用",
+    )
+
+    sandbox_image: str = Field(
+        default=DEFAULT_IMAGE,
+        description="沙箱镜像，须预先在本机构建或导入",
+    )
+    sandbox_workspace_root: Path = Field(
+        # 生产挂在 /data/sandbox 下，但开发机上没有那个目录，默认值放仓库内才能开箱即跑
+        default=REPO_ROOT / "data" / "sandbox",
+        description="各会话 workspace 的宿主机根目录",
+    )
+    sandbox_max_container: int = Field(
+        default=DEFAULT_MAX_CONTAINER,
+        gt=0,
+        description="同时存活的沙箱容器数上限，容量瓶颈是宿主机内存",
+    )
+    sandbox_idle_timeout: float = Field(
+        default=DEFAULT_IDLE_TIMEOUT,
+        gt=0,
+        description="沙箱无人使用多久后回收，秒",
+    )
+    sandbox_queue_timeout: float = Field(
+        default=DEFAULT_QUEUE_TIMEOUT,
+        gt=0,
+        description="沙箱排队等待的上限，秒。超时的 run 转失败且标记可重试",
     )
 
 

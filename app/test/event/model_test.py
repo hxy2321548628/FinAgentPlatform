@@ -2,9 +2,23 @@ import pytest
 from pydantic import ValidationError
 
 from event.model import (
+    TERMINAL_EVENT_TYPE,
+    ErrorData,
     EventType,
     ReasoningData,
     ReasoningEvent,
+    RunErrorCode,
+    RunFailedData,
+    RunFailedEvent,
+    RunFinishedData,
+    RunFinishedEvent,
+    RunStartedData,
+    RunStartedEvent,
+    RunStatus,
+    SandboxQueuedData,
+    SandboxQueuedEvent,
+    SandboxReadyData,
+    SandboxReadyEvent,
     TokenData,
     TokenEvent,
     ToolCallData,
@@ -107,3 +121,77 @@ def test_tool_call_event_type_is_fixed_by_the_class() -> None:
     event = ToolCallEvent(ts=1, run_id="r", path=(), data=ToolCallData(id="c", name="ls", args={}))
 
     assert event.type == EventType.TOOL_CALL
+
+
+# ------------------------------------------------------------------ 平台层事件
+def test_run_status_values_match_the_contract() -> None:
+    assert RunStatus.QUEUED.value == "queued"
+    assert RunStatus.RUNNING.value == "running"
+    assert RunStatus.SUCCEEDED.value == "succeeded"
+    assert RunStatus.FAILED.value == "failed"
+
+
+def test_run_started_serializes_to_the_contract_envelope() -> None:
+    event = RunStartedEvent(ts=1, run_id="r", path=(), data=RunStartedData(thread_id="t"))
+
+    assert event.model_dump(mode="json") == {
+        "type": "run.started",
+        "ts": 1,
+        "run_id": "r",
+        "path": [],
+        "data": {"thread_id": "t"},
+    }
+
+
+def test_run_finished_carries_the_token_usage() -> None:
+    """§6.4 的配额要按 run 计量，这个字段是它唯一的来源。"""
+    event = RunFinishedEvent(ts=1, run_id="r", path=(), data=RunFinishedData(tokens_used=313341))
+
+    assert event.model_dump(mode="json")["data"] == {"status": "succeeded", "tokens_used": 313341}
+
+
+def test_run_failed_tells_the_frontend_whether_retrying_is_worth_it() -> None:
+    event = RunFailedEvent(
+        ts=1,
+        run_id="r",
+        path=(),
+        data=RunFailedData(code=RunErrorCode.SANDBOX_QUEUE_TIMEOUT, message="等待沙箱超过 600 秒", retryable=True),
+    )
+
+    assert event.model_dump(mode="json")["data"] == {
+        "code": "SANDBOX_QUEUE_TIMEOUT",
+        "message": "等待沙箱超过 600 秒",
+        "retryable": True,
+    }
+
+
+def test_sandbox_queued_reports_the_position() -> None:
+    event = SandboxQueuedEvent(ts=1, run_id="r", path=(), data=SandboxQueuedData(position=3))
+
+    assert event.model_dump(mode="json")["data"] == {"position": 3}
+
+
+def test_a_position_of_zero_is_rejected() -> None:
+    """排位从 1 起算，0 会让前端显示「前面还有 0 个」。"""
+    with pytest.raises(ValidationError):
+        SandboxQueuedData(position=0)
+
+
+def test_sandbox_ready_carries_an_empty_object() -> None:
+    """信封形状保持一致，前端不必为这一种事件写特例。"""
+    event = SandboxReadyEvent(ts=1, run_id="r", path=(), data=SandboxReadyData())
+
+    assert event.model_dump(mode="json")["data"] == {}
+
+
+def test_error_does_not_terminate_the_run() -> None:
+    """与 run.failed 的区别就是这个：前者是终态，后者只是过程中的告警。"""
+    event = ErrorData(code=RunErrorCode.INTERNAL, message="工具调用失败，已让模型重试")
+
+    assert EventType.ERROR not in TERMINAL_EVENT_TYPE
+    assert event.message
+
+
+def test_terminal_types_cover_every_way_a_run_can_end() -> None:
+    """漏一种，订阅那个 run 的 SSE 连接就永远等不到收尾。"""
+    assert {EventType.RUN_FINISHED, EventType.RUN_FAILED, EventType.RUN_CANCELLED} == TERMINAL_EVENT_TYPE

@@ -7,10 +7,16 @@
 断线重连的 `Last-Event-ID` 认的就是那个号。映射层自己发号会与日志的号撞车。
 """
 
+import time
 from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+def now_ms() -> int:
+    """返回信封 `ts` 用的服务端毫秒时间戳。"""
+    return time.time_ns() // 1_000_000
 
 
 class EventType(StrEnum):
@@ -39,6 +45,30 @@ class EventType(StrEnum):
     INTERRUPT = "interrupt"
 
 
+class RunStatus(StrEnum):
+    """run 的生命周期状态。
+
+    本期只有四态：没有主动取消，也没有 HITL 审批（`cancelled` 与 `waiting_approval`
+    要等那两项落地才会出现）。
+    """
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class RunErrorCode(StrEnum):
+    """run 失败的原因，前端据此决定提示语。
+
+    与 HTTP 错误的 code 是两套：那套描述「这个请求为什么被拒」，
+    这套描述「这个已经在跑的 run 为什么没跑完」。
+    """
+
+    SANDBOX_QUEUE_TIMEOUT = "SANDBOX_QUEUE_TIMEOUT"
+    INTERNAL = "INTERNAL"
+
+
 class EventEnvelope(BaseModel):
     """所有事件共用的信封，`type` 之外的字段与事件种类无关。
 
@@ -51,6 +81,46 @@ class EventEnvelope(BaseModel):
     ts: int = Field(description="服务端毫秒时间戳")
     run_id: str = Field(min_length=1, description="所属 run，便于前端在多 run 并存时路由")
     path: tuple[str, ...] = Field(description="子 agent 归属，空元组为主 agent")
+
+
+class RunStartedData(BaseModel):
+    """`run.started` 事件的载荷。"""
+
+    thread_id: str = Field(min_length=1, description="run 所属的会话")
+
+
+class RunFinishedData(BaseModel):
+    """`run.finished` 事件的载荷。"""
+
+    status: Literal[RunStatus.SUCCEEDED] = Field(
+        default=RunStatus.SUCCEEDED,
+        description="正常完成才发这个事件，失败走 run.failed",
+    )
+    tokens_used: int = Field(ge=0, description="本次 run 消耗的 token 总量")
+
+
+class RunFailedData(BaseModel):
+    """`run.failed` 事件的载荷。"""
+
+    code: RunErrorCode = Field(description="失败原因，稳定的机器可读枚举")
+    message: str = Field(min_length=1, description="中文说明，前端可直接展示")
+    retryable: bool = Field(description="重试是否有意义，前端据此决定要不要显示重试按钮")
+
+
+class SandboxQueuedData(BaseModel):
+    """`sandbox.queued` 事件的载荷。"""
+
+    position: int = Field(ge=1, description="当前排位，1 表示下一个就轮到自己")
+
+
+class ErrorData(BaseModel):
+    """`error` 事件的载荷。
+
+    与 `run.failed` 的区别是**是否终止 run**：这个只是过程中的告警。
+    """
+
+    code: RunErrorCode = Field(description="错误分类")
+    message: str = Field(min_length=1, description="中文说明")
 
 
 class TokenData(BaseModel):
@@ -80,6 +150,56 @@ class ToolResultData(BaseModel):
     name: str = Field(description="产生该结果的工具名")
     content: str = Field(description="工具返回的文本，出错时是错误描述")
     status: Literal["success", "error"] = Field(description="工具自身的成败，与 run 的成败无关")
+
+
+class SandboxReadyData(BaseModel):
+    """`sandbox.ready` 事件的载荷。
+
+    契约上是空对象。留成模型而不是省掉 `data` 字段，是为了让前端拿到的信封形状一致，
+    且将来要带上沙箱标识时不必改事件的类型。
+    """
+
+
+class RunStartedEvent(EventEnvelope):
+    """worker 领取任务，开始执行。"""
+
+    type: Literal[EventType.RUN_STARTED] = EventType.RUN_STARTED
+    data: RunStartedData
+
+
+class RunFinishedEvent(EventEnvelope):
+    """run 正常完成，终态。"""
+
+    type: Literal[EventType.RUN_FINISHED] = EventType.RUN_FINISHED
+    data: RunFinishedData
+
+
+class RunFailedEvent(EventEnvelope):
+    """run 异常终止，终态。"""
+
+    type: Literal[EventType.RUN_FAILED] = EventType.RUN_FAILED
+    data: RunFailedData
+
+
+class SandboxQueuedEvent(EventEnvelope):
+    """沙箱已满，正在排队。排位每次变化都会推一条。"""
+
+    type: Literal[EventType.SANDBOX_QUEUED] = EventType.SANDBOX_QUEUED
+    data: SandboxQueuedData
+
+
+class SandboxReadyEvent(EventEnvelope):
+    """拿到沙箱，排队结束。"""
+
+    type: Literal[EventType.SANDBOX_READY] = EventType.SANDBOX_READY
+    data: SandboxReadyData
+
+
+class ErrorEvent(EventEnvelope):
+    """不终止 run 的非致命错误。"""
+
+    type: Literal[EventType.ERROR] = EventType.ERROR
+    data: ErrorData
 
 
 class TokenEvent(EventEnvelope):
@@ -114,4 +234,18 @@ class ToolResultEvent(EventEnvelope):
     data: ToolResultData
 
 
-type Event = TokenEvent | ReasoningEvent | ToolCallEvent | ToolResultEvent
+type Event = (
+    RunStartedEvent
+    | RunFinishedEvent
+    | RunFailedEvent
+    | SandboxQueuedEvent
+    | SandboxReadyEvent
+    | ErrorEvent
+    | TokenEvent
+    | ReasoningEvent
+    | ToolCallEvent
+    | ToolResultEvent
+)
+
+# 出现即代表 run 已经结束，事件流可以收尾。SSE 端点靠它决定何时关闭连接。
+TERMINAL_EVENT_TYPE = frozenset({EventType.RUN_FINISHED, EventType.RUN_FAILED, EventType.RUN_CANCELLED})

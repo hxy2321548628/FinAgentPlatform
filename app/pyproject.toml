@@ -61,8 +61,8 @@ allow-star-arg-any = false
 
 [tool.ruff.lint.per-file-ignores]
 # 测试文件不强制 docstring：测试函数名本身就是说明（python-constitution.md 第一条）。
-# D102 一并豁免是因为测试里的假对象（fake / stub）方法名即职责，写 docstring 只是噪音。
-"*_test.py" = ["D100", "D102", "D103"]
+# D101 / D102 一并豁免是因为测试里的假对象（fake / stub）名字即职责，写 docstring 只是噪音。
+"*_test.py" = ["D100", "D101", "D102", "D103"]
 
 [tool.ruff.format]
 docstring-code-format = true
