@@ -44,10 +44,11 @@ ignore = [
     "D203",  # 与 D211 冲突，二选一
     "D213",  # 与 D212 冲突，二选一
     "D107",  # __init__ 的说明允许写在类 docstring 里（python-style.md 三）
-    # 以下四条与「注释和 docstring 一律中文」冲突，不是放松标准而是规则不适用：
+    # 以下五条与「面向用户的文字一律中文」冲突，不是放松标准而是规则不适用：
     "D400",  # 要求首行以 . 结尾，中文句号是 。
     "D415",  # 同上，扩展到 ? !
-    "RUF002",  # 把 docstring 里的全角标点（，。）判为歧义字符
+    "RUF001",  # 把字符串字面量里的全角标点判为歧义字符，命中 Field(description="…") 这类中文说明
+    "RUF002",  # 同上，针对 docstring
     "RUF003",  # 同上，针对注释
 ]
 
@@ -72,6 +73,9 @@ exclude = ["^\\.venv/"]
 strict = true
 # 三方库缺 stub 时不阻塞门禁，但本项目自己的代码仍按 strict 检查
 ignore_missing_imports = true
+# 没有插件时，mypy 靠 dataclass_transform 合成 __init__，会把 BaseSettings 的字段
+# 当成必传参数（Settings() 直接报错）——而这些值本就来自环境变量。
+plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 # 测试文件命名为 {module}_test.py（python-style.md 一）
