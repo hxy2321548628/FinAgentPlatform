@@ -16,12 +16,14 @@ on:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    # action 一律 pin 到完整版本号：setup-uv 不发布 @v9 这种浮动 major tag，
+    # 写了会以 "unable to find version" 失败。升级靠手动改这里。
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       # 不需要 actions/setup-python：uv 依 app/.python-version 自行装 3.13
       - name: 安装 uv
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
