@@ -17,15 +17,17 @@
 ```bash
 cd app/spike
 
-../.venv/bin/python probe1_api_surface.py          # 不花钱，纯静态核对 API
-../.venv/bin/python probe3_write_idempotency.py    # 不花钱，会拉/建镜像
-../.venv/bin/python probe4_interrupt_toolcallid.py # 约 5k token
-../.venv/bin/python probe2_stream_dump.py --quick  # 约 6k token，只抓 StreamPart 结构
-../.venv/bin/python probe2_stream_dump.py          # 约 31 万 token，跑完整分析
+../.venv/bin/python probe1_api_surface.py           # 不花钱，纯静态核对 API
+../.venv/bin/python probe3_write_idempotency.py     # 不花钱，会拉/建镜像
+../.venv/bin/python probe4_interrupt_toolcallid.py  # 约 5k token
+../.venv/bin/python probe5_replay_key_stability.py  # 约 10k token
+../.venv/bin/python probe2_stream_dump.py --quick   # 约 6k token，只抓 StreamPart 结构
+../.venv/bin/python probe2_stream_dump.py --fixture # 约 13k token，生成事件映射器的测试样本
+../.venv/bin/python probe2_stream_dump.py           # 约 31 万 token，跑完整分析
 ```
 
 最后一条是完整验收 case（持仓 CSV → 按行业算年化波动率 → 出图），一次约 31 万 token，
-不要反复跑。只需要事件结构的话用 `--quick`。
+不要反复跑。只需要事件结构的话用 `--quick` 或 `--fixture`。
 
 ## 各探针回答什么
 
@@ -35,6 +37,7 @@ cd app/spike
 | `probe2_stream_dump.py` | DeepAgents 实际吐什么流式结构；一次分析花多少 token、几轮 | 架构 §5.2、§6.4；03agent-design §5.2、§7.3 |
 | `probe3_write_idempotency.py` | `write_file` 是覆盖还是报错；`edit`/`delete` 重放什么行为 | 03agent-design §3.3 |
 | `probe4_interrupt_toolcallid.py` | `tool_call_id` 在 interrupt 恢复前后是否稳定 | ADR-0014、架构 §5.6、§10.2 |
+| `probe5_replay_key_stability.py` | 崩溃重放时幂等键各字段是否稳定、能否按调用唯一 | ADR-0014 的去重键定案 |
 
 ## 文件
 

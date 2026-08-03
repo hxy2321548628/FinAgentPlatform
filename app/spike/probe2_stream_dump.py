@@ -49,6 +49,16 @@ TASK = "workspace 里有一份持仓数据 holdings.csv，请按行业分组计�
 # 而结构捕获两轮就够 —— 结构结论与任务复杂度无关。
 QUICK_TASK = "用 ls 看一下 /workspace 下有哪些文件，然后直接告诉我文件名，不要做别的。"
 
+# 专为生成事件映射器的测试 fixture 设计：几轮之内走遍 read_file / write_file /
+# execute 三个工具，并**故意读一个不存在的文件**制造 status="error" 的 tool_result
+# —— 那是 tool_result 映射的另一个结构分支，成功样本覆盖不到。
+FIXTURE_TASK = (
+    "按顺序做三件事，每件只做一次，不要重试也不要做别的："
+    "① 读 /workspace/missing.csv（它不存在，你会看到报错，看到就继续下一步）；"
+    "② 写一个 /workspace/hello.py，内容是打印 hello；"
+    "③ 运行它。"
+)
+
 # 探针预置的输入文件，判定「agent 是否把产物存进 outputs/」时要排除
 INPUT_FILES = {"holdings.csv"}
 
@@ -68,13 +78,14 @@ def make_holdings_csv(path: Path) -> None:
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
-async def main(quick: bool = False) -> None:
-    section("探针 2 · 真实分析 + StreamPart 结构落盘" + ("（quick：只抓结构）" if quick else ""))
+async def main(mode: str = "full") -> None:
+    section("探针 2 · 真实分析 + StreamPart 结构落盘" + {"quick": "（quick：只抓结构）", "fixture": "（fixture：为映射器造测试样本）"}.get(mode, ""))
     require("DEEPSEEK_API_KEY")
     results: list[dict] = []
 
-    name = "probe2_quick" if quick else "probe2"
-    task = QUICK_TASK if quick else TASK
+    name = {"quick": "probe2_quick", "fixture": "probe2_fixture"}.get(mode, "probe2")
+    task = {"quick": QUICK_TASK, "fixture": FIXTURE_TASK}.get(mode, TASK)
+    quick = mode != "full"
     workspace = fresh_workspace(name)
     make_holdings_csv(workspace / "holdings.csv")
 
@@ -190,4 +201,5 @@ async def main(quick: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main(quick="--quick" in sys.argv))
+    _mode = "quick" if "--quick" in sys.argv else "fixture" if "--fixture" in sys.argv else "full"
+    asyncio.run(main(_mode))

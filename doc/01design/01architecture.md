@@ -23,6 +23,7 @@
 | v0.9 | 2026-07-31 | hxy | **结构整理**：选型论证下沉至 [`adr/`](./adr/)（新增 ADR-0010–0015），主文档只保留契约与现状，净减约 90 行；小节重编号 §7.2.x |
 | v0.10 | 2026-07-31 | hxy | 新增下游[智能体设计](./03agent-design.md)与 ADR-0016；据此**改正 §5.6 工具集**（改用 DeepAgents 内置 8 工具）与 §5.5 文件系统映射；§8.5 补两条部署前提 |
 | v0.11 | 2026-08-02 | hxy | **P0 探针实测回填**：§5.2 Agent 层事件 payload 全部定案并新增 `reasoning` 类型；**§3.2 重放表改正**（HITL 不致工具重复执行）；§6.4 配额口径改按 cache 拆分；§7.3.5 预装清单补中文字体；关闭 §10.2 两条风险、新增一条；改正 `async_create_deep_agent` 与模型 ID 笔误 |
+| v0.12 | 2026-08-03 | hxy | 依探针⑤定案 §5.6 的**幂等键改用 `(thread_id, checkpoint_ns)`**（backend 拿不到 `tool_call_id`）；§10.2 关闭「幂等键无落点」，新增「键与框架扇出方式耦合」 |
 
 > **本文档的分工**：主文档回答**「系统是什么样」** —— 结构、契约、参数、现状。**「为什么这样选、否掉了什么」**在 [`adr/`](./adr/)，本文只在相应位置给出链接。
 >
@@ -784,11 +785,11 @@ worker ──POST /sandbox/{op} { tool_call_id, ... } ──▶ broker
 
 这样**单个工具是否幂等就不再是正确性的前提**。论证、备选与残留风险见 [ADR-0014](./adr/0014-tool-idempotency-key.md)。
 
-> **支点已验证成立**（2026-08-02，P0 探针）：跑一次 `interrupt` → `Command(resume=...)`，中断前的 `AIMessage.tool_calls[0].id`、恢复后的同一字段、回填的 `ToolMessage.tool_call_id` 三者完全相同。
+> **去重键已改为 `(thread_id, checkpoint_ns)`**（2026-08-03 定案，[ADR-0014 §落地方式](./adr/0014-tool-idempotency-key.md)）。上图里「worker 传 `tool_call_id`」改成传这两项。
 >
-> **但落点不成立，方案尚不能直接实施**：`BackendProtocol.write(file_path, content)` 等方法的签名里**没有** `tool_call_id`，middleware 拿得到却不往 backend 传，`get_config()['configurable']` 里也没有。而 worker 侧唯一能改的就是 backend 实现。
+> `tool_call_id` 的重放稳定性验证是通过的，但**backend 拿不到它** —— `BackendProtocol.write(file_path, content)` 的签名里没有，middleware 拿得到却不往下传，`get_config()['configurable']` 里也没有。而 worker 侧唯一能改的就是 backend 实现。
 >
-> 上图「worker 传 `tool_call_id`」这一步**缺一条落地路径**，三条候选与倾向见 [ADR-0014 §落地方式](./adr/0014-tool-idempotency-key.md)。倾向 worker 侧用 `(thread_id, checkpoint_ns, 操作, 路径, 内容 hash)` 自构造确定性键 —— 但需要单独再验证一次 `checkpoint_ns` 的重放稳定性。
+> `checkpoint_ns` 则两个条件都实测满足：崩溃重放前后一致；且 LangGraph 把每个工具调用扇出成独立 task，同一轮的并行调用拿到的 ns 不同，因此它按**调用**唯一而非按节点唯一。
 
 ### 5.7 对外接口概要
 
@@ -1318,7 +1319,7 @@ location /api/runs/ {
 | [ADR-0011](./adr/0011-cookie-session-not-oauth2.md) | 认证用 Cookie + Redis Session，不用 OAuth2 / JWT | 已接受 |
 | [ADR-0012](./adr/0012-plain-http-intranet.md) | 内网走 HTTP，不启用 TLS | 已接受 |
 | [ADR-0013](./adr/0013-event-anticorruption-layer-v2-stream.md) | 事件契约做防腐层，worker 消费 v2 `astream` | 已接受 |
-| [ADR-0014](./adr/0014-tool-idempotency-key.md) | 工具幂等键用 `tool_call_id`，broker 侧去重 | 已接受（**支点已验证，落点待定**） |
+| [ADR-0014](./adr/0014-tool-idempotency-key.md) | 工具幂等键，broker 侧去重（键为 `thread_id` + `checkpoint_ns`） | 已接受 |
 | [ADR-0015](./adr/0015-sandbox-disk-quota-xfs.md) | 沙箱磁盘配额用 XFS project quota | 已接受 |
 | [ADR-0016](./adr/0016-sandbox-filesystem-backend.md) | 自实现 DeepAgents 沙箱后端，不用内置 StateBackend | 已接受 |
 
@@ -1355,7 +1356,8 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 | **用户范围被悄悄放开到全院学生** | 基数增一个数量级，§3.2 权衡、§8.1 容量、ADR-0001 单机结论同时失效 | §2.2 已明确边界为「课题组研究生」。放开前必须重审这三处，不能当作纯运营决定 |
 | **写操作重复执行** | ~~HITL 每次审批恢复都会整节点重跑~~ **（2026-08-02 实测改正：HITL 不致工具重复执行，§3.2）**。仅余崩溃路径：崩溃在工具执行途中时重复执行 `execute` / `edit_file` / `delete`，造成数据污染或使 LLM 看到虚假错误 | §5.6 幂等键方案。**降级**：不再是 P3 HITL 的前置条件，可与 HITL 解耦排期。§5.4 的 run 级自动重试上限维持 1 次（该理由不受影响） |
 | ~~**`tool_call_id` 重放稳定性未经验证**~~ | **已关闭**（2026-08-02）。实测中断前后 `tool_call_id` 完全一致 | — |
-| **ADR-0014 的幂等键无落点** | backend 拿不到 `tool_call_id`（签名里没有、`get_config()` 里也没有），而 worker 侧唯一能改的就是 backend 实现。方案目前无法直接实施 | [ADR-0014 §落地方式](./adr/0014-tool-idempotency-key.md) 列了三条候选，倾向 worker 侧自构造确定性键。**决定前需再验一次 `checkpoint_ns` 的重放稳定性** |
+| ~~**ADR-0014 的幂等键无落点**~~ | **已关闭**（2026-08-03）。改用 `(thread_id, checkpoint_ns)`，两个条件均实测满足 | — |
+| **幂等键与 LangGraph 的任务扇出方式耦合** | `checkpoint_ns` 是框架编排细节，不是本平台的领域概念。若 LangGraph 改变扇出粒度（同一轮多个工具调用合成一个 task），键将不再按调用唯一，去重**静默误判**而不报错 | 升级 langgraph 时须重跑 `app/spike/probe5_replay_key_stability.py` 的并行场景复验。已写入 [ADR-0014](./adr/0014-tool-idempotency-key.md) 的重估触发条件 |
 | **LLM 供应商的 prompt cache 影响成本模型** | 实测 62% 的 input token 是 cache 命中，按总量计费/扣配额会高估约 1.6 倍，且方向性地惩罚长会话 | §6.4 已定口径：分开记 `cache_read` 与未命中。**若换模型供应商需重新测这个比例**，它不是 DeepSeek 独有但比例各不相同 |
 | ~~`interrupt` 的流式表示无文档依据~~ | **已关闭**（2026-07-31）。官方文档确认 HITL 在工具调用边界暂停而非流式事件，改为流结束后查 `aget_state()`，不依赖未文档化行为 | §5.3 已定机制与 payload |
 | **HITL 的触发范围未定** | 若给 `execute` 全量加审批，agent 每跑一段代码就要教师点一次，平台不可用 | §5.3 TODO。倾向用 `when` 谓词做条件拦截；P0 跑出真实行为模式后再定，HITL 本就排 P3 |
@@ -1391,12 +1393,13 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 | ② | 一次典型分析的 token 消耗与 agent 行为模式 | ✅ 17 轮 / 31.3 万 token，已回填 §6.4；**发现 prompt cache 影响计量口径** |
 | ③ | `interrupt` 恢复前后 `tool_call_id` 是否一致 | ✅ 一致，ADR-0014 支点成立；**但发现落点不成立**（backend 拿不到该 id） |
 | ④ | `write_file` 对已存在文件是覆盖还是报错 | ✅ 覆盖。[智能体设计 §3.3](./03agent-design.md) 的存疑项定案 |
+| ⑤ | 崩溃重放时 `checkpoint_ns` 是否稳定、能否按调用唯一 | ✅ 两者都成立。**[ADR-0014](./adr/0014-tool-idempotency-key.md) 的去重键据此定案**（2026-08-03 补做） |
 
 **另有一项计划外的重要发现**：HITL 审批恢复**不会**导致工具重复执行，§3.2 那张重放表的最后一行被推翻。这不改变架构，但改变了 ADR-0014 的紧迫性与排期依赖。
 
 验收 case 本身也已通过：agent 自行写出 `explore_data.py` 与 `volatility_analysis.py`，在容器里执行，产出 `outputs/industry_volatility.png`。
 
-**P0 剩余工作**：FastAPI 网关接入、SSE 流式输出、事件防腐层按 §5.2 已定案的契约实现。
+**P0 剩余工作**：FastAPI 网关接入、SSE 流式输出、事件防腐层按 §5.2 已定案的契约实现。步骤分解、验收标准与刻意欠债的登记见 [P0 实施计划](../03plan/P0-plan.md)。
 
 ### 关于 P0 与 P1 的顺序
 
@@ -1420,6 +1423,7 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 | 架构决策记录 | [`doc/01design/adr/`](./adr/) | 下游，本文档 §9 的展开 |
 | 智能体设计 | [`doc/01design/03agent-design.md`](./03agent-design.md) | 下游，展开本文档 §5.5、§5.6 的 Agent 侧细节 |
 | P0 探针结论 | [`app/spike/FINDINGS.md`](../../app/spike/FINDINGS.md) | 输入，v0.11 的全部实测数据来源。一次性验证代码，回填完即可删除 |
+| P0 实施计划 | [`doc/03plan/P0-plan.md`](../03plan/P0-plan.md) | 下游，把 §11 的 P0 一行展开为可执行的步骤与验收标准 |
 
 ## 附录 B：已评估但本期不采用
 

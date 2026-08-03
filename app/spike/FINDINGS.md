@@ -7,7 +7,9 @@
 | 模型 | `deepseek-v4-pro`（temperature=0） |
 | 对应任务 | [架构文档 §11](../../doc/01design/01architecture.md) 的 P0 探针①②③④ + [智能体设计 §7.3](../../doc/01design/03agent-design.md) 的观察项 |
 
-四个探针全部跑完。**19 项核对通过，4 项与设计文档不符**，另有 3 项文档没预料到的发现。
+五个探针全部跑完（①–④ 于 2026-08-02，⑤ 于 08-03 补做）。**19 项核对通过，4 项与设计文档不符**，另有 3 项文档没预料到的发现，以及 1 条据此定案的幂等键方案。
+
+**当前无待决事项** —— 探针提出的三个问题（`tool_call_id` 稳定性、幂等键落点、`checkpoint_ns` 稳定性）已全部关闭。
 
 ---
 
@@ -38,7 +40,7 @@
 | `edit_file` | `occurrences=1` | `Error: String not found in file: '…'` |
 | `delete` | `path='/workspace/probe3.txt'` | `Error: '/workspace/probe3.txt' not found` |
 
-### 4. ADR-0014 的支点成立，但**落点不成立** ❌
+### 4. ADR-0014 的支点成立，落点另找（2026-08-03 已定案）
 
 这是本轮最重要的发现，分两半：
 
@@ -58,7 +60,9 @@
 - middleware 拿得到（`runtime.tool_call_id`），但**不往 backend 传**；
 - 在 backend 方法里调 `langgraph.config.get_config()`，`configurable` 只有 `['__pregel_call', '__pregel_checkpointer', '__pregel_read', '__pregel_replay_state', '__pregel_runtime', '__pregel_scratchpad', '__pregel_send', '__pregel_task_id', 'checkpoint_id', 'checkpoint_map', 'checkpoint_ns', 'thread_id']` —— **没有 `tool_call_id`**。
 
-ADR-0014 的机制是「worker 传 `tool_call_id`，broker 对全部写操作去重」，而 worker 侧唯一能改的就是 backend 实现，它恰好看不到这个 id。**ADR-0014 需要补一条「id 怎么传到 backend」的落地方案**，候选见下方第四节。
+ADR-0014 的机制是「worker 传 `tool_call_id`，broker 对全部写操作去重」，而 worker 侧唯一能改的就是 backend 实现，它恰好看不到这个 id。
+
+**已由探针⑤解决（2026-08-03）：去重键改用 `(thread_id, checkpoint_ns)`，见下方第五节。**
 
 ---
 
@@ -128,19 +132,41 @@ ADR-0014 的机制是「worker 传 `tool_call_id`，broker 对全部写操作去
 
 ---
 
-## 四、待决事项
+## 五、探针⑤：幂等键定案（2026-08-03 补做）
 
-### ADR-0014 的 id 传递路径（阻塞 P3）
+`probe5_replay_key_stability.py`。目的是给上面第 4 条找落点。
 
-backend 拿不到 `tool_call_id`，三条候选：
+**模拟真实场景**：让 backend 在第一次 `write` 时抛异常（崩溃在工具执行途中 —— 由发现 5，HITL 路径不需要验），再用同一 thread 恢复重跑，比对两次调用看到的上下文。
 
-1. **contextvar 中转** —— 自定义 middleware 在工具执行前把 `runtime.tool_call_id` 写进 contextvar，`SandboxBackend` 读它。侵入小，但依赖 middleware 执行顺序，异步并发下要确认 contextvar 隔离正确。
-2. **worker 侧自构造确定性键** —— 用 `(thread_id, checkpoint_ns, 操作, 路径, 内容 hash)` 拼键。`get_config()` 里 `thread_id` 与 `checkpoint_ns` 都拿得到，无需框架配合。这正是 [§10.2 风险表](../../doc/01design/01architecture.md)里写的退路。
-3. **不做工具层去重** —— 鉴于发现 5（HITL 不导致重复执行），只在崩溃恢复路径上承担风险。
+**条件① 重放稳定** ✅ —— 四个候选字段全部一致：
 
-倾向 2：不依赖框架内部细节，且 `checkpoint_ns` 在重放时稳定。但需要单独验证一次。
+```
+thread_id         probe5-thread              → probe5-thread
+checkpoint_ns     tools:aba4ce70-…           → tools:aba4ce70-…
+checkpoint_id     None                       → None
+__pregel_task_id  aba4ce70-…                 → aba4ce70-…
+```
 
-### 其余观察项
+工具入参（路径 + 内容 hash）也一致。顺带复核 `tool_call_id` 在崩溃重放前后同样一致（发现 4 验的是 HITL 路径，这里补了崩溃路径）。
+
+**条件② 能区分同一轮的不同调用** ✅ —— 这一条我原先判断会**不**成立。`checkpoint_ns` 形如 `tools:<uuid>`，其中的 uuid 就是 `__pregel_task_id`，看着是按**节点**生成的，那么同一个 `AIMessage` 里的多个 `tool_calls` 应该共享同一个 ns 而撞键。
+
+实测推翻了这个推断。让模型一次吐出两个并行 `write_file`：
+
+```
+/workspace/a.txt → tools:fd422cb9-d8b8-c0ae-510d-64ed2e099a1c
+/workspace/b.txt → tools:3ad455cb-c5f8-4f8d-5ade-b005f0a631a7
+```
+
+**LangGraph 把每个工具调用扇出成独立 task**，所以 `checkpoint_ns` 实际按**调用**唯一。
+
+**结论：去重键 = `(thread_id, checkpoint_ns)`。** 不需要再拼「操作名 + 路径 + 内容 hash」—— 那是怀疑条件②时准备的补强，既然 ns 已按调用唯一，加进去只会让「同一调用重放」在参数被上游改动时误判成新调用。
+
+**代价要记住**：`checkpoint_ns` 是 LangGraph 的编排细节，不是本平台的领域概念。**若框架改变扇出粒度，条件②会失效且不报错，只是静默误判。** 升级 langgraph 时须重跑本探针的并行场景复验，已写进 [ADR-0014](../../doc/01design/adr/0014-tool-idempotency-key.md) 的重估触发条件。
+
+---
+
+## 六、其余观察项
 
 | 观察项 | 结果 |
 |---|---|

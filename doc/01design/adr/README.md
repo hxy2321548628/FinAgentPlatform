@@ -25,7 +25,7 @@
 | [0011](./0011-cookie-session-not-oauth2.md) | 认证用 Cookie + Redis Session，不用 OAuth2 / JWT | 已接受 | §7.2.2 |
 | [0012](./0012-plain-http-intranet.md) | 内网走 HTTP，不启用 TLS | 已接受 | §4.4、§7.4 |
 | [0013](./0013-event-anticorruption-layer-v2-stream.md) | 事件契约做防腐层，worker 消费 v2 `astream` | 已接受 | §5.2 |
-| [0014](./0014-tool-idempotency-key.md) | 工具幂等键用 `tool_call_id`，broker 侧去重 | 已接受（支点已验证，落点待定） | §3.2、§5.6 |
+| [0014](./0014-tool-idempotency-key.md) | 工具幂等键，broker 侧去重（键为 `thread_id` + `checkpoint_ns`） | 已接受 | §3.2、§5.6 |
 | [0015](./0015-sandbox-disk-quota-xfs.md) | 沙箱磁盘配额用 XFS project quota | 已接受 | §7.3.5 |
 | [0016](./0016-sandbox-filesystem-backend.md) | 自实现 DeepAgents 沙箱后端，不用内置 StateBackend | 已接受 | §5.5、§5.6 |
 
