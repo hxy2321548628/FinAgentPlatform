@@ -24,8 +24,10 @@ zuel-platform/
 ├── deploy/         # Docker Compose 与部署配置（未开始）
 ├── doc/            # 设计文档，见上方文档地图
 ├── .claude/        # 技术章程与风格指南
+├── .github/        # CI（gate workflow：干净环境里复跑 make all）
+├── .githooks/      # pre-push 门禁 hook，需 `make hooks` 启用
 ├── .env            # 凭据，不入库；模板见 .env.example
-└── Makefile        # 质量门禁入口（待建，见下）
+└── Makefile        # 质量门禁入口，见下
 ```
 
 ---
@@ -51,6 +53,7 @@ cd app && uv run python spike/probe1_api_surface.py
 
 - 直接提交到 `main`，不开分支。
 - 消息格式 `Type(scope): 中文描述`，与现有历史一致（`Docs(design):` / `Feat(spike):`）。正文说清改了什么、为什么。
+- 提交前 `make all` 全绿。`make hooks` 装上 pre-push hook 后 push 会自动跑（**新克隆的仓库要手动跑一次**，hook 配置不随 clone 走）。
 
 ---
 

@@ -9,7 +9,7 @@ APP := app
 UV  := uv run
 
 .DEFAULT_GOAL := all
-.PHONY: all fix fmt lint type test cov sync clean help
+.PHONY: all fix fmt lint type test cov sync sync-locked hooks clean help
 
 ## all: 本地门禁 —— lint + 类型 + 测试（提交前必须全绿）
 all: lint type test
@@ -51,6 +51,15 @@ cov:
 ## sync: 按 uv.lock 重建虚拟环境
 sync:
 	@cd $(APP) && uv sync
+
+## sync-locked: 同上但禁止改动 uv.lock（CI 用；锁文件与 pyproject 不一致即失败）
+sync-locked:
+	@cd $(APP) && uv sync --locked
+
+## hooks: 启用仓库内的 git hooks（新克隆的仓库需手动跑一次）
+hooks:
+	@git config core.hooksPath .githooks
+	@echo "✅ 已启用 .githooks/：push 前自动跑 make all"
 
 ## clean: 清理工具缓存与构建产物
 clean:

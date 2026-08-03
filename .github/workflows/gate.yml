@@ -1,0 +1,30 @@
+# 远端门禁：在干净环境里把本地 `make all` 原样复跑一遍。
+#
+# 检查项一律定义在仓库根 Makefile，这里不重复任何 ruff / mypy / pytest 命令 ——
+# 复制一份就是给门禁立第二个裁判，改一处必漏另一处。
+#
+# main 是直推的，事前拦截靠 .githooks/pre-push；本 workflow 兜的是
+# hook 未安装、被 --no-verify 绕过、或本机环境与 uv.lock 漂移这三种情况。
+name: gate
+
+on:
+  push:
+    branches: [main]
+  # 目前不走 PR 流程，留着是防将来（含 dependabot）开了 PR 却静默漏跑
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # 不需要 actions/setup-python：uv 依 app/.python-version 自行装 3.13
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      # 无 .env、无 DEEPSEEK_API_KEY，进 CI 的测试一律不得打真实 API
+      - name: 门禁
+        run: make sync-locked all
