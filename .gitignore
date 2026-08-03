@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage
 
 # ---- 环境变量 ----
 # .env 存放 DEEPSEEK_API_KEY 等凭据，一律不进库；占位模板走 .env.example
