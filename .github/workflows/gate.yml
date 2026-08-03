@@ -27,6 +27,11 @@ jobs:
         with:
           enable-cache: true
 
+      # 沙箱测试靠镜像是否存在来决定跑还是跳过。不在这里构建，CI 会静默跳过
+      # 二十个用例（含「容器停掉后文件工具仍可用」这条核心断言）并照常显示绿灯。
+      - name: 构建沙箱镜像
+        run: docker build -f deploy/sandbox.Dockerfile -t zuel-sandbox:latest .
+
       # 无 .env、无 DEEPSEEK_API_KEY，进 CI 的测试一律不得打真实 API
       - name: 门禁
         run: make sync-locked all

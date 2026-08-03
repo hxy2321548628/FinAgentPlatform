@@ -31,6 +31,19 @@ DeepAgents 官方内置的后端有 `StateBackend` / `FilesystemBackend` / `Loca
 >
 > 另注：`SandboxBackendProtocol` 位于 `deepagents.backends.protocol`，**没有从 `deepagents.backends` 导出**，须写全路径 import。
 
+> **实现方式补充（2026-08-03，P0 步骤二）**：`SandboxBackend` 内部把九个文件方法委托给 `FilesystemBackend`（`root_dir` 设为该 thread 的 workspace，`virtual_mode=True`），只有 `execute` 与产物判定自己写。
+>
+> **这不等于「改用 `FilesystemBackend`」** —— 下表排除它，针对的是「把它直接挂给 agent 当 backend」。本决策的四条分工全部保持：仍自实现 `SandboxBackend`、仍实现 `SandboxBackendProtocol`、文件操作走宿主 bind-mount 目录、只有 `execute` 进容器。变的只是磁盘操作由谁落笔。
+>
+> 成立的前提是 **P0 不拆 broker**（[P0 计划 §1.2](../../03plan/P0-plan.md) 已登记为 P1 欠债）：worker 进程直接持有 bind-mount 目录，因此「它操作的是 worker 的文件系统，不是沙箱的」这条排除理由不成立 —— P0 形态下两者是同一个目录。**P1 拆出 broker 时本补充随之失效**，届时文件操作改走 HTTP，需重新评估。
+>
+> 包装层必须补两件它不做的事，缺一条就违反[智能体设计 §3.4](../03agent-design.md)：
+>
+> - **越界时它抛 `ValueError` 而非返回 `error` 字段** —— 不捕获就会让整个 run 失败
+> - 它的虚拟根是 `/`，agent 视角的 `/workspace/x` 须先剥掉前缀
+>
+> 其 `virtual_mode` 的防护已实测：`..`、workspace 外的绝对路径、**指向外部的符号链接**（规范化后校验，含符号链接目录）均被拦下，且穿越写入不落盘。
+
 ## 理由
 
 **排除 `StateBackend` 的理由是决定性的，不是偏好问题**：文件只存在于 LangGraph state 中，磁盘上没有实体，所以沙箱里的 `pd.read_csv('/workspace/data.csv')` 会 FileNotFound。而「agent 写代码分析文件」正是本平台的全部业务（§1.1），这个组合根本不成立。

@@ -20,7 +20,7 @@
 zuel-platform/
 ├── app/            # Python 后端（uv 工程，虚拟环境在 app/.venv）
 ├── frontend/       # React 前端（未开始）
-├── deploy/         # Docker Compose 与部署配置（未开始）
+├── deploy/         # 部署配置。目前只有 sandbox.Dockerfile；Compose 未开始
 ├── doc/            # 设计文档，见上方文档地图
 ├── .claude/        # 技术章程与风格指南
 ├── .github/        # CI（gate workflow：干净环境里复跑 make all）
@@ -38,6 +38,9 @@ Python 3.13 + uv。虚拟环境在 `app/.venv`，**不在仓库根**：
 ```bash
 cd app && uv sync                      # 装依赖
 cd app && uv run pytest                # 跑脚本一律走 uv run；门禁入口仍是仓库根的 make
+
+# 沙箱镜像。**新克隆的仓库要跑一次**，否则沙箱测试会静默跳过而门禁照样绿
+docker build -f deploy/sandbox.Dockerfile -t zuel-sandbox:latest .
 ```
 
 `.env` 在**仓库根**（不在 `app/`），业务代码一律走 `pydantic_settings.BaseSettings` 读取，不直接 `os.getenv`。
@@ -45,6 +48,7 @@ cd app && uv run pytest                # 跑脚本一律走 uv run；门禁入�
 ### 两个会浪费时间的坑
 
 - **开发机的 `ALL_PROXY=socks://…` 会让 `ChatDeepSeek` 构造直接报错**（httpx 不认 socks 方案）。`api.deepseek.com` 实测可直连，剥掉该变量即可。内网服务器上没有这些变量，是纯开发机问题。
+- **没有 `zuel-sandbox:latest` 镜像时，二十个沙箱测试会 skip 而不是失败**，`make all` 依旧显示通过。要验沙箱就得先构建镜像，见上方命令。
 
 ---
 
