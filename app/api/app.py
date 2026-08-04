@@ -6,7 +6,7 @@
 字段级的请求/响应文档以 `/docs` 的 OpenAPI 为准，不在这里手写第二份。
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -31,7 +31,7 @@ def create_app(platform: Platform | None = None) -> FastAPI:
     """
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         owned = platform is None
         current = platform if platform is not None else build_platform(get_settings())
         if owned:
