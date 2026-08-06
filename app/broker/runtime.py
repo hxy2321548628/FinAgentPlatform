@@ -82,7 +82,13 @@ def build_broker(settings: Settings) -> Broker:
     Returns:
         可直接交给路由使用的运行时。
     """
-    workspace = Workspace(root=settings.sandbox_workspace_root, quota=_build_quota(settings))
+    # 属主必须跟沙箱的运行身份一致：broker 在容器里是 root，建出来的目录
+    # 沙箱（以宿主用户跑）一个字节都写不进去，而且不会有任何一条报错指向权限
+    workspace = Workspace(
+        root=settings.sandbox_workspace_root,
+        quota=_build_quota(settings),
+        owner=settings.sandbox_owner(),
+    )
     pool = SandboxPool(
         workspace=workspace,
         image=settings.sandbox_image,

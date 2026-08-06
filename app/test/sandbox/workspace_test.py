@@ -201,3 +201,28 @@ def test_without_a_quota_the_directory_still_works(tmp_path: Path) -> None:
     space = Workspace(root=tmp_path)
 
     assert space.path("thread-1").is_dir()
+
+
+def test_a_new_directory_is_handed_to_the_sandbox_user(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Broker 在容器里是 root，不改属主的话沙箱（以宿主用户跑）写不进去。
+
+    症状极具迷惑性：execute 照常成功、没有一条报错指向权限，只是产物一个都没有。
+    """
+    handed: list[tuple[Path, int, int]] = []
+    monkeypatch.setattr("sandbox.workspace.os.chown", lambda path, uid, gid: handed.append((path, uid, gid)))
+    space = Workspace(root=tmp_path, owner=(1000, 1000))
+
+    thread_id = space.create()
+
+    assert handed == [(tmp_path / thread_id, 1000, 1000)]
+
+
+def test_without_an_owner_the_directory_is_left_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """直接跑 uvicorn 时进程本就是宿主用户，不该多此一举地 chown。"""
+    handed: list[object] = []
+    monkeypatch.setattr("sandbox.workspace.os.chown", lambda *argument: handed.append(argument))
+    space = Workspace(root=tmp_path)
+
+    space.create()
+
+    assert handed == []

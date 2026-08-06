@@ -1,6 +1,5 @@
 """run 相关的端点：查状态、订阅事件流。"""
 
-from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header
@@ -9,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from api.error import invalid, not_found
 from api.platform import Platform, get_platform
 from api.schema import RunResponse
-from api.sse import format_event
+from api.sse import heartbeat_stream
 from run.log import InvalidEventIdError, parse_event_id
 
 router = APIRouter(prefix="/runs", tags=["run"])
@@ -19,7 +18,8 @@ SSE_MEDIA_TYPE = "text/event-stream"
 SSE_HEADER = {
     "Cache-Control": "no-cache",
     # Nginx 默认会攒够一整个缓冲区才往下发，流式输出会全部卡到响应结束。
-    # 本期直接跑 uvicorn 用不上这一条，但它得跟着端点走，不然上了反代才发现。
+    # 反代那边也配了 proxy_buffering off，两处都留着：这一条跟着端点走，
+    # 换个反代或多加一层缓存时不必再想起来改配置。
     "X-Accel-Buffering": "no",
 }
 
@@ -50,14 +50,8 @@ async def stream_events(
         raise not_found(message)
 
     cursor = _cursor(last_event_id)
-
-    async def body() -> AsyncIterator[str]:
-        # 长时间静默（例如排队等沙箱）时没有心跳，反代或浏览器可能先把连接掐掉。
-        # 本期直连 uvicorn 且 curl 不会超时，上反代前须补一条注释行做心跳。
-        async for logged in platform.log.follow(run_id, after=cursor):
-            yield format_event(logged)
-
-    return StreamingResponse(body(), media_type=SSE_MEDIA_TYPE, headers=SSE_HEADER)
+    body = heartbeat_stream(platform.log.follow(run_id, after=cursor))
+    return StreamingResponse(body, media_type=SSE_MEDIA_TYPE, headers=SSE_HEADER)
 
 
 def _cursor(last_event_id: str | None) -> str | None:

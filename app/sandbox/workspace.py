@@ -6,11 +6,15 @@
 上传的文件名与产物路径都来自 HTTP 请求，属于不可信输入，越界防护在本模块。
 """
 
+import logging
+import os
 from pathlib import Path
 from uuid import uuid4
 
 from sandbox.path import OUTPUT_DIR, PathEscapeError, thread_workspace
 from sandbox.quota import NoQuota, QuotaProtocol
+
+logger = logging.getLogger(__name__)
 
 
 class Workspace:
@@ -22,11 +26,18 @@ class Workspace:
     Args:
         root: 各会话目录所在的宿主机根目录。
         quota: 目录配额，不传则不设 —— 只有 CI 与没挂 XFS 的开发机该用这个默认值。
+        owner: 新建目录要交给谁，形如 `(1000, 1000)`。不传则跟着当前进程走。
     """
 
-    def __init__(self, root: Path, quota: QuotaProtocol | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        quota: QuotaProtocol | None = None,
+        owner: tuple[int, int] | None = None,
+    ) -> None:
         self._root = root
         self._quota = quota or NoQuota()
+        self._owner = owner
 
     def create(self) -> str:
         """开一个新会话。
@@ -75,8 +86,24 @@ class Workspace:
             return workspace
 
         workspace.mkdir(parents=True, exist_ok=True)
+        self._hand_over(workspace)
         self._quota.assign(thread_id, workspace)
         return workspace
+
+    def _hand_over(self, workspace: Path) -> None:
+        """把新建的目录交给沙箱要用的那个用户。
+
+        **broker 进容器之后是 root，建出来的目录就是 root 属主**，而沙箱以宿主用户跑，
+        于是一个字节都写不进去。症状极具迷惑性：`execute` 照常成功（脚本在 /tmp 里跑），
+        agent 只是「选择」把图存到别处，最后产物一个都没有 —— 全程没有一条报错指向权限。
+        """
+        if self._owner is None:
+            return
+        uid, gid = self._owner
+        try:
+            os.chown(workspace, uid, gid)
+        except OSError:
+            logger.warning("workspace 属主没能改成 %d:%d，沙箱可能写不进去：%s", uid, gid, workspace, exc_info=True)
 
     def save(self, thread_id: str, filename: str, content: bytes) -> Path:
         """把上传的文件落进会话目录。

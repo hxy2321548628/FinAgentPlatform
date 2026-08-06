@@ -72,6 +72,10 @@ class Hardening:
     cpus: str = DEFAULT_CPUS
     pids_limit: int = DEFAULT_PIDS_LIMIT
     tmp_size: str = DEFAULT_TMP_SIZE
+    # 沙箱以谁的身份跑，形如 "1000:1000"。留空则取当前进程的 uid:gid。
+    # **broker 进容器之后当前进程是 root**，那时这个值必须显式给成宿主用户 ——
+    # 否则 agent 写出的文件是 root 属主，宿主侧读不了，且症状不指向权限。
+    user: str | None = None
 
 
 @dataclass(frozen=True)
@@ -230,7 +234,7 @@ class DockerContainer:
                 f"--pids-limit={limit.pids_limit}",
                 # uid/gid 对齐宿主，否则容器写出的文件宿主侧读不了（架构 §8.5 的部署前提）
                 "--user",
-                f"{os.getuid()}:{os.getgid()}",
+                limit.user or f"{os.getuid()}:{os.getgid()}",
                 "-v",
                 f"{self._workspace}:{SANDBOX_ROOT}",
                 "-w",

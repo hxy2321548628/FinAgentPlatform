@@ -1,0 +1,66 @@
+# 内网单机部署：nginx + api + broker 三个服务。
+#
+#   docker compose -f deploy/compose.yml up -d --build
+#
+# **沙箱容器不在这里声明** —— 它们由 broker 在运行时动态创建与销毁。
+#
+# 本期没有的（各自的偿还期次见 P1 计划 §1.3）：postgres 与 redis 在 P2，
+# minio 在 P2，pypi-mirror 本期定案不做（沙箱零出网）。
+
+name: zuel-platform
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/app.Dockerfile
+    command: uvicorn api.app:app --host 0.0.0.0 --port 8000
+    env_file:
+      - ../.env
+    environment:
+      BROKER_URL: http://broker:8100
+    # **不挂 docker.sock，也不挂 workspace** —— 这两条就是 ADR-0004 的全部内容。
+    # api 被 agent 生成的内容影响之后，能做的最多是发几个 HTTP 请求给 broker。
+    depends_on:
+      - broker
+    restart: unless-stopped
+
+  broker:
+    build:
+      context: ..
+      dockerfile: deploy/app.Dockerfile
+    command: uvicorn broker.app:app --host 0.0.0.0 --port 8100
+    env_file:
+      - ../.env
+    environment:
+      # **容器内外必须是同一个路径**：broker 起沙箱时把 workspace 路径交给宿主机的
+      # Docker 守护进程，那个路径是在**宿主机**上解析的。两边不一致的话，
+      # docker run -v 传过去的是 broker 容器内的路径，宿主机上根本不存在
+      SANDBOX_WORKSPACE_ROOT: ${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}
+      # 容器内是 root，xfs_quota 不必再套 sudo
+      SANDBOX_QUOTA_COMMAND: xfs_quota
+      # broker 容器内当前进程是 root，不显式指定的话沙箱会以 root 跑，
+      # agent 写出的文件宿主侧读不了，且症状不指向权限
+      SANDBOX_USER: ${SANDBOX_USER:?请设成宿主机上 workspace 的属主，形如 1000:1000}
+    volumes:
+      # 唯一持有它的服务。给的是宿主机 root 权限，因此这个容器里不跑任何
+      # 来自 agent 的东西 —— 它只认「哪个会话、做什么操作」
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}:${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}
+    # 设 project quota 要 CAP_SYS_ADMIN
+    cap_add:
+      - SYS_ADMIN
+    # 不对外暴露端口：只有同一个内部网络里的 api 够得着
+    expose:
+      - "8100"
+    restart: unless-stopped

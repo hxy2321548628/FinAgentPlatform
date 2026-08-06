@@ -118,6 +118,11 @@ class Settings(BaseSettings):
         description="/tmp 的 tmpfs 限容。吃的是宿主机内存，不限容一句 dd 就能撑爆",
     )
 
+    sandbox_user: str = Field(
+        default="",
+        description="沙箱以谁的身份跑，形如 1000:1000。留空即当前进程的 uid:gid；broker 进容器后须显式给宿主用户",
+    )
+
     sandbox_disk_quota: str = Field(
         default=DEFAULT_DISK_QUOTA,
         description="每个会话 workspace 的硬上限（XFS bhard）。留空则不设配额，仅限没有 XFS 的环境",
@@ -135,6 +140,23 @@ class Settings(BaseSettings):
         """
         return tuple(shlex.split(self.sandbox_quota_command))
 
+    def sandbox_owner(self) -> tuple[int, int] | None:
+        """把 `sandbox_user` 解析成 workspace 目录该有的属主。
+
+        Returns:
+            `(uid, gid)`；未配置则 None，表示跟着当前进程走。
+
+        Raises:
+            ValueError: 配置的格式不是 `uid:gid`。
+        """
+        if not self.sandbox_user:
+            return None
+        uid, _, gid = self.sandbox_user.partition(":")
+        if not uid.isdigit() or not gid.isdigit():
+            message = f"SANDBOX_USER 须形如 1000:1000：{self.sandbox_user!r}"
+            raise ValueError(message)
+        return int(uid), int(gid)
+
     def hardening(self) -> Hardening:
         """把加固相关的配置项收成一组，交给容器。
 
@@ -148,6 +170,7 @@ class Settings(BaseSettings):
             cpus=self.sandbox_cpus,
             pids_limit=self.sandbox_pids_limit,
             tmp_size=self.sandbox_tmp_size,
+            user=self.sandbox_user or None,
         )
 
 

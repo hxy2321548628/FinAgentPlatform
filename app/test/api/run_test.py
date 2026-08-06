@@ -1,11 +1,29 @@
+import asyncio
 import json
 
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessageChunk
 
+from api.platform import Platform
+from api.sse import HEARTBEAT_FRAME, heartbeat_stream
 from event.mapper import StreamChunk
-from event.model import RunStatus
+from event.model import (
+    Event,
+    RunFinishedData,
+    RunFinishedEvent,
+    RunStatus,
+    TokenData,
+    TokenEvent,
+)
 from test.api.conftest import Agent, drain
+
+
+def finished_event(run_id: str) -> Event:
+    return RunFinishedEvent(ts=1, run_id=run_id, path=(), data=RunFinishedData())
+
+
+def token_event(run_id: str, text: str) -> Event:
+    return TokenEvent(ts=1, run_id=run_id, path=(), data=TokenData(text=text))
 
 
 def token(text: str) -> StreamChunk:
@@ -206,3 +224,51 @@ def test_two_subscribers_of_one_run_see_the_same_stream(client: TestClient, thre
     second = parse(drain(client, run_id))
 
     assert first == second
+
+
+# ------------------------------------------------------------------ 心跳
+async def test_a_silent_stream_still_sends_heartbeats(platform: Platform) -> None:
+    """排队等沙箱那几分钟是完全静默的，Nginx 默认 60s 就会把连接掐了。
+
+    心跳用 SSE 注释行：不占事件 id、不进事件日志，Last-Event-ID 的补齐逻辑不受影响。
+    """
+    frames: list[str] = []
+
+    async def collect() -> None:
+        async for frame in heartbeat_stream(platform.log.follow("run-silent"), interval=0.05):
+            frames.append(frame)
+
+    task = asyncio.create_task(collect())
+    await asyncio.sleep(0.3)
+    platform.log.append(finished_event("run-silent"))
+    await asyncio.wait_for(task, timeout=2)
+
+    assert HEARTBEAT_FRAME in frames
+    assert frames[-1].startswith("id:")
+
+
+async def test_a_heartbeat_is_a_comment_line_not_an_event(platform: Platform) -> None:
+    """带 id 的话客户端会把它记成 Last-Event-ID，重连时就从心跳之后开始，漏掉真事件。"""
+    assert HEARTBEAT_FRAME.startswith(":")
+    assert "id:" not in HEARTBEAT_FRAME
+    assert HEARTBEAT_FRAME.endswith("\n\n")
+
+
+async def test_a_busy_stream_needs_no_heartbeat(platform: Platform) -> None:
+    """事件密集时不该掺进心跳 —— 那只是白白多出来的噪音。"""
+    platform.log.append(token_event("run-busy", "好"))
+    platform.log.append(finished_event("run-busy"))
+
+    frames = [frame async for frame in heartbeat_stream(platform.log.follow("run-busy"), interval=5.0)]
+
+    assert HEARTBEAT_FRAME not in frames
+    assert len(frames) == 2
+
+
+async def test_the_stream_still_ends_when_the_run_ends(platform: Platform) -> None:
+    """心跳不能把一个已经结束的流变成永不收尾的连接。"""
+    platform.log.append(finished_event("run-over"))
+
+    frames = [frame async for frame in heartbeat_stream(platform.log.follow("run-over"), interval=0.05)]
+
+    assert len(frames) == 1
