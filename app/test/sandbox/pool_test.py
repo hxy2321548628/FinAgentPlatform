@@ -10,6 +10,7 @@ import pytest
 
 from sandbox.container import CommandResult, ContainerError
 from sandbox.pool import SandboxPool, SandboxQueueTimeoutError
+from sandbox.workspace import Workspace
 
 
 class FakeContainer:
@@ -62,7 +63,7 @@ def factory() -> Factory:
 
 def make_pool(tmp_path: Path, factory: Factory, **override: object) -> SandboxPool:
     argument: dict[str, object] = {
-        "workspace_root": tmp_path,
+        "workspace": Workspace(root=tmp_path),
         "max_container": 2,
         "idle_timeout": 1800.0,
         "queue_timeout": 1.0,

@@ -61,11 +61,28 @@ else
     chown "$SUDO_UID:$SUDO_GID" "$MOUNT_POINT"
 fi
 
+log "放行 xfs_quota 的免密调用"
+# 平台进程以普通用户跑，而 xfs_quota 要 CAP_SYS_ADMIN —— 不放行的话，
+# 每建一个会话都会卡在配额那一步。**只放行这一个命令**，不是给整个 sudo。
+# 生产上 broker 容器内以 root 跑，不需要这条规则。
+SUDOERS_FILE=/etc/sudoers.d/zuel-xfs-quota
+QUOTA_BIN="$(command -v xfs_quota)"
+printf '%s ALL=(root) NOPASSWD: %s\n' "$(id -un "$SUDO_UID")" "$QUOTA_BIN" > "$SUDOERS_FILE.tmp"
+chmod 0440 "$SUDOERS_FILE.tmp"
+# 先校验再就位：sudoers 写坏会让整台机器的 sudo 全部失效
+if visudo -cqf "$SUDOERS_FILE.tmp"; then
+    mv "$SUDOERS_FILE.tmp" "$SUDOERS_FILE"
+else
+    rm -f "$SUDOERS_FILE.tmp"
+    die "生成的 sudoers 规则语法不合法，已丢弃"
+fi
+
 log "验证 project quota 已启用"
 findmnt -no FSTYPE "$MOUNT_POINT" | grep -qx xfs || die "$MOUNT_POINT 不是 XFS"
 xfs_quota -x -c state "$MOUNT_POINT" | grep -A2 -i 'project quota state' | grep -qi 'Enforcement: ON' \
     || die "project quota 未启用，检查挂载选项是否带 prjquota"
 
-log "完成。$MOUNT_POINT 已是 XFS + prjquota"
+log "完成。$MOUNT_POINT 已是 XFS + prjquota，且已放行免密 xfs_quota"
+log "平台以普通用户跑时，.env 里需设 SANDBOX_QUOTA_COMMAND='sudo xfs_quota'"
 log "重启后需再跑一次本脚本；要开机自动挂载，往 /etc/fstab 加："
 printf '    %s %s xfs loop,prjquota 0 0\n' "$IMAGE_PATH" "$MOUNT_POINT"

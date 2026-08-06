@@ -27,7 +27,7 @@ from sandbox.container import (
     Hardening,
     ManagedContainerProtocol,
 )
-from sandbox.path import thread_workspace
+from sandbox.workspace import Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class SandboxPool:
     """按 thread 复用容器，并在容器数达上限时排队。
 
     Args:
-        workspace_root: 所有 thread 的 workspace 所在的根目录。
+        workspace: 各会话的文件空间，容器要 bind-mount 的目录经它拿。
         image: 沙箱镜像。
         max_container: 同时存活的容器数上限。
         idle_timeout: 无人使用多久后回收，秒。
@@ -87,7 +87,7 @@ class SandboxPool:
     def __init__(
         self,
         *,
-        workspace_root: Path,
+        workspace: Workspace,
         image: str = DEFAULT_IMAGE,
         max_container: int = DEFAULT_MAX_CONTAINER,
         idle_timeout: float = DEFAULT_IDLE_TIMEOUT,
@@ -95,7 +95,7 @@ class SandboxPool:
         hardening: Hardening | None = None,
         container_factory: ContainerFactory | None = None,
     ) -> None:
-        self._root = workspace_root
+        self._workspace = workspace
         self._max_container = max_container
         self._idle_timeout = idle_timeout
         self._queue_timeout = queue_timeout
@@ -116,15 +116,6 @@ class SandboxPool:
         """当前存活的容器数。"""
         return len(self._slot)
 
-    def _workspace_for(self, thread_id: str) -> Path:
-        """给出容器要 bind-mount 的目录，不存在则创建。
-
-        目录留给 Docker 创建会是 root 属主，而容器以宿主 uid 运行，写不进去。
-        """
-        workspace = thread_workspace(self._root, thread_id)
-        workspace.mkdir(parents=True, exist_ok=True)
-        return workspace
-
     async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> ContainerProtocol:
         """取得一个 thread 的容器，必要时排队等待。
 
@@ -139,8 +130,11 @@ class SandboxPool:
             SandboxQueueTimeoutError: 排队超过上限。
             ContainerError: 容器启动失败。
             PathEscapeError: thread_id 会让 workspace 落到根目录之外。
+            QuotaError: workspace 的磁盘配额没能设上。
         """
-        workspace = self._workspace_for(thread_id)
+        # 目录留给 Docker 建会是 root 属主，而容器以宿主 uid 跑，写不进去；
+        # 而且配额必须在容器起来之前就位，否则中间那段时间的写入不受任何约束
+        workspace = self._workspace.path(thread_id)
 
         async with self._lock:
             container = await self._take(thread_id, workspace)

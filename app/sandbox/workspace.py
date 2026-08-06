@@ -10,26 +10,35 @@ from pathlib import Path
 from uuid import uuid4
 
 from sandbox.path import OUTPUT_DIR, PathEscapeError, thread_workspace
+from sandbox.quota import NoQuota, QuotaProtocol
 
 
 class Workspace:
     """所有会话的文件空间。
 
+    **是会话目录的唯一创建者**：沙箱池与容器都经这里拿目录，磁盘配额才有一个
+    单一的落点 —— 分散创建的话，总有一条路径会绕过配额，而绕过去了没有任何症状。
+
     Args:
         root: 各会话目录所在的宿主机根目录。
+        quota: 目录配额，不传则不设 —— 只有 CI 与没挂 XFS 的开发机该用这个默认值。
     """
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, quota: QuotaProtocol | None = None) -> None:
         self._root = root
+        self._quota = quota or NoQuota()
 
     def create(self) -> str:
         """开一个新会话。
 
         Returns:
             新会话的标识。
+
+        Raises:
+            QuotaError: 目录建出来了但配额没设上。
         """
         thread_id = uuid4().hex
-        thread_workspace(self._root, thread_id).mkdir(parents=True)
+        self.path(thread_id)
         return thread_id
 
     def exists(self, thread_id: str) -> bool:
@@ -44,7 +53,11 @@ class Workspace:
             return False
 
     def path(self, thread_id: str) -> Path:
-        """返回会话目录，不存在则创建。
+        """返回会话目录，不存在则创建，并确保配额已设上。
+
+        每次都设一遍而不只在新建时设：配额跟着目录而不跟着容器，容器销毁重建、
+        甚至平台重启之后，这是让配额回到位的唯一时机（本期没有任何持久化状态）。
+        两条子命令都是幂等赋值，重复设不会出错。
 
         Args:
             thread_id: 会话标识。
@@ -54,9 +67,11 @@ class Workspace:
 
         Raises:
             PathEscapeError: 标识会让目录落到根目录之外。
+            QuotaError: 配额没能设上。
         """
         workspace = thread_workspace(self._root, thread_id)
         workspace.mkdir(parents=True, exist_ok=True)
+        self._quota.assign(thread_id, workspace)
         return workspace
 
     def save(self, thread_id: str, filename: str, content: bytes) -> Path:

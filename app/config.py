@@ -3,6 +3,7 @@
 外部配置一律从这里读，业务代码不直接调 `os.getenv`。
 """
 
+import shlex
 from functools import lru_cache
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from sandbox.container import (
     Hardening,
 )
 from sandbox.pool import DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONTAINER, DEFAULT_QUEUE_TIMEOUT
+from sandbox.quota import DEFAULT_DISK_QUOTA, DEFAULT_QUOTA_COMMAND
 
 # .env 在仓库根而不在 app/，且门禁（cwd=app/）与 uvicorn（cwd 不定）的工作目录并不一致，
 # 因此按本文件位置解析成绝对路径 —— 相对路径或向上搜索都会在某种场景下静默读到别的文件。
@@ -109,6 +111,23 @@ class Settings(BaseSettings):
         default=DEFAULT_TMP_SIZE,
         description="/tmp 的 tmpfs 限容。吃的是宿主机内存，不限容一句 dd 就能撑爆",
     )
+
+    sandbox_disk_quota: str = Field(
+        default=DEFAULT_DISK_QUOTA,
+        description="每个会话 workspace 的硬上限（XFS bhard）。留空则不设配额，仅限没有 XFS 的环境",
+    )
+    sandbox_quota_command: str = Field(
+        default=shlex.join(DEFAULT_QUOTA_COMMAND),
+        description="xfs_quota 的调用方式。它要 CAP_SYS_ADMIN，非 root 跑平台时前面要加 sudo",
+    )
+
+    def quota_command(self) -> tuple[str, ...]:
+        """把配置里的命令串拆成 argv。
+
+        Returns:
+            调用 xfs_quota 的命令与前缀。
+        """
+        return tuple(shlex.split(self.sandbox_quota_command))
 
     def hardening(self) -> Hardening:
         """把加固相关的配置项收成一组，交给容器。

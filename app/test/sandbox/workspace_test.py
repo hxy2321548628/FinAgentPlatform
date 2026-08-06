@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from sandbox.path import OUTPUT_DIR, PathEscapeError
+from sandbox.quota import QuotaError
 from sandbox.workspace import Workspace
 
 
@@ -149,3 +150,54 @@ def test_an_artifact_symlink_pointing_outside_is_rejected(space: Workspace, tmp_
 
     with pytest.raises(PathEscapeError):
         space.artifact(thread_id, "link.txt")
+
+
+# ------------------------------------------------------------------ 磁盘配额
+class SpyQuota:
+    """记下被要求给哪些目录设配额。"""
+
+    def __init__(self) -> None:
+        self.assigned: list[tuple[str, Path]] = []
+        self.fail_with: Exception | None = None
+
+    def assign(self, thread_id: str, workspace: Path) -> None:
+        if self.fail_with is not None:
+            raise self.fail_with
+        self.assigned.append((thread_id, workspace))
+
+
+def test_a_new_thread_gets_its_quota(tmp_path: Path) -> None:
+    quota = SpyQuota()
+    space = Workspace(root=tmp_path, quota=quota)
+
+    thread_id = space.create()
+
+    assert quota.assigned == [(thread_id, tmp_path / thread_id)]
+
+
+def test_quota_is_reapplied_every_time_the_directory_is_handed_out(tmp_path: Path) -> None:
+    """配额跟着目录不跟着容器，容器重建甚至平台重启后靠这里设回来。"""
+    quota = SpyQuota()
+    space = Workspace(root=tmp_path, quota=quota)
+
+    space.path("thread-1")
+    space.path("thread-1")
+
+    assert len(quota.assigned) == 2
+
+
+def test_a_failing_quota_stops_the_thread_from_being_used(tmp_path: Path) -> None:
+    """设不上配额就是缺口敞着，不能当没事发生继续往下走。"""
+    quota = SpyQuota()
+    quota.fail_with = QuotaError("xfs_quota 没权限")
+    space = Workspace(root=tmp_path, quota=quota)
+
+    with pytest.raises(QuotaError):
+        space.path("thread-1")
+
+
+def test_without_a_quota_the_directory_still_works(tmp_path: Path) -> None:
+    """CI 与没挂 XFS 的开发机上平台仍要能跑起来。"""
+    space = Workspace(root=tmp_path)
+
+    assert space.path("thread-1").is_dir()
