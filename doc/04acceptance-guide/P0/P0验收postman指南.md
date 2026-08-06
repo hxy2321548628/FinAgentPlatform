@@ -241,7 +241,8 @@ tool_call / tool_result 若干轮  →  run.finished
 从 `run.finished` 事件的 `data.artifacts` 数组里取产物标识，形如：
 
 ```json
-{ "status": "succeeded", "tokens_used": 12345,
+{ "status": "succeeded",
+  "tokens": { "input_cache_read": 189312, "input_uncached": 115328, "output": 8701 },
   "artifacts": ["17d3f911.../industry_volatility.png"] }
 ```
 

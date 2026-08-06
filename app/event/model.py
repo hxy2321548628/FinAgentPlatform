@@ -89,6 +89,27 @@ class RunStartedData(BaseModel):
     thread_id: str = Field(min_length=1, description="run 所属的会话")
 
 
+class TokenUsage(BaseModel):
+    """一次 run 的 token 消耗，按计费单价不同的三部分分开记。
+
+    **刻意不给总数**：命中 prompt cache 的 input 单价远低于未命中部分，加总之后的数字
+    既不对应成本、也不能拿来算配额 —— P0 实测 62% 的 input 是命中，按总量记会高估约
+    1.6 倍，且会话越长高估越多，方向性地惩罚长会话。
+    """
+
+    input_cache_read: int = Field(default=0, ge=0, description="命中 prompt cache 的 input token")
+    input_uncached: int = Field(default=0, ge=0, description="未命中 cache 的 input token，配额按这部分加权计算")
+    output: int = Field(default=0, ge=0, description="output token，含 reasoning 部分")
+
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        """把两次模型调用的用量相加。一次 run 有十几次调用，总量是逐次累加出来的。"""
+        return TokenUsage(
+            input_cache_read=self.input_cache_read + other.input_cache_read,
+            input_uncached=self.input_uncached + other.input_uncached,
+            output=self.output + other.output,
+        )
+
+
 class RunFinishedData(BaseModel):
     """`run.finished` 事件的载荷。"""
 
@@ -96,7 +117,10 @@ class RunFinishedData(BaseModel):
         default=RunStatus.SUCCEEDED,
         description="正常完成才发这个事件，失败走 run.failed",
     )
-    tokens_used: int = Field(ge=0, description="本次 run 消耗的 token 总量")
+    tokens: TokenUsage = Field(
+        default_factory=TokenUsage,
+        description="本次 run 的 token 消耗，按 cache 命中拆分",
+    )
     artifacts: list[str] = Field(
         default_factory=list,
         description="本次 run 产出的产物标识，拼上产物端点即可下载",

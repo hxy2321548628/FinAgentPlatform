@@ -33,8 +33,10 @@ from event.model import (
     SandboxQueuedEvent,
     SandboxReadyData,
     SandboxReadyEvent,
+    TokenUsage,
     now_ms,
 )
+from log import run_context
 from run.log import EventLog
 from sandbox.backend import SandboxBackend
 from sandbox.container import ContainerProtocol
@@ -127,22 +129,27 @@ class RunExecutor:
         await asyncio.gather(*self._task.values(), return_exceptions=True)
 
     async def _drive(self, run: Run) -> None:
-        run.status = RunStatus.RUNNING
-        self._emit(RunStartedEvent(ts=now_ms(), run_id=run.id, path=(), data=RunStartedData(thread_id=run.thread_id)))
+        # 每个 run 跑在自己的任务里，任务启动时会复制一份 context，
+        # 因此在这里绑定不会串到并发的其他 run 上
+        with run_context(run_id=run.id, thread_id=run.thread_id):
+            run.status = RunStatus.RUNNING
+            self._emit(
+                RunStartedEvent(ts=now_ms(), run_id=run.id, path=(), data=RunStartedData(thread_id=run.thread_id))
+            )
 
-        container = await self._acquire(run)
-        if container is None:
-            return
+            container = await self._acquire(run)
+            if container is None:
+                return
 
-        try:
-            await self._consume(run, container)
-        # 智能体那一侧什么都可能抛：模型断连、图跑飞、工具越界。宽捕获是刻意的 ——
-        # 让异常逃出去只会让后台任务无声无息地死掉，订阅这个 run 的连接则永远等不到终态。
-        except Exception as exc:
-            logger.warning("run 执行失败：run_id=%s", run.id, exc_info=True)
-            self._fail(run, RunErrorCode.INTERNAL, str(exc), retryable=False)
-        finally:
-            await self._pool.release(run.thread_id)
+            try:
+                await self._consume(run, container)
+            # 智能体那一侧什么都可能抛：模型断连、图跑飞、工具越界。宽捕获是刻意的 ——
+            # 让异常逃出去只会让后台任务无声无息地死掉，订阅这个 run 的连接则永远等不到终态。
+            except Exception as exc:
+                logger.warning("run 执行失败", exc_info=True)
+                self._fail(run, RunErrorCode.INTERNAL, str(exc), retryable=False)
+            finally:
+                await self._pool.release(run.thread_id)
 
     async def _acquire(self, run: Run) -> ContainerProtocol | None:
         """申请沙箱，把排队过程写成事件。失败时结束 run 并返回 None。"""
@@ -156,7 +163,7 @@ class RunExecutor:
             container = await self._pool.acquire(run.thread_id, on_queued=announce)
         # 同上：容器起不来、磁盘满、排队超时都得转成 run.failed，不能让任务静默消失
         except Exception as exc:
-            logger.warning("run 申请沙箱失败：run_id=%s", run.id, exc_info=True)
+            logger.warning("run 申请沙箱失败", exc_info=True)
             queued_out = isinstance(exc, SandboxQueueTimeoutError)
             # 只有资源不足值得重试。其余按未分类错误处理 —— 盲目重试只是再炸一次，
             # 还多花一份 token
@@ -171,12 +178,12 @@ class RunExecutor:
         """消费智能体的流，逐个 chunk 映射成事件。"""
         workspace = self._workspace.path(run.thread_id)
         backend = SandboxBackend(workspace=workspace, container=container)
-        tokens_used = 0
+        tokens = TokenUsage()
         # 产物按 mtime 判定，基准要在 agent 动手之前取，否则本次的产出会被漏掉
         started_at = time.time()
 
         async for ns, mode, payload in self._runner(backend, run.thread_id, run.content):
-            tokens_used += _token_usage(mode, payload)
+            tokens = tokens + _token_usage(mode, payload)
             for event in map_chunk(ns, mode, payload, run_id=run.id):
                 self._log.append(event)
 
@@ -187,7 +194,7 @@ class RunExecutor:
                 run_id=run.id,
                 path=(),
                 data=RunFinishedData(
-                    tokens_used=tokens_used,
+                    tokens=tokens,
                     artifacts=[
                         artifact_id(run.thread_id, workspace, path) for path in backend.artifact_since(started_at)
                     ],
@@ -227,17 +234,15 @@ def artifact_id(thread_id: str, workspace: Path, path: Path) -> str:
     return f"{thread_id}/{path.relative_to(workspace / OUTPUT_DIR).as_posix()}"
 
 
-def _token_usage(mode: str, payload: object) -> int:
-    """从一个 chunk 里取出本次模型调用消耗的 token。
+def _token_usage(mode: str, payload: object) -> TokenUsage:
+    """从一个 chunk 里取出本次模型调用消耗的 token，按 cache 命中拆开。
 
     不复用映射层：那里的职责是产出前端要渲染的事件，而用量既不是事件也不该被前端逐条看到。
-    取 `input + output` 而不是 `total_tokens`，是因为实测二者对不上 ——
-    命中 prompt cache 的部分在 total 里另算，按 cache 拆分的口径要等配额落地时再定。
     """
     if mode != UPDATES_MODE or not isinstance(payload, dict):
-        return 0
+        return TokenUsage()
 
-    total = 0
+    total = TokenUsage()
     for update in payload.values():
         if not isinstance(update, dict):
             continue
@@ -247,5 +252,29 @@ def _token_usage(mode: str, payload: object) -> int:
         for one in message:
             usage = getattr(one, "usage_metadata", None)
             if isinstance(usage, dict):
-                total += int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
+                total = total + _split_usage(usage)
     return total
+
+
+def _split_usage(usage: dict[str, object]) -> TokenUsage:
+    """把一条 `usage_metadata` 拆成三部分。
+
+    `input_tokens` 是**含命中部分的总数**，相减才得到真正要付全价的那部分。
+    换用不带 prompt cache 的模型时 `input_token_details` 整个不存在，按零命中处理。
+    """
+    detail = usage.get("input_token_details")
+    cache_read = _as_int(detail.get("cache_read")) if isinstance(detail, dict) else 0
+    input_total = _as_int(usage.get("input_tokens"))
+    return TokenUsage(
+        input_cache_read=cache_read,
+        input_uncached=max(0, input_total - cache_read),
+        output=_as_int(usage.get("output_tokens")),
+    )
+
+
+def _as_int(value: object) -> int:
+    """取 `usage_metadata` 里的一个计数，缺失或形状不对时按 0 处理。
+
+    计量出岔子不该让整个 run 失败 —— 教师拿到的分析结果是对的，只是这一次的账记不准。
+    """
+    return value if isinstance(value, int) else 0

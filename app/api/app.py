@@ -15,6 +15,7 @@ from api.error import install_handler
 from api.platform import Platform, build_platform
 from api.route import artifact, run, thread
 from config import get_settings
+from log import configure
 
 API_PREFIX = "/api"
 
@@ -56,5 +57,10 @@ def create_app(platform: Platform | None = None) -> FastAPI:
         app.include_router(router, prefix=API_PREFIX)
     return app
 
+
+# 必须在导入时就装配，不能推迟到 lifespan：uvicorn 在跑 lifespan 之前就会打出
+# 「Started server process」这两行，装晚了它们就是夹在 JSON 中间的纯文本，
+# 整份日志没法再逐行解析。这里不读 Settings —— CI 没有 .env，导入即失败。
+configure()
 
 app = create_app()

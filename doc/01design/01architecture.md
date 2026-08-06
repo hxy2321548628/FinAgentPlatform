@@ -505,7 +505,7 @@ worker ──XADD──▶ stream:run:{run_id} ──XREAD──▶ 网关 ─�
 | type | `data` | 触发时机 |
 |---|---|---|
 | `run.started` | `{ thread_id }` | worker 领取任务 |
-| `run.finished` | `{ status: "succeeded", tokens_used }` | 正常完成 |
+| `run.finished` | `{ status: "succeeded", tokens: { input_cache_read, input_uncached, output }, artifacts }` | 正常完成。`tokens` 按 §6.4 的口径拆分，**刻意不给总数** |
 | `run.failed` | `{ code, message, retryable }` | 异常终止。`retryable` 由 §5.4 的错误分类决定 |
 | `run.cancelled` | `{}` | 教师取消或审批超时 |
 | `sandbox.queued` | `{ position }` | 沙箱排队中。**排位每次变化都推**（§8.1） |
@@ -936,7 +936,9 @@ erDiagram
         text checkpoint_id
         text error_code
         text error_message
-        int tokens_used
+        int tokens_cache_read
+        int tokens_uncached
+        int tokens_output
         timestamptz started_at
         timestamptz ended_at
     }

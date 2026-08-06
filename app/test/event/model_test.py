@@ -21,6 +21,7 @@ from event.model import (
     SandboxReadyEvent,
     TokenData,
     TokenEvent,
+    TokenUsage,
     ToolCallData,
     ToolCallEvent,
     ToolResultData,
@@ -143,15 +144,33 @@ def test_run_started_serializes_to_the_contract_envelope() -> None:
     }
 
 
-def test_run_finished_carries_the_token_usage() -> None:
-    """§6.4 的配额要按 run 计量，这个字段是它唯一的来源。"""
-    event = RunFinishedEvent(ts=1, run_id="r", path=(), data=RunFinishedData(tokens_used=313341))
+def test_run_finished_splits_the_token_usage_by_cache_hit() -> None:
+    """§6.4 的配额要按未命中部分加权算，给一个总数等于让前端自己去猜怎么拆。"""
+    event = RunFinishedEvent(
+        ts=1,
+        run_id="r",
+        path=(),
+        data=RunFinishedData(tokens=TokenUsage(input_cache_read=189312, input_uncached=115328, output=8701)),
+    )
 
     assert event.model_dump(mode="json")["data"] == {
         "status": "succeeded",
-        "tokens_used": 313341,
+        "tokens": {"input_cache_read": 189312, "input_uncached": 115328, "output": 8701},
         "artifacts": [],
     }
+
+
+def test_token_usage_adds_up_across_model_calls() -> None:
+    """一次 run 有十几次模型调用，用量是逐次累加出来的。"""
+    total = TokenUsage(input_cache_read=1, input_uncached=2, output=3) + TokenUsage(
+        input_cache_read=10, input_uncached=20, output=30
+    )
+
+    assert total == TokenUsage(input_cache_read=11, input_uncached=22, output=33)
+
+
+def test_token_usage_defaults_to_zero() -> None:
+    assert TokenUsage() == TokenUsage(input_cache_read=0, input_uncached=0, output=0)
 
 
 def test_run_finished_carries_the_artifact_ids() -> None:
@@ -160,7 +179,7 @@ def test_run_finished_carries_the_artifact_ids() -> None:
         ts=1,
         run_id="r",
         path=(),
-        data=RunFinishedData(tokens_used=0, artifacts=["8f3a/industry_volatility.png"]),
+        data=RunFinishedData(artifacts=["8f3a/industry_volatility.png"]),
     )
 
     assert event.model_dump(mode="json")["data"]["artifacts"] == ["8f3a/industry_volatility.png"]

@@ -1,8 +1,11 @@
 """执行器的测试，用假 agent 与假沙箱池 —— 一律不打真实模型 API。"""
 
 import asyncio
+import json
+import logging
 import os
 from collections.abc import AsyncIterator
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -10,7 +13,8 @@ from deepagents.backends.protocol import BackendProtocol
 from langchain_core.messages import AIMessage, AIMessageChunk
 
 from event.mapper import StreamChunk
-from event.model import EventType, RunErrorCode, RunFinishedData, RunStatus
+from event.model import EventType, RunErrorCode, RunFinishedData, RunStatus, TokenUsage
+from log import JsonFormatter
 from run.executor import RunExecutor
 from run.log import EventLog
 from sandbox.container import CommandResult
@@ -65,10 +69,16 @@ def token_chunk(text: str) -> StreamChunk:
     return ((), "messages", (AIMessageChunk(content=text), {}))
 
 
-def usage_chunk(input_token: int, output_token: int) -> StreamChunk:
+def usage_chunk(input_token: int, output_token: int, cache_read: int = 0) -> StreamChunk:
+    """一个带用量的 chunk。`input_token` 是含命中部分的总数，与 DeepSeek 的口径一致。"""
     message = AIMessage(
         content="",
-        usage_metadata={"input_tokens": input_token, "output_tokens": output_token, "total_tokens": 0},
+        usage_metadata={
+            "input_tokens": input_token,
+            "output_tokens": output_token,
+            "total_tokens": 0,
+            "input_token_details": {"cache_read": cache_read},
+        },
     )
     return ((), "updates", {"model": {"messages": [message]}})
 
@@ -96,9 +106,17 @@ def make_executor(pool: FakePool, space: Workspace, log: EventLog, *chunk: Strea
 
 
 def artifacts_of(log: EventLog, run_id: str) -> list[str]:
+    return _finished(log, run_id).artifacts
+
+
+def tokens_of(log: EventLog, run_id: str) -> TokenUsage:
+    return _finished(log, run_id).tokens
+
+
+def _finished(log: EventLog, run_id: str) -> RunFinishedData:
     data = log.read(run_id)[-1].event.data
     assert isinstance(data, RunFinishedData)
-    return data.artifacts
+    return data
 
 
 def types_of(log: EventLog, run_id: str) -> list[str]:
@@ -198,7 +216,7 @@ async def test_events_of_two_concurrent_runs_do_not_mix(pool: FakePool, space: W
 
 
 # ------------------------------------------------------------------ token 计量
-async def test_run_finished_reports_the_tokens_the_run_consumed(
+async def test_run_finished_accumulates_the_tokens_across_model_calls(
     pool: FakePool, space: Workspace, log: EventLog
 ) -> None:
     executor = make_executor(pool, space, log, usage_chunk(2916, 120), usage_chunk(4100, 80))
@@ -206,8 +224,32 @@ async def test_run_finished_reports_the_tokens_the_run_consumed(
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    finished = log.read(run.id)[-1].event
-    assert finished.data.tokens_used == 2916 + 120 + 4100 + 80  # type: ignore[union-attr]
+    assert tokens_of(log, run.id) == TokenUsage(input_cache_read=0, input_uncached=2916 + 4100, output=120 + 80)
+
+
+async def test_cache_hits_are_reported_apart_from_the_rest(pool: FakePool, space: Workspace, log: EventLog) -> None:
+    """§6.4：按 input 总数记会高估成本约 1.6 倍，两部分单价差得远，不能合并。"""
+    executor = make_executor(pool, space, log, usage_chunk(304640, 8701, cache_read=189312))
+
+    run = await executor.submit(thread_id=THREAD, content="一")
+    await executor.wait(run.id)
+
+    assert tokens_of(log, run.id) == TokenUsage(
+        input_cache_read=189312,
+        input_uncached=304640 - 189312,
+        output=8701,
+    )
+
+
+async def test_a_missing_cache_detail_counts_as_no_hit(pool: FakePool, space: Workspace, log: EventLog) -> None:
+    """换个不带 prompt cache 的模型时 `input_token_details` 整个不存在，不能因此崩掉。"""
+    message = AIMessage(content="", usage_metadata={"input_tokens": 100, "output_tokens": 7, "total_tokens": 107})
+    executor = make_executor(pool, space, log, ((), "updates", {"model": {"messages": [message]}}))
+
+    run = await executor.submit(thread_id=THREAD, content="一")
+    await executor.wait(run.id)
+
+    assert tokens_of(log, run.id) == TokenUsage(input_cache_read=0, input_uncached=100, output=7)
 
 
 async def test_tokens_are_zero_when_the_model_reports_no_usage(pool: FakePool, space: Workspace, log: EventLog) -> None:
@@ -216,8 +258,37 @@ async def test_tokens_are_zero_when_the_model_reports_no_usage(pool: FakePool, s
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    finished = log.read(run.id)[-1].event
-    assert finished.data.tokens_used == 0  # type: ignore[union-attr]
+    assert tokens_of(log, run.id) == TokenUsage()
+
+
+# ------------------------------------------------------------------ 排障日志
+async def test_logs_emitted_during_a_run_carry_its_ids(pool: FakePool, space: Workspace, log: EventLog) -> None:
+    """排障要能按 run_id 把一次执行的全部日志过滤出来，执行器是这两个 id 的唯一来源。"""
+    sink = StringIO()
+    handler = logging.StreamHandler(sink)
+    handler.setFormatter(JsonFormatter())
+    probe = logging.getLogger("test.executor.probe")
+    probe.addHandler(handler)
+    probe.setLevel(logging.INFO)
+
+    def noisy(backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+        async def stream() -> AsyncIterator[StreamChunk]:
+            probe.info("执行中")
+            await asyncio.sleep(0)
+            yield token_chunk("好")
+
+        return stream()
+
+    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=noisy)
+    run = await executor.submit(thread_id=THREAD, content="一")
+    try:
+        await executor.wait(run.id)
+    finally:
+        probe.removeHandler(handler)
+
+    line = json.loads(sink.getvalue())
+    assert line["run_id"] == run.id
+    assert line["thread_id"] == THREAD
 
 
 # ------------------------------------------------------------------ 沙箱
