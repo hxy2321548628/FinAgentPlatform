@@ -35,17 +35,15 @@ def create_app(platform: Platform | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         owned = platform is None
         current = platform if platform is not None else build_platform(get_settings())
-        if owned:
-            # 不起它的话，容器只在有新申请时才回收 —— 而 idle 回收要防的恰恰是
-            # 「没人再来申请，容器却一直占着内存」
-            current.pool.start_sweeper()
         app.state.platform = current
         try:
             yield
         finally:
             if owned:
+                # 沙箱的起停与 idle 回收都在 broker 那边，这里只有一条到它的连接
                 await current.executor.aclose()
-                await current.pool.aclose()
+                current.backend_factory.close()
+                await current.connection.aclose()
 
     app = FastAPI(
         title="金融学院智能体平台",

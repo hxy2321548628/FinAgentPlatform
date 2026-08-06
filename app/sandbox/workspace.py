@@ -53,11 +53,12 @@ class Workspace:
             return False
 
     def path(self, thread_id: str) -> Path:
-        """返回会话目录，不存在则创建，并确保配额已设上。
+        """返回会话目录，不存在则创建并设上配额。
 
-        每次都设一遍而不只在新建时设：配额跟着目录而不跟着容器，容器销毁重建、
-        甚至平台重启之后，这是让配额回到位的唯一时机（本期没有任何持久化状态）。
-        两条子命令都是幂等赋值，重复设不会出错。
+        **配额只在新建时设一次**：XFS project quota 是落在盘上的（目录的 projid 是
+        inode 属性，限额在文件系统的 quota 记录里），容器销毁重建、平台重启、
+        甚至重新挂载之后它都还在。每次都重设一遍不会更安全，只会给每一次
+        `read_file` 都搭上两个 `xfs_quota` 子进程。
 
         Args:
             thread_id: 会话标识。
@@ -70,6 +71,9 @@ class Workspace:
             QuotaError: 配额没能设上。
         """
         workspace = thread_workspace(self._root, thread_id)
+        if workspace.is_dir():
+            return workspace
+
         workspace.mkdir(parents=True, exist_ok=True)
         self._quota.assign(thread_id, workspace)
         return workspace

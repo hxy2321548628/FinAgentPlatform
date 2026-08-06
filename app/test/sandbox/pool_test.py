@@ -16,12 +16,14 @@ from sandbox.workspace import Workspace
 class FakeContainer:
     """记录自己被起停过几次的假容器。"""
 
-    def __init__(self, workspace: Path, image: str = "fake") -> None:
+    def __init__(self, thread_id: str, workspace: Path, image: str = "fake") -> None:
+        self.thread_id = thread_id
         self.workspace = workspace
         self.image = image
         self.start_count = 0
         self.stopped = False
         self.broken = False
+        self.adopted: str | None = None
         self.start_error: str | None = None
 
     @property
@@ -40,6 +42,9 @@ class FakeContainer:
     def alive(self) -> bool:
         return not self.stopped and not self.broken
 
+    def adopt(self, container_id: str) -> None:
+        self.adopted = container_id
+
     def exec(self, command: str, *, timeout: int) -> CommandResult:
         return CommandResult(output=command, exit_code=0)
 
@@ -50,8 +55,8 @@ class Factory:
     def __init__(self) -> None:
         self.made: list[FakeContainer] = []
 
-    def __call__(self, workspace: Path) -> FakeContainer:
-        container = FakeContainer(workspace)
+    def __call__(self, thread_id: str, workspace: Path) -> FakeContainer:
+        container = FakeContainer(thread_id, workspace)
         self.made.append(container)
         return container
 
@@ -392,8 +397,8 @@ async def test_a_failed_start_propagates_and_frees_the_slot(tmp_path: Path, fact
     """镜像没构建这类失败要让调用方看见，但不能把名额一起漏掉。"""
     pool = make_pool(tmp_path, factory, max_container=1)
 
-    def broken_factory(workspace: Path) -> FakeContainer:
-        container = factory(workspace)
+    def broken_factory(thread_id: str, workspace: Path) -> FakeContainer:
+        container = factory(thread_id, workspace)
         container.start_error = "docker run 失败"
         return container
 
@@ -474,3 +479,81 @@ async def test_closing_releases_everyone_still_queued(tmp_path: Path, factory: F
 
     with pytest.raises(asyncio.CancelledError):
         await waiting
+
+
+# ------------------------------------------------------------------ broker 重启认领
+class Reclaimable(Factory):
+    """认领用的假工厂，顺便记下被接管的容器 id。"""
+
+
+async def test_reclaim_adopts_containers_left_by_a_previous_broker(
+    tmp_path: Path, factory: Factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """容器带 --rm 但不是 broker 的子进程，broker 重启不会带走它们。
+
+    不认领就是既占着内存又不在池账上的孤儿：新申请另起一个，旧的再没人回收。
+    """
+    monkeypatch.setattr("sandbox.pool.running_sandbox", lambda: {"thread-1": "abc123", "thread-2": "def456"})
+    pool = make_pool(tmp_path, factory)
+
+    await pool.reclaim()
+
+    assert pool.size == 2
+    assert {one.adopted for one in factory.made} == {"abc123", "def456"}
+    await pool.aclose()
+
+
+async def test_a_reclaimed_container_is_reused_instead_of_restarted(
+    tmp_path: Path, factory: Factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """认领的意义就在这里：接着用，而不是再起一个把旧的晾在那。"""
+    monkeypatch.setattr("sandbox.pool.running_sandbox", lambda: {"thread-1": "abc123"})
+    pool = make_pool(tmp_path, factory)
+    await pool.reclaim()
+
+    await pool.acquire("thread-1")
+
+    assert len(factory.made) == 1
+    assert factory.made[0].start_count == 0
+    await pool.aclose()
+
+
+async def test_a_reclaimed_container_is_idle_and_sweepable(
+    tmp_path: Path, factory: Factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """用着它的 run 随上一个 broker 一起没了，因此它现在是空闲的，该受 idle 回收管。"""
+    monkeypatch.setattr("sandbox.pool.running_sandbox", lambda: {"thread-1": "abc123"})
+    pool = make_pool(tmp_path, factory, idle_timeout=0.0)
+    await pool.reclaim()
+
+    await pool.sweep()
+
+    assert pool.size == 0
+    await pool.aclose()
+
+
+async def test_reclaim_does_not_disturb_containers_already_in_the_pool(
+    tmp_path: Path, factory: Factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """认领可能被重复调用，正在服务某个 run 的容器绝不能被顶掉。"""
+    pool = make_pool(tmp_path, factory)
+    await pool.acquire("thread-1")
+    monkeypatch.setattr("sandbox.pool.running_sandbox", lambda: {"thread-1": "abc123"})
+
+    await pool.reclaim()
+
+    assert pool.size == 1
+    assert factory.made[0].adopted is None
+    await pool.aclose()
+
+
+async def test_reclaim_on_a_clean_host_does_nothing(
+    tmp_path: Path, factory: Factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sandbox.pool.running_sandbox", lambda: {})
+    pool = make_pool(tmp_path, factory)
+
+    await pool.reclaim()
+
+    assert pool.size == 0
+    await pool.aclose()

@@ -7,14 +7,15 @@
 产物的唯一身份就是「哪个会话的哪个文件」。等表建起来，这里换成表主键，端点形状不变。
 """
 
+import mimetypes
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 
 from api.error import not_found
 from api.platform import Platform, get_platform
-from sandbox.path import PathEscapeError
+from sandbox.remote import BrokerError
 
 router = APIRouter(prefix="/artifacts", tags=["artifact"])
 
@@ -23,21 +24,28 @@ router = APIRouter(prefix="/artifacts", tags=["artifact"])
 async def download_artifact(
     artifact_id: str,
     platform: Annotated[Platform, Depends(get_platform)],
-) -> FileResponse:
-    """取回一个产物。"""
+) -> Response:
+    """取回一个产物。
+
+    字节由 broker 取出后原样转发 —— 这个进程碰不到宿主机上的文件。
+    """
     thread_id, _, relative_path = artifact_id.partition("/")
-    if not thread_id or not relative_path or not platform.workspace.exists(thread_id):
+    if not thread_id or not relative_path:
         raise _missing(artifact_id)
 
     try:
-        path = platform.workspace.artifact(thread_id, relative_path)
-    except PathEscapeError as exc:
+        content = await platform.workspace.artifact(artifact_id)
+    except BrokerError as exc:
         # 越界与不存在对外是同一个回答，否则这个端点就成了探测宿主机文件的工具
         raise _missing(artifact_id) from exc
 
-    if not path.is_file():
-        raise _missing(artifact_id)
-    return FileResponse(path)
+    return Response(content=content, media_type=_media_type(relative_path))
+
+
+def _media_type(relative_path: str) -> str:
+    """按扩展名猜类型。产物多半是图，猜不出就按二进制流回。"""
+    guessed, _ = mimetypes.guess_type(relative_path)
+    return guessed or "application/octet-stream"
 
 
 def _missing(artifact_id: str) -> Exception:

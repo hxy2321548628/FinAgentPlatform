@@ -175,15 +175,15 @@ def test_a_new_thread_gets_its_quota(tmp_path: Path) -> None:
     assert quota.assigned == [(thread_id, tmp_path / thread_id)]
 
 
-def test_quota_is_reapplied_every_time_the_directory_is_handed_out(tmp_path: Path) -> None:
-    """配额跟着目录不跟着容器，容器重建甚至平台重启后靠这里设回来。"""
+def test_quota_is_set_once_and_not_on_every_lookup(tmp_path: Path) -> None:
+    """XFS 配额落在盘上，重设一遍不会更安全，只会给每次 read_file 搭上两个子进程。"""
     quota = SpyQuota()
     space = Workspace(root=tmp_path, quota=quota)
 
     space.path("thread-1")
     space.path("thread-1")
 
-    assert len(quota.assigned) == 2
+    assert len(quota.assigned) == 1
 
 
 def test_a_failing_quota_stops_the_thread_from_being_used(tmp_path: Path) -> None:

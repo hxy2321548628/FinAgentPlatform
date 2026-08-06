@@ -22,6 +22,7 @@ from sandbox.container import (
 )
 from sandbox.pool import DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONTAINER, DEFAULT_QUEUE_TIMEOUT
 from sandbox.quota import DEFAULT_DISK_QUOTA, DEFAULT_QUOTA_COMMAND
+from sandbox.remote import DEFAULT_BROKER_URL
 
 # .env 在仓库根而不在 app/，且门禁（cwd=app/）与 uvicorn（cwd 不定）的工作目录并不一致，
 # 因此按本文件位置解析成绝对路径 —— 相对路径或向上搜索都会在某种场景下静默读到别的文件。
@@ -57,6 +58,11 @@ class Settings(BaseSettings):
     model_aux: str = Field(
         default="deepseek-v4-flash",
         description="辅助模型，承担意图分类等轻量调用",
+    )
+
+    broker_url: str = Field(
+        default=DEFAULT_BROKER_URL,
+        description="sandbox-broker 的地址。它是唯一持有 docker.sock 的进程，只在内网监听",
     )
 
     sandbox_image: str = Field(

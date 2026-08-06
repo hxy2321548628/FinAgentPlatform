@@ -26,6 +26,7 @@ from sandbox.container import (
     DockerContainer,
     Hardening,
     ManagedContainerProtocol,
+    running_sandbox,
 )
 from sandbox.workspace import Workspace
 
@@ -40,7 +41,8 @@ DEFAULT_QUEUE_TIMEOUT = 600.0
 # 后台扫描 idle 容器的间隔。远小于 idle_timeout 即可，精确度对回收没有意义
 DEFAULT_SWEEP_INTERVAL = 60.0
 
-type ContainerFactory = Callable[[Path], ManagedContainerProtocol]
+# 收 thread_id 是因为容器要带着它做 label，broker 重启后靠 label 认领
+type ContainerFactory = Callable[[str, Path], ManagedContainerProtocol]
 type QueuePositionCallback = Callable[[int], None]
 
 
@@ -100,7 +102,9 @@ class SandboxPool:
         self._idle_timeout = idle_timeout
         self._queue_timeout = queue_timeout
         self._factory = container_factory or (
-            lambda workspace: DockerContainer(workspace=workspace, image=image, hardening=hardening)
+            lambda thread_id, workspace: DockerContainer(
+                thread_id=thread_id, workspace=workspace, image=image, hardening=hardening
+            )
         )
 
         self._slot: dict[str, _Slot] = {}
@@ -115,6 +119,21 @@ class SandboxPool:
     def size(self) -> int:
         """当前存活的容器数。"""
         return len(self._slot)
+
+    def current(self, thread_id: str) -> ContainerProtocol | None:
+        """给出该 thread 眼下的容器，没有则返回 None。
+
+        **不申请、不排队、不改占用**。给文件工具用：它们直接读写宿主目录，
+        容器在不在都照常可用，为一次 `read_file` 去排队等一个容器是荒唐的。
+
+        Args:
+            thread_id: 会话标识。
+
+        Returns:
+            正在跑的容器，或 None。
+        """
+        slot = self._slot.get(thread_id)
+        return None if slot is None else slot.container
 
     async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> ContainerProtocol:
         """取得一个 thread 的容器，必要时排队等待。
@@ -158,6 +177,28 @@ class SandboxPool:
             # 名额是 _pump 许给本申请的，无论接下来起容器成不成，都在这里一次性归还
             self._reserved -= 1
             return await self._start(thread_id, workspace)
+
+    async def reclaim(self) -> None:
+        """认领 broker 重启前就已经在跑的沙箱容器。
+
+        容器带 `--rm`，但它**不是 broker 的子进程** —— broker 崩溃或滚动重启都不会
+        带走它们。不认领的话它们既占着内存又不在池的账上：新申请会另起一个，旧的
+        那个再也没有人回收，就是 ADR-0004 点名的孤儿泄漏。
+
+        认领回来的容器 `lease=0`：原先用着它的 run 随 broker 一起没了，
+        因此它现在是空闲的，该受 idle 回收管。
+
+        Raises:
+            ContainerError: 查询 Docker 失败。
+        """
+        async with self._lock:
+            for thread_id, container_id in (await asyncio.to_thread(running_sandbox)).items():
+                if thread_id in self._slot:
+                    continue
+                container = self._factory(thread_id, self._workspace.path(thread_id))
+                container.adopt(container_id)
+                self._slot[thread_id] = _Slot(container=container, lease=0, last_used=time.monotonic())
+                logger.info("认领重启前的沙箱容器：thread_id=%s container=%s", thread_id, container_id[:12])
 
     async def release(self, thread_id: str) -> None:
         """归还容器。容器不销毁，留给同一 thread 的后续 run 复用。
@@ -232,7 +273,7 @@ class SandboxPool:
         docker run 要一秒多，持锁等于让并发的申请串行启动。这是刻意的：
         放开锁就得先占位再启动，失败回滚的分支比省下的这一秒贵。
         """
-        container = self._factory(workspace)
+        container = self._factory(thread_id, workspace)
         await asyncio.to_thread(container.start)
         self._slot[thread_id] = _Slot(container=container, lease=1, last_used=time.monotonic())
         return container

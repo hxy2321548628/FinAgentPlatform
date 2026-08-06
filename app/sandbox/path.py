@@ -64,6 +64,23 @@ def to_sandbox_path(virtual_path: str) -> str:
     return f"{SANDBOX_ROOT}{VIRTUAL_ROOT}{relative}" if relative else SANDBOX_ROOT
 
 
+def artifact_id(thread_id: str, workspace: Path, path: Path) -> str:
+    """给一个产物文件编出可下载的标识。
+
+    形状是 `{thread_id}/{outputs 下的相对路径}` —— 本期没有 artifacts 表，
+    产物的唯一身份就是「哪个会话的哪个文件」。
+
+    Args:
+        thread_id: 产出它的会话。
+        workspace: 该会话的 workspace 目录。
+        path: 宿主机上的产物路径。
+
+    Returns:
+        产物标识。
+    """
+    return f"{thread_id}/{path.relative_to(workspace / OUTPUT_DIR).as_posix()}"
+
+
 def thread_workspace(root: Path, thread_id: str) -> Path:
     """给出某个 thread 在宿主机上的 workspace 目录。
 

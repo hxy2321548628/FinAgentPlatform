@@ -12,7 +12,6 @@ import logging
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
@@ -38,29 +37,42 @@ from event.model import (
 )
 from log import run_context
 from run.log import EventLog
-from sandbox.backend import SandboxBackend
-from sandbox.container import ContainerProtocol
-from sandbox.path import OUTPUT_DIR
 from sandbox.pool import QueuePositionCallback, SandboxQueueTimeoutError
-from sandbox.workspace import Workspace
+from sandbox.remote import RemoteBackendFactory
 
 logger = logging.getLogger(__name__)
 
 # 一次分析的 chunk 流，由智能体装配层提供
 type AgentRunner = Callable[[BackendProtocol, str, str], AsyncIterator[StreamChunk]]
 
+# 按会话造 backend。注入进来而不是就地 new，是为了让测试能换掉传输层 ——
+# 生产用发 HTTP 的远程实现，测试用直接读写临时目录的本地实现
+type BackendFactory = Callable[[str], BackendProtocol]
+
 UPDATES_MODE = "updates"
 
 
-class SandboxPoolProtocol(Protocol):
-    """执行器对沙箱池的全部要求。"""
+class WorkspaceProtocol(Protocol):
+    """执行器对会话文件空间的全部要求。"""
 
-    async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> ContainerProtocol:
-        """取得容器，必要时排队等待。"""
+    async def artifact_since(self, thread_id: str, since: float) -> list[str]:
+        """列出一次 run 产出的产物标识。"""
+        ...
+
+
+class SandboxPoolProtocol(Protocol):
+    """执行器对沙箱池的全部要求。
+
+    **申请不返回容器**：容器在 broker 那边，这个进程碰不到也不需要碰 ——
+    它只要知道「沙箱备好了，可以开工了」。
+    """
+
+    async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> None:
+        """申请沙箱，必要时排队等待。"""
         ...
 
     async def release(self, thread_id: str) -> None:
-        """归还容器。"""
+        """归还沙箱。"""
         ...
 
 
@@ -79,21 +91,24 @@ class RunExecutor:
 
     Args:
         pool: 沙箱池。
-        workspace: 各会话的文件空间。
+        workspace: 各会话的文件空间，用来认领本次 run 的产物。
         log: 事件日志，执行过程中产生的一切都往这里写。
         runner: 驱动一次智能体执行并产出 chunk 流的函数。
+        backend_factory: 按会话造 backend，不传则发 HTTP 给 broker。
     """
 
     def __init__(
         self,
         *,
         pool: SandboxPoolProtocol,
-        workspace: Workspace,
+        workspace: WorkspaceProtocol,
         log: EventLog,
         runner: AgentRunner,
+        backend_factory: BackendFactory | None = None,
     ) -> None:
         self._pool = pool
         self._workspace = workspace
+        self._backend = backend_factory or RemoteBackendFactory()
         self._log = log
         self._runner = runner
         self._run: dict[str, Run] = {}
@@ -137,12 +152,11 @@ class RunExecutor:
                 RunStartedEvent(ts=now_ms(), run_id=run.id, path=(), data=RunStartedData(thread_id=run.thread_id))
             )
 
-            container = await self._acquire(run)
-            if container is None:
+            if not await self._acquire(run):
                 return
 
             try:
-                await self._consume(run, container)
+                await self._consume(run)
             # 智能体那一侧什么都可能抛：模型断连、图跑飞、工具越界。宽捕获是刻意的 ——
             # 让异常逃出去只会让后台任务无声无息地死掉，订阅这个 run 的连接则永远等不到终态。
             except Exception as exc:
@@ -151,8 +165,8 @@ class RunExecutor:
             finally:
                 await self._pool.release(run.thread_id)
 
-    async def _acquire(self, run: Run) -> ContainerProtocol | None:
-        """申请沙箱，把排队过程写成事件。失败时结束 run 并返回 None。"""
+    async def _acquire(self, run: Run) -> bool:
+        """申请沙箱，把排队过程写成事件。失败时结束 run 并返回 False。"""
 
         def announce(position: int) -> None:
             self._emit(
@@ -160,7 +174,7 @@ class RunExecutor:
             )
 
         try:
-            container = await self._pool.acquire(run.thread_id, on_queued=announce)
+            await self._pool.acquire(run.thread_id, on_queued=announce)
         # 同上：容器起不来、磁盘满、排队超时都得转成 run.failed，不能让任务静默消失
         except Exception as exc:
             logger.warning("run 申请沙箱失败", exc_info=True)
@@ -169,15 +183,14 @@ class RunExecutor:
             # 还多花一份 token
             code = RunErrorCode.SANDBOX_QUEUE_TIMEOUT if queued_out else RunErrorCode.INTERNAL
             self._fail(run, code, str(exc), retryable=queued_out)
-            return None
+            return False
 
         self._emit(SandboxReadyEvent(ts=now_ms(), run_id=run.id, path=(), data=SandboxReadyData()))
-        return container
+        return True
 
-    async def _consume(self, run: Run, container: ContainerProtocol) -> None:
+    async def _consume(self, run: Run) -> None:
         """消费智能体的流，逐个 chunk 映射成事件。"""
-        workspace = self._workspace.path(run.thread_id)
-        backend = SandboxBackend(workspace=workspace, container=container)
+        backend = self._backend(run.thread_id)
         tokens = TokenUsage()
         # 产物按 mtime 判定，基准要在 agent 动手之前取，否则本次的产出会被漏掉
         started_at = time.time()
@@ -195,9 +208,7 @@ class RunExecutor:
                 path=(),
                 data=RunFinishedData(
                     tokens=tokens,
-                    artifacts=[
-                        artifact_id(run.thread_id, workspace, path) for path in backend.artifact_since(started_at)
-                    ],
+                    artifacts=await self._workspace.artifact_since(run.thread_id, started_at),
                 ),
             )
         )
@@ -215,23 +226,6 @@ class RunExecutor:
 
     def _emit(self, event: Event) -> None:
         self._log.append(event)
-
-
-def artifact_id(thread_id: str, workspace: Path, path: Path) -> str:
-    """给一个产物文件编出可下载的标识。
-
-    形状是 `{thread_id}/{outputs 下的相对路径}` —— 本期没有 artifacts 表，
-    产物的唯一身份就是「哪个会话的哪个文件」。
-
-    Args:
-        thread_id: 产出它的会话。
-        workspace: 该会话的 workspace 目录。
-        path: 宿主机上的产物路径。
-
-    Returns:
-        产物标识。
-    """
-    return f"{thread_id}/{path.relative_to(workspace / OUTPUT_DIR).as_posix()}"
 
 
 def _token_usage(mode: str, payload: object) -> TokenUsage:

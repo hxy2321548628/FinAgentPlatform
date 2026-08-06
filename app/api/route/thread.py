@@ -18,7 +18,7 @@ router = APIRouter(prefix="/threads", tags=["thread"])
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_thread(platform: Annotated[Platform, Depends(get_platform)]) -> ThreadResponse:
     """开一个新会话。"""
-    return ThreadResponse(id=platform.workspace.create())
+    return ThreadResponse(id=await platform.workspace.create())
 
 
 @router.post("/{thread_id}/files", status_code=status.HTTP_201_CREATED)
@@ -31,15 +31,15 @@ async def upload_file(
 
     文件会落在 agent 视角的 `/workspace` 根下，提示词告诉它的工作目录就是那里。
     """
-    _require_thread(platform, thread_id)
+    await _require_thread(platform, thread_id)
 
     content = await file.read()
     try:
-        saved = platform.workspace.save(thread_id, file.filename or "", content)
+        saved = await platform.workspace.save(thread_id, file.filename or "", content)
     except PathEscapeError as exc:
         # 文件名不可信，但拒绝的理由不必回给调用方 —— 那等于告诉它哪些名字能穿越
         raise not_found(f"文件名不可用：{file.filename!r}") from exc
-    return UploadResponse(filename=saved.name, size=len(content))
+    return UploadResponse(filename=saved, size=len(content))
 
 
 @router.post("/{thread_id}/runs", status_code=status.HTTP_202_ACCEPTED)
@@ -52,13 +52,13 @@ async def submit_run(
 
     执行要几分钟到几十分钟，进度通过订阅事件流看，不在这个响应里等。
     """
-    _require_thread(platform, thread_id)
+    await _require_thread(platform, thread_id)
 
     run = await platform.executor.submit(thread_id=thread_id, content=request.content)
     return RunResponse(id=run.id, thread_id=run.thread_id, status=run.status)
 
 
-def _require_thread(platform: Platform, thread_id: str) -> None:
-    if not platform.workspace.exists(thread_id):
+async def _require_thread(platform: Platform, thread_id: str) -> None:
+    if not await platform.workspace.exists(thread_id):
         message = f"会话不存在：{thread_id}"
         raise not_found(message)

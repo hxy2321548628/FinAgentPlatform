@@ -30,6 +30,11 @@ KEEP_ALIVE_COMMAND = ("sleep", "infinity")
 # docker CLI 自身的超时。管的是 docker 客户端卡住，与容器内命令的超时无关
 DOCKER_CLI_TIMEOUT = 30
 
+# 容器上的标记。broker 重启后靠它把还在跑的沙箱认回来 —— 容器带 --rm 但**不是
+# broker 的子进程**，broker 崩溃不会带走它们，不认领就是既占着内存又不在账上的孤儿。
+MANAGED_LABEL = "zuel.sandbox"
+THREAD_LABEL = "zuel.thread"
+
 DEFAULT_RUNTIME = "runsc"
 DEFAULT_NETWORK = "none"
 DEFAULT_MEMORY = "2g"
@@ -136,17 +141,33 @@ class ManagedContainerProtocol(ContainerProtocol, Protocol):
         """容器是否仍在运行。"""
         ...
 
+    def adopt(self, container_id: str) -> None:
+        """接管一个已经在跑的容器，不新起。
+
+        Args:
+            container_id: 已存在的容器标识。
+        """
+        ...
+
 
 class DockerContainer:
     """跑在 gVisor 上的沙箱容器，一个 thread 一个。
 
     Args:
+        thread_id: 会话标识，作为容器 label 打上去，broker 重启后靠它认领。
         workspace: 该 thread 在宿主机上的 workspace 目录，会挂进容器的 `/workspace`。
         image: 沙箱镜像。
         hardening: 资源限额与隔离档位，不传则用默认值。
     """
 
-    def __init__(self, workspace: Path, image: str = DEFAULT_IMAGE, hardening: Hardening | None = None) -> None:
+    def __init__(
+        self,
+        thread_id: str,
+        workspace: Path,
+        image: str = DEFAULT_IMAGE,
+        hardening: Hardening | None = None,
+    ) -> None:
+        self._thread_id = thread_id
         self._workspace = workspace.resolve()
         self._image = image
         self._hardening = hardening or Hardening()
@@ -190,6 +211,11 @@ class DockerContainer:
                 # 镜像必须是本地预先构建或导入的。不加这条，镜像名写错时 Docker 会去
                 # registry 拉取，在内网里卡满整个超时才失败，且错误指向网络而非镜像。
                 "--pull=never",
+                # 认领用的标记，见 MANAGED_LABEL 的说明
+                "--label",
+                f"{MANAGED_LABEL}=1",
+                "--label",
+                f"{THREAD_LABEL}={self._thread_id}",
                 # gVisor。容器逃逸要先过它这一层，是整套隔离的根基
                 f"--runtime={limit.runtime}",
                 # 零出网。装包因此不可能，这是「不部署 devpi」那个决策的另一半
@@ -253,6 +279,14 @@ class DockerContainer:
             return False
         return output.strip() == "true"
 
+    def adopt(self, container_id: str) -> None:
+        """接管一个已经在跑的容器，不新起。
+
+        Args:
+            container_id: 已存在的容器标识。
+        """
+        self._container_id = container_id
+
     def exec(self, command: str, *, timeout: int) -> CommandResult:
         """在容器内执行一条 shell 命令。
 
@@ -302,6 +336,37 @@ class DockerContainer:
     ) -> None:
         """离开上下文时销毁容器。"""
         self.stop()
+
+
+def running_sandbox() -> dict[str, str]:
+    """列出本机上还在跑的沙箱容器。
+
+    只认自己打的 label，因此不会把机器上别的容器卷进来。
+
+    Returns:
+        `thread_id → 容器 id`。没有则为空。
+
+    Raises:
+        ContainerError: docker 调用失败。
+    """
+    output = _run_docker(
+        [
+            "ps",
+            "--filter",
+            f"label={MANAGED_LABEL}",
+            "--format",
+            f'{{{{.ID}}}}\t{{{{.Label "{THREAD_LABEL}"}}}}',
+        ],
+        timeout=DOCKER_CLI_TIMEOUT,
+    )
+
+    found: dict[str, str] = {}
+    for line in output.splitlines():
+        container_id, separator, thread_id = line.partition("\t")
+        # 没有 thread label 的不认领：那是别人打了同名 label 的容器，动它是越界
+        if separator and thread_id:
+            found[thread_id] = container_id
+    return found
 
 
 def _capped(command: str) -> str:

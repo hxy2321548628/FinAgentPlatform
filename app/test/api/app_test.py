@@ -9,6 +9,7 @@ from pydantic import SecretStr
 from api.app import create_app
 from api.platform import build_platform
 from config import Settings
+from sandbox.remote import RemoteSandboxPool, RemoteWorkspace
 
 
 @pytest.fixture
@@ -46,16 +47,22 @@ def test_a_platform_built_from_settings_wires_everything_together(tmp_path: Path
 
     platform = build_platform(settings)
 
-    assert platform.workspace.create()
-    assert platform.pool.size == 0
+    # 装配阶段不该碰 broker、不该碰盘：这三样都只是拿到了一条到 broker 的连接
+    assert isinstance(platform.workspace, RemoteWorkspace)
+    assert isinstance(platform.pool, RemoteSandboxPool)
     assert platform.executor.get("never-existed") is None
 
 
 @pytest.mark.usefixtures("no_proxy")
 def test_an_app_without_an_injected_platform_builds_its_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """生产走的是这条路径：uvicorn 起进程时没有人给它塞运行时。"""
+    """生产走的是这条路径：uvicorn 起进程时没有人给它塞运行时。
+
+    只验它能自己起得来、并把运行时挂上去。**不在这里发业务请求** —— 拆出 broker
+    之后那需要一个真的 broker 在跑，那是 deploy/test/ 里的集成验收，不是单测。
+    """
     settings = Settings(deepseek_api_key=SecretStr("sk-test"), sandbox_workspace_root=tmp_path)
     monkeypatch.setattr("api.app.get_settings", lambda: settings)
 
     with TestClient(create_app()) as client:
-        assert client.post("/api/threads").status_code == 201
+        assert client.app.state.platform.executor is not None  # type: ignore[attr-defined]
+        assert client.get("/docs").status_code == 200
