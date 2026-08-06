@@ -20,7 +20,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from sandbox.container import DEFAULT_IMAGE, ContainerProtocol, DockerContainer, ManagedContainerProtocol
+from sandbox.container import (
+    DEFAULT_IMAGE,
+    ContainerProtocol,
+    DockerContainer,
+    Hardening,
+    ManagedContainerProtocol,
+)
 from sandbox.path import thread_workspace
 
 logger = logging.getLogger(__name__)
@@ -74,6 +80,7 @@ class SandboxPool:
         max_container: 同时存活的容器数上限。
         idle_timeout: 无人使用多久后回收，秒。
         queue_timeout: 排队等待的上限，秒。
+        hardening: 容器的资源限额与隔离档位，不传则用默认值。
         container_factory: 造容器的方式，默认是 Docker。测试用它换成假容器。
     """
 
@@ -85,13 +92,16 @@ class SandboxPool:
         max_container: int = DEFAULT_MAX_CONTAINER,
         idle_timeout: float = DEFAULT_IDLE_TIMEOUT,
         queue_timeout: float = DEFAULT_QUEUE_TIMEOUT,
+        hardening: Hardening | None = None,
         container_factory: ContainerFactory | None = None,
     ) -> None:
         self._root = workspace_root
         self._max_container = max_container
         self._idle_timeout = idle_timeout
         self._queue_timeout = queue_timeout
-        self._factory = container_factory or (lambda workspace: DockerContainer(workspace=workspace, image=image))
+        self._factory = container_factory or (
+            lambda workspace: DockerContainer(workspace=workspace, image=image, hardening=hardening)
+        )
 
         self._slot: dict[str, _Slot] = {}
         self._queue: deque[_Waiter] = deque()

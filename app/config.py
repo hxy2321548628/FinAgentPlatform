@@ -9,7 +9,16 @@ from pathlib import Path
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from sandbox.container import DEFAULT_IMAGE
+from sandbox.container import (
+    DEFAULT_CPUS,
+    DEFAULT_IMAGE,
+    DEFAULT_MEMORY,
+    DEFAULT_NETWORK,
+    DEFAULT_PIDS_LIMIT,
+    DEFAULT_RUNTIME,
+    DEFAULT_TMP_SIZE,
+    Hardening,
+)
 from sandbox.pool import DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONTAINER, DEFAULT_QUEUE_TIMEOUT
 
 # .env 在仓库根而不在 app/，且门禁（cwd=app/）与 uvicorn（cwd 不定）的工作目录并不一致，
@@ -72,6 +81,49 @@ class Settings(BaseSettings):
         gt=0,
         description="沙箱排队等待的上限，秒。超时的 run 转失败且标记可重试",
     )
+
+    # 加固清单里有中间档的几项。只读 rootfs、cap-drop、no-new-privileges 不在此列 ——
+    # 它们只有开和关，做成配置就是给静默失守留入口，见 sandbox/container.py。
+    sandbox_runtime: str = Field(
+        default=DEFAULT_RUNTIME,
+        description="容器运行时。runsc 即 gVisor，换成 runc 等于把隔离退回一层容器边界",
+    )
+    sandbox_network: str = Field(
+        default=DEFAULT_NETWORK,
+        description="沙箱网络。P1 定案为 none，agent 因此装不了任何包",
+    )
+    sandbox_memory: str = Field(
+        default=DEFAULT_MEMORY,
+        description="单沙箱内存上限，含 /tmp 的 tmpfs 占用",
+    )
+    sandbox_cpus: str = Field(
+        default=DEFAULT_CPUS,
+        description="单沙箱 CPU 核数上限。死循环被限在这个数以内",
+    )
+    sandbox_pids_limit: int = Field(
+        default=DEFAULT_PIDS_LIMIT,
+        gt=0,
+        description="单沙箱进程数上限，挡 fork 炸弹",
+    )
+    sandbox_tmp_size: str = Field(
+        default=DEFAULT_TMP_SIZE,
+        description="/tmp 的 tmpfs 限容。吃的是宿主机内存，不限容一句 dd 就能撑爆",
+    )
+
+    def hardening(self) -> Hardening:
+        """把加固相关的配置项收成一组，交给容器。
+
+        Returns:
+            容器创建时用的资源限额与隔离档位。
+        """
+        return Hardening(
+            runtime=self.sandbox_runtime,
+            network=self.sandbox_network,
+            memory=self.sandbox_memory,
+            cpus=self.sandbox_cpus,
+            pids_limit=self.sandbox_pids_limit,
+            tmp_size=self.sandbox_tmp_size,
+        )
 
 
 @lru_cache(maxsize=1)

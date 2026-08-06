@@ -43,6 +43,7 @@ def build_platform(settings: Settings) -> Platform:
         max_container=settings.sandbox_max_container,
         idle_timeout=settings.sandbox_idle_timeout,
         queue_timeout=settings.sandbox_queue_timeout,
+        hardening=settings.hardening(),
     )
     log = EventLog()
     executor = RunExecutor(
