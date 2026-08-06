@@ -15,13 +15,24 @@ worker 需要创建、执行、销毁沙箱容器，这要求访问 Docker daemo
 
 **不把 `docker.sock` 挂进 worker。**
 
-引入一个独立的 **sandbox-broker** 服务，它是架构中**唯一持有 `docker.sock` 的组件**，只对内网暴露三个受限 API：
+引入一个独立的 **sandbox-broker** 服务，它是架构中**唯一持有 `docker.sock` 的组件**，也是唯一能读写宿主机 workspace 目录的组件。worker 通过 HTTP 调用 broker 间接操作沙箱与文件。
 
-```
-create  / exec  / destroy
-```
+broker 暴露的内网 API：
 
-worker 通过 HTTP 调用 broker 间接操作沙箱。
+| 组 | 端点 | 说明 |
+|---|---|---|
+| 沙箱生命周期 | `POST /threads/{id}/sandbox`（流式）<br>`DELETE /threads/{id}/sandbox` | 申请与归还。申请用流式响应实时推排队排位，不轮询（§8.1） |
+| 八个工具 | `POST /threads/{id}/tool/{ls,read,write,edit,delete,glob,grep,execute}` | 七个文件工具不进容器，直接读写宿主目录（[ADR-0016](./0016-sandbox-filesystem-backend.md)） |
+| 字节搬运 | `POST /threads/{id}/tool/{upload,download}` | 产物多半是图片，走 base64 |
+| 会话目录 | `POST /threads`<br>`GET /threads/{id}/exists`<br>`POST /threads/{id}/save`<br>`GET /threads/{id}/artifacts[/{path}]` | 建会话、判存在、存上传文件、列与取产物 |
+
+> **本决策于 2026-08-03 按 §5.5 扩展。** 原文写的是「只暴露 `create / exec / destroy` 三个 API」，那是决策作出时的粗粒度描述，已被后续的 [ADR-0016](./0016-sandbox-filesystem-backend.md)（文件操作不进容器）与 [ADR-0014](./0014-tool-idempotency-key.md)（broker 侧去重）细化 —— **过时的是这份 ADR，不是 §5.5**。
+>
+> 扩展到 8 个工具全走 broker 的两条理由（详见 [P1 计划 §2.1](../../03plan/P1-plan.md)）：
+> 1. **去重落点**。P3 的去重要覆盖 `write_file` / `edit_file` / `delete` / `execute` 四个写操作，文件工具若不经 broker，P3 得把它们再搬一次；
+> 2. **边界的完整性**。本决策要防的是「api 被 agent 输出影响后能直接动沙箱资源」。若 api 仍能任意读写任意 thread 的 workspace，broker 就只挡住了容器、没挡住数据。
+>
+> 代价（明确接受）：`read_file` / `glob` / `grep` 这类高频调用每次多一跳本机 HTTP。相对 LLM 调用的耗时可忽略，但**不是零** —— 若实测 grep 大目录明显变慢，处置方式是在 broker 侧加结果上限，不是把工具搬回 api。
 
 ## 理由
 

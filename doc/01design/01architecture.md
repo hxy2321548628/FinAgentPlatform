@@ -352,6 +352,10 @@ services:
   pypi-mirror:      # devpi，供沙箱装包（也可指向校内已有镜像）
 ```
 
+> **P1 已落地的只有 `nginx` / `api` / `sandbox-broker` 三个**，见 [`deploy/compose.yml`](../../deploy/compose.yml)。其余各有偿还期次（[P1 计划 §1.3](../03plan/P1-plan.md)）：`postgres` / `redis` / `minio` 在 P2；`worker` 尚未从 api 拆出，也在 P2。
+>
+> **`pypi-mirror` 未部署，且本期定案不做** —— 沙箱保持零出网，理由见上方 §7.3.3 陷阱一的回填。
+
 沙箱容器**不在 compose 中声明** —— 它们由 sandbox-broker 在运行时动态创建与销毁，生命周期见 §5.5。
 
 **服务器规格（2026-07-31 确认）**
@@ -1140,9 +1144,17 @@ Agent 要写并运行分析代码，内网部署又意味着数据不能交给�
 
 Agent 一定会想装包。必须给沙箱配一个内网 pypi 镜像（清华 / 阿里源，或自建 devpi），网络策略从 `none` 改成「只允许访问镜像源 + 内网数据源」的白名单 bridge。
 
+> **P1 定案：不做，沙箱保持 `--network=none`**（2026-08-03，理由见 [P1 计划 §2.2](../03plan/P1-plan.md)）。
+> 本条写于 P0 之前，前提是「agent 一定会想装包」，而 P0 实测的前提已经变了：镜像预装了 pandas / numpy / matplotlib 与中文字体，全程没有装包需求。
+>
+> 更要紧的是**它与加固清单直接冲突**：`--read-only` 使 `pip` 只能装到 `HOME` 下，而 `HOME=/tmp` 是 512MB 且 `noexec` 的 tmpfs —— 装得下的包跑不起来，跑得起来的包装不下。要支持装包，得先给出一条可写且可执行的路径，那是对加固清单的实质放松，不能顺手做。
+>
+> **代价**：agent 遇到预装栈覆盖不到的分析方法（如 `statsmodels`）会直接卡住，且零出网下它的错误信息不会指向「装不了包」。缓解：把可用库清单写进系统提示词；实测缺哪个就加进镜像重新构建。
+> **重新评估的触发条件**：教师的分析需求反复撞到缺库，且加库频率高到无法靠重建镜像跟上。
+
 **陷阱二：不要把 `docker.sock` 挂进 worker 容器。**
 
-那等于给 worker 宿主机 root 权限，worker 一旦被 agent 生成的代码影响就全线失守。改成一个独立的 **sandbox-broker** 服务持有 `docker.sock`，只暴露 `create / exec / destroy` 三个内部 API，worker 通过它间接操作。详见 [ADR-0004](./adr/0004-sandbox-broker-docker-sock.md)。
+那等于给 worker 宿主机 root 权限，worker 一旦被 agent 生成的代码影响就全线失守。改成一个独立的 **sandbox-broker** 服务持有 `docker.sock`，worker 通过它间接操作。**8 个工具与会话目录的物理访问全部经 broker**（只挡容器不挡数据的话，边界只剩一半），API 清单与理由见 [ADR-0004](./adr/0004-sandbox-broker-docker-sock.md)。P1 已落地，见 [`app/broker/`](../../app/broker/)。
 
 #### 7.3.4 沙箱的网络策略
 
@@ -1271,6 +1283,13 @@ Agent run 是 **IO 密集**的 —— 绝大部分时间在等 LLM 返回。
 >
 > 优先级判断：**日志与 token 计量不能等到 P4** —— 前者是排障的最低要求，后者是 §6.4 配额的前提。建议把这两项前移到 P1。
 
+**这两项已于 P1 落地**（2026-08-06）：
+
+- **结构化日志**：进程日志输出成 JSON 行，`run_id` / `thread_id` 走 `contextvars` 自动带上，一次 run 的全部日志可按 `run_id` 过滤（[`app/log.py`](../../app/log.py)）。异常塞进同一行的 `exception` 字段 —— traceback 换行输出会把一条日志拆成十几行，逐行解析的工具在这里全部失败。
+- **token 计量**：按 cache 命中拆分，口径见 §6.4；契约见 §5.2 的 `run.finished`。
+
+仍在 P4 的：指标、链路追踪、成本看板。日志的**集中收集**也未做，目前只有 `docker logs`。
+
 ### 8.4 部署与发布
 
 不做灰度 / 蓝绿 / 金丝雀（理由见[附录 B](#附录-b已评估但本期不采用)）。用户量小、停机窗口容易协调，直接 `docker compose up -d` 滚动重启即可 —— 前提是 §8.2 的崩溃恢复真的可靠，滚动发布本质上就是一次可控的崩溃。
@@ -1369,7 +1388,7 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 ### 10.3 技术债与文档缺口
 
 - **智能体设计文档已建**（[`03agent-design.md`](./03agent-design.md)），但**只覆盖了与平台契约耦合的部分**（工具集、文件系统、产物判定、上下文截断）。提示词工程、子 agent 划分、效果评测**仍然空白，刻意推迟到下期** —— 它们只在 worker 进程内部生效，改了不影响别的模块。需要清醒的是：平台的价值完全取决于智能体好不好用（§10.2 风险二），这块债只是被安排了，不是被还了。
-- **P0 的裸 Docker 沙箱是刻意欠下的债**，P1 必须偿还，不可带入上线（§11）。P0 探针里的 `docker_sandbox.py`（已随 `app/spike/` 删除，存于 git 历史 `30b0fa6`）是这笔债的实体：无 gVisor、无资源限制、无网络白名单、无磁盘配额，且为省事继承了 `BaseSandbox`（文件操作进容器，与[智能体设计 §4.2](./03agent-design.md) 相反）。**它是验证工具，不是实现起点** —— 正式 backend 要按 [ADR-0016](./adr/0016-sandbox-filesystem-backend.md) 直接实现 `SandboxBackendProtocol`。
+- ~~**P0 的裸 Docker 沙箱是刻意欠下的债**~~ —— **已偿还**（2026-08-06，P1）。gVisor + §7.3.2 九条加固参数 + `/workspace` 5GB 配额 + `/tmp` 512MB 限容均已落地并经破坏性测试验证；`docker.sock` 已收归 broker。下面这段保留作为背景：**P0 的裸 Docker 沙箱**曾是刻意欠下的债，P1 必须偿还，不可带入上线（§11）。P0 探针里的 `docker_sandbox.py`（已随 `app/spike/` 删除，存于 git 历史 `30b0fa6`）是这笔债的实体：无 gVisor、无资源限制、无网络白名单、无磁盘配额，且为省事继承了 `BaseSandbox`（文件操作进容器，与[智能体设计 §4.2](./03agent-design.md) 相反）。**它是验证工具，不是实现起点** —— 正式 backend 要按 [ADR-0016](./adr/0016-sandbox-filesystem-backend.md) 直接实现 `SandboxBackendProtocol`。
 - **`todo.updated` 与 `subagent.*` 两个事件仍无实测样本**（§5.2）。前者是因为实测中 agent 一次都没调 `write_todos`，后者是因为本期不开子 agent。契约位置已留好，但**前端的对应渲染分支没有真实数据可对照**，等到真正触发时可能要改。
 - ~~文件名 `02Frontend Technology Selection.md.md` 命名风格不一致~~ —— 已于 2026-07-31 重命名为 `02frontend-selection.md`，引用同步更新。
 
