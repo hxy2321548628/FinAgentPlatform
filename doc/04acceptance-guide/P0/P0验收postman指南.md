@@ -5,13 +5,13 @@
 | 文档状态 | 可执行 |
 | 作者 | hxy |
 | 日期 | 2026-08-03 |
-| 上游文档 | [P0 实施计划](../doc/03plan/P0-plan.md) |
+| 上游文档 | [P0 实施计划](../../03plan/P0-plan.md) |
 
 > **本文档的职责**：回答 **「怎么用 Postman 一步步把 P0 验收跑完」**。
 >
-> **不回答**「验收标准为什么是这四条」（在 [P0 计划 §2](../doc/03plan/P0-plan.md)）、「接口为什么这么设计」（在[架构 §5.7](../doc/01design/01architecture.md)）。
+> **不回答**「验收标准为什么是这四条」（在 [P0 计划 §2](../../03plan/P0-plan.md)）、「接口为什么这么设计」（在[架构 §5.7](../../01design/01architecture.md)）。
 >
-> 本文与配套的 `holdings.csv` 都在 `tmp/`，**该目录已被 gitignore，不入库** —— 它是一次性的验收材料，不是交付物。
+> 配套的 `holdings.csv` 与本文同目录，是验收专用的样例数据，不是业务数据。
 
 ---
 
@@ -19,7 +19,7 @@
 
 验收要跑一次**真实的** LLM 调用（DeepSeek）与真实的 Docker 沙箱，**会产生 API 费用**，单次分析约几分钟。
 
-四条验收标准（原文见 [P0 计划 §2](../doc/03plan/P0-plan.md)）与本文步骤的对应：
+四条验收标准（原文见 [P0 计划 §2](../../03plan/P0-plan.md)）与本文步骤的对应：
 
 | 验收标准 | 在哪一步验 |
 |---|---|
@@ -147,7 +147,7 @@ pm.environment.set("threadId", pm.response.json().id);
 | URL | `{{baseUrl}}/api/threads/{{threadId}}/files` |
 | Body | `form-data`，key 填 `file`，**类型下拉选 File**（默认是 Text，选错会 422） |
 
-值选仓库里的 `tmp/holdings.csv` —— 6 只股票 × 7 个月的收盘价与持仓数，带行业分类，**并且 2025-07-01 五粮液的收盘价故意留空**，用来看 agent 会不会按提示词要求说明缺失值怎么处理的。
+值选与本文同目录的 `holdings.csv` —— 6 只股票 × 7 个月的收盘价与持仓数，带行业分类，**并且 2025-07-01 五粮液的收盘价故意留空**，用来看 agent 会不会按提示词要求说明缺失值怎么处理的。
 
 **期望**：`201 Created`
 
@@ -320,4 +320,4 @@ docker ps --filter ancestor=zuel-sandbox:latest -q | xargs -r docker rm -f
 ls data/sandbox/
 ```
 
-验收通过后，把实测数据回填到 [P0 计划 §2](../doc/03plan/P0-plan.md) 的通过条件下方。
+验收通过后，把实测数据回填到 [P0 计划 §2](../../03plan/P0-plan.md) 的通过条件下方。
