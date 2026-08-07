@@ -240,7 +240,7 @@ async def test_a_silent_stream_still_sends_heartbeats(platform: Platform) -> Non
 
     task = asyncio.create_task(collect())
     await asyncio.sleep(0.3)
-    platform.log.append(finished_event("run-silent"))
+    await platform.log.append(finished_event("run-silent"))
     await asyncio.wait_for(task, timeout=2)
 
     assert HEARTBEAT_FRAME in frames
@@ -256,8 +256,8 @@ async def test_a_heartbeat_is_a_comment_line_not_an_event(platform: Platform) ->
 
 async def test_a_busy_stream_needs_no_heartbeat(platform: Platform) -> None:
     """事件密集时不该掺进心跳 —— 那只是白白多出来的噪音。"""
-    platform.log.append(token_event("run-busy", "好"))
-    platform.log.append(finished_event("run-busy"))
+    await platform.log.append(token_event("run-busy", "好"))
+    await platform.log.append(finished_event("run-busy"))
 
     frames = [frame async for frame in heartbeat_stream(platform.log.follow("run-busy"), interval=5.0)]
 
@@ -267,7 +267,7 @@ async def test_a_busy_stream_needs_no_heartbeat(platform: Platform) -> None:
 
 async def test_the_stream_still_ends_when_the_run_ends(platform: Platform) -> None:
     """心跳不能把一个已经结束的流变成永不收尾的连接。"""
-    platform.log.append(finished_event("run-over"))
+    await platform.log.append(finished_event("run-over"))
 
     frames = [frame async for frame in heartbeat_stream(platform.log.follow("run-over"), interval=0.05)]
 

@@ -37,8 +37,8 @@ from event.model import (
 from log import run_context
 from run.log import EventLog
 from run.repository import Run
-from sandbox.pool import QueuePositionCallback, SandboxQueueTimeoutError
-from sandbox.remote import RemoteBackendFactory
+from sandbox.pool import SandboxQueueTimeoutError
+from sandbox.remote import AsyncQueuePositionCallback, RemoteBackendFactory
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class SandboxPoolProtocol(Protocol):
     它只要知道「沙箱备好了，可以开工了」。
     """
 
-    async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> None:
+    async def acquire(self, thread_id: str, *, on_queued: AsyncQueuePositionCallback | None = None) -> None:
         """申请沙箱，必要时排队等待。"""
         ...
 
@@ -168,7 +168,7 @@ class RunExecutor:
         # 因此在这里绑定不会串到并发的其他 run 上
         with run_context(run_id=run.id, thread_id=run.thread_id):
             await self._repository.start(run.id)
-            self._emit(
+            await self._emit(
                 RunStartedEvent(ts=now_ms(), run_id=run.id, path=(), data=RunStartedData(thread_id=run.thread_id))
             )
 
@@ -188,8 +188,8 @@ class RunExecutor:
     async def _acquire(self, run: Run) -> bool:
         """申请沙箱，把排队过程写成事件。失败时结束 run 并返回 False。"""
 
-        def announce(position: int) -> None:
-            self._emit(
+        async def announce(position: int) -> None:
+            await self._emit(
                 SandboxQueuedEvent(ts=now_ms(), run_id=run.id, path=(), data=SandboxQueuedData(position=position))
             )
 
@@ -205,7 +205,7 @@ class RunExecutor:
             await self._fail(run, code, str(exc), retryable=queued_out)
             return False
 
-        self._emit(SandboxReadyEvent(ts=now_ms(), run_id=run.id, path=(), data=SandboxReadyData()))
+        await self._emit(SandboxReadyEvent(ts=now_ms(), run_id=run.id, path=(), data=SandboxReadyData()))
         return True
 
     async def _consume(self, run: Run, content: str) -> None:
@@ -218,12 +218,12 @@ class RunExecutor:
         async for ns, mode, payload in self._runner(backend, run.thread_id, content):
             tokens = tokens + _token_usage(mode, payload)
             for event in map_chunk(ns, mode, payload, run_id=run.id):
-                self._log.append(event)
+                await self._log.append(event)
 
         # 先落库再发终态事件：订阅方收到 run.finished 就会回头查 GET /runs/{id}，
         # 反过来的话那一查会读到还在 running
         await self._repository.succeed(run.id, tokens=tokens)
-        self._emit(
+        await self._emit(
             RunFinishedEvent(
                 ts=now_ms(),
                 run_id=run.id,
@@ -237,7 +237,7 @@ class RunExecutor:
 
     async def _fail(self, run: Run, code: RunErrorCode, message: str, *, retryable: bool) -> None:
         await self._repository.fail(run.id, code=code, message=message or code.value)
-        self._emit(
+        await self._emit(
             RunFailedEvent(
                 ts=now_ms(),
                 run_id=run.id,
@@ -246,8 +246,8 @@ class RunExecutor:
             )
         )
 
-    def _emit(self, event: Event) -> None:
-        self._log.append(event)
+    async def _emit(self, event: Event) -> None:
+        await self._log.append(event)
 
 
 def _token_usage(mode: str, payload: object) -> TokenUsage:

@@ -30,6 +30,10 @@ ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 # 探活用。要短：连不上时每条用例都会等它一次
 PROBE_TIMEOUT_SECOND = 2
 
+# 测试专用的 Redis 逻辑库。**不能用业务那个 0 号库** —— 用例之间要清空，
+# 而清空会把开发机上正在跑的 run 的事件一起冲掉
+TEST_DATABASE = 15
+
 SKIP_POSTGRES = "没有可用的 Postgres：docker compose -f deploy/compose.yml up -d postgres"
 SKIP_REDIS = "没有可用的 Redis：docker compose -f deploy/compose.yml up -d redis"
 
@@ -57,6 +61,8 @@ async def live_engine(migrated: None) -> AsyncIterator[AsyncEngine]:
     except PostgresUnavailableError:
         await created.dispose()
         pytest.skip(SKIP_POSTGRES)
+    # 体检那条连接要扔掉，见下面 live_cache 里同一个理由
+    await created.dispose()
     try:
         yield created
     finally:
@@ -65,12 +71,23 @@ async def live_engine(migrated: None) -> AsyncIterator[AsyncEngine]:
 
 @pytest.fixture
 async def live_cache() -> AsyncIterator[Redis]:
-    created = create_client(SETTINGS.redis_url)
+    """清空过的测试库。
+
+    **每条用例开头清一次**：事件流按 run 分键，而用例里的 run id 有写死的，
+    不清就会读到上一条用例留下的事件。清的是 15 号库，与业务数据分家。
+
+    **清完要断开连接池**：asyncio 的连接绑在创建它的事件循环上，而 `TestClient`
+    把应用跑在另一个线程的另一个循环里。把这里建出来的连接留在池子里，
+    应用那一侧取到它就会挂死在读上 —— 症状是超时，不指向事件循环。
+    """
+    created = create_client(SETTINGS.redis_url, database=TEST_DATABASE)
     try:
         await check_redis(created)
     except RedisUnavailableError:
         await created.aclose()
         pytest.skip(SKIP_REDIS)
+    await created.flushdb()
+    await created.connection_pool.disconnect()
     try:
         yield created
     finally:

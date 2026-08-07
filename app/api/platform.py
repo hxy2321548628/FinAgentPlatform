@@ -63,7 +63,7 @@ async def build_platform(settings: Settings) -> Platform:
     connection = BrokerConnection(base_url=settings.broker_url)
     workspace = RemoteWorkspace(connection)
     pool = RemoteSandboxPool(connection)
-    log = EventLog()
+    log = EventLog(cache)
     backend_factory = RemoteBackendFactory(base_url=settings.broker_url)
     executor = RunExecutor(
         pool=pool,

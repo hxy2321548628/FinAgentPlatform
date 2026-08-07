@@ -1,33 +1,55 @@
 """事件日志：一个 run 产生的事件按顺序存下来，供 SSE 订阅与断线补齐。
 
-**接口照 Redis Stream 的形状设计**（追加时发号、按 id 之后范围读、per-run 有上限），
-本期是内存实现，换成 Redis 时只改这个类，不动调用方。这是本期唯一一处提前投入的抽象 ——
-换掉它的时机是确定的（进程重启即丢事件，这笔债已登记），而调用方遍布执行器与 SSE 端点。
+**存在 Redis Stream 里，一个 run 一条流。** 追加是 `XADD`，补历史是 `XRANGE`，
+跟新事件是 `XREAD BLOCK`。
 
-内存实现比 Redis 多欠两件事：进程重启事件全丢，以及事件只保留最近若干条 ——
-被裁掉的那段无法补齐，因此裁剪时会记警告。
+**对外契约一个字没变**：事件 id 仍是 `{毫秒}-{同毫秒内序号}`，因为 P0 那版内存实现
+本来就是照 Redis Stream 的规则自己发号的（这是当时刻意留的接口）。换到真 Stream 之后，
+发号的人从进程变成了 Redis，`Last-Event-ID` 的语义、前端的解析全都原样成立。
+
+`XREAD BLOCK` 顶掉了内存版那个用来唤醒 follower 的 `asyncio.Event`：新事件一到
+就返回，不靠轮询。超时只是安全网，用来周期性地重新判断「这个 run 是不是已经结束了」。
+
+条数上限由 `MAXLEN` 控。**按时间的保留策略与归档在步骤五**，本步只保证不无界增长。
 """
 
-import asyncio
 import logging
-import time
-from collections import OrderedDict, deque
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import cast
 
-from event.model import TERMINAL_EVENT_TYPE, Event
+from redis.asyncio import Redis
+
+from event.model import EVENT_ADAPTER, TERMINAL_EVENT_TYPE, Event
 
 logger = logging.getLogger(__name__)
+
+# Stream 里的一条：id 与字段表。客户端建的时候开了 decode_responses，
+# 因此实际拿到的都是 str，而 redis-py 的签名把 bytes 与 None 也算在内 ——
+# 读命令那几处要 cast 一次，原因就是这个
+type StreamEntry = tuple[str, dict[str, str]]
 
 # per-run 的事件条数上限。实测一次完整分析约 300 条，留两个数量级的余量：
 # 超出即意味着断线重连可能补不齐，宁可多占内存也不轻易触发。
 DEFAULT_MAX_LENGTH = 20_000
 
-# 同时保留多少个 run 的事件。进程长跑时 run 只增不减，没有这条会无界增长；
-# 超出后按最早追加的 run 整个丢弃。
-DEFAULT_MAX_RUN = 200
+# `XREAD` 阻塞多久后回来看一眼。**不是轮询间隔** —— 新事件一到就立刻返回，
+# 这个数只决定「run 已经结束但终态事件在游标之前」那种情形多久能收尾
+DEFAULT_BLOCK_MILLISECOND = 5_000
+
+KEY_PREFIX = "zuel:event"
+
+# Stream 的每条 entry 只有一个字段，装整条事件的 JSON。拆成多字段没有收益 ——
+# 读的时候总是整条取走，而拆开之后每加一个事件字段都要动这里
+PAYLOAD_FIELD = "data"
 
 ID_SEPARATOR = "-"
+
+# XRANGE / XREAD 的边界记号
+STREAM_START = "-"
+STREAM_END = "+"
+EXCLUSIVE = "("
+FROM_BEGINNING = "0-0"
 
 
 class InvalidEventIdError(ValueError):
@@ -42,42 +64,40 @@ class InvalidEventIdError(ValueError):
 class LoggedEvent:
     """事件与它在日志里的位置。
 
-    `id` 由日志在追加时分配，事件本身不带 —— 断线重连认的就是这个号。
+    `id` 由 Redis 在追加时分配，事件本身不带 —— 断线重连认的就是这个号。
     """
 
     id: str
     event: Event
 
 
-@dataclass
-class _Stream:
-    """一个 run 的事件序列与它的发号状态。"""
-
-    entry: deque[LoggedEvent]
-    last_millisecond: int = 0
-    last_sequence: int = 0
-    # 追加时唤醒所有在等新事件的 follower。没人在等时它也存在，代价是一个空对象。
-    arrival: asyncio.Event = field(default_factory=asyncio.Event)
-    # run 已经走到终态。跑完之后再来订阅的连接靠它收尾 —— 否则读不到新事件就一直等，
-    # 而这个 run 再也不会有新事件了
-    ended: bool = False
+def stream_key(run_id: str) -> str:
+    """一个 run 的事件流在 Redis 里的键名。"""
+    return f"{KEY_PREFIX}:{run_id}"
 
 
 class EventLog:
     """按 run 分流的事件日志。
 
     Args:
+        client: Redis 客户端。
         max_length: 每个 run 保留的事件条数上限。
-        max_run: 同时保留的 run 数上限，超出后丢弃最早的 run。
+        block_millisecond: 跟新事件时单次阻塞的时长。
     """
 
-    def __init__(self, *, max_length: int = DEFAULT_MAX_LENGTH, max_run: int = DEFAULT_MAX_RUN) -> None:
+    def __init__(
+        self,
+        client: Redis,
+        *,
+        max_length: int = DEFAULT_MAX_LENGTH,
+        block_millisecond: int = DEFAULT_BLOCK_MILLISECOND,
+    ) -> None:
+        self._client = client
         self._max_length = max_length
-        self._max_run = max_run
-        self._stream: OrderedDict[str, _Stream] = OrderedDict()
+        self._block = block_millisecond
 
-    def append(self, event: Event) -> LoggedEvent:
-        """追加一个事件并分配 id。
+    async def append(self, event: Event) -> LoggedEvent:
+        """追加一个事件并拿到 Redis 分配的 id。
 
         Args:
             event: 待追加的事件，所属 run 取自它的 `run_id`。
@@ -85,24 +105,24 @@ class EventLog:
         Returns:
             带 id 的事件。
         """
-        stream = self._stream_for(event.run_id)
-        logged = LoggedEvent(id=self._next_id(stream), event=event)
+        key = stream_key(event.run_id)
+        async with self._client.pipeline(transaction=True) as pipe:
+            # 精确裁剪而不是 `~` 近似：近似模式下实际条数会飘到上限之上，
+            # 「保留最近 N 条」这个承诺就变成了「大约 N 条」
+            pipe.xadd(key, {PAYLOAD_FIELD: event.model_dump_json()}, maxlen=self._max_length, approximate=False)
+            pipe.xlen(key)
+            assigned, length = await pipe.execute()
 
-        if len(stream.entry) == self._max_length:
+        if length >= self._max_length:
             logger.warning(
                 "事件日志已达上限，最早的事件被丢弃，断线重连可能补不齐：run_id=%s max_length=%d",
                 event.run_id,
                 self._max_length,
             )
-        stream.entry.append(logged)
+        identifier: str = assigned
+        return LoggedEvent(id=identifier, event=event)
 
-        if event.type in TERMINAL_EVENT_TYPE:
-            stream.ended = True
-        stream.arrival.set()
-        stream.arrival = asyncio.Event()
-        return logged
-
-    def read(self, run_id: str, *, after: str | None = None) -> list[LoggedEvent]:
+    async def read(self, run_id: str, *, after: str | None = None) -> list[LoggedEvent]:
         """读取一个 run 的事件。
 
         Args:
@@ -115,13 +135,9 @@ class EventLog:
         Raises:
             InvalidEventIdError: `after` 不是合法的事件 id。
         """
-        cursor = None if after is None else parse_event_id(after)
-        stream = self._stream.get(run_id)
-        if stream is None:
-            return []
-        if cursor is None:
-            return list(stream.entry)
-        return [logged for logged in stream.entry if parse_event_id(logged.id) > cursor]
+        start = STREAM_START if after is None else f"{EXCLUSIVE}{_validate(after)}"
+        entry = cast(list[StreamEntry], await self._client.xrange(stream_key(run_id), min=start, max=STREAM_END))
+        return [_decode(one) for one in entry]
 
     async def follow(self, run_id: str, *, after: str | None = None) -> AsyncIterator[LoggedEvent]:
         """先补齐历史，再持续产出新事件，直到 run 进入终态。
@@ -136,46 +152,54 @@ class EventLog:
         Raises:
             InvalidEventIdError: `after` 不是合法的事件 id。
         """
-        cursor = after
+        cursor = FROM_BEGINNING if after is None else _validate(after)
+        key = stream_key(run_id)
         while True:
-            # 必须先取这两样再读：反过来的话，读完到开始等待之间追加的事件
-            # 会唤醒一个已经被换掉的 waiter，这一轮就白等了。
-            stream = self._stream_for(run_id)
-            arrival, ended = stream.arrival, stream.ended
-            pending = self.read(run_id, after=cursor)
-            if not pending:
-                # 已经终结且没有更多可读，说明订阅者的游标已经走到了流的末尾
-                if ended:
-                    return
-                await arrival.wait()
-                continue
-            for logged in pending:
-                cursor = logged.id
-                yield logged
-                if logged.event.type in TERMINAL_EVENT_TYPE:
-                    return
+            # 先判「已经结束且游标在末尾」再阻塞：跑完之后才来订阅的连接不该白等一轮，
+            # 而这个 run 再也不会有新事件了
+            if await self._ended(run_id, cursor):
+                return
+            # XREAD 取的是游标之后的 entry，因此「读完到开始等待之间新来的事件」
+            # 不会漏 —— 内存实现里要靠一个 asyncio.Event 才能避免的那个竞态，这里不存在
+            batch = cast(
+                list[tuple[str, list[StreamEntry]]],
+                await self._client.xread({key: cursor}, block=self._block) or [],
+            )
+            for _, entry in batch:
+                for one in entry:
+                    logged = _decode(one)
+                    cursor = logged.id
+                    yield logged
+                    if logged.event.type in TERMINAL_EVENT_TYPE:
+                        return
 
-    def _stream_for(self, run_id: str) -> _Stream:
-        stream = self._stream.get(run_id)
-        if stream is not None:
-            return stream
+    async def _ended(self, run_id: str, cursor: str) -> bool:
+        """这个 run 是否已经结束，且游标已经走过了终态事件。
 
-        stream = _Stream(entry=deque(maxlen=self._max_length))
-        self._stream[run_id] = stream
-        while len(self._stream) > self._max_run:
-            evicted, _ = self._stream.popitem(last=False)
-            logger.warning("事件日志的 run 数已达上限，整个 run 的事件被丢弃：run_id=%s", evicted)
-        return stream
+        只看流里最后一条：终态事件是一个 run 最后发的东西，它之后不该再有别的。
+        """
+        last = cast(
+            list[StreamEntry],
+            await self._client.xrevrange(stream_key(run_id), max=STREAM_END, min=STREAM_START, count=1),
+        )
+        if not last:
+            return False
+        logged = _decode(last[0])
+        if parse_event_id(logged.id) > parse_event_id(cursor):
+            return False
+        return logged.event.type in TERMINAL_EVENT_TYPE
 
-    def _next_id(self, stream: _Stream) -> str:
-        """按 Redis Stream 的规则发号：毫秒时间戳 + 同毫秒内递增的序号。"""
-        millisecond = time.time_ns() // 1_000_000
-        if millisecond > stream.last_millisecond:
-            stream.last_millisecond = millisecond
-            stream.last_sequence = 0
-        else:
-            stream.last_sequence += 1
-        return f"{stream.last_millisecond}{ID_SEPARATOR}{stream.last_sequence}"
+
+def _decode(entry: StreamEntry) -> LoggedEvent:
+    """把一条 Stream entry 还原成事件。"""
+    entry_id, field = entry
+    return LoggedEvent(id=entry_id, event=EVENT_ADAPTER.validate_json(field[PAYLOAD_FIELD]))
+
+
+def _validate(event_id: str) -> str:
+    """确认游标能被 Redis 当成 id 用，不合法就拒绝。"""
+    parse_event_id(event_id)
+    return event_id
 
 
 def parse_event_id(event_id: str) -> tuple[int, int]:

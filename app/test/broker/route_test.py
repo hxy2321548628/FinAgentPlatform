@@ -233,7 +233,10 @@ async def test_queue_positions_stream_back_before_ready(connection: BrokerConnec
     pool.queue_position = [3, 2, 1]
     seen: list[int] = []
 
-    await RemoteSandboxPool(connection).acquire(THREAD, on_queued=seen.append)
+    async def record(position: int) -> None:
+        seen.append(position)
+
+    await RemoteSandboxPool(connection).acquire(THREAD, on_queued=record)
 
     assert seen == [3, 2, 1]
     await connection.aclose()
@@ -242,7 +245,10 @@ async def test_queue_positions_stream_back_before_ready(connection: BrokerConnec
 async def test_no_position_is_reported_when_a_sandbox_is_free(connection: BrokerConnection, pool: FakePool) -> None:
     seen: list[int] = []
 
-    await RemoteSandboxPool(connection).acquire(THREAD, on_queued=seen.append)
+    async def record(position: int) -> None:
+        seen.append(position)
+
+    await RemoteSandboxPool(connection).acquire(THREAD, on_queued=record)
 
     assert seen == []
     await connection.aclose()

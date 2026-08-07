@@ -37,7 +37,6 @@ from sandbox.pool import QueuePositionCallback
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
 from sandbox.workspace import Workspace
 from store.checkpoint import CONNECTION_KWARGS, CheckpointPool
-from store.redis import create_client
 
 BROKER_URL = "http://broker.test"
 
@@ -108,8 +107,8 @@ def space(tmp_path: Path) -> Workspace:
 
 
 @pytest.fixture
-def log() -> EventLog:
-    return EventLog()
+def log(live_cache: Redis) -> EventLog:
+    return EventLog(live_cache)
 
 
 @pytest.fixture
@@ -132,13 +131,6 @@ def connection(broker_app: FastAPI) -> BrokerConnection:
 
 
 @pytest.fixture
-async def cache() -> AsyncIterator[Redis]:
-    created = create_client(UNUSED_REDIS_URL)
-    yield created
-    await created.aclose()
-
-
-@pytest.fixture
 async def checkpoint_pool() -> AsyncIterator[CheckpointPool]:
     created = cast(CheckpointPool, AsyncConnectionPool(conninfo=UNUSED_CONNINFO, kwargs=CONNECTION_KWARGS, open=False))
     yield created
@@ -153,7 +145,7 @@ def platform(
     log: EventLog,
     agent: Agent,
     live_engine: AsyncEngine,
-    cache: Redis,
+    live_cache: Redis,
     checkpoint_pool: CheckpointPool,
 ) -> Platform:
     workspace = RemoteWorkspace(connection)
@@ -181,7 +173,7 @@ def platform(
         connection=connection,
         backend_factory=RemoteBackendFactory(base_url=BROKER_URL),
         engine=live_engine,
-        cache=cache,
+        cache=live_cache,
         checkpoint_pool=checkpoint_pool,
     )
 
@@ -192,9 +184,20 @@ def api(platform: Platform) -> FastAPI:
 
 
 @pytest.fixture
-def client(api: FastAPI) -> Iterator[TestClient]:
+def client(api: FastAPI, live_cache: Redis, live_engine: AsyncEngine) -> Iterator[TestClient]:
+    """跑在 `TestClient` 自己那条事件循环上的客户端。
+
+    **收尾要回到那条循环里做**：asyncio 的连接绑在创建它的循环上，而这些连接是应用在
+    portal 的循环里建的。等回到 pytest 的循环再关，那条循环已经没了 ——
+    报出来是 `Event loop is closed`，而这个消息一点都不指向真正的原因。
+    """
     with TestClient(api) as opened:
-        yield opened
+        try:
+            yield opened
+        finally:
+            assert opened.portal is not None
+            opened.portal.call(live_cache.connection_pool.disconnect)
+            opened.portal.call(live_engine.dispose)
 
 
 def drain(client: TestClient, run_id: str) -> list[str]:

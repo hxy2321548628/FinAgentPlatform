@@ -10,6 +10,7 @@ from io import StringIO
 import pytest
 from deepagents.backends.protocol import BackendProtocol
 from langchain_core.messages import AIMessage, AIMessageChunk
+from redis.asyncio import Redis
 
 from event.mapper import StreamChunk
 from event.model import EventType, RunErrorCode, RunFinishedData, RunStatus, TokenUsage
@@ -17,7 +18,8 @@ from log import JsonFormatter
 from run.executor import RunExecutor
 from run.log import EventLog
 from run.repository import Run
-from sandbox.pool import QueuePositionCallback, SandboxQueueTimeoutError
+from sandbox.pool import SandboxQueueTimeoutError
+from sandbox.remote import AsyncQueuePositionCallback
 
 THREAD = "thread-1"
 
@@ -34,10 +36,10 @@ class FakePool:
         self.queue_position: list[int] = []
         self.fail_with: Exception | None = None
 
-    async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> None:
+    async def acquire(self, thread_id: str, *, on_queued: AsyncQueuePositionCallback | None = None) -> None:
         for position in self.queue_position:
             if on_queued is not None:
-                on_queued(position)
+                await on_queued(position)
         if self.fail_with is not None:
             raise self.fail_with
         self.acquired.append(thread_id)
@@ -130,8 +132,8 @@ def space() -> FakeWorkspace:
 
 
 @pytest.fixture
-def log() -> EventLog:
-    return EventLog()
+def log(live_cache: Redis) -> EventLog:
+    return EventLog(live_cache)
 
 
 def make_executor(pool: FakePool, space: FakeWorkspace, log: EventLog, *chunk: StreamChunk) -> RunExecutor:
@@ -141,22 +143,22 @@ def make_executor(pool: FakePool, space: FakeWorkspace, log: EventLog, *chunk: S
     return RunExecutor(pool=pool, workspace=space, log=log, runner=runner, repository=FakeRepository())
 
 
-def artifacts_of(log: EventLog, run_id: str) -> list[str]:
-    return _finished(log, run_id).artifacts
+async def artifacts_of(log: EventLog, run_id: str) -> list[str]:
+    return (await _finished(log, run_id)).artifacts
 
 
-def tokens_of(log: EventLog, run_id: str) -> TokenUsage:
-    return _finished(log, run_id).tokens
+async def tokens_of(log: EventLog, run_id: str) -> TokenUsage:
+    return (await _finished(log, run_id)).tokens
 
 
-def _finished(log: EventLog, run_id: str) -> RunFinishedData:
-    data = log.read(run_id)[-1].event.data
+async def _finished(log: EventLog, run_id: str) -> RunFinishedData:
+    data = (await log.read(run_id))[-1].event.data
     assert isinstance(data, RunFinishedData)
     return data
 
 
-def types_of(log: EventLog, run_id: str) -> list[str]:
-    return [one.event.model_dump()["type"] for one in log.read(run_id)]
+async def types_of(log: EventLog, run_id: str) -> list[str]:
+    return [one.event.model_dump()["type"] for one in await log.read(run_id)]
 
 
 # ------------------------------------------------------------------ 提交
@@ -208,7 +210,7 @@ async def test_the_event_sequence_brackets_the_agent_output(
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    assert types_of(log, run.id) == ["run.started", "sandbox.ready", "token", "token", "run.finished"]
+    assert await types_of(log, run.id) == ["run.started", "sandbox.ready", "token", "token", "run.finished"]
 
 
 async def test_run_started_carries_the_thread(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
@@ -217,7 +219,7 @@ async def test_run_started_carries_the_thread(pool: FakePool, space: FakeWorkspa
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    started = log.read(run.id)[0].event
+    started = (await log.read(run.id))[0].event
     assert started.data.thread_id == THREAD  # type: ignore[union-attr]
 
 
@@ -228,7 +230,7 @@ async def test_every_event_carries_the_run_id(pool: FakePool, space: FakeWorkspa
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    assert {one.event.run_id for one in log.read(run.id)} == {run.id}
+    assert {one.event.run_id for one in (await log.read(run.id))} == {run.id}
 
 
 async def test_event_ids_increase_monotonically_across_the_whole_run(
@@ -239,7 +241,7 @@ async def test_event_ids_increase_monotonically_across_the_whole_run(
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    ids = [one.id for one in log.read(run.id)]
+    ids = [one.id for one in (await log.read(run.id))]
     assert ids == sorted(ids, key=lambda one: tuple(int(part) for part in one.split("-")))
 
 
@@ -251,8 +253,8 @@ async def test_events_of_two_concurrent_runs_do_not_mix(pool: FakePool, space: F
     await executor.wait(first.id)
     await executor.wait(second.id)
 
-    assert types_of(log, first.id) == types_of(log, second.id)
-    assert types_of(log, first.id) == ["run.started", "sandbox.ready", "token", "run.finished"]
+    assert await types_of(log, first.id) == await types_of(log, second.id)
+    assert await types_of(log, first.id) == ["run.started", "sandbox.ready", "token", "run.finished"]
 
 
 # ------------------------------------------------------------------ token 计量
@@ -264,7 +266,7 @@ async def test_run_finished_accumulates_the_tokens_across_model_calls(
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    assert tokens_of(log, run.id) == TokenUsage(input_cache_read=0, input_uncached=2916 + 4100, output=120 + 80)
+    assert await tokens_of(log, run.id) == TokenUsage(input_cache_read=0, input_uncached=2916 + 4100, output=120 + 80)
 
 
 async def test_cache_hits_are_reported_apart_from_the_rest(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
@@ -274,7 +276,7 @@ async def test_cache_hits_are_reported_apart_from_the_rest(pool: FakePool, space
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    assert tokens_of(log, run.id) == TokenUsage(
+    assert await tokens_of(log, run.id) == TokenUsage(
         input_cache_read=189312,
         input_uncached=304640 - 189312,
         output=8701,
@@ -289,7 +291,7 @@ async def test_a_missing_cache_detail_counts_as_no_hit(pool: FakePool, space: Fa
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    assert tokens_of(log, run.id) == TokenUsage(input_cache_read=0, input_uncached=100, output=7)
+    assert await tokens_of(log, run.id) == TokenUsage(input_cache_read=0, input_uncached=100, output=7)
 
 
 async def test_tokens_are_zero_when_the_model_reports_no_usage(
@@ -300,7 +302,7 @@ async def test_tokens_are_zero_when_the_model_reports_no_usage(
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    assert tokens_of(log, run.id) == TokenUsage()
+    assert await tokens_of(log, run.id) == TokenUsage()
 
 
 # ------------------------------------------------------------------ 排障日志
@@ -372,9 +374,9 @@ async def test_queue_positions_are_emitted_as_events(pool: FakePool, space: Fake
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    queued = [one.event for one in log.read(run.id) if one.event.type is EventType.SANDBOX_QUEUED]
+    queued = [one.event for one in (await log.read(run.id)) if one.event.type is EventType.SANDBOX_QUEUED]
     assert [one.data.position for one in queued] == [3, 2, 1]
-    assert types_of(log, run.id)[:5] == [
+    assert (await types_of(log, run.id))[:5] == [
         "run.started",
         "sandbox.queued",
         "sandbox.queued",
@@ -393,7 +395,7 @@ async def test_waiting_too_long_for_a_sandbox_fails_the_run_as_retryable(
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    failed = log.read(run.id)[-1].event
+    failed = (await log.read(run.id))[-1].event
     assert failed.type is EventType.RUN_FAILED
     assert failed.data.code is RunErrorCode.SANDBOX_QUEUE_TIMEOUT
     assert failed.data.retryable is True
@@ -426,7 +428,7 @@ async def test_an_agent_error_ends_the_run_as_failed(pool: FakePool, space: Fake
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    assert types_of(log, run.id) == ["run.started", "sandbox.ready", "token", "run.failed"]
+    assert await types_of(log, run.id) == ["run.started", "sandbox.ready", "token", "run.failed"]
     assert (await executor.get(run.id)).status is RunStatus.FAILED  # type: ignore[union-attr]
 
 
@@ -445,7 +447,7 @@ async def test_an_unclassified_error_is_not_retryable(pool: FakePool, space: Fak
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    failed = log.read(run.id)[-1].event
+    failed = (await log.read(run.id))[-1].event
     assert failed.data.code is RunErrorCode.INTERNAL  # type: ignore[union-attr]
     assert failed.data.retryable is False  # type: ignore[union-attr]
 
@@ -458,7 +460,7 @@ async def test_a_failing_run_always_gets_a_terminal_event(pool: FakePool, space:
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    assert types_of(log, run.id)[-1] == "run.failed"
+    assert (await types_of(log, run.id))[-1] == "run.failed"
 
 
 # ------------------------------------------------------------------ 与事件流的衔接
@@ -482,7 +484,7 @@ async def test_closing_waits_for_running_tasks(pool: FakePool, space: FakeWorksp
 
     await executor.aclose()
 
-    assert types_of(log, run.id)[-1] == "run.finished"
+    assert (await types_of(log, run.id))[-1] == "run.finished"
 
 
 # ------------------------------------------------------------------ 产物
@@ -496,7 +498,7 @@ async def test_run_finished_lists_what_this_run_produced(pool: FakePool, space: 
     run = await executor.submit(thread_id=THREAD, content="画个图")
     await executor.wait(run.id)
 
-    assert artifacts_of(log, run.id) == [f"{THREAD}/chart.png"]
+    assert await artifacts_of(log, run.id) == [f"{THREAD}/chart.png"]
 
 
 async def test_a_run_that_produced_nothing_reports_an_empty_list(
@@ -507,7 +509,7 @@ async def test_a_run_that_produced_nothing_reports_an_empty_list(
     run = await executor.submit(thread_id=THREAD, content="解释一下")
     await executor.wait(run.id)
 
-    assert artifacts_of(log, run.id) == []
+    assert await artifacts_of(log, run.id) == []
 
 
 async def test_artifacts_are_asked_for_from_before_the_agent_started(

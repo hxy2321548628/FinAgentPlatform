@@ -9,9 +9,9 @@
 
 import time
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, TypeAdapter
 
 
 def now_ms() -> int:
@@ -277,3 +277,7 @@ type Event = (
 
 # 出现即代表 run 已经结束，事件流可以收尾。SSE 端点靠它决定何时关闭连接。
 TERMINAL_EVENT_TYPE = frozenset({EventType.RUN_FINISHED, EventType.RUN_FAILED, EventType.RUN_CANCELLED})
+
+# 事件从 Redis Stream 读回来时要还原成具体的事件类型。按 `type` 判别而不是逐个试 ——
+# 逐个试会让载荷形状相近的两种事件互相冒认，而那种错不报错，只是渲染成了别的东西。
+EVENT_ADAPTER: TypeAdapter[Event] = TypeAdapter(Annotated[Event, Discriminator("type")])

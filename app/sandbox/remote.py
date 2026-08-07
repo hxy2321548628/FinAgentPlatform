@@ -18,7 +18,7 @@ agent 侧一行不用改，换掉的只是 backend 的实现。
 import base64
 import json
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from types import TracebackType
 from typing import cast
 
@@ -42,13 +42,17 @@ from deepagents.backends.protocol import (
 
 from event.model import RunErrorCode
 from sandbox.path import PathEscapeError
-from sandbox.pool import QueuePositionCallback, SandboxQueueTimeoutError
+from sandbox.pool import SandboxQueueTimeoutError
 
 logger = logging.getLogger(__name__)
 
 # 工具结果是 **dataclass** 而不是 dict：agent 侧拿到的是 `result.error` 这样的属性访问。
 # 因此这里必须把 JSON 还原成对象 —— 直接把 dict 传回去，类型检查看不出来，
 # 而 agent 第一次读字段就会 AttributeError。
+
+# 排位回调是可等待的，与 broker 内部那个同步版本（sandbox/pool.py）不是一回事：
+# 这一侧的回调要把排位写进 Redis 的事件流，那是个 IO 操作
+type AsyncQueuePositionCallback = Callable[[int], Awaitable[None]]
 
 DEFAULT_BROKER_URL = "http://127.0.0.1:8100"
 
@@ -399,7 +403,7 @@ class RemoteSandboxPool:
     def __init__(self, connection: BrokerConnection) -> None:
         self._connection = connection
 
-    async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> None:
+    async def acquire(self, thread_id: str, *, on_queued: AsyncQueuePositionCallback | None = None) -> None:
         """申请沙箱，必要时排队等待。
 
         排位由 broker 用流式响应推过来，**不轮询** —— 排队可能持续几分钟，这期间
@@ -422,7 +426,7 @@ class RemoteSandboxPool:
                     if event == "queued" and on_queued is not None:
                         position = data.get("position")
                         if isinstance(position, int):
-                            on_queued(position)
+                            await on_queued(position)
                     elif event == "ready":
                         return
                     elif event == "error":
