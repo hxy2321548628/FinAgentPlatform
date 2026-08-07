@@ -11,9 +11,10 @@
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import Index, text
+from sqlalchemy import Column, Enum, Index, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import Field, SQLModel, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -27,6 +28,25 @@ TABLE_NAME = "runs"
 # 崩溃后要接着跑的就是这两态。部分索引只覆盖它们 —— 全量索引会随历史 run 无限长大，
 # 而这条查询只关心「此刻还没结束的」，那永远是很小的一撮
 UNFINISHED_STATUS = (RunStatus.QUEUED, RunStatus.RUNNING)
+
+# 还能写终态的状态。已经有终态的 run 再写一次是幂等的空操作，不是错误 ——
+# 无论那一次写的是成功、失败还是取消
+CANCELLABLE_STATUS = UNFINISHED_STATUS
+
+
+def _value_column(enum: type[StrEnum], *, nullable: bool = False) -> Column[Enum]:
+    """枚举列，**按值存而不是按名字**。
+
+    默认行为是存名字，于是库里躺着的是 `SUCCEEDED` 而事件契约与架构文档写的是
+    `succeeded`。两边对不上时一声不响 —— 查询照样对（绑定参数用的是同一套编码），
+    坏掉的是所有照文档写的 SQL，以及 `ix_runs_unfinished` 那条部分索引：
+    它的谓词是 `status IN ('queued','running')`，永远匹配不上，于是崩溃恢复的扫描
+    静默退化成全表扫。
+    """
+    return Column(
+        Enum(enum, values_callable=lambda one: [member.value for member in one], native_enum=False),
+        nullable=nullable,
+    )
 
 
 @dataclass(frozen=True)
@@ -60,11 +80,11 @@ class RunRecord(SQLModel, table=True):
     # P2 之前建的行在这一列上是空的：那批 run 没有真实归属，编一个 owner 只会造假数据。
     # 空值因此是遗留而不是 bug，见 migration/version/0003_user_thread.py
     user_id: UUID | None = Field(default=None, foreign_key="users.id")
-    status: RunStatus
+    status: RunStatus = Field(sa_column=_value_column(RunStatus))
     # 架构 §6.2 的草案里有这一列，本期没有写它的人：恢复靠 thread_id 找最新的
     # checkpoint，不指定具体某一个
     checkpoint_id: str | None = Field(default=None)
-    error_code: RunErrorCode | None = Field(default=None)
+    error_code: RunErrorCode | None = Field(default=None, sa_column=_value_column(RunErrorCode, nullable=True))
     error_message: str | None = Field(default=None)
     tokens_cache_read: int = Field(default=0)
     tokens_uncached: int = Field(default=0)
@@ -130,26 +150,76 @@ class RunRepository:
         """标记开跑。"""
         await self._update(run_id, status=RunStatus.RUNNING)
 
-    async def succeed(self, run_id: str, *, tokens: TokenUsage) -> None:
-        """标记跑完，并记下这一次的 token 消耗。"""
-        await self._update(
+    async def succeed(self, run_id: str, *, tokens: TokenUsage) -> bool:
+        """标记跑完，并记下这一次的 token 消耗。
+
+        Returns:
+            这一次调用是否真的写下了终态。
+        """
+        return await self._finalize(
             run_id,
             status=RunStatus.SUCCEEDED,
-            ended_at=datetime.now(UTC),
             tokens_cache_read=tokens.input_cache_read,
             tokens_uncached=tokens.input_uncached,
             tokens_output=tokens.output,
         )
 
-    async def fail(self, run_id: str, *, code: RunErrorCode, message: str) -> None:
-        """标记失败，并记下原因。"""
-        await self._update(
-            run_id,
-            status=RunStatus.FAILED,
-            ended_at=datetime.now(UTC),
-            error_code=code,
-            error_message=message,
+    async def fail(self, run_id: str, *, code: RunErrorCode, message: str) -> bool:
+        """标记失败，并记下原因。
+
+        Returns:
+            这一次调用是否真的写下了终态。
+        """
+        return await self._finalize(run_id, status=RunStatus.FAILED, error_code=code, error_message=message)
+
+    async def cancel(self, run_id: str, *, tokens: TokenUsage | None = None) -> bool:
+        """把一个还没结束的 run 标记成取消。
+
+        终态的 run 拿到 False，那是幂等而不是失败。
+
+        Args:
+            run_id: 目标 run。
+            tokens: 取消之前已经消耗的用量，api 侧调用时没有。
+
+        Returns:
+            这一次调用是否真的改变了状态。
+        """
+        change: dict[str, object] = {"status": RunStatus.CANCELLED}
+        if tokens is not None:
+            change |= {
+                "tokens_cache_read": tokens.input_cache_read,
+                "tokens_uncached": tokens.input_uncached,
+                "tokens_output": tokens.output,
+            }
+        return await self._finalize(run_id, **change)
+
+    async def _finalize(self, run_id: str, **change: object) -> bool:
+        """写一次终态，**只在这个 run 还没有终态时才写**。
+
+        条件写在 SQL 的 WHERE 里，因此这一句是原子的 —— 谁改成了谁负责推终态事件，
+        另一边拿到 False 就安静退出。这一点有两个非它不可的场合：
+
+        - 教师在最后一刻点了停止：api 已经写下 `cancelled` 并推过事件，而 worker 那一侧
+          正好跑完。无条件写的话它会把状态盖回 `succeeded`，于是事件说已取消、
+          状态说已成功，两边对不上而且谁都不报错；
+        - 教师连点两下停止：无条件写会推出两条「已取消」。
+
+        Returns:
+            这一次调用是否真的改变了状态。
+        """
+        identifier = _parse(run_id)
+        if identifier is None:
+            logger.warning("run id 不是合法 uuid，终态未落库：run_id=%s", run_id)
+            return False
+        statement = (
+            update(RunRecord)
+            .where(col(RunRecord.id) == identifier, col(RunRecord.status).in_(CANCELLABLE_STATUS))
+            .values(ended_at=datetime.now(UTC), **change)
         )
+        async with AsyncSession(self._engine) as session:
+            result = await session.exec(statement)
+            await session.commit()
+        return bool(result.rowcount)
 
     async def unfinished(self) -> list[Run]:
         """列出还没走到终态的 run。

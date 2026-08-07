@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from agent.factory import create_model, create_runner
 from config import Settings
 from run.archive import EventArchive
+from run.cancel import CancelFlag
 from run.executor import RunExecutor
 from run.log import EventLog
 from run.repository import RunRepository
@@ -87,6 +88,7 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
         log=EventLog(cache, archive=EventArchive(engine)),
         runner=create_runner(model=create_model(settings), checkpointer=checkpoint.saver),
         repository=RunRepository(engine),
+        cancel=CancelFlag(cache),
         backend_factory=backend_factory,
     )
     queue = TaskQueue(

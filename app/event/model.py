@@ -48,14 +48,14 @@ class EventType(StrEnum):
 class RunStatus(StrEnum):
     """run 的生命周期状态。
 
-    本期只有四态：没有主动取消，也没有 HITL 审批（`cancelled` 与 `waiting_approval`
-    要等那两项落地才会出现）。
+    `waiting_approval` 要等 HITL 审批落地才会出现。
     """
 
     QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class RunErrorCode(StrEnum):
@@ -135,6 +135,19 @@ class RunFailedData(BaseModel):
     retryable: bool = Field(description="重试是否有意义，前端据此决定要不要显示重试按钮")
 
 
+class RunCancelledData(BaseModel):
+    """`run.cancelled` 事件的载荷。
+
+    **带上取消那一刻的用量**：教师点「停止」多半是因为觉得跑偏了，
+    而「这次白花了多少」是他下一个要问的问题。
+    """
+
+    tokens: TokenUsage = Field(
+        default_factory=TokenUsage,
+        description="取消之前已经消耗的 token，按 cache 命中拆分",
+    )
+
+
 class SandboxQueuedData(BaseModel):
     """`sandbox.queued` 事件的载荷。"""
 
@@ -209,6 +222,16 @@ class RunFailedEvent(EventEnvelope):
     data: RunFailedData
 
 
+class RunCancelledEvent(EventEnvelope):
+    """教师主动取消，终态。
+
+    与 `run.failed` 分开是因为它不是故障：前端不该显示「重试」按钮，也不该报错。
+    """
+
+    type: Literal[EventType.RUN_CANCELLED] = EventType.RUN_CANCELLED
+    data: RunCancelledData
+
+
 class SandboxQueuedEvent(EventEnvelope):
     """沙箱已满，正在排队。排位每次变化都会推一条。"""
 
@@ -266,6 +289,7 @@ type Event = (
     RunStartedEvent
     | RunFinishedEvent
     | RunFailedEvent
+    | RunCancelledEvent
     | SandboxQueuedEvent
     | SandboxReadyEvent
     | ErrorEvent

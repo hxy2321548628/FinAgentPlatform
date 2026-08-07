@@ -18,6 +18,8 @@ from deepagents.backends.protocol import BackendProtocol
 from event.mapper import StreamChunk, map_chunk
 from event.model import (
     Event,
+    RunCancelledData,
+    RunCancelledEvent,
     RunErrorCode,
     RunFailedData,
     RunFailedEvent,
@@ -77,7 +79,7 @@ class SandboxPoolProtocol(Protocol):
 
 
 class RunRepositoryProtocol(Protocol):
-    """执行器对 run 元数据仓储的全部要求：只有三次状态流转。
+    """执行器对 run 元数据仓储的全部要求：只有几次状态流转。
 
     建行在提交那一侧，查状态在端点那一侧，都不经过执行器。
     """
@@ -86,13 +88,37 @@ class RunRepositoryProtocol(Protocol):
         """标记开跑。"""
         ...
 
-    async def succeed(self, run_id: str, *, tokens: TokenUsage) -> None:
-        """标记跑完。"""
+    async def succeed(self, run_id: str, *, tokens: TokenUsage) -> bool:
+        """标记跑完，并回答这一次是不是自己写下的终态。"""
         ...
 
-    async def fail(self, run_id: str, *, code: RunErrorCode, message: str) -> None:
-        """标记失败。"""
+    async def fail(self, run_id: str, *, code: RunErrorCode, message: str) -> bool:
+        """标记失败，并回答这一次是不是自己写下的终态。"""
         ...
+
+    async def cancel(self, run_id: str, *, tokens: TokenUsage | None = None) -> bool:
+        """标记取消，并回答这一次是不是自己改的。"""
+        ...
+
+
+class CancelFlagProtocol(Protocol):
+    """执行器对取消标志的全部要求：只有读。
+
+    立标志是 api 那一侧的事 —— worker 只负责发现它。
+    """
+
+    async def is_raised(self, run_id: str) -> bool:
+        """有没有人要停这个 run。"""
+        ...
+
+
+class RunCancelledError(Exception):
+    """教师取消了这个 run。
+
+    **不是失败**，因此不走 `run.failed` 那条路：前端不该显示重试按钮，也不该报错。
+    用异常而不是返回值，是因为要停的位置在 `astream` 的循环里，
+    而收尾（归还沙箱）在几层之外的 `finally` 上。
+    """
 
 
 class RunExecutor:
@@ -115,6 +141,7 @@ class RunExecutor:
         log: EventLog,
         runner: AgentRunner,
         repository: RunRepositoryProtocol,
+        cancel: CancelFlagProtocol,
         backend_factory: BackendFactory | None = None,
     ) -> None:
         self._pool = pool
@@ -123,6 +150,7 @@ class RunExecutor:
         self._log = log
         self._runner = runner
         self._repository = repository
+        self._cancel = cancel
 
     async def execute(self, task: RunTask) -> None:
         """跑完一条已经领到手的任务。
@@ -140,6 +168,14 @@ class RunExecutor:
         # 每个 run 跑在自己的任务里，任务启动时会复制一份 context，
         # 因此在这里绑定不会串到并发的其他 run 上
         with run_context(run_id=run.id, thread_id=run.thread_id, user_id=user_id):
+            # **开跑之前先看一眼**：取消一个还在排队的 run 时，任务消息仍然躺在队列里，
+            # worker 迟早会领到它。不在这里挡一道，那次取消就只是把状态改了一下，
+            # 而分析照跑不误 —— 那正是「取消没停下来」最典型的形态
+            if await self._cancel.is_raised(run.id):
+                logger.info("run 在开跑前已被取消，直接收手")
+                await self._stop(run, TokenUsage())
+                return
+
             await self._repository.start(run.id)
             await self._emit(
                 RunStartedEvent(ts=now_ms(), run_id=run.id, path=(), data=RunStartedData(thread_id=run.thread_id))
@@ -150,6 +186,10 @@ class RunExecutor:
 
             try:
                 await self._consume(run, content)
+            except RunCancelledError:
+                # 取消不是失败。沙箱在 finally 里归还，已经写入的 checkpoint 原样留着 ——
+                # 那是「从该点还能续跑」的全部依据
+                logger.info("run 已按教师的要求停下")
             # 智能体那一侧什么都可能抛：模型断连、图跑飞、工具越界。宽捕获是刻意的 ——
             # 让异常逃出去只会让后台任务无声无息地死掉，订阅这个 run 的连接则永远等不到终态。
             except Exception as exc:
@@ -190,12 +230,24 @@ class RunExecutor:
 
         async for ns, mode, payload in self._runner(backend, run.thread_id, content):
             tokens = tokens + _token_usage(mode, payload)
+            # **只在 step 边界上查**：`updates` 每个图节点吐一条，一次分析约三十几次，
+            # 那是可以干净停下的位置。逐个 token 去查是几千次 Redis 往返，
+            # 而且停在模型调用中间也省不下什么 —— 那次调用的 token 已经花掉了
+            if mode == UPDATES_MODE and await self._cancel.is_raised(run.id):
+                await self._stop(run, tokens)
+                raise RunCancelledError
             for event in map_chunk(ns, mode, payload, run_id=run.id):
                 await self._log.append(event)
 
         # 先落库再发终态事件：订阅方收到 run.finished 就会回头查 GET /runs/{id}，
-        # 反过来的话那一查会读到还在 running
-        await self._repository.succeed(run.id, tokens=tokens)
+        # 反过来的话那一查会读到还在 running。
+        #
+        # **落库失败就不发事件**：那意味着这个 run 已经有终态了 —— 教师在最后一刻点了
+        # 停止，api 抢先写下 cancelled 并推过事件。这时再推一条 run.finished，
+        # 前端会把一次被取消的分析显示成正常完成
+        if not await self._repository.succeed(run.id, tokens=tokens):
+            logger.info("run 已经有终态了，不再推 run.finished")
+            return
         await self._emit(
             RunFinishedEvent(
                 ts=now_ms(),
@@ -208,8 +260,22 @@ class RunExecutor:
             )
         )
 
+    async def _stop(self, run: Run, tokens: TokenUsage) -> None:
+        """落终态并推 `run.cancelled`。
+
+        **状态先改、事件后推，而且只有改成了才推**：条件更新是原子的，api 那一侧
+        可能已经抢先改过 —— 那时它已经推过事件了，这里再推一条，教师会看到两次「已取消」。
+        """
+        if await self._repository.cancel(run.id, tokens=tokens):
+            await self._emit(
+                RunCancelledEvent(ts=now_ms(), run_id=run.id, path=(), data=RunCancelledData(tokens=tokens))
+            )
+
     async def _fail(self, run: Run, code: RunErrorCode, message: str, *, retryable: bool) -> None:
-        await self._repository.fail(run.id, code=code, message=message or code.value)
+        # 同上：已经有终态就不再推事件
+        if not await self._repository.fail(run.id, code=code, message=message or code.value):
+            logger.info("run 已经有终态了，不再推 run.failed")
+            return
         await self._emit(
             RunFailedEvent(
                 ts=now_ms(),

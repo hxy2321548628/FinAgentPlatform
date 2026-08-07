@@ -46,6 +46,7 @@ def test_the_openapi_document_is_served(client: TestClient) -> None:
         "/api/threads/{thread_id}/runs",
         "/api/runs/{run_id}",
         "/api/runs/{run_id}/events",
+        "/api/runs/{run_id}/cancel",
         "/api/artifacts/{artifact_id}",
     }
 

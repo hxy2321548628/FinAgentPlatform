@@ -14,6 +14,7 @@
 `docker compose up`，投递与消费这条链路没有被绕过。
 """
 
+import asyncio
 from collections.abc import AsyncIterator, Iterator
 from functools import partial
 from pathlib import Path
@@ -37,6 +38,7 @@ from event.mapper import StreamChunk
 from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
 from quota.usage import RunUsage
+from run.cancel import CancelFlag
 from run.executor import RunExecutor
 from run.log import EventLog
 from run.repository import RunRepository
@@ -67,6 +69,9 @@ TEST_PASSWORD = "口令-test"
 # 真要验限流的那几条自己换一个更小的上限
 TEST_RATE_LIMIT = 10_000
 TEST_RATE_WINDOW_SECOND = 60
+
+# 假 agent 被卡住时多久回头看一次「放行了没」
+POLL_SECOND = 0.01
 
 
 class FakeContainer:
@@ -104,11 +109,16 @@ class Agent:
         self.side_effect: Exception | None = None
         self.asked: list[str] = []
         self.produce: dict[str, bytes] = {}
+        # 卡住不往下走，直到用例放行。**取消那几条用例非它不可**：假 agent 转眼就跑完，
+        # 请求还没发出去 run 已经是终态了，验的就成了「取消一个已完成的 run」
+        self.blocked = False
 
     def __call__(self, backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
         self.asked.append(content)
 
         async def stream() -> AsyncIterator[StreamChunk]:
+            while self.blocked:
+                await asyncio.sleep(POLL_SECOND)
             # 走字节接口：产物多半是图片，文本接口会在写 PNG 时就炸掉
             backend.upload_files([(f"/workspace/outputs/{name}", payload) for name, payload in self.produce.items()])
             for one in self.chunk:
@@ -195,6 +205,7 @@ def platform(
         user=UserRepository(live_engine),
         thread=ThreadRepository(live_engine),
         policy=QuotaPolicy(),
+        cancel=CancelFlag(live_cache),
         usage=RunUsage(live_engine),
         rate=RateLimiter(live_cache, limit=TEST_RATE_LIMIT, window_second=TEST_RATE_WINDOW_SECOND),
         session=SessionStore(live_cache, ttl_second=DEFAULT_TTL_SECOND),
@@ -211,6 +222,7 @@ def worker(
     log: EventLog,
     agent: Agent,
     live_engine: AsyncEngine,
+    live_cache: Redis,
     queue: TaskQueue,
 ) -> Worker:
     """跑在 api 同一个进程里的 worker。中间那条队列是真的。"""
@@ -227,6 +239,7 @@ def worker(
         log=log,
         runner=agent,
         repository=RunRepository(live_engine),
+        cancel=CancelFlag(live_cache),
         backend_factory=backend_factory,
     )
     return Worker(queue=queue, executor=executor)
@@ -266,6 +279,7 @@ def login(client: TestClient, name: str) -> None:
 def client(
     api: FastAPI,
     worker: Worker,
+    agent: Agent,
     live_cache: Redis,
     live_engine: AsyncEngine,
     platform: Platform,
@@ -291,6 +305,9 @@ def client(
             login(opened, owner.name)
             yield opened
         finally:
+            # **先放行再停 worker**：卡住的 agent 会让 `stop()` 一直等在
+            # 「等在跑的 run 结束」上，整套用例就挂死在收尾里
+            agent.blocked = False
             opened.portal.call(worker.stop)
             opened.portal.call(live_cache.connection_pool.disconnect)
             opened.portal.call(live_engine.dispose)

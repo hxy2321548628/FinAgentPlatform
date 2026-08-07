@@ -81,13 +81,46 @@ class FakeRepository:
     async def start(self, run_id: str) -> None:
         self.status[run_id] = RunStatus.RUNNING
 
-    async def succeed(self, run_id: str, *, tokens: TokenUsage) -> None:
+    async def succeed(self, run_id: str, *, tokens: TokenUsage) -> bool:
+        if not self._open(run_id):
+            return False
         self.tokens[run_id] = tokens
         self.status[run_id] = RunStatus.SUCCEEDED
+        return True
 
-    async def fail(self, run_id: str, *, code: RunErrorCode, message: str) -> None:
+    async def fail(self, run_id: str, *, code: RunErrorCode, message: str) -> bool:
+        if not self._open(run_id):
+            return False
         self.error[run_id] = (code, message)
         self.status[run_id] = RunStatus.FAILED
+        return True
+
+    async def cancel(self, run_id: str, *, tokens: TokenUsage | None = None) -> bool:
+        if not self._open(run_id):
+            return False
+        if tokens is not None:
+            self.tokens[run_id] = tokens
+        self.status[run_id] = RunStatus.CANCELLED
+        return True
+
+    def _open(self, run_id: str) -> bool:
+        """条件更新的替身：已经有终态的 run 写不进去。"""
+        return self.status.get(run_id) in (None, RunStatus.QUEUED, RunStatus.RUNNING)
+
+
+class FakeCancelFlag:
+    """可以在任意一个 step 边界上被举起来的假标志。"""
+
+    def __init__(self) -> None:
+        self.raised: set[str] = set()
+        self.checked: list[str] = []
+
+    async def is_raised(self, run_id: str) -> bool:
+        self.checked.append(run_id)
+        return run_id in self.raised
+
+    def raise_flag(self, run_id: str) -> None:
+        self.raised.add(run_id)
 
 
 def chunk_stream(*chunk: StreamChunk) -> AsyncIterator[StreamChunk]:
@@ -147,10 +180,21 @@ def make_executor(
 
 
 def make_executor_with(
-    pool: FakePool, space: FakeWorkspace, log: EventLog, runner: AgentRunner
+    pool: FakePool,
+    space: FakeWorkspace,
+    log: EventLog,
+    runner: AgentRunner,
+    cancel: FakeCancelFlag | None = None,
 ) -> tuple[RunExecutor, FakeRepository]:
     repository = FakeRepository()
-    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=runner, repository=repository)
+    executor = RunExecutor(
+        pool=pool,
+        workspace=space,
+        log=log,
+        runner=runner,
+        repository=repository,
+        cancel=cancel or FakeCancelFlag(),
+    )
     return executor, repository
 
 
@@ -497,3 +541,150 @@ async def test_artifacts_are_asked_for_from_before_the_agent_started(
     asked_thread, asked_since = space.asked[0]
     assert asked_thread == THREAD
     assert before <= asked_since <= time.time_ns()
+
+
+# ------------------------------------------------------------------ 主动取消
+async def test_a_cancelled_run_stops_at_the_next_step_boundary(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
+    """标志在第一个 step 边界上就被看到，后面的 chunk 一个都不该再被消费。"""
+    cancel = FakeCancelFlag()
+    consumed: list[str] = []
+
+    def runner(backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+        async def stream() -> AsyncIterator[StreamChunk]:
+            yield usage_chunk(100, 10)
+            consumed.append("第二步")
+            yield usage_chunk(100, 10)
+
+        return stream()
+
+    executor, repository = make_executor_with(pool, space, log, runner, cancel)
+    run = a_task()
+    cancel.raise_flag(run.run_id)
+
+    await executor.execute(run)
+
+    assert repository.status[run.run_id] is RunStatus.CANCELLED
+    assert consumed == []
+
+
+async def test_a_cancelled_run_pushes_its_own_event(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    """终态是 `run.cancelled` 而不是 `run.failed` —— 取消不是故障，前端不该显示重试。"""
+    cancel = FakeCancelFlag()
+    executor, _ = make_executor_with(pool, space, log, lambda *_: chunk_stream(usage_chunk(100, 10)), cancel)
+    run = a_task()
+    cancel.raise_flag(run.run_id)
+
+    await executor.execute(run)
+
+    assert (await types_of(log, run.run_id))[-1] == EventType.RUN_CANCELLED.value
+
+
+async def test_a_cancelled_run_stops_burning_tokens(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    """步骤四验证②：事件流停了只说明没人在推，不说明模型调用停了 —— 而那是真金白银。
+
+    第一步的 100 token 已经花掉，退不回来；第二步那 9999 一个都不该出现在账上。
+    """
+    cancel = FakeCancelFlag()
+    executor, repository = make_executor_with(
+        pool, space, log, lambda *_: chunk_stream(usage_chunk(100, 10), usage_chunk(9999, 9999)), cancel
+    )
+    run = a_task()
+    cancel.raise_flag(run.run_id)
+
+    await executor.execute(run)
+
+    assert repository.tokens[run.run_id].input_uncached == 0
+
+
+async def test_a_run_cancelled_midway_keeps_what_it_already_burned(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
+    """取消那一刻的用量要记下来 —— 教师下一个要问的就是「这次白花了多少」。"""
+    cancel = FakeCancelFlag()
+    run = a_task()
+
+    def runner(backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+        async def stream() -> AsyncIterator[StreamChunk]:
+            yield usage_chunk(100, 10)
+            cancel.raise_flag(run.run_id)
+            yield usage_chunk(200, 20)
+
+        return stream()
+
+    executor, repository = make_executor_with(pool, space, log, runner, cancel)
+
+    await executor.execute(run)
+
+    assert repository.status[run.run_id] is RunStatus.CANCELLED
+    assert repository.tokens[run.run_id].input_uncached == 300
+
+
+async def test_a_cancelled_run_gives_its_sandbox_back(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    """沙箱在 finally 里归还，取消这条路径不能绕过它 —— 绕过去就是永久少一个名额。"""
+    cancel = FakeCancelFlag()
+    run = a_task()
+
+    def runner(backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+        async def stream() -> AsyncIterator[StreamChunk]:
+            cancel.raise_flag(run.run_id)
+            yield usage_chunk(100, 10)
+
+        return stream()
+
+    executor, _ = make_executor_with(pool, space, log, runner, cancel)
+
+    await executor.execute(run)
+
+    assert pool.released == [THREAD]
+
+
+async def test_a_run_cancelled_while_queued_never_starts(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    """步骤四验证④：任务消息还躺在队列里，worker 迟早会领到它。
+
+    不在开跑前挡一道的话，那次取消就只是改了个状态，而分析照跑不误。
+    """
+    cancel = FakeCancelFlag()
+    asked: list[str] = []
+
+    def runner(backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+        asked.append(content)
+        return chunk_stream(token_chunk("好"))
+
+    executor, repository = make_executor_with(pool, space, log, runner, cancel)
+    run = a_task()
+    cancel.raise_flag(run.run_id)
+
+    await executor.execute(run)
+
+    assert asked == []
+    assert repository.status[run.run_id] is RunStatus.CANCELLED
+    assert await types_of(log, run.run_id) == [EventType.RUN_CANCELLED.value]
+
+
+async def test_a_run_that_someone_else_already_cancelled_stays_quiet(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
+    """Api 抢先改过状态时，worker 不该再推一条 —— 否则教师看到两次「已取消」。"""
+    cancel = FakeCancelFlag()
+    executor, repository = make_executor_with(pool, space, log, lambda *_: chunk_stream(), cancel)
+    run = a_task()
+    cancel.raise_flag(run.run_id)
+    repository.status[run.run_id] = RunStatus.CANCELLED
+
+    await executor.execute(run)
+
+    assert await types_of(log, run.run_id) == []
+
+
+async def test_an_uncancelled_run_still_checks_the_flag(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    """没人取消时照常跑完 —— 上面几条不能是「加了个标志就谁都跑不动」。"""
+    cancel = FakeCancelFlag()
+    executor, repository = make_executor_with(pool, space, log, lambda *_: chunk_stream(usage_chunk(100, 10)), cancel)
+    run = a_task()
+
+    await executor.execute(run)
+
+    assert repository.status[run.run_id] is RunStatus.SUCCEEDED
+    assert cancel.checked

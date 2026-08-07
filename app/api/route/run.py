@@ -3,7 +3,7 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import StreamingResponse
 
 from api.error import invalid, not_found
@@ -11,6 +11,7 @@ from api.platform import Platform, get_platform
 from api.schema import RunResponse
 from api.security import CurrentUser
 from api.sse import heartbeat_stream
+from event.model import RunCancelledData, RunCancelledEvent, now_ms
 from log import run_context
 from run.log import InvalidEventIdError, parse_event_id
 from run.repository import Run
@@ -67,6 +68,39 @@ async def stream_events(
 
     body = heartbeat_stream(platform.log.follow(run_id, after=cursor))
     return StreamingResponse(body, media_type=SSE_MEDIA_TYPE, headers=SSE_HEADER)
+
+
+@router.post("/{run_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
+async def cancel_run(
+    run_id: str,
+    current: CurrentUser,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> RunResponse:
+    """请求停下一个还在跑的 run。
+
+    **202 而不是 200**：api 停不了 worker —— 那在另一个进程里。这里能做的是立一个
+    标志、把状态抢先改掉，worker 在自己的下一个 step 边界上收手。因此取消是**尽快**
+    而不是**立刻**：正在进行的那次模型调用会跑完，它的 token 已经花掉了。
+
+    **已经跑完的 run 取消一次是空操作，不是错误** —— 教师点「停止」的那一刻它可能
+    刚好结束，那不该弹一个红框。
+    """
+    run = await _require_run(platform, run_id, current.user_id)
+
+    # **标志先立、状态后改**：反过来的话有一瞬间状态已经是 cancelled、标志却还没到，
+    # 而 worker 正好在那一瞬间查了标志，就会一路跑到底
+    await platform.cancel.raise_flag(run_id)
+    with run_context(run_id=run_id, thread_id=run.thread_id, user_id=current.user_id):
+        if await platform.repository.cancel(run_id):
+            await platform.log.append(RunCancelledEvent(ts=now_ms(), run_id=run_id, path=(), data=RunCancelledData()))
+            logger.info("run 已被取消")
+        else:
+            logger.info("run 已经是终态，取消是空操作")
+
+    # 回真实状态而不是一律回 cancelled：已经跑完的那一次并没有被取消，
+    # 谎报会让前端把一次成功的分析显示成被中断
+    current_run = await _require_run(platform, run_id, current.user_id)
+    return RunResponse(id=current_run.id, thread_id=current_run.thread_id, status=current_run.status)
 
 
 async def _require_run(platform: Platform, run_id: str, user_id: str) -> Run:

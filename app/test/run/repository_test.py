@@ -128,3 +128,61 @@ async def test_the_partial_index_covers_the_unfinished_query(live_engine: AsyncE
         plan = "\n".join(row[0] for row in result)
 
     assert "ix_runs_unfinished" in plan
+
+
+async def test_the_status_is_stored_the_way_the_contract_spells_it(
+    repository: RunRepository, submitted: str, live_engine: AsyncEngine
+) -> None:
+    """库里躺的必须是 `queued` 而不是 `QUEUED`。
+
+    SQLModel 默认按枚举**名字**存，而事件契约、架构文档、以及 `ix_runs_unfinished`
+    的谓词写的都是小写的值。两边对不上时一声不响 —— 查询照样对（绑定参数用的是同一套
+    编码），坏掉的是那条部分索引（谓词永远匹配不上，崩溃恢复的扫描退化成全表扫）
+    与所有照文档写的 SQL。这条用例就是那件事的直接断言。
+    """
+    async with live_engine.connect() as connection:
+        found = await connection.execute(text("SELECT status FROM runs WHERE id = :id"), {"id": submitted})
+
+    assert found.scalar_one() == RunStatus.QUEUED.value
+
+
+async def test_a_cancelled_run_is_stored_as_cancelled(
+    repository: RunRepository, submitted: str, owner: User, live_engine: AsyncEngine
+) -> None:
+    await repository.cancel(submitted)
+
+    found = await repository.get(submitted, user_id=owner.id)
+
+    assert found is not None
+    assert found.status is RunStatus.CANCELLED
+
+
+async def test_cancelling_a_finished_run_changes_nothing(
+    repository: RunRepository, submitted: str, owner: User
+) -> None:
+    """终态的 run 取消一次是幂等的空操作，不是错误。"""
+    await repository.succeed(submitted, tokens=TokenUsage())
+
+    assert await repository.cancel(submitted) is False
+    found = await repository.get(submitted, user_id=owner.id)
+    assert found is not None
+    assert found.status is RunStatus.SUCCEEDED
+
+
+async def test_only_one_of_two_racing_finalizers_wins(repository: RunRepository, submitted: str) -> None:
+    """条件更新是原子的：教师点停止与 worker 跑完撞在一起时，只有一边算数。
+
+    没有这一条，事件说已取消、状态说已成功，两边对不上而且谁都不报错。
+    """
+    cancelled = await repository.cancel(submitted)
+    succeeded = await repository.succeed(submitted, tokens=TokenUsage())
+
+    assert cancelled is True
+    assert succeeded is False
+
+
+async def test_a_cancelled_run_is_no_longer_unfinished(repository: RunRepository, submitted: str) -> None:
+    """崩溃恢复不该把已经取消的 run 捞回来重跑。"""
+    await repository.cancel(submitted)
+
+    assert submitted not in {run.id for run in await repository.unfinished()}

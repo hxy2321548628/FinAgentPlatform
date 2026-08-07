@@ -30,6 +30,10 @@ SYSTEM_METHOD = {
     (RunRepository, "start"),
     (RunRepository, "succeed"),
     (RunRepository, "fail"),
+    # 同上，取消也是一次按 id 精确定位的状态流转。它有两个调用方：worker 在 step
+    # 边界上发现标志时，以及取消端点 —— 而那个端点在调它之前已经用带 user 的查询
+    # 确认过归属，查不到就是 404，走不到这一步
+    (RunRepository, "cancel"),
 }
 
 

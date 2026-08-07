@@ -23,6 +23,7 @@ from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
 from quota.usage import RunUsage
 from run.archive import EventArchive
+from run.cancel import CancelFlag
 from run.log import EventLog
 from run.repository import RunRepository
 from run.submitter import RunSubmitter
@@ -53,6 +54,7 @@ class Platform:
     thread: ThreadRepository
     session: SessionStore
     policy: QuotaPolicy
+    cancel: CancelFlag
     usage: RunUsage
     rate: RateLimiter
     password: PasswordHasher
@@ -101,6 +103,7 @@ async def build_platform(settings: Settings) -> Platform:
         user=UserRepository(engine),
         thread=ThreadRepository(engine),
         policy=policy,
+        cancel=CancelFlag(cache),
         usage=RunUsage(engine, output_weight=policy.output_weight),
         rate=RateLimiter(cache, limit=settings.rate_limit, window_second=settings.rate_limit_window_second),
         session=SessionStore(cache, ttl_second=settings.session_ttl_second),
