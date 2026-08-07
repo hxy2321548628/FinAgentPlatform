@@ -17,6 +17,7 @@ from agent.factory import create_model, create_runner
 from config import Settings
 from run.executor import RunExecutor
 from run.log import EventLog
+from run.repository import RunRepository
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
 from store import postgres, redis
 from store.checkpoint import CheckpointPool, open_checkpoint
@@ -69,6 +70,7 @@ async def build_platform(settings: Settings) -> Platform:
         workspace=workspace,
         log=log,
         runner=create_runner(model=create_model(settings), checkpointer=checkpoint.saver),
+        repository=RunRepository(engine),
         backend_factory=backend_factory,
     )
     return Platform(

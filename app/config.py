@@ -46,21 +46,81 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = REPO_ROOT / ".env"
 
 
-class Settings(BaseSettings):
+SETTINGS_CONFIG = SettingsConfigDict(
+    env_file=ENV_FILE,
+    env_file_encoding="utf-8",
+    # .env 里可能有部署脚本用的其他变量，多出来的键不该让平台起不来
+    extra="ignore",
+    # get_settings() 让全进程共用一个实例，冻结它才不构成可变全局状态
+    frozen=True,
+)
+
+
+class StoreSettings(BaseSettings):
+    """连两个外部存储需要的那几项。
+
+    **单独分一层是为了 Alembic 与测试**：迁移只需要连得上库，不该因为缺
+    `DEEPSEEK_API_KEY` 而跑不起来。配置项本身仍只在这里定义一次，`Settings` 继承它。
+    """
+
+    model_config = SETTINGS_CONFIG
+
+    # 拆成五项而不是一整条 DSN，是为了让 compose 只覆盖主机名，
+    # 密码不必经过 compose 的变量插值，理由见 store/postgres.py 的 build_dsn
+    postgres_host: str = Field(
+        default=DEFAULT_HOST,
+        description="Postgres 主机。compose 部署时是服务名 postgres",
+    )
+    postgres_port: int = Field(default=DEFAULT_PORT, gt=0, description="Postgres 端口")
+    postgres_user: str = Field(default=DEFAULT_USER, min_length=1, description="Postgres 用户名")
+    postgres_password: SecretStr = Field(
+        default=SecretStr(DEFAULT_PASSWORD),
+        description="Postgres 口令。默认值只够开发机用，上线前必须改",
+    )
+    postgres_db: str = Field(default=DEFAULT_DATABASE, min_length=1, description="Postgres 库名")
+
+    redis_url: str = Field(
+        default=DEFAULT_URL,
+        description="Redis 连接串。事件通道与任务队列都落在这里。无口令，因此不必拆开",
+    )
+
+    def postgres_dsn(self) -> str:
+        """拼出 SQLAlchemy 用的 Postgres 连接串。
+
+        Returns:
+            带 `+psycopg` 驱动后缀的 DSN。
+        """
+        return self._postgres_dsn(DRIVER)
+
+    def postgres_conninfo(self) -> str:
+        """拼出原生 psycopg 用的 Postgres 连接串。
+
+        LangGraph 的 checkpointer 直接用 psycopg，它不认 SQLAlchemy 的驱动后缀。
+
+        Returns:
+            不带驱动后缀的 DSN。
+        """
+        return self._postgres_dsn(NATIVE_DRIVER)
+
+    def _postgres_dsn(self, driver: str) -> str:
+        return build_dsn(
+            host=self.postgres_host,
+            port=self.postgres_port,
+            user=self.postgres_user,
+            password=self.postgres_password.get_secret_value(),
+            database=self.postgres_db,
+            driver=driver,
+        )
+
+
+class Settings(StoreSettings):
     """平台运行所需的外部配置。
 
     缺必填项时构造即抛 `ValidationError`，让进程在启动时失败，
     而不是等到第一次调模型才炸。
     """
 
-    model_config = SettingsConfigDict(
-        env_file=ENV_FILE,
-        env_file_encoding="utf-8",
-        # .env 里可能有部署脚本用的其他变量，多出来的键不该让平台起不来
-        extra="ignore",
-        # get_settings() 让全进程共用一个实例，冻结它才不构成可变全局状态
-        frozen=True,
-    )
+    model_config = SETTINGS_CONFIG
 
     deepseek_api_key: SecretStr = Field(description="DeepSeek API 凭据。无默认值，缺失即启动失败")
     deepseek_base_url: str = Field(
@@ -79,25 +139,6 @@ class Settings(BaseSettings):
     broker_url: str = Field(
         default=DEFAULT_BROKER_URL,
         description="sandbox-broker 的地址。它是唯一持有 docker.sock 的进程，只在内网监听",
-    )
-
-    # Postgres 存会话 checkpoint 与 run 元数据。拆成五项是为了让 compose 只覆盖主机名，
-    # 密码不必经过 compose 的变量插值，理由见 store/postgres.py 的 build_dsn
-    postgres_host: str = Field(
-        default=DEFAULT_HOST,
-        description="Postgres 主机。compose 部署时是服务名 postgres",
-    )
-    postgres_port: int = Field(default=DEFAULT_PORT, gt=0, description="Postgres 端口")
-    postgres_user: str = Field(default=DEFAULT_USER, min_length=1, description="Postgres 用户名")
-    postgres_password: SecretStr = Field(
-        default=SecretStr(DEFAULT_PASSWORD),
-        description="Postgres 口令。默认值只够开发机用，上线前必须改",
-    )
-    postgres_db: str = Field(default=DEFAULT_DATABASE, min_length=1, description="Postgres 库名")
-
-    redis_url: str = Field(
-        default=DEFAULT_URL,
-        description="Redis 连接串。事件通道与任务队列都落在这里。无口令，因此不必拆开",
     )
 
     sandbox_image: str = Field(
@@ -171,34 +212,6 @@ class Settings(BaseSettings):
         default=shlex.join(DEFAULT_QUOTA_COMMAND),
         description="xfs_quota 的调用方式。它要 CAP_SYS_ADMIN，非 root 跑平台时前面要加 sudo",
     )
-
-    def postgres_dsn(self) -> str:
-        """拼出 SQLAlchemy 用的 Postgres 连接串。
-
-        Returns:
-            带 `+psycopg` 驱动后缀的 DSN。
-        """
-        return self._postgres_dsn(DRIVER)
-
-    def postgres_conninfo(self) -> str:
-        """拼出原生 psycopg 用的 Postgres 连接串。
-
-        LangGraph 的 checkpointer 直接用 psycopg，它不认 SQLAlchemy 的驱动后缀。
-
-        Returns:
-            不带驱动后缀的 DSN。
-        """
-        return self._postgres_dsn(NATIVE_DRIVER)
-
-    def _postgres_dsn(self, driver: str) -> str:
-        return build_dsn(
-            host=self.postgres_host,
-            port=self.postgres_port,
-            user=self.postgres_user,
-            password=self.postgres_password.get_secret_value(),
-            database=self.postgres_db,
-            driver=driver,
-        )
 
     def quota_command(self) -> tuple[str, ...]:
         """把配置里的命令串拆成 argv。

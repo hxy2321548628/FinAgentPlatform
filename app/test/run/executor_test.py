@@ -16,6 +16,7 @@ from event.model import EventType, RunErrorCode, RunFinishedData, RunStatus, Tok
 from log import JsonFormatter
 from run.executor import RunExecutor
 from run.log import EventLog
+from run.repository import Run
 from sandbox.pool import QueuePositionCallback, SandboxQueueTimeoutError
 
 THREAD = "thread-1"
@@ -55,6 +56,40 @@ class FakeWorkspace:
     async def artifact_since(self, thread_id: str, since_ns: int) -> list[str]:
         self.asked.append((thread_id, since_ns))
         return self.produced.get(thread_id, [])
+
+
+class FakeRepository:
+    """内存里的 run 元数据。
+
+    真的那一套 (`runs` 表) 在 test/run/repository_test.py 里连真库验；
+    这里要验的是执行器的状态流转顺序，不是 SQL。
+    """
+
+    def __init__(self) -> None:
+        self.run: dict[str, Run] = {}
+        self.tokens: dict[str, TokenUsage] = {}
+        self.error: dict[str, tuple[RunErrorCode, str]] = {}
+
+    async def create(self, *, run_id: str, thread_id: str) -> None:
+        self.run[run_id] = Run(id=run_id, thread_id=thread_id, status=RunStatus.QUEUED)
+
+    async def get(self, run_id: str) -> Run | None:
+        return self.run.get(run_id)
+
+    async def start(self, run_id: str) -> None:
+        self._move(run_id, RunStatus.RUNNING)
+
+    async def succeed(self, run_id: str, *, tokens: TokenUsage) -> None:
+        self.tokens[run_id] = tokens
+        self._move(run_id, RunStatus.SUCCEEDED)
+
+    async def fail(self, run_id: str, *, code: RunErrorCode, message: str) -> None:
+        self.error[run_id] = (code, message)
+        self._move(run_id, RunStatus.FAILED)
+
+    def _move(self, run_id: str, status: RunStatus) -> None:
+        current = self.run[run_id]
+        self.run[run_id] = Run(id=current.id, thread_id=current.thread_id, status=status)
 
 
 def chunk_stream(*chunk: StreamChunk) -> AsyncIterator[StreamChunk]:
@@ -103,7 +138,7 @@ def make_executor(pool: FakePool, space: FakeWorkspace, log: EventLog, *chunk: S
     def runner(backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
         return chunk_stream(*chunk)
 
-    return RunExecutor(pool=pool, workspace=space, log=log, runner=runner)
+    return RunExecutor(pool=pool, workspace=space, log=log, runner=runner, repository=FakeRepository())
 
 
 def artifacts_of(log: EventLog, run_id: str) -> list[str]:
@@ -153,15 +188,15 @@ async def test_a_finished_run_is_queryable_by_id(pool: FakePool, space: FakeWork
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
-    found = executor.get(run.id)
+    found = await executor.get(run.id)
     assert found is not None
     assert found.status is RunStatus.SUCCEEDED
 
 
-def test_an_unknown_run_is_not_found(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+async def test_an_unknown_run_is_not_found(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
     executor = make_executor(pool, space, log)
 
-    assert executor.get("never-existed") is None
+    assert await executor.get("never-existed") is None
 
 
 # ------------------------------------------------------------------ 事件序列
@@ -286,7 +321,7 @@ async def test_logs_emitted_during_a_run_carry_its_ids(pool: FakePool, space: Fa
 
         return stream()
 
-    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=noisy)
+    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=noisy, repository=FakeRepository())
     run = await executor.submit(thread_id=THREAD, content="一")
     try:
         await executor.wait(run.id)
@@ -322,7 +357,7 @@ async def test_the_sandbox_is_released_even_when_the_agent_blows_up(
 
         return stream()
 
-    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=exploding)
+    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=exploding, repository=FakeRepository())
 
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
@@ -362,7 +397,7 @@ async def test_waiting_too_long_for_a_sandbox_fails_the_run_as_retryable(
     assert failed.type is EventType.RUN_FAILED
     assert failed.data.code is RunErrorCode.SANDBOX_QUEUE_TIMEOUT
     assert failed.data.retryable is True
-    assert executor.get(run.id).status is RunStatus.FAILED  # type: ignore[union-attr]
+    assert (await executor.get(run.id)).status is RunStatus.FAILED  # type: ignore[union-attr]
 
 
 async def test_a_failed_sandbox_acquisition_is_not_released(
@@ -386,13 +421,13 @@ async def test_an_agent_error_ends_the_run_as_failed(pool: FakePool, space: Fake
 
         return stream()
 
-    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=exploding)
+    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=exploding, repository=FakeRepository())
 
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)
 
     assert types_of(log, run.id) == ["run.started", "sandbox.ready", "token", "run.failed"]
-    assert executor.get(run.id).status is RunStatus.FAILED  # type: ignore[union-attr]
+    assert (await executor.get(run.id)).status is RunStatus.FAILED  # type: ignore[union-attr]
 
 
 async def test_an_unclassified_error_is_not_retryable(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
@@ -405,7 +440,7 @@ async def test_an_unclassified_error_is_not_retryable(pool: FakePool, space: Fak
 
         return stream()
 
-    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=exploding)
+    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=exploding, repository=FakeRepository())
 
     run = await executor.submit(thread_id=THREAD, content="一")
     await executor.wait(run.id)

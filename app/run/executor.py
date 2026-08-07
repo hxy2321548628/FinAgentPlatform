@@ -11,7 +11,6 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
 from typing import Protocol
 from uuid import uuid4
 
@@ -37,6 +36,7 @@ from event.model import (
 )
 from log import run_context
 from run.log import EventLog
+from run.repository import Run
 from sandbox.pool import QueuePositionCallback, SandboxQueueTimeoutError
 from sandbox.remote import RemoteBackendFactory
 
@@ -76,14 +76,31 @@ class SandboxPoolProtocol(Protocol):
         ...
 
 
-@dataclass
-class Run:
-    """一次提问的执行记录。"""
+class RunRepositoryProtocol(Protocol):
+    """执行器对 run 元数据仓储的全部要求。
 
-    id: str
-    thread_id: str
-    content: str
-    status: RunStatus
+    只有五个方法：查历史 run、扫未完成的 run 都不经执行器 —— 那是端点与恢复流程的事。
+    """
+
+    async def create(self, *, run_id: str, thread_id: str) -> None:
+        """记下一个刚提交的 run。"""
+        ...
+
+    async def get(self, run_id: str) -> Run | None:
+        """按 id 查一次 run。"""
+        ...
+
+    async def start(self, run_id: str) -> None:
+        """标记开跑。"""
+        ...
+
+    async def succeed(self, run_id: str, *, tokens: TokenUsage) -> None:
+        """标记跑完。"""
+        ...
+
+    async def fail(self, run_id: str, *, code: RunErrorCode, message: str) -> None:
+        """标记失败。"""
+        ...
 
 
 class RunExecutor:
@@ -94,6 +111,7 @@ class RunExecutor:
         workspace: 各会话的文件空间，用来认领本次 run 的产物。
         log: 事件日志，执行过程中产生的一切都往这里写。
         runner: 驱动一次智能体执行并产出 chunk 流的函数。
+        repository: run 元数据的仓储，状态流转往这里落。
         backend_factory: 按会话造 backend，不传则发 HTTP 给 broker。
     """
 
@@ -104,6 +122,7 @@ class RunExecutor:
         workspace: WorkspaceProtocol,
         log: EventLog,
         runner: AgentRunner,
+        repository: RunRepositoryProtocol,
         backend_factory: BackendFactory | None = None,
     ) -> None:
         self._pool = pool
@@ -111,7 +130,7 @@ class RunExecutor:
         self._backend = backend_factory or RemoteBackendFactory()
         self._log = log
         self._runner = runner
-        self._run: dict[str, Run] = {}
+        self._repository = repository
         self._task: dict[str, asyncio.Task[None]] = {}
 
     async def submit(self, *, thread_id: str, content: str) -> Run:
@@ -124,14 +143,15 @@ class RunExecutor:
         Returns:
             状态为 `queued` 的 run 记录，`id` 用于订阅事件与查询状态。
         """
-        run = Run(id=uuid4().hex, thread_id=thread_id, content=content, status=RunStatus.QUEUED)
-        self._run[run.id] = run
-        self._task[run.id] = asyncio.create_task(self._drive(run))
+        run = Run(id=uuid4().hex, thread_id=thread_id, status=RunStatus.QUEUED)
+        # 先落库再起任务：反过来的话，后台任务可能抢在这一行之前就去改状态
+        await self._repository.create(run_id=run.id, thread_id=run.thread_id)
+        self._task[run.id] = asyncio.create_task(self._drive(run, content))
         return run
 
-    def get(self, run_id: str) -> Run | None:
+    async def get(self, run_id: str) -> Run | None:
         """按 id 查一次 run，不存在时返回 None。"""
-        return self._run.get(run_id)
+        return await self._repository.get(run_id)
 
     async def wait(self, run_id: str) -> None:
         """等一个 run 跑完。未知的 run 直接返回。"""
@@ -143,11 +163,11 @@ class RunExecutor:
         """等所有在跑的 run 结束。"""
         await asyncio.gather(*self._task.values(), return_exceptions=True)
 
-    async def _drive(self, run: Run) -> None:
+    async def _drive(self, run: Run, content: str) -> None:
         # 每个 run 跑在自己的任务里，任务启动时会复制一份 context，
         # 因此在这里绑定不会串到并发的其他 run 上
         with run_context(run_id=run.id, thread_id=run.thread_id):
-            run.status = RunStatus.RUNNING
+            await self._repository.start(run.id)
             self._emit(
                 RunStartedEvent(ts=now_ms(), run_id=run.id, path=(), data=RunStartedData(thread_id=run.thread_id))
             )
@@ -156,12 +176,12 @@ class RunExecutor:
                 return
 
             try:
-                await self._consume(run)
+                await self._consume(run, content)
             # 智能体那一侧什么都可能抛：模型断连、图跑飞、工具越界。宽捕获是刻意的 ——
             # 让异常逃出去只会让后台任务无声无息地死掉，订阅这个 run 的连接则永远等不到终态。
             except Exception as exc:
                 logger.warning("run 执行失败", exc_info=True)
-                self._fail(run, RunErrorCode.INTERNAL, str(exc), retryable=False)
+                await self._fail(run, RunErrorCode.INTERNAL, str(exc), retryable=False)
             finally:
                 await self._pool.release(run.thread_id)
 
@@ -182,25 +202,27 @@ class RunExecutor:
             # 只有资源不足值得重试。其余按未分类错误处理 —— 盲目重试只是再炸一次，
             # 还多花一份 token
             code = RunErrorCode.SANDBOX_QUEUE_TIMEOUT if queued_out else RunErrorCode.INTERNAL
-            self._fail(run, code, str(exc), retryable=queued_out)
+            await self._fail(run, code, str(exc), retryable=queued_out)
             return False
 
         self._emit(SandboxReadyEvent(ts=now_ms(), run_id=run.id, path=(), data=SandboxReadyData()))
         return True
 
-    async def _consume(self, run: Run) -> None:
+    async def _consume(self, run: Run, content: str) -> None:
         """消费智能体的流，逐个 chunk 映射成事件。"""
         backend = self._backend(run.thread_id)
         tokens = TokenUsage()
         # 产物按 mtime 判定，基准要在 agent 动手之前取，否则本次的产出会被漏掉
         started_at = time.time_ns()
 
-        async for ns, mode, payload in self._runner(backend, run.thread_id, run.content):
+        async for ns, mode, payload in self._runner(backend, run.thread_id, content):
             tokens = tokens + _token_usage(mode, payload)
             for event in map_chunk(ns, mode, payload, run_id=run.id):
                 self._log.append(event)
 
-        run.status = RunStatus.SUCCEEDED
+        # 先落库再发终态事件：订阅方收到 run.finished 就会回头查 GET /runs/{id}，
+        # 反过来的话那一查会读到还在 running
+        await self._repository.succeed(run.id, tokens=tokens)
         self._emit(
             RunFinishedEvent(
                 ts=now_ms(),
@@ -213,8 +235,8 @@ class RunExecutor:
             )
         )
 
-    def _fail(self, run: Run, code: RunErrorCode, message: str, *, retryable: bool) -> None:
-        run.status = RunStatus.FAILED
+    async def _fail(self, run: Run, code: RunErrorCode, message: str, *, retryable: bool) -> None:
+        await self._repository.fail(run.id, code=code, message=message or code.value)
         self._emit(
             RunFailedEvent(
                 ts=now_ms(),

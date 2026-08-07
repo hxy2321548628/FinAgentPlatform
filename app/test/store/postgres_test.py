@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from store.postgres import PostgresUnavailableError, build_dsn, check, create_engine
+from store.postgres import NATIVE_DRIVER, PostgresUnavailableError, build_dsn, check, create_engine
 
 # 一个不会有人监听的端口。连不上是立刻的 ECONNREFUSED，不是超时
 DEAD_DSN = "postgresql+psycopg://zuel:zuel@127.0.0.1:1/zuel"
@@ -28,6 +28,13 @@ def test_a_password_with_url_punctuation_survives_the_dsn() -> None:
     dsn = build_dsn(host="db", port=5432, user="zuel", password="p@ss/w:rd", database="zuel")
 
     assert dsn == "postgresql+psycopg://zuel:p%40ss%2Fw%3Ard@db:5432/zuel"
+
+
+def test_the_native_driver_drops_the_sqlalchemy_suffix() -> None:
+    """Checkpointer 用原生 psycopg，它不认 `+psycopg` 这个后缀。"""
+    dsn = build_dsn(host="db", port=5432, user="zuel", password="zuel", database="zuel", driver=NATIVE_DRIVER)
+
+    assert dsn == "postgresql://zuel:zuel@db:5432/zuel"
 
 
 async def test_check_passes_against_a_live_postgres(live_engine: AsyncEngine) -> None:

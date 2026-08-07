@@ -20,7 +20,7 @@
 zuel-platform/
 ├── app/            # Python 后端（uv 工程，虚拟环境在 app/.venv）。两个入口：api.app:app 与 broker.app:app
 ├── frontend/       # React 前端（未开始）
-├── deploy/         # 部署配置：compose.yml（nginx+api+broker）、两个 Dockerfile、nginx.conf、环境搭建与验收脚本
+├── deploy/         # 部署配置：compose.yml（nginx+api+broker+postgres+redis）、两个 Dockerfile、nginx.conf、环境搭建与验收脚本
 ├── doc/            # 设计文档，见上方文档地图
 ├── .claude/        # 技术章程与风格指南
 ├── .github/        # CI（gate workflow：干净环境里复跑 make all）
@@ -44,6 +44,7 @@ docker build -f deploy/sandbox.Dockerfile -t zuel-sandbox:latest .
 
 # Postgres 与 Redis。跑门禁前要起着，否则落库与事件流的用例会 skip（同上，门禁照样绿）
 docker compose -f deploy/compose.yml up -d postgres redis
+cd app && uv run alembic upgrade head    # 建 runs 等业务表。测试会自己跑一次，手工部署要跑
 
 # 环境（gVisor + XFS prjquota）。新机器要跑一次，脚本可重跑
 sudo bash deploy/setup-gvisor.sh && sudo bash deploy/setup-xfs.sh && sudo bash deploy/verify-env.sh

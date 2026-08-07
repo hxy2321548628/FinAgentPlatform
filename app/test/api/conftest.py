@@ -5,7 +5,9 @@
 「取产物」全都跨了进程边界，用假对象顶掉这一段等于把要验的东西验没了。
 
 假的只有两样：**沙箱池**（不起 Docker）与**智能体**（不打模型 API）。
-其余全是真的 —— 真的执行器、真的事件日志、真的 workspace、真的 broker 路由。
+其余全是真的 —— 真的执行器、真的事件日志、真的 workspace、真的 broker 路由，
+以及**真的 Postgres**：`GET /runs/{id}` 现在读的是 `runs` 表，拿假仓储顶掉
+就等于不验它。库没起时这一整包会 skip。
 """
 
 from collections.abc import AsyncIterator, Iterator
@@ -28,21 +30,19 @@ from broker.runtime import Broker
 from event.mapper import StreamChunk
 from run.executor import RunExecutor
 from run.log import EventLog
+from run.repository import RunRepository
 from sandbox.backend import SandboxBackend
 from sandbox.container import CommandResult
 from sandbox.pool import QueuePositionCallback
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
 from sandbox.workspace import Workspace
 from store.checkpoint import CONNECTION_KWARGS, CheckpointPool
-from store.postgres import create_engine
 from store.redis import create_client
 
 BROKER_URL = "http://broker.test"
 
-# 这三样在这里都用不上：端点不读库，而 checkpointer 被假 agent 顶掉了。
-# 给的是没连过的对象 —— 建它们不发起连接。真连上去验的部分在 test/store/，
-# 那里连不上会 skip；换成真连接只会让两百多条与存储无关的用例一起停摆
-UNUSED_DSN = "postgresql+psycopg://unused@127.0.0.1:1/unused"
+# 这两样在这里用不上：端点不碰 Redis，checkpointer 被假 agent 顶掉了。
+# 给的是没连过的对象 —— 建它们不发起连接
 UNUSED_CONNINFO = "postgresql://unused@127.0.0.1:1/unused"
 UNUSED_REDIS_URL = "redis://127.0.0.1:1/0"
 
@@ -132,13 +132,6 @@ def connection(broker_app: FastAPI) -> BrokerConnection:
 
 
 @pytest.fixture
-async def engine() -> AsyncIterator[AsyncEngine]:
-    created = create_engine(UNUSED_DSN, pool_size=1)
-    yield created
-    await created.dispose()
-
-
-@pytest.fixture
 async def cache() -> AsyncIterator[Redis]:
     created = create_client(UNUSED_REDIS_URL)
     yield created
@@ -159,7 +152,7 @@ def platform(
     pool: FakePool,
     log: EventLog,
     agent: Agent,
-    engine: AsyncEngine,
+    live_engine: AsyncEngine,
     cache: Redis,
     checkpoint_pool: CheckpointPool,
 ) -> Platform:
@@ -173,7 +166,12 @@ def platform(
         return SandboxBackend(workspace=space.path(thread_id), container=pool.current(thread_id) or FakeContainer())
 
     executor = RunExecutor(
-        pool=remote_pool, workspace=workspace, log=log, runner=agent, backend_factory=backend_factory
+        pool=remote_pool,
+        workspace=workspace,
+        log=log,
+        runner=agent,
+        repository=RunRepository(live_engine),
+        backend_factory=backend_factory,
     )
     return Platform(
         workspace=workspace,
@@ -182,7 +180,7 @@ def platform(
         executor=executor,
         connection=connection,
         backend_factory=RemoteBackendFactory(base_url=BROKER_URL),
-        engine=engine,
+        engine=live_engine,
         cache=cache,
         checkpoint_pool=checkpoint_pool,
     )

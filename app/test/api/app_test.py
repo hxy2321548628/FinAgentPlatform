@@ -56,7 +56,7 @@ async def test_a_platform_built_from_settings_wires_everything_together(tmp_path
         # 装配阶段不该碰 broker、不该碰盘：这三样都只是拿到了一条到 broker 的连接
         assert isinstance(platform.workspace, RemoteWorkspace)
         assert isinstance(platform.pool, RemoteSandboxPool)
-        assert platform.executor.get("never-existed") is None
+        assert await platform.executor.get("never-existed") is None
     finally:
         await platform.engine.dispose()
         await platform.cache.aclose()

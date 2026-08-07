@@ -15,25 +15,10 @@ from langgraph.checkpoint.base import CheckpointMetadata, empty_checkpoint
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from config import StoreSettings
 from store.checkpoint import Checkpoint, open_checkpoint
-from store.postgres import (
-    DEFAULT_DATABASE,
-    DEFAULT_HOST,
-    DEFAULT_PASSWORD,
-    DEFAULT_PORT,
-    DEFAULT_USER,
-    NATIVE_DRIVER,
-    build_dsn,
-)
 
-CONNINFO = build_dsn(
-    host=DEFAULT_HOST,
-    port=DEFAULT_PORT,
-    user=DEFAULT_USER,
-    password=DEFAULT_PASSWORD,
-    database=DEFAULT_DATABASE,
-    driver=NATIVE_DRIVER,
-)
+CONNINFO = StoreSettings().postgres_conninfo()
 
 # 框架自己建的表。手工改过就等着下次升级 LangGraph 时冲突，因此它们不进 Alembic
 FRAMEWORK_TABLE = ("checkpoints", "checkpoint_writes", "checkpoint_blobs", "checkpoint_migrations")
