@@ -8,6 +8,7 @@ CI 那边由 gate workflow 的 services 保证它永远跑得到，不会静默�
 「测试连 A 库、迁移建 B 库」，而那种故障不报错，只是表「不见了」。
 """
 
+import contextlib
 import json
 import logging
 from collections.abc import AsyncIterator, Iterator
@@ -19,12 +20,13 @@ import psycopg
 import pytest
 from alembic import command
 from alembic.config import Config
+from psycopg import sql
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from config import StoreSettings
 from log import JsonFormatter
-from store.postgres import PostgresUnavailableError, create_engine
+from store.postgres import DRIVER, NATIVE_DRIVER, PostgresUnavailableError, build_dsn, create_engine
 from store.postgres import check as check_postgres
 from store.redis import RedisUnavailableError, create_client
 from store.redis import check as check_redis
@@ -37,10 +39,92 @@ PROBE_TIMEOUT_SECOND = 2
 
 # 测试专用的 Redis 逻辑库。**不能用业务那个 0 号库** —— 用例之间要清空，
 # 而清空会把开发机上正在跑的 run 的事件一起冲掉
-TEST_DATABASE = 15
+TEST_REDIS_DATABASE = 15
+
+# 测试专用的 Postgres 库，与上面同一个理由。共用业务库时测试数据会一行行混进业务表，
+# 而混进去之后就再也分不出哪些行是测试留下的 —— 每加一张表混得更多一批。
+# 库不存在时由 `migrated` 自己建，因此新机器不必先手工 createdb
+TEST_POSTGRES_DATABASE = "zuel_test"
 
 SKIP_POSTGRES = "没有可用的 Postgres：docker compose -f deploy/compose.yml up -d postgres"
 SKIP_REDIS = "没有可用的 Redis：docker compose -f deploy/compose.yml up -d redis"
+
+
+def store_dsn(driver: str, *, database: str = TEST_POSTGRES_DATABASE) -> str:
+    """拼一条指向测试库的连接串。
+
+    连接参数取自 `StoreSettings`，只把库名换掉 —— 各写各的默认值会出现
+    「测试连 A 库、迁移建 B 库」，而那种故障不报错，只是表「不见了」。
+
+    Args:
+        driver: 协议前缀，SQLAlchemy 与原生 psycopg 认的不是同一个。
+        database: 库名。
+
+    Returns:
+        可直接交给引擎或 psycopg 的 DSN。
+    """
+    return build_dsn(
+        host=SETTINGS.postgres_host,
+        port=SETTINGS.postgres_port,
+        user=SETTINGS.postgres_user,
+        password=SETTINGS.postgres_password.get_secret_value(),
+        database=database,
+        driver=driver,
+    )
+
+
+TEST_POSTGRES_DSN = store_dsn(DRIVER)
+TEST_POSTGRES_CONNINFO = store_dsn(NATIVE_DRIVER)
+
+
+def alembic_config(dsn: str) -> Config:
+    """指到某个库的 alembic 配置。
+
+    Args:
+        dsn: 目标库的连接串。
+
+    Returns:
+        可交给 `command.upgrade` 的配置。
+    """
+    config = Config(str(ALEMBIC_INI))
+    config.set_main_option("sqlalchemy.url", dsn)
+    return config
+
+
+@contextmanager
+def maintenance() -> Iterator[psycopg.Connection[tuple[object, ...]]]:
+    """连到业务库，只为了下一句 CREATE / DROP DATABASE。
+
+    建库不能在要建的那个库里下，得先连上另一个已经存在的库。业务库一定在
+    （compose 起 postgres 时就建了），且这条连接除了那一句什么都不做。
+
+    Yields:
+        自动提交的连接 —— CREATE DATABASE 不能在事务里跑。
+    """
+    with psycopg.connect(
+        SETTINGS.postgres_conninfo(), connect_timeout=PROBE_TIMEOUT_SECOND, autocommit=True
+    ) as connection:
+        yield connection
+
+
+def ensure_database(name: str) -> None:
+    """建一个库，已经有了就当无事发生。
+
+    Args:
+        name: 库名。
+    """
+    with maintenance() as connection, contextlib.suppress(psycopg.errors.DuplicateDatabase):
+        connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+
+
+def drop_database(name: str) -> None:
+    """删掉一个库，连同还连着它的连接。
+
+    Args:
+        name: 库名。
+    """
+    with maintenance() as connection:
+        connection.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
 
 
 @contextmanager
@@ -74,22 +158,21 @@ def json_log(name: str) -> Iterator[list[dict[str, object]]]:
 
 @pytest.fixture(scope="session")
 def migrated() -> None:
-    """把库迁到最新。
+    """把**测试库**迁到最新，库不存在就先建。
 
     **测试也走 Alembic，不另起一条 `create_all`** —— 两条路都能建表时，
     它们迟早会分叉，而分叉的症状是「本地全绿、上线缺列」。
     """
     try:
-        with psycopg.connect(SETTINGS.postgres_conninfo(), connect_timeout=PROBE_TIMEOUT_SECOND):
-            pass
+        ensure_database(TEST_POSTGRES_DATABASE)
     except psycopg.Error:
         pytest.skip(SKIP_POSTGRES)
-    command.upgrade(Config(str(ALEMBIC_INI)), "head")
+    command.upgrade(alembic_config(TEST_POSTGRES_DSN), "head")
 
 
 @pytest.fixture
 async def live_engine(migrated: None) -> AsyncIterator[AsyncEngine]:
-    created = create_engine(SETTINGS.postgres_dsn())
+    created = create_engine(TEST_POSTGRES_DSN)
     try:
         await check_postgres(created)
     except PostgresUnavailableError:
@@ -114,7 +197,7 @@ async def live_cache() -> AsyncIterator[Redis]:
     把应用跑在另一个线程的另一个循环里。把这里建出来的连接留在池子里，
     应用那一侧取到它就会挂死在读上 —— 症状是超时，不指向事件循环。
     """
-    created = create_client(SETTINGS.redis_url, database=TEST_DATABASE)
+    created = create_client(SETTINGS.redis_url, database=TEST_REDIS_DATABASE)
     try:
         await check_redis(created)
     except RedisUnavailableError:
@@ -125,9 +208,9 @@ async def live_cache() -> AsyncIterator[Redis]:
     # 静默盖掉，于是每条用例都在冲业务库，而且投出去的测试任务被真的 worker 领走 ——
     # 那是要花钱的模型调用。整件事没有一处报错，是靠一条断言里冒出真实中文回答才发现的
     connected = created.connection_pool.connection_kwargs["db"]
-    if connected != TEST_DATABASE:
+    if connected != TEST_REDIS_DATABASE:
         await created.aclose()
-        pytest.fail(f"测试连到了 {connected} 号库而不是 {TEST_DATABASE} 号，拒绝 flushdb")
+        pytest.fail(f"测试连到了 {connected} 号库而不是 {TEST_REDIS_DATABASE} 号，拒绝 flushdb")
 
     await created.flushdb()
     await created.connection_pool.disconnect()

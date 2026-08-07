@@ -10,7 +10,7 @@ from config import StoreSettings
 from run.log import DEFAULT_BLOCK_MILLISECOND as EVENT_BLOCK
 from store.redis import DEFAULT_SOCKET_TIMEOUT, RedisUnavailableError, check, create_client
 from task.queue import DEFAULT_BLOCK_MILLISECOND as TASK_BLOCK
-from test.conftest import TEST_DATABASE
+from test.conftest import TEST_REDIS_DATABASE
 
 # 一个不会有人监听的端口
 DEAD_URL = "redis://127.0.0.1:1/0"
@@ -44,9 +44,9 @@ def test_the_database_argument_beats_the_database_in_the_url() -> None:
     冲的是业务库，正在跑的 run 的事件与排队中的任务一起没；投出去的测试任务被真的
     worker 领走，那是要花钱的模型调用，而事件流里会冒出没人写过的真实回答。
     """
-    client = create_client(BUSINESS_URL, database=TEST_DATABASE)
+    client = create_client(BUSINESS_URL, database=TEST_REDIS_DATABASE)
 
-    assert client.connection_pool.connection_kwargs["db"] == TEST_DATABASE
+    assert client.connection_pool.connection_kwargs["db"] == TEST_REDIS_DATABASE
 
 
 def test_no_database_argument_keeps_the_one_in_the_url() -> None:
@@ -68,7 +68,7 @@ def test_the_socket_timeout_outlives_every_blocking_command() -> None:
 async def test_a_blocking_read_dies_when_the_socket_gives_up_first(live_cache: Redis) -> None:
     """上一条守的是什么，这一条演示给你看：超时压到 BLOCK 之下，阻塞读就炸。"""
     impatient = Redis.from_url(
-        StoreSettings().redis_url, db=TEST_DATABASE, decode_responses=True, socket_timeout=IMPATIENT_SECOND
+        StoreSettings().redis_url, db=TEST_REDIS_DATABASE, decode_responses=True, socket_timeout=IMPATIENT_SECOND
     )
     try:
         with pytest.raises(RedisTimeoutError):

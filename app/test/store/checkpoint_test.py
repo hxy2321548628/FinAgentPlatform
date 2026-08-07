@@ -15,10 +15,8 @@ from langgraph.checkpoint.base import CheckpointMetadata, empty_checkpoint
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from config import StoreSettings
 from store.checkpoint import Checkpoint, open_checkpoint
-
-CONNINFO = StoreSettings().postgres_conninfo()
+from test.conftest import TEST_POSTGRES_CONNINFO
 
 # 框架自己建的表。手工改过就等着下次升级 LangGraph 时冲突，因此它们不进 Alembic
 FRAMEWORK_TABLE = ("checkpoints", "checkpoint_writes", "checkpoint_blobs", "checkpoint_migrations")
@@ -31,7 +29,7 @@ def _config(thread_id: str) -> RunnableConfig:
 @pytest.fixture
 async def checkpoint(live_engine: AsyncEngine) -> AsyncIterator[Checkpoint]:
     """真的 checkpointer。`live_engine` 只用来决定「Postgres 在不在」。"""
-    opened = await open_checkpoint(CONNINFO)
+    opened = await open_checkpoint(TEST_POSTGRES_CONNINFO)
     try:
         yield opened
     finally:
@@ -53,7 +51,7 @@ async def test_a_thread_written_by_one_saver_is_read_by_the_next(checkpoint: Che
     thread_id = uuid4().hex
     await checkpoint.saver.aput(_config(thread_id), empty_checkpoint(), CheckpointMetadata(), {})
 
-    reopened = await open_checkpoint(CONNINFO)
+    reopened = await open_checkpoint(TEST_POSTGRES_CONNINFO)
     try:
         restored = await reopened.saver.aget_tuple(_config(thread_id))
     finally:

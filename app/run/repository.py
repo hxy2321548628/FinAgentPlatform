@@ -56,9 +56,12 @@ class RunRecord(SQLModel, table=True):
     )
 
     id: UUID = Field(primary_key=True)
+    # 外键在 0004 才加：建 threads 表的那一刻它还是空的，而提交 run 的入口那时
+    # 仍只建目录不落表 —— 早加一版，每一次提交都会当场炸在插入上
     thread_id: UUID = Field(index=False)
-    # P3 才有用户体系。留空而不是不建，是因为补列比补数据便宜
-    user_id: UUID | None = Field(default=None)
+    # P2 之前建的行在这一列上是空的：那批 run 没有真实归属，编一个 owner 只会造假数据。
+    # 空值因此是遗留而不是 bug，见 migration/version/0003_user_thread.py
+    user_id: UUID | None = Field(default=None, foreign_key="users.id")
     status: RunStatus
     # 架构 §6.2 的草案里有这一列，本期没有写它的人：恢复靠 thread_id 找最新的
     # checkpoint，不指定具体某一个

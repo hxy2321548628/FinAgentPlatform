@@ -26,10 +26,15 @@ from config import StoreSettings
 
 # 导入是为了让表定义注册进 SQLModel.metadata，autogenerate 才看得见它们
 import run.repository  # noqa: F401  isort:skip
+import thread.model  # noqa: F401  isort:skip
+import user.model  # noqa: F401  isort:skip
 
 config = context.config
 
-config.set_main_option("sqlalchemy.url", StoreSettings().postgres_dsn())
+# 连接串可以由调用方先设好 —— 测试据此把库指到独立的测试库上。
+# 没设才回落到配置，那是命令行 `alembic upgrade head` 走的路
+if not config.get_main_option("sqlalchemy.url", None):
+    config.set_main_option("sqlalchemy.url", StoreSettings().postgres_dsn())
 
 target_metadata = SQLModel.metadata
 

@@ -16,13 +16,13 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from config import StoreSettings
 from event.model import Event, TokenData, TokenEvent
 from run.archive import EventArchive
 from run.log import EventLog
 from run.repository import RunRepository
 from store.checkpoint import Checkpoint, open_checkpoint
 from store.retention import purge, purge_checkpoint, purge_event
+from test.conftest import TEST_POSTGRES_CONNINFO
 
 NOW = datetime(2026, 8, 7, tzinfo=UTC)
 RETENTION_DAY = 180
@@ -34,7 +34,7 @@ def _config(thread_id: str) -> RunnableConfig:
 
 @pytest.fixture
 async def live_checkpoint(live_engine: AsyncEngine) -> AsyncIterator[Checkpoint]:
-    opened = await open_checkpoint(StoreSettings().postgres_conninfo())
+    opened = await open_checkpoint(TEST_POSTGRES_CONNINFO)
     try:
         yield opened
     finally:
