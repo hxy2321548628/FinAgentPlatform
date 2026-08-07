@@ -8,7 +8,11 @@ CI 那边由 gate workflow 的 services 保证它永远跑得到，不会静默�
 「测试连 A 库、迁移建 B 库」，而那种故障不报错，只是表「不见了」。
 """
 
-from collections.abc import AsyncIterator
+import json
+import logging
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
+from io import StringIO
 from pathlib import Path
 
 import psycopg
@@ -19,6 +23,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from config import StoreSettings
+from log import JsonFormatter
 from store.postgres import PostgresUnavailableError, create_engine
 from store.postgres import check as check_postgres
 from store.redis import RedisUnavailableError, create_client
@@ -36,6 +41,35 @@ TEST_DATABASE = 15
 
 SKIP_POSTGRES = "没有可用的 Postgres：docker compose -f deploy/compose.yml up -d postgres"
 SKIP_REDIS = "没有可用的 Redis：docker compose -f deploy/compose.yml up -d redis"
+
+
+@contextmanager
+def json_log(name: str) -> Iterator[list[dict[str, object]]]:
+    """收下某个 logger 的输出，按真正的 JSON formatter 渲染后解析。
+
+    **不能用 `caplog`**：`run_id` / `thread_id` 是 formatter 从 contextvars 里取的，
+    record 上并没有这两个字段，而验收脚本用 `jq` 读的正是渲染之后的那一行。
+
+    Args:
+        name: 要收的 logger 名。
+
+    Yields:
+        一个列表，**退出上下文之后**才装上解析好的日志行。
+    """
+    stream = StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JsonFormatter())
+    logger = logging.getLogger(name)
+    level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    parsed: list[dict[str, object]] = []
+    try:
+        yield parsed
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(level)
+        parsed.extend(json.loads(one) for one in stream.getvalue().splitlines())
 
 
 @pytest.fixture(scope="session")

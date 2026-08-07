@@ -317,7 +317,9 @@ VERDICT[5]=$([[ $failed -eq $before ]] && echo 通过 || echo 未过)
 log "⑥ 日志是结构化行且带 run_id / thread_id"
 
 before=$failed
-for service in api broker; do
+# **worker 必须在列**：P2 把执行搬出了 api，一个 run 的绝大多数日志现在产在那边。
+# 只看 api 的话，这一条会在平台可观测性完好时照样绿，也会在它坏掉时照样绿
+for service in api worker broker; do
     compose logs "$service" --since "$LOG_SINCE" --no-log-prefix --no-color 2>/dev/null |
         grep -v '^[[:space:]]*$' > "$WORK_DIR/$service.log"
     TOTAL=$(wc -l < "$WORK_DIR/$service.log")
@@ -339,17 +341,25 @@ if [[ -z $RUN_ID ]]; then
     RUN_FILTER_VERIFIED=0
 else
     RUN_FILTER_VERIFIED=1
-    FILTERED=$(jq -sr --arg run "$RUN_ID" '[.[] | select(.run_id == $run)] | length' "$WORK_DIR/api.log" 2>/dev/null)
-    if [[ ${FILTERED:-0} -gt 0 ]]; then
-        pass "按 run_id 能把这一次 run 的 $FILTERED 行日志过滤出来"
-    else
-        fail "api 日志里按 run_id=$RUN_ID 过滤不出任何行"
-    fi
+    # 一个 run 现在跨两个进程：api 收提交与订阅，worker 驱动智能体。任一侧过滤不出行，
+    # 「按 run_id 追一次 run 的全过程」就断在进程边界上 —— 而断在哪一侧，排障时天差地别
+    for service in api worker; do
+        FILTERED=$(jq -sr --arg run "$RUN_ID" '[.[] | select(.run_id == $run)] | length' \
+            "$WORK_DIR/$service.log" 2>/dev/null)
+        if [[ ${FILTERED:-0} -gt 0 ]]; then
+            pass "$service 里按 run_id 过滤出这一次 run 的 $FILTERED 行"
+        else
+            fail "$service 日志里按 run_id=$RUN_ID 过滤不出任何行"
+        fi
+    done
 
-    if jq -se 'any(.[]; has("thread_id"))' "$WORK_DIR/api.log" >/dev/null 2>&1; then
-        pass "日志带 thread_id"
+    # thread_id 要长在**同一批行**上。分开验的话，某个进程只带 run_id 不带 thread_id 也会全绿，
+    # 而「这个会话下的几次 run 都怎么了」正是靠它串起来的
+    if jq -se --arg run "$RUN_ID" 'map(select(.run_id == $run)) | length > 0 and all(has("thread_id"))' \
+        "$WORK_DIR/api.log" "$WORK_DIR/worker.log" >/dev/null 2>&1; then
+        pass "过滤出来的行都带 thread_id"
     else
-        fail "api 日志里没有一行带 thread_id"
+        fail "按 run_id 过滤出的行里有不带 thread_id 的"
     fi
 fi
 info "token 按 cache 拆分那半条由 ② 断言（acceptance.sh 末尾）"

@@ -1,5 +1,6 @@
 """run 相关的端点：查状态、订阅事件流。"""
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header
@@ -9,7 +10,10 @@ from api.error import invalid, not_found
 from api.platform import Platform, get_platform
 from api.schema import RunResponse
 from api.sse import heartbeat_stream
+from log import run_context
 from run.log import InvalidEventIdError, parse_event_id
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/runs", tags=["run"])
 
@@ -45,11 +49,17 @@ async def stream_events(
     带上 `Last-Event-ID` 就从那个 id 之后接着推，中间产生的事件全部补齐。
     流在 run 进入终态时自然结束。
     """
-    if await platform.repository.get(run_id) is None:
+    run = await platform.repository.get(run_id)
+    if run is None:
         message = f"run 不存在：{run_id}"
         raise not_found(message)
 
     cursor = _cursor(last_event_id)
+    # 断线重连整段都发生在 api 侧，worker 的日志里一个字都不会有。
+    # 「教师说页面没动静」的第一问是「订阅连上了没、从哪个游标接的」，答案只在这里
+    with run_context(run_id=run_id, thread_id=run.thread_id):
+        logger.info("事件流已订阅：游标=%s", cursor or "从头")
+
     body = heartbeat_stream(platform.log.follow(run_id, after=cursor))
     return StreamingResponse(body, media_type=SSE_MEDIA_TYPE, headers=SSE_HEADER)
 

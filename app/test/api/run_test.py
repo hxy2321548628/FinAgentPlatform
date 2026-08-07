@@ -16,6 +16,9 @@ from event.model import (
     TokenEvent,
 )
 from test.api.conftest import Agent, drain
+from test.conftest import json_log
+
+RUN_ROUTE_LOGGER = "api.route.run"
 
 
 def finished_event(run_id: str) -> Event:
@@ -272,3 +275,19 @@ async def test_the_stream_still_ends_when_the_run_ends(platform: Platform) -> No
     frames = [frame async for frame in heartbeat_stream(platform.log.follow("run-over"), interval=0.05)]
 
     assert len(frames) == 1
+
+
+# ------------------------------------------------------------------ 排障线索
+def test_subscribing_is_logged_with_the_run_identity(client: TestClient, thread_id: str, agent: Agent) -> None:
+    """「教师说页面没动静」的第一问是「订阅连上了没、从哪个游标接的」。
+
+    断线重连是这个平台的核心行为，而它整段都发生在 api 侧 —— worker 的日志里
+    一个字都不会有。这一行不带 id 的话，这段就是排障的盲区。
+    """
+    agent.chunk = [token("好")]
+    run_id = submit(client, thread_id)
+
+    with json_log(RUN_ROUTE_LOGGER) as line:
+        drain(client, run_id)
+
+    assert [(one.get("run_id"), one.get("thread_id")) for one in line] == [(run_id, thread_id)]

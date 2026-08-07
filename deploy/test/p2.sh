@@ -281,7 +281,11 @@ else
     info "【观察项】工具调用 $tool_call 次、返回 $tool_result 次 —— 差值即崩在工具执行途中的重跑次数"
     info "【观察项】这个数是 P2 §7 那项「幂等键先量后定」的输入，请记进计划文档"
 
-    wait_worker "$WORKER_COUNT" || info "被杀的 worker 没重新起来，检查 compose 的 restart 策略"
+    # **`docker kill` 不会触发 restart 策略**：守护进程把外部下的 kill 记成「人为停止」，
+    # 从此不再自动拉起。真崩溃（进程自己死在容器里）走的是另一条路，`unless-stopped` 照常生效 ——
+    # 所以这里副本没回来不说明策略有问题，手工拉一把，好让后面几条仍在满编下跑
+    compose up -d --no-recreate worker >/dev/null 2>&1
+    wait_worker "$WORKER_COUNT" || info "worker 没回到 $WORKER_COUNT 个副本，后面几条会在减员状态下跑"
     (( failed == before )) && VERDICT[1]=通过 || VERDICT[1]=未过
 fi
 
