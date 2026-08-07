@@ -79,11 +79,33 @@ log "前置检查"
 for tool in jq curl docker; do
     command -v "$tool" >/dev/null || { echo "缺 $tool" >&2; exit 1; }
 done
-: "${SANDBOX_USER:?请先 export SANDBOX_USER=\"\$(id -u):\$(id -g)\"}"
-: "${SANDBOX_WORKSPACE_ROOT:?请先 export SANDBOX_WORKSPACE_ROOT=\"\$(pwd)/data/sandbox\"}"
-WORKSPACE_ROOT="$SANDBOX_WORKSPACE_ROOT"
+# compose.yml 里 SANDBOX_USER 与 SANDBOX_WORKSPACE_ROOT 是必填插值，两个都没有的话
+# 连 `docker compose ps` 都跑不起来。这里**从跑着的 broker 身上读回来**，而不是让人
+# 记着 export，也不是在这里另猜一份默认值 —— 猜错的后果是 ⑤ 重建 broker 时挂载路径
+# 与在跑的那套不一致，而那种错不会报错，只会让验收在错的目标上跑
+#
+# 用裸 docker ps 按 compose 标签找：这一步本身不能依赖 compose，否则就是先有鸡还是先有蛋
+COMPOSE_PROJECT=zuel-platform
+BROKER_ID="$(docker ps -q \
+    --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+    --filter label=com.docker.compose.service=broker)"
+[[ -n $BROKER_ID ]] || {
+    cat >&2 <<'TIP'
+broker 没在跑。先把栈起起来：
 
-for service in nginx api broker; do
+    export SANDBOX_USER="$(id -u):$(id -g)"
+    export SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
+    docker compose -f deploy/compose.yml up -d --build
+TIP
+    exit 1
+}
+BROKER_ENV="$(docker inspect "$BROKER_ID" --format '{{range .Config.Env}}{{println .}}{{end}}')"
+export SANDBOX_USER="${SANDBOX_USER:-$(grep -m1 '^SANDBOX_USER=' <<<"$BROKER_ENV" | cut -d= -f2-)}"
+export SANDBOX_WORKSPACE_ROOT="${SANDBOX_WORKSPACE_ROOT:-$(grep -m1 '^SANDBOX_WORKSPACE_ROOT=' <<<"$BROKER_ENV" | cut -d= -f2-)}"
+WORKSPACE_ROOT="$SANDBOX_WORKSPACE_ROOT"
+[[ -n $SANDBOX_USER && -n $WORKSPACE_ROOT ]] || { echo "broker 容器里没有 SANDBOX_USER / SANDBOX_WORKSPACE_ROOT" >&2; exit 1; }
+
+for service in nginx api; do
     [[ $(compose ps --status running --format '{{.Service}}' | grep -cx "$service") -eq 1 ]] || {
         echo "$service 没在跑：docker compose -f deploy/compose.yml up -d --build" >&2; exit 1
     }
