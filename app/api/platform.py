@@ -10,7 +10,6 @@ broker 那边，这里只有到它的一条 HTTP 连接。
 from dataclasses import dataclass
 
 from fastapi import Request
-from langgraph.checkpoint.memory import InMemorySaver
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -20,6 +19,7 @@ from run.executor import RunExecutor
 from run.log import EventLog
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
 from store import postgres, redis
+from store.checkpoint import CheckpointPool, open_checkpoint
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,8 @@ class Platform:
     backend_factory: RemoteBackendFactory
     engine: AsyncEngine
     cache: Redis
+    # checkpointer 自己被 runner 闭包持着，这里留的是它那条池子 —— 应用关闭时要归还
+    checkpoint_pool: CheckpointPool
 
 
 async def build_platform(settings: Settings) -> Platform:
@@ -55,6 +57,7 @@ async def build_platform(settings: Settings) -> Platform:
     await postgres.check(engine)
     cache = redis.create_client(settings.redis_url)
     await redis.check(cache)
+    checkpoint = await open_checkpoint(settings.postgres_conninfo())
 
     connection = BrokerConnection(base_url=settings.broker_url)
     workspace = RemoteWorkspace(connection)
@@ -65,8 +68,7 @@ async def build_platform(settings: Settings) -> Platform:
         pool=pool,
         workspace=workspace,
         log=log,
-        # checkpointer 是内存实现：进程重启后会话历史全丢，这笔债登记在 P2
-        runner=create_runner(model=create_model(settings), checkpointer=InMemorySaver()),
+        runner=create_runner(model=create_model(settings), checkpointer=checkpoint.saver),
         backend_factory=backend_factory,
     )
     return Platform(
@@ -78,6 +80,7 @@ async def build_platform(settings: Settings) -> Platform:
         backend_factory=backend_factory,
         engine=engine,
         cache=cache,
+        checkpoint_pool=checkpoint.pool,
     )
 
 

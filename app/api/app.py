@@ -46,6 +46,7 @@ def create_app(platform: Platform | None = None) -> FastAPI:
                 await current.connection.aclose()
                 await current.engine.dispose()
                 await current.cache.aclose()
+                await current.checkpoint_pool.close()
 
     app = FastAPI(
         title="金融学院智能体平台",

@@ -34,6 +34,8 @@ from store.postgres import (
     DEFAULT_PASSWORD,
     DEFAULT_PORT,
     DEFAULT_USER,
+    DRIVER,
+    NATIVE_DRIVER,
     build_dsn,
 )
 from store.redis import DEFAULT_URL
@@ -171,17 +173,31 @@ class Settings(BaseSettings):
     )
 
     def postgres_dsn(self) -> str:
-        """拼出 Postgres 的连接串。
+        """拼出 SQLAlchemy 用的 Postgres 连接串。
 
         Returns:
-            SQLAlchemy 认的 DSN。
+            带 `+psycopg` 驱动后缀的 DSN。
         """
+        return self._postgres_dsn(DRIVER)
+
+    def postgres_conninfo(self) -> str:
+        """拼出原生 psycopg 用的 Postgres 连接串。
+
+        LangGraph 的 checkpointer 直接用 psycopg，它不认 SQLAlchemy 的驱动后缀。
+
+        Returns:
+            不带驱动后缀的 DSN。
+        """
+        return self._postgres_dsn(NATIVE_DRIVER)
+
+    def _postgres_dsn(self, driver: str) -> str:
         return build_dsn(
             host=self.postgres_host,
             port=self.postgres_port,
             user=self.postgres_user,
             password=self.postgres_password.get_secret_value(),
             database=self.postgres_db,
+            driver=driver,
         )
 
     def quota_command(self) -> tuple[str, ...]:

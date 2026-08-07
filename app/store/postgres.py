@@ -17,7 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 logger = logging.getLogger(__name__)
 
+# SQLAlchemy 靠这个后缀选驱动；LangGraph 的 checkpointer 用的是原生 psycopg，它不认。
+# 两种形状由同一个函数拼，才不会出现「引擎连 A 库、checkpointer 连 B 库」
 DRIVER = "postgresql+psycopg"
+NATIVE_DRIVER = "postgresql"
 
 # 开发机与 CI 的默认库。compose 的 postgres 服务与 CI workflow 的 services
 # 都按这一组值起，因此本机跑门禁不必额外配任何东西。
@@ -43,8 +46,8 @@ class PostgresUnavailableError(RuntimeError):
     """
 
 
-def build_dsn(*, host: str, port: int, user: str, password: str, database: str) -> str:
-    """把连接参数拼成 SQLAlchemy 认的 DSN。
+def build_dsn(*, host: str, port: int, user: str, password: str, database: str, driver: str = DRIVER) -> str:
+    """把连接参数拼成 DSN。
 
     **配置拆成五项而不是一整条连接串**：compose 部署与本机直接跑 uvicorn 只差一个主机名，
     拆开之后 compose 里只需覆盖 `POSTGRES_HOST` 这一个字面量 —— 整条 DSN 带着密码，
@@ -56,12 +59,13 @@ def build_dsn(*, host: str, port: int, user: str, password: str, database: str) 
         user: 用户名。
         password: 口令，其中的 `@` `/` `:` 等字符会被转义。
         database: 库名。
+        driver: 协议前缀。默认给 SQLAlchemy 用，checkpointer 那边传 `NATIVE_DRIVER`。
 
     Returns:
         形如 `postgresql+psycopg://user:password@host:5432/db`。
     """
     credential = f"{quote(user, safe='')}:{quote(password, safe='')}"
-    return f"{DRIVER}://{credential}@{host}:{port}/{database}"
+    return f"{driver}://{credential}@{host}:{port}/{database}"
 
 
 # 开发机与 CI 的默认连接串，测试连不上时会据此 skip

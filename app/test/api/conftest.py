@@ -10,12 +10,14 @@
 
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
 from deepagents.backends.protocol import BackendProtocol
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -31,14 +33,17 @@ from sandbox.container import CommandResult
 from sandbox.pool import QueuePositionCallback
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
 from sandbox.workspace import Workspace
+from store.checkpoint import CONNECTION_KWARGS, CheckpointPool
 from store.postgres import create_engine
 from store.redis import create_client
 
 BROKER_URL = "http://broker.test"
 
-# 端点这一期还不读这两样，给的是没连过的对象 —— 建它们不发起连接。
-# 真连上去验的部分在 test/store/，那里连不上会 skip
+# 这三样在这里都用不上：端点不读库，而 checkpointer 被假 agent 顶掉了。
+# 给的是没连过的对象 —— 建它们不发起连接。真连上去验的部分在 test/store/，
+# 那里连不上会 skip；换成真连接只会让两百多条与存储无关的用例一起停摆
 UNUSED_DSN = "postgresql+psycopg://unused@127.0.0.1:1/unused"
+UNUSED_CONNINFO = "postgresql://unused@127.0.0.1:1/unused"
 UNUSED_REDIS_URL = "redis://127.0.0.1:1/0"
 
 
@@ -141,6 +146,13 @@ async def cache() -> AsyncIterator[Redis]:
 
 
 @pytest.fixture
+async def checkpoint_pool() -> AsyncIterator[CheckpointPool]:
+    created = cast(CheckpointPool, AsyncConnectionPool(conninfo=UNUSED_CONNINFO, kwargs=CONNECTION_KWARGS, open=False))
+    yield created
+    await created.close()
+
+
+@pytest.fixture
 def platform(
     connection: BrokerConnection,
     space: Workspace,
@@ -149,6 +161,7 @@ def platform(
     agent: Agent,
     engine: AsyncEngine,
     cache: Redis,
+    checkpoint_pool: CheckpointPool,
 ) -> Platform:
     workspace = RemoteWorkspace(connection)
     remote_pool = RemoteSandboxPool(connection)
@@ -171,6 +184,7 @@ def platform(
         backend_factory=RemoteBackendFactory(base_url=BROKER_URL),
         engine=engine,
         cache=cache,
+        checkpoint_pool=checkpoint_pool,
     )
 
 
