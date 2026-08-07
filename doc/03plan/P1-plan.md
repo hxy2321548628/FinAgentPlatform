@@ -2,8 +2,8 @@
 
 | 项 | 值 |
 |---|---|
-| 文档状态 | 草稿 |
-| 当前版本 | v0.1 |
+| 文档状态 | 已完成 |
+| 当前版本 | v0.2 |
 | 作者 | hxy |
 | 日期 | 2026-08-03 |
 | 上游文档 | [总体架构设计](../01design/01architecture.md) · [P0 实施计划](./P0-plan.md) |
@@ -13,6 +13,7 @@
 | 版本 | 日期 | 修改人 | 说明 |
 |---|---|---|---|
 | v0.1 | 2026-08-03 | hxy | 初稿。P0 已于同日完成（验收四条全过），本文覆盖上线前必须偿还的加固债 |
+| v0.2 | 2026-08-06 | hxy | **六个步骤全部完成，§4 通过条件六条全中**。关闭 §7 两项待决（`projid` 用 `crc32` 派生、`Workspace` 三处收进 broker）；§2 两处定案已回填上游文档；补记落地时发现的 workspace 属主坑与 gVisor 下 `--pids-limit` 的行为差异 |
 
 > **本文档的职责**：回答 **「P1 具体怎么做、做到什么程度算完」**。
 >
@@ -54,6 +55,7 @@
 | 认证、RBAC、配额、限流 | 仍是固定假 `user_id`，无越权隔离 | P3 |
 | HITL 审批、主动取消 | run 仍只有四态 | P3 |
 | 工具幂等键去重 | 崩溃在工具执行途中仍会重复执行 | P3（**broker 拆分后落点已就位**，见步骤三） |
+| 跨进程租约的失效兜底 | api 若在 `acquire` 与 `release` 之间崩溃，broker 侧该容器的 `lease` 永远归不了零，既不被 idle 回收也不被驱逐 —— 一个沙箱名额被永久占住 | P2（**本期新增的缺口**：P0 单进程时有 `finally` 兜着，拆开进程后没有了。P2 拆 worker 时正面处理，见 [`sandbox/pool.py`](../../app/sandbox/pool.py) 的 `lease == 0` 判定） |
 | 内网 pypi 镜像（devpi） | agent 装不了任何包，只能用镜像预装的栈 | 本期定案不做，见 §2.2 |
 | workspace 归档回收 | 磁盘占用仍是「历史 thread 数 × 最多 5GB」，worst case TB 级 | [§6.5](../01design/01architecture.md) 待定，**P2 前必须排** |
 | 前端 | 仍只能 curl 验收 | 另行排期，[P0 §4](./P0-plan.md) 的遗留问题仍未关闭 |
@@ -65,7 +67,7 @@
 
 ## 2. 两处与上游文档不一致，本期定案
 
-开工前发现上游文档在两个点上给不出唯一答案。按[项目约定](../../CLAUDE.md)先确认再写，两处均已于 2026-08-03 定案，**结论需要回填到对应的上游文档**。
+开工前发现上游文档在两个点上给不出唯一答案。按[项目约定](../../CLAUDE.md)先确认再写，两处均已于 2026-08-03 定案，**结论已于 2026-08-06 回填到对应的上游文档**。
 
 ### 2.1 broker 的职责边界：8 个工具全走 broker
 
@@ -79,7 +81,7 @@
 
 **代价**（明确接受）：`read_file` / `glob` / `grep` 这类高频调用每次多一跳本地 HTTP；大文件读写要走 HTTP body。相对 LLM 调用的耗时可忽略，但**不是零** —— 若实测 grep 大目录明显变慢，处置方式是在 broker 侧加结果上限，不是把工具搬回 api。
 
-**要回填**：[ADR-0004](../01design/adr/0004-sandbox-broker-docker-sock.md) 的「决策」一节需改写 API 清单，并补一条「本决策于 2026-08-03 按 §5.5 扩展」的记录。
+**已回填**（2026-08-06）：[ADR-0004](../01design/adr/0004-sandbox-broker-docker-sock.md) 的「决策」一节已改写为按组列出的 API 清单，并补了「本决策于 2026-08-03 按 §5.5 扩展」的记录。
 
 ### 2.2 沙箱网络策略：`--network=none`，本期不上 devpi
 
@@ -96,7 +98,7 @@
 
 **重新评估的触发条件**：教师提出的分析需求反复撞到缺库，且加库的频率高到无法靠重建镜像跟上。届时要连同「可写可执行路径」一起重新设计，见待决 §7.
 
-**要回填**：[架构 §7.3.3](../01design/01architecture.md) 陷阱一需注明「P1 定案不做，理由见本文 §2.2」；[§4.4](../01design/01architecture.md) 的 compose 骨架需标注 `pypi-mirror` 未部署。
+**已回填**（2026-08-06）：[架构 §7.3.3](../01design/01architecture.md) 陷阱一已注明「P1 定案不做，沙箱保持 `--network=none`」；[§4.4](../01design/01architecture.md) 的 compose 骨架已标注 `pypi-mirror` 未部署。
 
 ---
 
@@ -146,6 +148,21 @@ bash deploy/test/acceptance.sh
 6. **日志是结构化行且带 `run_id` / `thread_id`**；`run.finished` 分别给出 `cache_read` 与未命中两个数
 
 > 破坏性测试脚本要**先记基线再跑**（`free` / `df`），跑完比对。只看「命令报错了」不算通过 —— 要验的是宿主机没事，不是沙箱里的命令失败了。
+
+### 4.1 实测结果（2026-08-06，六条全中）
+
+| 条件 | 结果 |
+|---|---|
+| ① 四条破坏性测试 | ✅ 死循环 100.25% 限一核；fork 炸弹宿主进程数 501→504；`/workspace` 5120MB 处 `ENOSPC`；`/tmp` 512MiB 处 `ENOSPC`。内存与磁盘均回基线 |
+| ② P0 验收四条重跑 | ✅ 按 §6 分三次跑（步骤一 gVisor 下、步骤三经 broker、步骤四经 Nginx），中文四联图无缺字 |
+| ③ api 无 `docker.sock` | ✅ 容器内 `docker ps` 报 `Cannot connect to the Docker daemon`，且看不到宿主 workspace |
+| ④ broker 重启认领 | ✅ `kill -9` 后 `--rm` 容器仍在（步骤三的疑问就地证实），重启按 label 认领，同会话追问复用同一容器 |
+| ⑤ SSE 静默期存活 | ✅ 静默 100 秒经 Nginx 未断，收到 5 个心跳帧且都不带 `id:` |
+| ⑥ 日志与 token 口径 | ✅ 全部输出经 `jq` 逐行解析通过 |
+
+> **一处与预期不符，如实记下**：撞上 `--pids-limit` 时 **runsc 直接掀掉整个沙箱**，而不是像 runc 那样让 `fork` 干净地返回 `EAGAIN`。宿主机毫发无损、沙箱池的健康检查会重建，对平台可接受 —— 但与通过条件①「fork 炸弹被 `--pids-limit` 挡住」的字面预期不同：**挡住的是宿主机，不是那次 fork**。已写进 [`sandbox/container.py`](../../app/sandbox/container.py) 的注释。
+
+> **验证脚本本身失效了三次**，每次都表现为「测试通过但什么都没测到」：`repr` 把换行转义导致 fork 炸弹根本没点着；`dd ... | tail -3` 恰好砍掉唯一带 `No space left on device` 的那行；脚本以 root 跑、`mkdir` 出 `root:root` 目录导致容器 `Permission denied` 被误读成「配额生效」（**方向相反的假象**）。**破坏性脚本写完要先对着一个已知应当失败的场景跑一遍**，确认它真能报红。
 
 ---
 
@@ -277,11 +294,11 @@ P1 全程**不新增业务功能**，因此 [P0 的验收四条](./P0-plan.md)�
 
 ## 7. 待决事项
 
-**两项未关闭，开工前需定案。**
+**两项均已于 2026-08-06 关闭**，结论按建议采纳并已落地。
 
 | 项 | 状态 |
 |---|---|
-| **`projid` 映射存在哪里** | [ADR-0015](../01design/adr/0015-sandbox-disk-quota-xfs.md) 写「broker 维护 `thread_id → 数字 id` 的映射（`sandboxes` 表加一列）」，但**P1 没有 Postgres**（P2 才上），这个落点不存在。<br>**建议：由 `thread_id` 确定性派生**（如 `crc32`），不引入任何持久化状态。理由：另外两个方案（broker 内存表 + 启动时从 `xfs_quota report` 恢复、落 JSON 文件）都是给一个 P2 就要拆掉的东西引入状态。碰撞的后果温和 —— 两个 thread 共享一份 5GB 配额，是容量问题不是越权问题，且 P2 换成表时是纯替换。<br>**需确认**：能否接受碰撞概率（uuid 的 thread_id，crc32 空间下几万个 thread 量级开始有生日碰撞） |
-| **`Workspace` 的物理访问是否也收进 broker** | §2.1 定了 8 个工具走 broker，但 api 还有三处直接摸宿主目录：建会话（`create`）、上传文件（`save`）、产物下载（`artifact`），见 [`sandbox/workspace.py`](../../app/sandbox/workspace.py)。<br>**建议：一并收进 broker。** 理由：§2.1 的第二条论证（边界的完整性）对这三处同样成立 —— 留着它们，api 仍能读写任意 thread 的文件，broker 只挡住了容器。代价是上传与产物下载多一跳 HTTP body（产物是几百 KB 的图，可忽略）。<br>**需确认**：这是 §2.1 决策的推论而非用户已确认项，若不认同则步骤三的范围相应缩小 |
+| ~~**`projid` 映射存在哪里**~~ | **已关闭**（2026-08-06）。**由 `thread_id` 确定性派生**：`crc32(thread_id) % 0x7FFFFFFF + 1`，见 [`sandbox/quota.py`](../../app/sandbox/quota.py)。不引入任何持久化状态 —— 另外两个方案（broker 内存表 + 启动时从 `xfs_quota report` 恢复、落 JSON 文件）都是给一个 P2 就要拆掉的东西引入状态。<br>**碰撞已接受**：2³¹ 的空间下约 4.6 万个 thread 起有生日碰撞，后果是两个 thread 共享一份 5GB 配额 —— 是容量问题不是越权问题。P2 上 Postgres 后换成 [ADR-0015](../01design/adr/0015-sandbox-disk-quota-xfs.md) 说的表映射是纯替换 |
+| ~~**`Workspace` 的物理访问是否也收进 broker**~~ | **已关闭**（2026-08-06）。**三处一并收进 broker**：`POST /threads`（建会话）、`POST /threads/{id}/save`（上传）、`GET /threads/{id}/artifacts[/{path}]`（产物），见 [`broker/route.py`](../../app/broker/route.py)；api 侧只剩 HTTP 客户端 [`sandbox/remote.py`](../../app/sandbox/remote.py)。<br>理由即 §2.1 的第二条（边界的完整性）：留着这三处，api 仍能读写任意 thread 的文件，broker 只挡住了容器、没挡住数据。验收②已实测确认 api 容器看不见宿主 workspace |
 
-> 两项都不影响步骤零与步骤一，**可以先开工，在步骤二（`projid`）与步骤三（`Workspace`）之前关闭**。
+> **落地时才发现的坑，记在这里**：broker 在容器里是 root，它建出来的 workspace 目录属主是 `root:root`，而沙箱以宿主用户跑 —— 写不进去。症状**完全不指向权限**：`execute` 全部成功（脚本落在 `/tmp`）、没有一条报错，agent 只是「选择」把图存到别处，最后产物一个都没有并反复重试到撞 recursion limit。[§8.5](../01design/01architecture.md) 点名过这个坑（步骤一「三个会咬人的地方」第二条也抄了），但**真实验收连栽两次才定位到**。处置：`Workspace` 建目录后 `chown` 到 `SANDBOX_USER`，见 [`sandbox/workspace.py`](../../app/sandbox/workspace.py)。
