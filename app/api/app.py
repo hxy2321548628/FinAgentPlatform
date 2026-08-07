@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI
 from api.error import install_handler
 from api.platform import Platform, build_platform
 from api.route import artifact, auth, run, thread
-from api.security import require_user
+from api.security import limit_by_user, require_user
 from auth.bootstrap import ensure_first_admin
 from config import get_settings
 from log import configure
@@ -68,7 +68,11 @@ def create_app(platform: Platform | None = None) -> FastAPI:
     install_handler(app)
     app.include_router(auth.router, prefix=API_PREFIX)
     for router in (thread.router, run.router, artifact.router):
-        app.include_router(router, prefix=API_PREFIX, dependencies=[Depends(require_user)])
+        app.include_router(
+            router,
+            prefix=API_PREFIX,
+            dependencies=[Depends(require_user), Depends(limit_by_user)],
+        )
     return app
 
 

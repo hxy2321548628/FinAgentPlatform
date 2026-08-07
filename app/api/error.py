@@ -80,6 +80,24 @@ def unauthenticated(message: str) -> ApiError:
     return ApiError(status.HTTP_401_UNAUTHORIZED, ErrorCode.UNAUTHENTICATED, message)
 
 
+# 三道闸都回 429，**必须靠 code 区分**：它们的提示语与前端行为完全不同 ——
+# 频率限制该自动退避重试，配额耗尽该提示明天再来，并发超限该提示先等已有任务跑完。
+# 只给 HTTP 429 的话前端分不出该做哪一件。
+def rate_limited(message: str) -> ApiError:
+    """接口频率超限。三道闸里唯一可能误伤正常用户的那一道。"""
+    return ApiError(status.HTTP_429_TOO_MANY_REQUESTS, ErrorCode.RATE_LIMITED, message)
+
+
+def quota_exceeded(message: str) -> ApiError:
+    """今日 token 配额已用尽。"""
+    return ApiError(status.HTTP_429_TOO_MANY_REQUESTS, ErrorCode.QUOTA_EXCEEDED, message)
+
+
+def concurrency_limit(message: str) -> ApiError:
+    """同时在跑的 run 太多。"""
+    return ApiError(status.HTTP_429_TOO_MANY_REQUESTS, ErrorCode.CONCURRENCY_LIMIT, message)
+
+
 def install_handler(app: FastAPI) -> None:
     """把框架抛出的异常统一收敛成上面的结构。
 

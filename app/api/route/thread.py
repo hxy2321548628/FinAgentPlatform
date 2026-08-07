@@ -6,14 +6,16 @@
 """
 
 import logging
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, UploadFile, status
 
-from api.error import not_found
+from api.error import concurrency_limit, not_found, quota_exceeded, unauthenticated
 from api.platform import Platform, get_platform
 from api.schema import RunRequest, RunResponse, ThreadResponse, UploadResponse
-from api.security import CurrentUser
+from api.security import UNAUTHENTICATED_MESSAGE, CurrentUser
+from quota.usage import next_reset
 from sandbox.path import PathEscapeError
 from thread.repository import Thread
 
@@ -74,11 +76,47 @@ async def submit_run(
     """提交一次分析，立刻返回。
 
     执行要几分钟到几十分钟，进度通过订阅事件流看，不在这个响应里等。
+
+    **两道闸都在这里关**：token 日配额与并发 run 上限都只在「新开一次执行」时有意义，
+    挂到路由器上会让查状态、订阅事件也被它们拦住。
     """
     await _require_thread(platform, thread_id, current.user_id)
+    await _require_quota(platform, current.user_id)
 
     run = await platform.submitter.submit(thread_id=thread_id, content=request.content, user_id=current.user_id)
     return RunResponse(id=run.id, thread_id=run.thread_id, status=run.status)
+
+
+async def _require_quota(platform: Platform, user_id: str) -> None:
+    """确认这个用户还有额度可用，没有就 429。
+
+    **两道闸的 code 不同**，因为前端要做的事完全不同：配额耗尽该提示明天再来，
+    并发超限该提示先等已有任务跑完。
+
+    Raises:
+        ApiError: 今日配额已用尽，或同时在跑的 run 已达上限。
+    """
+    user = await platform.user.get(user_id)
+    if user is None:
+        # session 还在、账号已经没了。当作未登录处理比放行安全
+        raise unauthenticated(UNAUTHENTICATED_MESSAGE)
+
+    allowance = platform.policy.allow(
+        role=user.role,
+        token_daily=user.quota_tokens_daily,
+        concurrent_run=user.quota_concurrent_runs,
+    )
+
+    used = await platform.usage.token_today(user_id)
+    if used >= allowance.token_daily:
+        reset = next_reset(datetime.now(UTC)).astimezone().strftime("%m-%d %H:%M")
+        logger.info("配额耗尽，拒绝提交：user_id=%s used=%d limit=%d", user_id, used, allowance.token_daily)
+        raise quota_exceeded(f"今日 token 配额已用尽（{used}/{allowance.token_daily}），{reset} 重置")
+
+    active = await platform.usage.active_run(user_id)
+    if active >= allowance.concurrent_run:
+        logger.info("并发超限，拒绝提交：user_id=%s active=%d limit=%d", user_id, active, allowance.concurrent_run)
+        raise concurrency_limit(f"同时在跑的分析已达上限（{active}/{allowance.concurrent_run}），请等其中一个跑完")
 
 
 async def _require_thread(platform: Platform, thread_id: str, user_id: str) -> Thread:

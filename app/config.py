@@ -11,6 +11,13 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from auth.session import DEFAULT_TTL_SECOND as DEFAULT_SESSION_TTL_SECOND
+from quota.policy import (
+    DEFAULT_CONCURRENT_RUN,
+    DEFAULT_OUTPUT_WEIGHT,
+    DEFAULT_RATE_LIMIT,
+    DEFAULT_RATE_WINDOW_SECOND,
+    DEFAULT_TOKEN_DAILY,
+)
 from sandbox.container import (
     DEFAULT_CPUS,
     DEFAULT_IMAGE,
@@ -41,6 +48,7 @@ from store.postgres import (
 )
 from store.redis import DEFAULT_URL
 from task.queue import DEFAULT_CLAIM_IDLE_MILLISECOND
+from user.model import UserRole
 from worker.loop import DEFAULT_CONCURRENCY, DEFAULT_HEARTBEAT_SECOND
 
 # .env 在仓库根而不在 app/，且门禁（cwd=app/）与 uvicorn（cwd 不定）的工作目录并不一致，
@@ -157,6 +165,32 @@ class Settings(StoreSettings):
         default=DEFAULT_SESSION_TTL_SECOND,
         gt=0,
         description="登录态多久不用就失效，秒。每次请求都会把它推回去，因此是滑动过期",
+    )
+
+    # 三道闸的档位。**默认值全部是从一个样本外推出来的初值**，外推方式写在
+    # quota/policy.py 的常量旁边 —— 拿到真实使用数据之后回那里校准，不要凭感觉改这里
+    quota_token_daily: dict[UserRole, int] = Field(
+        default_factory=lambda: dict(DEFAULT_TOKEN_DAILY),
+        description="各角色的 token 日配额，按未命中部分计。JSON 对象，键是角色名",
+    )
+    quota_concurrent_run: dict[UserRole, int] = Field(
+        default_factory=lambda: dict(DEFAULT_CONCURRENT_RUN),
+        description="各角色同时在跑的 run 上限。JSON 对象，键是角色名",
+    )
+    quota_output_weight: int = Field(
+        default=DEFAULT_OUTPUT_WEIGHT,
+        ge=0,
+        description="output token 折算成配额当量的权重。拿到真实价目表再调",
+    )
+    rate_limit: int = Field(
+        default=DEFAULT_RATE_LIMIT,
+        gt=0,
+        description="一个窗口内允许的请求数。宁松勿紧 —— 这道闸误伤的是正常用户",
+    )
+    rate_limit_window_second: int = Field(
+        default=DEFAULT_RATE_WINDOW_SECOND,
+        gt=0,
+        description="限流窗口长度，秒",
     )
 
     worker_concurrency: int = Field(

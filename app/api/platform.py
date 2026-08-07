@@ -19,6 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from auth.password import PasswordHasher
 from auth.session import SessionStore
 from config import Settings
+from quota.policy import QuotaPolicy
+from quota.rate import RateLimiter
+from quota.usage import RunUsage
 from run.archive import EventArchive
 from run.log import EventLog
 from run.repository import RunRepository
@@ -49,6 +52,9 @@ class Platform:
     user: UserRepository
     thread: ThreadRepository
     session: SessionStore
+    policy: QuotaPolicy
+    usage: RunUsage
+    rate: RateLimiter
     password: PasswordHasher
     # Cookie 的 max-age 要与 session 在 Redis 里的 TTL 一致。两边分别配的话，
     # 短的那一侧到期时另一侧还留着 —— 症状是「明明还没登出却要重新登录」，或者反过来
@@ -77,6 +83,11 @@ async def build_platform(settings: Settings) -> Platform:
 
     connection = BrokerConnection(base_url=settings.broker_url)
     repository = RunRepository(engine)
+    policy = QuotaPolicy(
+        token_daily=settings.quota_token_daily,
+        concurrent_run=settings.quota_concurrent_run,
+        output_weight=settings.quota_output_weight,
+    )
     return Platform(
         workspace=RemoteWorkspace(connection),
         # 网关只读事件，不写。给它归档是为了让「Stream 里已经没有的那段历史」也读得到
@@ -89,6 +100,9 @@ async def build_platform(settings: Settings) -> Platform:
         cache=cache,
         user=UserRepository(engine),
         thread=ThreadRepository(engine),
+        policy=policy,
+        usage=RunUsage(engine, output_weight=policy.output_weight),
+        rate=RateLimiter(cache, limit=settings.rate_limit, window_second=settings.rate_limit_window_second),
         session=SessionStore(cache, ttl_second=settings.session_ttl_second),
         password=PasswordHasher(),
         session_ttl_second=settings.session_ttl_second,

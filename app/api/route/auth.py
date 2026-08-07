@@ -1,7 +1,11 @@
 """认证端点：登录、登出、我是谁。
 
-**这三个是仅有的不需要登录就能调的业务端点**（`/auth/me` 除外，它自己要认人）。
-其余全部挂着 `require_user`，见 `api/app.py`。
+`/auth/login` 是整个平台唯一一个未登录也能打的端口，其余端点全部挂着 `require_user`
+（见 `api/app.py`）。
+
+**只有登录这一个挂限流，而且按来源地址挂。** 另外两个要求先有一个有效 session，
+而那个 session 正是从被限过流的登录里发出来的；它们各自只有一次 Redis 操作，
+再限一道换不来什么。登录不限则是另一回事 —— 那等于把口令爆破的门开着。
 """
 
 import logging
@@ -12,7 +16,7 @@ from fastapi import APIRouter, Cookie, Depends, Response, status
 from api.error import unauthenticated
 from api.platform import Platform, get_platform
 from api.schema import LoginRequest, MeResponse
-from api.security import CurrentUser
+from api.security import CurrentUser, limit_by_address
 from auth.session import COOKIE_NAME, Session
 
 logger = logging.getLogger(__name__)
@@ -34,7 +38,7 @@ COOKIE_SAME_SITE: Literal["lax"] = "lax"
 COOKIE_PATH = "/"
 
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(limit_by_address)])
 async def login(
     request: LoginRequest,
     response: Response,

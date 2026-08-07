@@ -8,14 +8,24 @@
 
 from typing import Annotated
 
-from fastapi import Cookie, Depends
+from fastapi import Cookie, Depends, Request
 
-from api.error import unauthenticated
+from api.error import rate_limited, unauthenticated
 from api.platform import Platform, get_platform
 from auth.session import COOKIE_NAME, Session
 
 # 未登录与 session 过期给同一句话：两者对使用者是同一件事 —— 重新登录
 UNAUTHENTICATED_MESSAGE = "未登录或登录已过期，请重新登录"
+
+RATE_LIMITED_MESSAGE = "操作太快了，请稍后再试"
+
+# 认证前后按不同的东西限流：登录时还没有用户身份，只能按来源地址。
+# 前缀是为了让两类键不撞 —— 否则一个 IP 后面所有人的额度会被算成一份
+USER_RATE_KEY = "user"
+ADDRESS_RATE_KEY = "address"
+
+# 拿不到来源地址时的兜底键。宁可把这一小撮请求算作同一个来源，也不放行不限流
+UNKNOWN_ADDRESS = "unknown"
 
 
 async def require_user(
@@ -45,3 +55,42 @@ async def require_user(
 # 端点要用当前用户时标这个类型。同一个请求里依赖只解析一次，
 # 因此路由器上挂了一份、端点再取一次，并不会多查一遍 Redis
 CurrentUser = Annotated[Session, Depends(require_user)]
+
+
+async def limit_by_user(
+    current: CurrentUser,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> None:
+    """给已登录的调用方限一次频率。
+
+    与 `require_user` 一样挂在路由器上，因此新加的端点自动被覆盖。
+
+    Args:
+        current: 当前用户。
+        platform: 运行时。
+
+    Raises:
+        ApiError: 这个窗口内已经超限。
+    """
+    if not await platform.rate.allow(f"{USER_RATE_KEY}:{current.user_id}"):
+        raise rate_limited(RATE_LIMITED_MESSAGE)
+
+
+async def limit_by_address(
+    request: Request,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> None:
+    """给还没登录的调用方限一次频率。
+
+    登录是唯一一个未认证还能打的业务端口，不限它等于把口令爆破的门开着。
+
+    Args:
+        request: 当前请求，从中取来源地址。
+        platform: 运行时。
+
+    Raises:
+        ApiError: 这个窗口内已经超限。
+    """
+    address = request.client.host if request.client is not None else UNKNOWN_ADDRESS
+    if not await platform.rate.allow(f"{ADDRESS_RATE_KEY}:{address}"):
+        raise rate_limited(RATE_LIMITED_MESSAGE)

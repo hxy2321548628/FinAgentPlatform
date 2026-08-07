@@ -34,6 +34,9 @@ from auth.session import DEFAULT_TTL_SECOND, SessionStore
 from broker.app import create_app as create_broker_app
 from broker.runtime import Broker
 from event.mapper import StreamChunk
+from quota.policy import QuotaPolicy
+from quota.rate import RateLimiter
+from quota.usage import RunUsage
 from run.executor import RunExecutor
 from run.log import EventLog
 from run.repository import RunRepository
@@ -59,6 +62,11 @@ TEST_BLOCK_MILLISECOND = 50
 # 用例里登录用的口令。**哈希参数同时调到最低档**（见 `hasher`）——
 # 默认档一次 64 MiB、几十毫秒，而这套用例每条都要登录一次
 TEST_PASSWORD = "口令-test"
+
+# 限流的窗口在用例里要大到不误伤：一条用例会发十几个请求，而窗口是按秒滑的。
+# 真要验限流的那几条自己换一个更小的上限
+TEST_RATE_LIMIT = 10_000
+TEST_RATE_WINDOW_SECOND = 60
 
 
 class FakeContainer:
@@ -186,6 +194,9 @@ def platform(
         cache=live_cache,
         user=UserRepository(live_engine),
         thread=ThreadRepository(live_engine),
+        policy=QuotaPolicy(),
+        usage=RunUsage(live_engine),
+        rate=RateLimiter(live_cache, limit=TEST_RATE_LIMIT, window_second=TEST_RATE_WINDOW_SECOND),
         session=SessionStore(live_cache, ttl_second=DEFAULT_TTL_SECOND),
         password=hasher,
         session_ttl_second=DEFAULT_TTL_SECOND,
