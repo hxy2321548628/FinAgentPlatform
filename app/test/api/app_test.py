@@ -10,6 +10,11 @@ from api.app import create_app
 from api.platform import build_platform
 from config import Settings
 from sandbox.remote import RemoteSandboxPool, RemoteWorkspace
+from store.postgres import PostgresUnavailableError
+from store.redis import RedisUnavailableError
+
+# 不会有人监听的端口，连不上是立刻的 ECONNREFUSED
+DEAD_PORT = 1
 
 
 @pytest.fixture
@@ -41,19 +46,51 @@ def test_the_openapi_document_is_served(client: TestClient) -> None:
     }
 
 
-@pytest.mark.usefixtures("no_proxy")
-def test_a_platform_built_from_settings_wires_everything_together(tmp_path: Path) -> None:
+@pytest.mark.usefixtures("no_proxy", "live_engine", "live_cache")
+async def test_a_platform_built_from_settings_wires_everything_together(tmp_path: Path) -> None:
     settings = Settings(deepseek_api_key=SecretStr("sk-test"), sandbox_workspace_root=tmp_path)
 
-    platform = build_platform(settings)
+    platform = await build_platform(settings)
 
-    # 装配阶段不该碰 broker、不该碰盘：这三样都只是拿到了一条到 broker 的连接
-    assert isinstance(platform.workspace, RemoteWorkspace)
-    assert isinstance(platform.pool, RemoteSandboxPool)
-    assert platform.executor.get("never-existed") is None
+    try:
+        # 装配阶段不该碰 broker、不该碰盘：这三样都只是拿到了一条到 broker 的连接
+        assert isinstance(platform.workspace, RemoteWorkspace)
+        assert isinstance(platform.pool, RemoteSandboxPool)
+        assert platform.executor.get("never-existed") is None
+    finally:
+        await platform.engine.dispose()
+        await platform.cache.aclose()
 
 
 @pytest.mark.usefixtures("no_proxy")
+async def test_building_a_platform_fails_when_postgres_is_unreachable(tmp_path: Path) -> None:
+    """步骤零的验证标准②：连不上要在装配那一刻炸，不是撑到第一次落库。
+
+    「能启动但一查就 500」的进程，会让之后每一次故障都多一个候选原因。
+    """
+    settings = Settings(
+        deepseek_api_key=SecretStr("sk-test"),
+        sandbox_workspace_root=tmp_path,
+        postgres_port=DEAD_PORT,
+    )
+
+    with pytest.raises(PostgresUnavailableError):
+        await build_platform(settings)
+
+
+@pytest.mark.usefixtures("no_proxy", "live_engine", "live_cache")
+async def test_building_a_platform_fails_when_redis_is_unreachable(tmp_path: Path) -> None:
+    settings = Settings(
+        deepseek_api_key=SecretStr("sk-test"),
+        sandbox_workspace_root=tmp_path,
+        redis_url=f"redis://127.0.0.1:{DEAD_PORT}/0",
+    )
+
+    with pytest.raises(RedisUnavailableError):
+        await build_platform(settings)
+
+
+@pytest.mark.usefixtures("no_proxy", "live_engine", "live_cache")
 def test_an_app_without_an_injected_platform_builds_its_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """生产走的是这条路径：uvicorn 起进程时没有人给它塞运行时。
 

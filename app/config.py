@@ -28,6 +28,15 @@ from sandbox.pool import (
 )
 from sandbox.quota import DEFAULT_DISK_QUOTA, DEFAULT_QUOTA_COMMAND
 from sandbox.remote import DEFAULT_BROKER_URL
+from store.postgres import (
+    DEFAULT_DATABASE,
+    DEFAULT_HOST,
+    DEFAULT_PASSWORD,
+    DEFAULT_PORT,
+    DEFAULT_USER,
+    build_dsn,
+)
+from store.redis import DEFAULT_URL
 
 # .env 在仓库根而不在 app/，且门禁（cwd=app/）与 uvicorn（cwd 不定）的工作目录并不一致，
 # 因此按本文件位置解析成绝对路径 —— 相对路径或向上搜索都会在某种场景下静默读到别的文件。
@@ -68,6 +77,25 @@ class Settings(BaseSettings):
     broker_url: str = Field(
         default=DEFAULT_BROKER_URL,
         description="sandbox-broker 的地址。它是唯一持有 docker.sock 的进程，只在内网监听",
+    )
+
+    # Postgres 存会话 checkpoint 与 run 元数据。拆成五项是为了让 compose 只覆盖主机名，
+    # 密码不必经过 compose 的变量插值，理由见 store/postgres.py 的 build_dsn
+    postgres_host: str = Field(
+        default=DEFAULT_HOST,
+        description="Postgres 主机。compose 部署时是服务名 postgres",
+    )
+    postgres_port: int = Field(default=DEFAULT_PORT, gt=0, description="Postgres 端口")
+    postgres_user: str = Field(default=DEFAULT_USER, min_length=1, description="Postgres 用户名")
+    postgres_password: SecretStr = Field(
+        default=SecretStr(DEFAULT_PASSWORD),
+        description="Postgres 口令。默认值只够开发机用，上线前必须改",
+    )
+    postgres_db: str = Field(default=DEFAULT_DATABASE, min_length=1, description="Postgres 库名")
+
+    redis_url: str = Field(
+        default=DEFAULT_URL,
+        description="Redis 连接串。事件通道与任务队列都落在这里。无口令，因此不必拆开",
     )
 
     sandbox_image: str = Field(
@@ -141,6 +169,20 @@ class Settings(BaseSettings):
         default=shlex.join(DEFAULT_QUOTA_COMMAND),
         description="xfs_quota 的调用方式。它要 CAP_SYS_ADMIN，非 root 跑平台时前面要加 sudo",
     )
+
+    def postgres_dsn(self) -> str:
+        """拼出 Postgres 的连接串。
+
+        Returns:
+            SQLAlchemy 认的 DSN。
+        """
+        return build_dsn(
+            host=self.postgres_host,
+            port=self.postgres_port,
+            user=self.postgres_user,
+            password=self.postgres_password.get_secret_value(),
+            database=self.postgres_db,
+        )
 
     def quota_command(self) -> tuple[str, ...]:
         """把配置里的命令串拆成 argv。

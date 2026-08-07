@@ -16,6 +16,8 @@ import pytest
 from deepagents.backends.protocol import BackendProtocol
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from api.app import create_app
 from api.platform import Platform
@@ -29,8 +31,15 @@ from sandbox.container import CommandResult
 from sandbox.pool import QueuePositionCallback
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
 from sandbox.workspace import Workspace
+from store.postgres import create_engine
+from store.redis import create_client
 
 BROKER_URL = "http://broker.test"
+
+# 端点这一期还不读这两样，给的是没连过的对象 —— 建它们不发起连接。
+# 真连上去验的部分在 test/store/，那里连不上会 skip
+UNUSED_DSN = "postgresql+psycopg://unused@127.0.0.1:1/unused"
+UNUSED_REDIS_URL = "redis://127.0.0.1:1/0"
 
 
 class FakeContainer:
@@ -118,7 +127,29 @@ def connection(broker_app: FastAPI) -> BrokerConnection:
 
 
 @pytest.fixture
-def platform(connection: BrokerConnection, space: Workspace, pool: FakePool, log: EventLog, agent: Agent) -> Platform:
+async def engine() -> AsyncIterator[AsyncEngine]:
+    created = create_engine(UNUSED_DSN, pool_size=1)
+    yield created
+    await created.dispose()
+
+
+@pytest.fixture
+async def cache() -> AsyncIterator[Redis]:
+    created = create_client(UNUSED_REDIS_URL)
+    yield created
+    await created.aclose()
+
+
+@pytest.fixture
+def platform(
+    connection: BrokerConnection,
+    space: Workspace,
+    pool: FakePool,
+    log: EventLog,
+    agent: Agent,
+    engine: AsyncEngine,
+    cache: Redis,
+) -> Platform:
     workspace = RemoteWorkspace(connection)
     remote_pool = RemoteSandboxPool(connection)
 
@@ -138,6 +169,8 @@ def platform(connection: BrokerConnection, space: Workspace, pool: FakePool, log
         executor=executor,
         connection=connection,
         backend_factory=RemoteBackendFactory(base_url=BROKER_URL),
+        engine=engine,
+        cache=cache,
     )
 
 

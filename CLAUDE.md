@@ -42,6 +42,9 @@ cd app && uv run pytest                # 跑脚本一律走 uv run；门禁入�
 # 沙箱镜像。**新克隆的仓库要跑一次**，否则沙箱测试会静默跳过而门禁照样绿
 docker build -f deploy/sandbox.Dockerfile -t zuel-sandbox:latest .
 
+# Postgres 与 Redis。跑门禁前要起着，否则落库与事件流的用例会 skip（同上，门禁照样绿）
+docker compose -f deploy/compose.yml up -d postgres redis
+
 # 环境（gVisor + XFS prjquota）。新机器要跑一次，脚本可重跑
 sudo bash deploy/setup-gvisor.sh && sudo bash deploy/setup-xfs.sh && sudo bash deploy/verify-env.sh
 
@@ -72,7 +75,8 @@ sudo bash deploy/test/hostile.sh  # 四条破坏性测试
 ### 两个会浪费时间的坑
 
 - **开发机的 `ALL_PROXY=socks://…` 会让 `ChatDeepSeek` 构造直接报错**（httpx 不认 socks 方案）。`api.deepseek.com` 实测可直连，剥掉该变量即可。内网服务器上没有这些变量，是纯开发机问题。
-- **没有 `zuel-sandbox:latest` 镜像时，沙箱测试会 skip 而不是失败**，`make all` 依旧显示通过。要验沙箱就得先构建镜像，见上方命令。
+- **没有 `zuel-sandbox:latest` 镜像时，沙箱测试会 skip 而不是失败**，`make all` 依旧显示通过。要验沙箱就得先构建镜像，见上方命令。Postgres / Redis 没起时同理。
+- **平台自己的 Postgres 在宿主机上听 5433，不是 5432**。装了系统 Postgres 的机器上 5432 已被占用，而「连错了库」这种故障不报错。这个端口在 `deploy/compose.yml` 里**写死不走插值** —— compose 的插值只认 shell 里 `export` 过的值，而 `.env` 在仓库根，两边不是同一份。
 - **直接跑 uvicorn 时不要设 `SANDBOX_USER`**：留空即取当前进程的 uid:gid，正好对。只有 compose 部署才必须显式给 —— broker 在容器里是 root，不给的话它建出来的 workspace 目录沙箱写不进去，而**症状不指向权限**：`execute` 全部成功，agent 只是「选择」把图存到别处，最后产物一个都没有。
 
 ---

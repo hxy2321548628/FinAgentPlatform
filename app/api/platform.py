@@ -11,12 +11,15 @@ from dataclasses import dataclass
 
 from fastapi import Request
 from langgraph.checkpoint.memory import InMemorySaver
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agent.factory import create_model, create_runner
 from config import Settings
 from run.executor import RunExecutor
 from run.log import EventLog
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
+from store import postgres, redis
 
 
 @dataclass(frozen=True)
@@ -29,17 +32,30 @@ class Platform:
     executor: RunExecutor
     connection: BrokerConnection
     backend_factory: RemoteBackendFactory
+    engine: AsyncEngine
+    cache: Redis
 
 
-def build_platform(settings: Settings) -> Platform:
-    """按配置装配一整套运行时。
+async def build_platform(settings: Settings) -> Platform:
+    """按配置装配一整套运行时，并当场确认两个外部存储都连得上。
+
+    **体检失败即启动失败**：这与缺 `DEEPSEEK_API_KEY` 时构造 `Settings` 就抛是同一个规矩。
 
     Args:
         settings: 平台配置。
 
     Returns:
         可直接交给应用使用的运行时。
+
+    Raises:
+        PostgresUnavailableError: 连不上 Postgres。
+        RedisUnavailableError: 连不上 Redis。
     """
+    engine = postgres.create_engine(settings.postgres_dsn())
+    await postgres.check(engine)
+    cache = redis.create_client(settings.redis_url)
+    await redis.check(cache)
+
     connection = BrokerConnection(base_url=settings.broker_url)
     workspace = RemoteWorkspace(connection)
     pool = RemoteSandboxPool(connection)
@@ -60,6 +76,8 @@ def build_platform(settings: Settings) -> Platform:
         executor=executor,
         connection=connection,
         backend_factory=backend_factory,
+        engine=engine,
+        cache=cache,
     )
 
 

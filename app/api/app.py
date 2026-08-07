@@ -34,7 +34,7 @@ def create_app(platform: Platform | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         owned = platform is None
-        current = platform if platform is not None else build_platform(get_settings())
+        current = platform if platform is not None else await build_platform(get_settings())
         app.state.platform = current
         try:
             yield
@@ -44,6 +44,8 @@ def create_app(platform: Platform | None = None) -> FastAPI:
                 await current.executor.aclose()
                 current.backend_factory.close()
                 await current.connection.aclose()
+                await current.engine.dispose()
+                await current.cache.aclose()
 
     app = FastAPI(
         title="金融学院智能体平台",

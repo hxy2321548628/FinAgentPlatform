@@ -16,6 +16,35 @@ on:
 jobs:
   gate:
     runs-on: ubuntu-latest
+
+    # 起真的存储，不让门禁静默跳过。test/store/ 与之后落库的用例连不上时会 skip，
+    # 而「跳过的门禁等于没有门禁」—— 凭据与端口跟代码里的默认值一致，
+    # 因此这里不必再喂一遍 POSTGRES_DSN / REDIS_URL
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: zuel
+          POSTGRES_PASSWORD: zuel
+          POSTGRES_DB: zuel
+        # 映射到 5433，与 deploy/compose.yml 及代码里的默认端口一致
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
     # action 一律 pin 到完整版本号：setup-uv 不发布 @v9 这种浮动 major tag，
     # 写了会以 "unable to find version" 失败。升级靠手动改这里。
     steps:
