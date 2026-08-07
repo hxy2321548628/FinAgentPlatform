@@ -25,8 +25,11 @@ from test.conftest import (
 # 本期新建的两张表加上 P2 那两张。downgrade 之后一张都不该剩
 PLATFORM_TABLE = ("users", "threads", "runs", "run_events")
 
-# 补外键之前的那一版。已有的 runs 行就是在这一版上写下的
+# 建用户模型之前的那一版。已有的 runs 行就是在这一版上写下的
 BEFORE_USER_MODEL = "0002_run_events"
+
+# 给 runs.thread_id 补外键之前的那一版
+BEFORE_RUN_THREAD_FOREIGN_KEY = "0003_user_thread"
 
 
 @pytest.fixture
@@ -150,17 +153,29 @@ def test_existing_run_rows_survive_the_upgrade(scratch: str) -> None:
     assert found[0] is None
 
 
-def test_a_run_still_takes_a_thread_that_has_no_row(scratch: str) -> None:
-    """这一版**故意**不约束 `runs.thread_id`。
+def test_a_new_run_must_point_at_an_existing_thread(scratch: str) -> None:
+    """0004 之后 `runs.thread_id` 受外键约束：NOT VALID 只放过历史行。
 
-    `threads` 表此刻还是空的，而提交 run 的入口仍只建目录不落表 —— 现在加外键，
-    每一次提交都会当场炸在插入上。这条用例会随隔离那一步落地而改成它的反面，
-    那时 api 已经先落 `threads` 行，外键才约束得住真实的写入路径。
+    这条外键推迟到 0004 才加，是因为在 0003 那一刻它约束不住任何东西 ——
+    `threads` 还是空的，而提交 run 的入口仍只建目录不落表。
     """
     _upgrade(scratch, "head")
 
-    with _connect(scratch) as connection:
+    with _connect(scratch) as connection, pytest.raises(psycopg.errors.ForeignKeyViolation):
         _insert_run(connection, uuid4().hex, uuid4().hex)
+
+
+def test_a_run_written_before_the_foreign_key_is_left_alone(scratch: str) -> None:
+    """NOT VALID 的另一半：历史行不追究，`alembic upgrade head` 不会栽在它们身上。"""
+    _upgrade(scratch, BEFORE_RUN_THREAD_FOREIGN_KEY)
+    orphan = uuid4().hex
+    with _connect(scratch) as connection:
+        _insert_run(connection, orphan, uuid4().hex)
+
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        assert connection.execute("SELECT 1 FROM runs WHERE id = %s", (orphan,)).fetchone() is not None
 
 
 def test_a_thread_must_point_at_an_existing_user(scratch: str) -> None:

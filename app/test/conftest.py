@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
+from uuid import uuid4
 
 import psycopg
 import pytest
@@ -30,6 +31,9 @@ from store.postgres import DRIVER, NATIVE_DRIVER, PostgresUnavailableError, buil
 from store.postgres import check as check_postgres
 from store.redis import RedisUnavailableError, create_client
 from store.redis import check as check_redis
+from thread.repository import Thread, ThreadRepository
+from user.model import UserRole
+from user.repository import User, UserRepository
 
 SETTINGS = StoreSettings()
 ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
@@ -48,6 +52,9 @@ TEST_POSTGRES_DATABASE = "zuel_test"
 
 SKIP_POSTGRES = "没有可用的 Postgres：docker compose -f deploy/compose.yml up -d postgres"
 SKIP_REDIS = "没有可用的 Redis：docker compose -f deploy/compose.yml up -d redis"
+
+# 建账号的夹具只需要一个形状对的串。真的哈希在 auth 那边的用例里算
+FAKE_HASH = "$argon2id$v=19$m=8,t=1,p=1$假的但形状对"
 
 
 def store_dsn(driver: str, *, database: str = TEST_POSTGRES_DATABASE) -> str:
@@ -184,6 +191,24 @@ async def live_engine(migrated: None) -> AsyncIterator[AsyncEngine]:
         yield created
     finally:
         await created.dispose()
+
+
+@pytest.fixture
+async def owner(live_engine: AsyncEngine) -> User:
+    """一个真的账号。
+
+    `threads.user_id` 与 `runs.user_id` 都有外键，凭空编一个 uuid 已经写不进去了 ——
+    这正是隔离做在数据层的副作用：无主的数据在库那一层就存不下来。
+    """
+    return await UserRepository(live_engine).create(
+        name=f"owner-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.TEACHER
+    )
+
+
+@pytest.fixture
+async def owned_thread(live_engine: AsyncEngine, owner: User) -> Thread:
+    """一个真的会话，主人是 `owner`。"""
+    return await ThreadRepository(live_engine).create(user_id=owner.id)
 
 
 @pytest.fixture

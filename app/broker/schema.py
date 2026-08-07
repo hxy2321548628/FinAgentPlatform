@@ -134,6 +134,12 @@ class DownloadResponse(BaseModel):
     files: list[DownloadItem] = Field(description="逐个文件的结果，顺序与请求一致")
 
 
+class CreateThreadRequest(BaseModel):
+    """给一个已经落表的会话建目录。"""
+
+    thread_id: str = Field(min_length=1, description="会话标识，由 api 那边发号（threads 表是权威）")
+
+
 class ThreadResponse(BaseModel):
     """新建会话的结果。"""
 

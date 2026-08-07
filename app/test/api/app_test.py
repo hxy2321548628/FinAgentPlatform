@@ -1,6 +1,7 @@
 """应用组装本身的测试。"""
 
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -60,7 +61,7 @@ async def test_a_platform_built_from_settings_wires_everything_together(tmp_path
         # **网关这一侧没有沙箱池、没有模型、没有 checkpointer** —— 那些都随 worker 走了
         assert isinstance(platform.workspace, RemoteWorkspace)
         assert not hasattr(platform, "executor")
-        assert await platform.repository.get("never-existed") is None
+        assert await platform.repository.get("never-existed", user_id=uuid4().hex) is None
     finally:
         await platform.engine.dispose()
         await platform.cache.aclose()

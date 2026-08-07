@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -273,7 +274,7 @@ async def test_releasing_reaches_the_pool(connection: BrokerConnection, pool: Fa
 
 # ------------------------------------------------------------------ 会话目录
 async def test_a_created_thread_gets_a_directory(connection: BrokerConnection, space: Workspace) -> None:
-    thread_id = await RemoteWorkspace(connection).create()
+    thread_id = await RemoteWorkspace(connection).create(uuid4().hex)
 
     assert space.exists(thread_id)
     await connection.aclose()
@@ -281,7 +282,7 @@ async def test_a_created_thread_gets_a_directory(connection: BrokerConnection, s
 
 async def test_a_saved_file_lands_in_the_workspace(connection: BrokerConnection, space: Workspace) -> None:
     workspace = RemoteWorkspace(connection)
-    thread_id = await workspace.create()
+    thread_id = await workspace.create(uuid4().hex)
 
     await workspace.save(thread_id, "holdings.csv", b"a,b\n")
 
@@ -292,7 +293,7 @@ async def test_a_saved_file_lands_in_the_workspace(connection: BrokerConnection,
 async def test_artifacts_written_after_the_mark_are_reported(connection: BrokerConnection, space: Workspace) -> None:
     """产物判定在 broker 侧，因为只有它看得见宿主机上的文件与 mtime。"""
     workspace = RemoteWorkspace(connection)
-    thread_id = await workspace.create()
+    thread_id = await workspace.create(uuid4().hex)
     since = time.time_ns()
     output_dir = space.path(thread_id) / "outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -306,7 +307,7 @@ async def test_artifacts_written_after_the_mark_are_reported(connection: BrokerC
 
 async def test_an_artifact_can_be_fetched_back(connection: BrokerConnection, space: Workspace) -> None:
     workspace = RemoteWorkspace(connection)
-    thread_id = await workspace.create()
+    thread_id = await workspace.create(uuid4().hex)
     output_dir = space.path(thread_id) / "outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "chart.png").write_bytes(b"\x89PNG binary")

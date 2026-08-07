@@ -9,9 +9,11 @@ from fastapi.responses import StreamingResponse
 from api.error import invalid, not_found
 from api.platform import Platform, get_platform
 from api.schema import RunResponse
+from api.security import CurrentUser
 from api.sse import heartbeat_stream
 from log import run_context
 from run.log import InvalidEventIdError, parse_event_id
+from run.repository import Run
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +31,20 @@ SSE_HEADER = {
 
 
 @router.get("/{run_id}")
-async def get_run(run_id: str, platform: Annotated[Platform, Depends(get_platform)]) -> RunResponse:
-    """查一次 run 的当前状态。"""
-    run = await platform.repository.get(run_id)
-    if run is None:
-        message = f"run 不存在：{run_id}"
-        raise not_found(message)
+async def get_run(
+    run_id: str,
+    current: CurrentUser,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> RunResponse:
+    """查一次 run 的当前状态。别人的 run 与不存在的 run 是同一个回答。"""
+    run = await _require_run(platform, run_id, current.user_id)
     return RunResponse(id=run.id, thread_id=run.thread_id, status=run.status)
 
 
 @router.get("/{run_id}/events")
 async def stream_events(
     run_id: str,
+    current: CurrentUser,
     platform: Annotated[Platform, Depends(get_platform)],
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
 ) -> StreamingResponse:
@@ -48,20 +52,30 @@ async def stream_events(
 
     带上 `Last-Event-ID` 就从那个 id 之后接着推，中间产生的事件全部补齐。
     流在 run 进入终态时自然结束。
+
+    **越权检查在这一层，不在事件那一层**：`run_events` 是全库最大的表，
+    唯一的查询模式是「按 run_id 顺序重放」，冗余一列 user_id 只为鉴权不划算。
+    先确认这个 run 属于当前用户，再读它的事件。
     """
-    run = await platform.repository.get(run_id)
-    if run is None:
-        message = f"run 不存在：{run_id}"
-        raise not_found(message)
+    run = await _require_run(platform, run_id, current.user_id)
 
     cursor = _cursor(last_event_id)
     # 断线重连整段都发生在 api 侧，worker 的日志里一个字都不会有。
     # 「教师说页面没动静」的第一问是「订阅连上了没、从哪个游标接的」，答案只在这里
-    with run_context(run_id=run_id, thread_id=run.thread_id):
+    with run_context(run_id=run_id, thread_id=run.thread_id, user_id=current.user_id):
         logger.info("事件流已订阅：游标=%s", cursor or "从头")
 
     body = heartbeat_stream(platform.log.follow(run_id, after=cursor))
     return StreamingResponse(body, media_type=SSE_MEDIA_TYPE, headers=SSE_HEADER)
+
+
+async def _require_run(platform: Platform, run_id: str, user_id: str) -> Run:
+    """确认这个 run 存在**且属于当前用户**，否则 404。"""
+    run = await platform.repository.get(run_id, user_id=user_id)
+    if run is None:
+        message = f"run 不存在：{run_id}"
+        raise not_found(message)
+    return run
 
 
 def _cursor(last_event_id: str | None) -> str | None:

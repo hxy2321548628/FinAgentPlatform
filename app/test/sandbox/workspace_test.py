@@ -1,4 +1,5 @@
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -14,17 +15,20 @@ def space(tmp_path: Path) -> Workspace:
 
 # ------------------------------------------------------------------ 会话
 def test_a_new_thread_gets_a_directory(space: Workspace, tmp_path: Path) -> None:
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
 
     assert (tmp_path / thread_id).is_dir()
 
 
-def test_each_thread_gets_a_distinct_id(space: Workspace) -> None:
-    assert space.create() != space.create()
+def test_the_identifier_comes_from_the_caller(space: Workspace) -> None:
+    """会话的身份长在 threads 表上，目录只是它的副产品 —— 这里不发号。"""
+    thread_id = uuid4().hex
+
+    assert space.create(thread_id) == thread_id
 
 
 def test_a_created_thread_exists(space: Workspace) -> None:
-    assert space.exists(space.create())
+    assert space.exists(space.create(uuid4().hex))
 
 
 def test_an_unknown_thread_does_not_exist(space: Workspace) -> None:
@@ -51,7 +55,7 @@ def test_path_rejects_a_thread_id_that_escapes_the_root(space: Workspace) -> Non
 
 # ------------------------------------------------------------------ 上传
 def test_an_uploaded_file_lands_in_the_thread_directory(space: Workspace, tmp_path: Path) -> None:
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
 
     saved = space.save(thread_id, "holdings.csv", b"a,b\n")
 
@@ -61,7 +65,7 @@ def test_an_uploaded_file_lands_in_the_thread_directory(space: Workspace, tmp_pa
 
 def test_the_agent_sees_an_uploaded_file_at_the_workspace_root(space: Workspace) -> None:
     """提示词告诉 agent 工作目录是 /workspace，上传的数据必须就在那一层。"""
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
 
     saved = space.save(thread_id, "holdings.csv", b"x")
 
@@ -80,7 +84,7 @@ def test_a_traversing_filename_is_reduced_to_its_last_segment(
     space: Workspace, tmp_path: Path, filename: str, expected: str
 ) -> None:
     """文件名来自 HTTP 请求，是不可信输入。"""
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
 
     saved = space.save(thread_id, filename, b"x")
 
@@ -89,14 +93,14 @@ def test_a_traversing_filename_is_reduced_to_its_last_segment(
 
 @pytest.mark.parametrize("filename", ["", "..", ".", "/", "../"])
 def test_a_filename_with_no_usable_segment_is_rejected(space: Workspace, filename: str) -> None:
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
 
     with pytest.raises(PathEscapeError):
         space.save(thread_id, filename, b"x")
 
 
 def test_uploading_the_same_name_twice_overwrites(space: Workspace) -> None:
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
     space.save(thread_id, "data.csv", b"old")
 
     saved = space.save(thread_id, "data.csv", b"new")
@@ -106,7 +110,7 @@ def test_uploading_the_same_name_twice_overwrites(space: Workspace) -> None:
 
 # ------------------------------------------------------------------ 产物
 def test_an_artifact_resolves_under_the_output_directory(space: Workspace) -> None:
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
     output_dir = space.path(thread_id) / OUTPUT_DIR
     output_dir.mkdir()
     (output_dir / "chart.png").write_bytes(b"png")
@@ -115,7 +119,7 @@ def test_an_artifact_resolves_under_the_output_directory(space: Workspace) -> No
 
 
 def test_a_nested_artifact_resolves(space: Workspace) -> None:
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
     nested = space.path(thread_id) / OUTPUT_DIR / "figure"
     nested.mkdir(parents=True)
     (nested / "chart.png").write_bytes(b"png")
@@ -125,7 +129,7 @@ def test_a_nested_artifact_resolves(space: Workspace) -> None:
 
 def test_a_missing_artifact_resolves_but_does_not_exist(space: Workspace) -> None:
     """路径合法与文件存在是两回事，前者归本模块，后者归调用方决定回什么状态码。"""
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
 
     assert not space.artifact(thread_id, "never-made.png").exists()
 
@@ -133,7 +137,7 @@ def test_a_missing_artifact_resolves_but_does_not_exist(space: Workspace) -> Non
 @pytest.mark.parametrize("relative", ["../holdings.csv", "../../etc/passwd", "/etc/passwd"])
 def test_an_artifact_path_that_escapes_the_output_directory_is_rejected(space: Workspace, relative: str) -> None:
     """不挡住的话，产物下载就成了任意文件读取。"""
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
 
     with pytest.raises(PathEscapeError):
         space.artifact(thread_id, relative)
@@ -141,7 +145,7 @@ def test_an_artifact_path_that_escapes_the_output_directory_is_rejected(space: W
 
 def test_an_artifact_symlink_pointing_outside_is_rejected(space: Workspace, tmp_path: Path) -> None:
     """Agent 能在沙箱里创建符号链接，纯字符串校验拦不住这一条。"""
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
     output_dir = space.path(thread_id) / OUTPUT_DIR
     output_dir.mkdir()
     secret = tmp_path / "secret.txt"
@@ -170,7 +174,7 @@ def test_a_new_thread_gets_its_quota(tmp_path: Path) -> None:
     quota = SpyQuota()
     space = Workspace(root=tmp_path, quota=quota)
 
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
 
     assert quota.assigned == [(thread_id, tmp_path / thread_id)]
 
@@ -212,7 +216,7 @@ def test_a_new_directory_is_handed_to_the_sandbox_user(tmp_path: Path, monkeypat
     monkeypatch.setattr("sandbox.workspace.os.chown", lambda path, uid, gid: handed.append((path, uid, gid)))
     space = Workspace(root=tmp_path, owner=(1000, 1000))
 
-    thread_id = space.create()
+    thread_id = space.create(uuid4().hex)
 
     assert handed == [(tmp_path / thread_id, 1000, 1000)]
 
@@ -223,6 +227,6 @@ def test_without_an_owner_the_directory_is_left_alone(tmp_path: Path, monkeypatc
     monkeypatch.setattr("sandbox.workspace.os.chown", lambda *argument: handed.append(argument))
     space = Workspace(root=tmp_path)
 
-    space.create()
+    space.create(uuid4().hex)
 
     assert handed == []

@@ -15,6 +15,7 @@ from fastapi.responses import Response
 
 from api.error import not_found
 from api.platform import Platform, get_platform
+from api.security import CurrentUser
 from sandbox.remote import BrokerError
 
 router = APIRouter(prefix="/artifacts", tags=["artifact"])
@@ -23,14 +24,22 @@ router = APIRouter(prefix="/artifacts", tags=["artifact"])
 @router.get("/{artifact_id:path}")
 async def download_artifact(
     artifact_id: str,
+    current: CurrentUser,
     platform: Annotated[Platform, Depends(get_platform)],
 ) -> Response:
     """取回一个产物。
 
     字节由 broker 取出后原样转发 —— 这个进程碰不到宿主机上的文件。
+
+    **越权检查落在会话上**：产物的身份就是「哪个会话的哪个文件」，因此
+    「这个产物是不是你的」等价于「这个会话是不是你的」。查不到会话就是 404，
+    与产物本身存不存在给同一个回答。
     """
     thread_id, _, relative_path = artifact_id.partition("/")
     if not thread_id or not relative_path:
+        raise _missing(artifact_id)
+
+    if await platform.thread.get(thread_id, user_id=current.user_id) is None:
         raise _missing(artifact_id)
 
     try:

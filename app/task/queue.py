@@ -60,6 +60,9 @@ class RunTask(BaseModel):
     run_id: str = Field(min_length=1, description="run 标识，事件与元数据都按它归集")
     thread_id: str = Field(min_length=1, description="所属会话，沙箱与文件空间按它隔离")
     content: str = Field(min_length=1, description="教师的问题")
+    # worker 不拿它做任何判断（授权在提交那一刻就做完了），只把它带进日志 ——
+    # 少了它，「这个用户今天的执行日志」在 worker 那一侧一条都过滤不出来
+    user_id: str | None = Field(default=None, description="提交的人，只用于日志归集")
 
 
 class Delivery(BaseModel):

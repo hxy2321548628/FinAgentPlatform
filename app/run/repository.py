@@ -56,9 +56,7 @@ class RunRecord(SQLModel, table=True):
     )
 
     id: UUID = Field(primary_key=True)
-    # 外键在 0004 才加：建 threads 表的那一刻它还是空的，而提交 run 的入口那时
-    # 仍只建目录不落表 —— 早加一版，每一次提交都会当场炸在插入上
-    thread_id: UUID = Field(index=False)
+    thread_id: UUID = Field(index=False, foreign_key="threads.id")
     # P2 之前建的行在这一列上是空的：那批 run 没有真实归属，编一个 owner 只会造假数据。
     # 空值因此是遗留而不是 bug，见 migration/version/0003_user_thread.py
     user_id: UUID | None = Field(default=None, foreign_key="users.id")
@@ -89,11 +87,17 @@ class RunRepository:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
-    async def create(self, *, run_id: str, thread_id: str) -> None:
-        """记下一个刚提交、还没开跑的 run。"""
+    async def create(self, *, run_id: str, thread_id: str, user_id: str) -> None:
+        """记下一个刚提交、还没开跑的 run。
+
+        `user_id` 是有意的反范式（严格范式下它该经 `threads` 推导）：配额统计与隔离
+        过滤两条高频路径都要按用户聚合，每次都 join 不值得。一致性由这个唯一入口
+        保证 —— 而调用方在提交之前已经用同一个 `user_id` 查过 thread，查不到就走不到这里。
+        """
         record = RunRecord(
             id=UUID(run_id),
             thread_id=UUID(thread_id),
+            user_id=UUID(user_id),
             status=RunStatus.QUEUED,
             started_at=datetime.now(UTC),
         )
@@ -101,14 +105,26 @@ class RunRepository:
             session.add(record)
             await session.commit()
 
-    async def get(self, run_id: str) -> Run | None:
-        """按 id 查一次 run，不存在或 id 不是合法 uuid 时返回 None。"""
-        identifier = _parse(run_id)
-        if identifier is None:
+    async def get(self, run_id: str, *, user_id: str) -> Run | None:
+        """按 id 查一次 run，**只查得到自己的那些**。
+
+        别人的 run 与不存在的 run 在这里是同一个结果，端点因此自然落到 404。
+
+        Args:
+            run_id: run 标识。
+            user_id: 当前用户。
+
+        Returns:
+            找到的 run；不存在、id 不合法，或不属于该用户则 None。
+        """
+        identifier, owner = _parse(run_id), _parse(user_id)
+        if identifier is None or owner is None:
             return None
         async with AsyncSession(self._engine) as session:
             record = await session.get(RunRecord, identifier)
-            return None if record is None else record.to_run()
+        if record is None or record.user_id != owner:
+            return None
+        return record.to_run()
 
     async def start(self, run_id: str) -> None:
         """标记开跑。"""
@@ -138,7 +154,9 @@ class RunRepository:
     async def unfinished(self) -> list[Run]:
         """列出还没走到终态的 run。
 
-        崩溃恢复扫的就是它，走 `ix_runs_unfinished` 那条部分索引。
+        **这是本类里唯一不带 user 上下文的查询**，因为它不服务任何用户请求：
+        崩溃恢复扫的是「此刻还没跑完的 run」，调用方是 worker 的启动路径，
+        那里根本没有登录用户。走 `ix_runs_unfinished` 那条部分索引。
 
         Returns:
             状态为 `queued` 或 `running` 的 run，按提交顺序。
@@ -169,9 +187,9 @@ class RunRepository:
             await session.commit()
 
 
-def _parse(run_id: str) -> UUID | None:
-    """Run id 来自 URL，属于不可信输入 —— 解析不了就是「查不到」，不是 500。"""
+def _parse(identifier: str) -> UUID | None:
+    """标识来自 URL 与 session，属于不可信输入 —— 解析不了就是「查不到」，不是 500。"""
     try:
-        return UUID(run_id)
+        return UUID(identifier)
     except ValueError:
         return None

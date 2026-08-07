@@ -19,17 +19,20 @@ CONSUMER = "submitter-test"
 
 SUBMITTER_LOGGER = "run.submitter"
 
+# 提交侧不查库，因此这里只要一个形状对的标识
+USER_ID = uuid4().hex
+
 
 class RecordingRepository:
     """记下建过哪些行，并能在建行时回头看队列里有没有东西。"""
 
     def __init__(self, queue: TaskQueue) -> None:
         self._queue = queue
-        self.created: list[tuple[str, str]] = []
+        self.created: list[tuple[str, str, str]] = []
         self.queued_when_created: list[int] = []
 
-    async def create(self, *, run_id: str, thread_id: str) -> None:
-        self.created.append((run_id, thread_id))
+    async def create(self, *, run_id: str, thread_id: str, user_id: str) -> None:
+        self.created.append((run_id, thread_id, user_id))
         self.queued_when_created.append(await self._queue.pending_count())
 
 
@@ -44,7 +47,7 @@ async def test_submit_returns_a_queued_run(queue: TaskQueue) -> None:
     """任务要跑几十分钟，提交必须立刻返回，不能等执行完。"""
     submitter = RunSubmitter(repository=RecordingRepository(queue), queue=queue)
 
-    run = await submitter.submit(thread_id=uuid4().hex, content="算个波动率")
+    run = await submitter.submit(thread_id=uuid4().hex, content="算个波动率", user_id=USER_ID)
 
     assert run.status is RunStatus.QUEUED
     assert run.id
@@ -54,8 +57,8 @@ async def test_each_run_gets_its_own_id(queue: TaskQueue) -> None:
     submitter = RunSubmitter(repository=RecordingRepository(queue), queue=queue)
     thread_id = uuid4().hex
 
-    first = await submitter.submit(thread_id=thread_id, content="一")
-    second = await submitter.submit(thread_id=thread_id, content="二")
+    first = await submitter.submit(thread_id=thread_id, content="一", user_id=USER_ID)
+    second = await submitter.submit(thread_id=thread_id, content="二", user_id=USER_ID)
 
     assert first.id != second.id
 
@@ -65,7 +68,7 @@ async def test_the_task_carries_everything_the_worker_needs(queue: TaskQueue) ->
     submitter = RunSubmitter(repository=RecordingRepository(queue), queue=queue)
     thread_id = uuid4().hex
 
-    run = await submitter.submit(thread_id=thread_id, content="算个波动率")
+    run = await submitter.submit(thread_id=thread_id, content="算个波动率", user_id=USER_ID)
 
     delivery = await queue.reserve()
     assert delivery is not None
@@ -79,7 +82,7 @@ async def test_the_row_is_written_before_the_task_is_published(queue: TaskQueue)
     repository = RecordingRepository(queue)
     submitter = RunSubmitter(repository=repository, queue=queue)
 
-    await submitter.submit(thread_id=uuid4().hex, content="一")
+    await submitter.submit(thread_id=uuid4().hex, content="一", user_id=USER_ID)
 
     assert repository.queued_when_created == [0]
 
@@ -94,6 +97,8 @@ async def test_the_submission_log_carries_the_run_identity(queue: TaskQueue) -> 
     thread_id = uuid4().hex
 
     with json_log(SUBMITTER_LOGGER) as line:
-        run = await submitter.submit(thread_id=thread_id, content="算个波动率")
+        run = await submitter.submit(thread_id=thread_id, content="算个波动率", user_id=USER_ID)
 
-    assert [(one.get("run_id"), one.get("thread_id")) for one in line] == [(run.id, thread_id)]
+    assert [(one.get("run_id"), one.get("thread_id"), one.get("user_id")) for one in line] == [
+        (run.id, thread_id, USER_ID)
+    ]

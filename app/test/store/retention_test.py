@@ -23,6 +23,8 @@ from run.repository import RunRepository
 from store.checkpoint import Checkpoint, open_checkpoint
 from store.retention import purge, purge_checkpoint, purge_event
 from test.conftest import TEST_POSTGRES_CONNINFO
+from thread.repository import ThreadRepository
+from user.repository import User
 
 NOW = datetime(2026, 8, 7, tzinfo=UTC)
 RETENTION_DAY = 180
@@ -123,29 +125,29 @@ async def test_purging_deletes_in_batches(live_cache: Redis, archive: EventArchi
 
 
 # ------------------------------------------------------------------ checkpoint
-async def _seed_thread(engine: AsyncEngine, checkpoint: Checkpoint, *, last_active: datetime) -> str:
+async def _seed_thread(engine: AsyncEngine, checkpoint: Checkpoint, owner: User, *, last_active: datetime) -> str:
     """造一个有 checkpoint、且最后活动时间可指定的会话。"""
-    thread_id = uuid4().hex
-    await checkpoint.saver.aput(_config(thread_id), empty_checkpoint(), CheckpointMetadata(), {})
+    thread = await ThreadRepository(engine).create(user_id=owner.id)
+    await checkpoint.saver.aput(_config(thread.id), empty_checkpoint(), CheckpointMetadata(), {})
     run_id = uuid4().hex
-    await RunRepository(engine).create(run_id=run_id, thread_id=thread_id)
+    await RunRepository(engine).create(run_id=run_id, thread_id=thread.id, user_id=owner.id)
     async with engine.begin() as connection:
         await connection.execute(
             text("UPDATE runs SET started_at = :moment WHERE id = :run_id"),
             {"moment": last_active, "run_id": run_id},
         )
-    return thread_id
+    return thread.id
 
 
 async def test_a_stale_thread_loses_its_checkpoints_but_an_active_one_does_not(
-    live_engine: AsyncEngine, live_checkpoint: Checkpoint
+    live_engine: AsyncEngine, live_checkpoint: Checkpoint, owner: User
 ) -> None:
     """判据是会话最后一次活动，不是 checkpoint 自己的时间 —— LangGraph 的表里没有时间列。
 
     两个会话一起验：只删掉旧的那条断言，靠「全删」也能满足。
     """
-    stale = await _seed_thread(live_engine, live_checkpoint, last_active=NOW - timedelta(days=RETENTION_DAY + 1))
-    active = await _seed_thread(live_engine, live_checkpoint, last_active=NOW - timedelta(days=1))
+    stale = await _seed_thread(live_engine, live_checkpoint, owner, last_active=NOW - timedelta(days=RETENTION_DAY + 1))
+    active = await _seed_thread(live_engine, live_checkpoint, owner, last_active=NOW - timedelta(days=1))
 
     await purge_checkpoint(live_engine, cutoff=NOW - timedelta(days=RETENTION_DAY))
 

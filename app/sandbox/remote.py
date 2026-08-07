@@ -308,22 +308,20 @@ class RemoteWorkspace:
     def __init__(self, connection: BrokerConnection) -> None:
         self._connection = connection
 
-    async def create(self) -> str:
-        """开一个新会话。
+    async def create(self, thread_id: str) -> str:
+        """给一个已经落表的会话建目录。
+
+        Args:
+            thread_id: 会话标识，由 api 那边发号。
 
         Returns:
-            新会话的标识。
+            同一个标识。
 
         Raises:
-            BrokerError: broker 不可达。
+            BrokerError: broker 不可达，或标识不能作为目录名。
         """
-        result = await self._connection.call("POST", "/threads")
+        result = await self._connection.call("POST", "/threads", json={"thread_id": thread_id})
         return str(result["thread_id"])
-
-    async def exists(self, thread_id: str) -> bool:
-        """会话是否存在。"""
-        result = await self._connection.call("GET", f"/threads/{thread_id}/exists")
-        return bool(result.get("exists"))
 
     async def save(self, thread_id: str, filename: str, content: bytes) -> str:
         """把上传的文件落进会话目录。

@@ -44,6 +44,7 @@ from sandbox.pool import QueuePositionCallback
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
 from sandbox.workspace import Workspace
 from task.queue import TaskQueue
+from thread.repository import ThreadRepository
 from user.model import UserRole
 from user.repository import User, UserRepository
 from worker.loop import Worker
@@ -184,6 +185,7 @@ def platform(
         engine=live_engine,
         cache=live_cache,
         user=UserRepository(live_engine),
+        thread=ThreadRepository(live_engine),
         session=SessionStore(live_cache, ttl_second=DEFAULT_TTL_SECOND),
         password=hasher,
         session_ttl_second=DEFAULT_TTL_SECOND,

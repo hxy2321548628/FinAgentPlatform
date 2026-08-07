@@ -28,6 +28,7 @@ from broker.runtime import Broker, get_broker
 from broker.schema import (
     AcquireErrorData,
     ArtifactListResponse,
+    CreateThreadRequest,
     DeleteRequest,
     DownloadItem,
     DownloadRequest,
@@ -61,9 +62,16 @@ SSE_MEDIA_TYPE = "text/event-stream"
 
 # ------------------------------------------------------------------ 会话目录
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_thread(broker: BrokerDep) -> ThreadResponse:
-    """开一个新会话，建目录并设上磁盘配额。"""
-    return ThreadResponse(thread_id=broker.workspace.create())
+async def create_thread(request: CreateThreadRequest, broker: BrokerDep) -> ThreadResponse:
+    """给一个已经落表的会话建目录并设上磁盘配额。
+
+    **标识由 api 给**：会话的身份长在 `threads` 表上，目录是它的副产品。
+    """
+    try:
+        created = broker.workspace.create(request.thread_id)
+    except PathEscapeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return ThreadResponse(thread_id=created)
 
 
 @router.get("/{thread_id}/exists")

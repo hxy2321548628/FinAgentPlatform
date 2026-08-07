@@ -25,6 +25,7 @@ UVICORN_LOGGER = ("uvicorn", "uvicorn.error", "uvicorn.access")
 # `asyncio.create_task` 启动时复制当前 context，因此两个 run 之间不会串。
 _RUN_ID: ContextVar[str | None] = ContextVar("run_id", default=None)
 _THREAD_ID: ContextVar[str | None] = ContextVar("thread_id", default=None)
+_USER_ID: ContextVar[str | None] = ContextVar("user_id", default=None)
 
 
 class JsonFormatter(logging.Formatter):
@@ -43,12 +44,10 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
-        run_id, thread_id = _RUN_ID.get(), _THREAD_ID.get()
         # 启动、路由这些日志本就不属于任何 run，硬塞一个空值只会污染过滤条件
-        if run_id is not None:
-            line["run_id"] = run_id
-        if thread_id is not None:
-            line["thread_id"] = thread_id
+        for name, value in (("run_id", _RUN_ID.get()), ("thread_id", _THREAD_ID.get()), ("user_id", _USER_ID.get())):
+            if value is not None:
+                line[name] = value
 
         if record.exc_info is not None:
             line["exception"] = self.formatException(record.exc_info)
@@ -58,23 +57,24 @@ class JsonFormatter(logging.Formatter):
 
 
 @contextmanager
-def run_context(*, run_id: str, thread_id: str) -> Generator[None]:
+def run_context(*, run_id: str, thread_id: str, user_id: str | None = None) -> Generator[None]:
     """在上下文内把 run 的身份带进每一行日志，退出时恢复原值。
 
     Args:
         run_id: 当前 run。
         thread_id: run 所属的会话。
+        user_id: 提交的人。崩溃恢复扫出来的旧 run 可能没有主人，因此可缺席。
 
     Yields:
-        无。上下文内产生的日志都会带上这两个 id。
+        无。上下文内产生的日志都会带上这几个 id。
     """
-    run_token = _RUN_ID.set(run_id)
-    thread_token = _THREAD_ID.set(thread_id)
+    token = (_RUN_ID.set(run_id), _THREAD_ID.set(thread_id), _USER_ID.set(user_id))
     try:
         yield
     finally:
-        _RUN_ID.reset(run_token)
-        _THREAD_ID.reset(thread_token)
+        _RUN_ID.reset(token[0])
+        _THREAD_ID.reset(token[1])
+        _USER_ID.reset(token[2])
 
 
 def configure(*, level: str = DEFAULT_LEVEL) -> None:

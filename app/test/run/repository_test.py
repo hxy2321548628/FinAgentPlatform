@@ -15,6 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from event.model import RunErrorCode, RunStatus, TokenUsage
 from run.repository import RunRepository
+from test.conftest import FAKE_HASH
+from thread.repository import Thread
+from user.model import UserRole
+from user.repository import User, UserRepository
 
 
 @pytest.fixture
@@ -23,65 +27,85 @@ def repository(live_engine: AsyncEngine) -> RunRepository:
 
 
 @pytest.fixture
-async def submitted(repository: RunRepository) -> AsyncIterator[tuple[str, str]]:
-    run_id, thread_id = uuid4().hex, uuid4().hex
-    await repository.create(run_id=run_id, thread_id=thread_id)
-    yield run_id, thread_id
+async def submitted(repository: RunRepository, owner: User, owned_thread: Thread) -> AsyncIterator[str]:
+    run_id = uuid4().hex
+    await repository.create(run_id=run_id, thread_id=owned_thread.id, user_id=owner.id)
+    yield run_id
 
 
-async def test_a_submitted_run_starts_out_queued(repository: RunRepository, submitted: tuple[str, str]) -> None:
-    run_id, thread_id = submitted
-
-    found = await repository.get(run_id)
+async def test_a_submitted_run_starts_out_queued(
+    repository: RunRepository, submitted: str, owner: User, owned_thread: Thread
+) -> None:
+    found = await repository.get(submitted, user_id=owner.id)
 
     assert found is not None
     assert found.status is RunStatus.QUEUED
-    assert found.thread_id == thread_id
+    assert found.thread_id == owned_thread.id
 
 
 async def test_a_new_repository_still_sees_the_terminal_state(
-    repository: RunRepository, submitted: tuple[str, str], live_engine: AsyncEngine
+    repository: RunRepository, submitted: str, owner: User, live_engine: AsyncEngine
 ) -> None:
     """换一个仓储实例就是换一个进程 —— 终态必须还在。"""
-    run_id, _ = submitted
-    await repository.start(run_id)
-    await repository.succeed(run_id, tokens=TokenUsage(input_cache_read=7, input_uncached=3, output=5))
+    await repository.start(submitted)
+    await repository.succeed(submitted, tokens=TokenUsage(input_cache_read=7, input_uncached=3, output=5))
 
-    found = await RunRepository(live_engine).get(run_id)
+    found = await RunRepository(live_engine).get(submitted, user_id=owner.id)
 
     assert found is not None
     assert found.status is RunStatus.SUCCEEDED
 
 
-async def test_a_failed_run_keeps_its_reason(repository: RunRepository, submitted: tuple[str, str]) -> None:
-    run_id, _ = submitted
-    await repository.fail(run_id, code=RunErrorCode.SANDBOX_QUEUE_TIMEOUT, message="等了十分钟")
+async def test_a_failed_run_keeps_its_reason(repository: RunRepository, submitted: str, owner: User) -> None:
+    await repository.fail(submitted, code=RunErrorCode.SANDBOX_QUEUE_TIMEOUT, message="等了十分钟")
 
-    found = await repository.get(run_id)
+    found = await repository.get(submitted, user_id=owner.id)
 
     assert found is not None
     assert found.status is RunStatus.FAILED
 
 
-async def test_an_unknown_run_is_not_found(repository: RunRepository) -> None:
-    assert await repository.get(uuid4().hex) is None
+async def test_an_unknown_run_is_not_found(repository: RunRepository, owner: User) -> None:
+    assert await repository.get(uuid4().hex, user_id=owner.id) is None
 
 
-async def test_a_malformed_run_id_is_not_found_rather_than_an_error(repository: RunRepository) -> None:
+async def test_a_malformed_run_id_is_not_found_rather_than_an_error(repository: RunRepository, owner: User) -> None:
     """Run id 来自 URL，是不可信输入。解析不了该是 404，不是 500。"""
-    assert await repository.get("never-existed") is None
+    assert await repository.get("never-existed", user_id=owner.id) is None
+
+
+async def test_another_users_run_is_not_found(
+    repository: RunRepository, submitted: str, live_engine: AsyncEngine
+) -> None:
+    """越权与不存在是同一个结果 —— 端点因此自然落到 404，不需要额外写一句鉴权。"""
+    stranger = await UserRepository(live_engine).create(
+        name=f"stranger-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.TEACHER
+    )
+
+    assert await repository.get(submitted, user_id=stranger.id) is None
+
+
+async def test_an_admin_gets_no_special_treatment(
+    repository: RunRepository, submitted: str, live_engine: AsyncEngine
+) -> None:
+    """管理员多的是管账号的能力，不是看别人会话的能力。这一层没有绕过过滤的旁路。"""
+    admin = await UserRepository(live_engine).create(
+        name=f"admin-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.ADMIN
+    )
+
+    assert await repository.get(submitted, user_id=admin.id) is None
 
 
 async def test_unfinished_lists_the_runs_that_never_reached_a_terminal_state(
-    repository: RunRepository, submitted: tuple[str, str]
+    repository: RunRepository, submitted: str, owner: User, owned_thread: Thread
 ) -> None:
     """崩溃恢复扫的就是它。走的是 ix_runs_unfinished 那条部分索引。"""
-    queued, _ = submitted
-    running_id, thread_id = uuid4().hex, uuid4().hex
-    await repository.create(run_id=running_id, thread_id=thread_id)
+    queued = submitted
+    running_id = uuid4().hex
+    await repository.create(run_id=running_id, thread_id=owned_thread.id, user_id=owner.id)
     await repository.start(running_id)
-    done_id, done_thread = uuid4().hex, uuid4().hex
-    await repository.create(run_id=done_id, thread_id=done_thread)
+    done_id = uuid4().hex
+    await repository.create(run_id=done_id, thread_id=owned_thread.id, user_id=owner.id)
     await repository.succeed(done_id, tokens=TokenUsage())
 
     pending = {run.id for run in await repository.unfinished()}

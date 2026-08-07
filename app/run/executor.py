@@ -134,12 +134,12 @@ class RunExecutor:
             task: 从队列里领到的任务。
         """
         run = Run(id=task.run_id, thread_id=task.thread_id, status=RunStatus.RUNNING)
-        await self._drive(run, task.content)
+        await self._drive(run, task.content, task.user_id)
 
-    async def _drive(self, run: Run, content: str) -> None:
+    async def _drive(self, run: Run, content: str, user_id: str | None) -> None:
         # 每个 run 跑在自己的任务里，任务启动时会复制一份 context，
         # 因此在这里绑定不会串到并发的其他 run 上
-        with run_context(run_id=run.id, thread_id=run.thread_id):
+        with run_context(run_id=run.id, thread_id=run.thread_id, user_id=user_id):
             await self._repository.start(run.id)
             await self._emit(
                 RunStartedEvent(ts=now_ms(), run_id=run.id, path=(), data=RunStartedData(thread_id=run.thread_id))

@@ -1,7 +1,10 @@
 """会话在宿主机上的文件空间。
 
-**本期没有 threads 表，一个会话在服务端的全部实体就是这里的一个目录** ——
-「会话存不存在」问的就是「目录在不在」。容器可以随时销毁重建，这个目录不会跟着没。
+**目录不是会话的身份，`threads` 表才是。** 这里只管「那个会话的文件放在哪」——
+标识由建表那一侧发过来，本模块不发号。容器可以随时销毁重建，这个目录不会跟着没。
+
+broker 自己的 `exists` 仍然保留，但它答的是「目录在不在」这个 broker 视角的问题；
+api 侧判断会话存不存在一律查表，不再调它。
 
 上传的文件名与产物路径都来自 HTTP 请求，属于不可信输入，越界防护在本模块。
 """
@@ -9,7 +12,6 @@
 import logging
 import os
 from pathlib import Path
-from uuid import uuid4
 
 from sandbox.path import OUTPUT_DIR, PathEscapeError, thread_workspace
 from sandbox.quota import NoQuota, QuotaProtocol
@@ -39,16 +41,22 @@ class Workspace:
         self._quota = quota or NoQuota()
         self._owner = owner
 
-    def create(self) -> str:
-        """开一个新会话。
+    def create(self, thread_id: str) -> str:
+        """给一个已经存在的会话开出它的目录。
+
+        **标识由调用方给，不在这里发。** 会话的身份长在 `threads` 表上，目录是它的
+        副产品 —— 这里自己发号的话，「会话存不存在」就有两个真相源，而它们会分叉。
+
+        Args:
+            thread_id: 会话标识。
 
         Returns:
-            新会话的标识。
+            同一个标识，方便调用方直接接着用。
 
         Raises:
+            PathEscapeError: 标识会让目录落到根目录之外。
             QuotaError: 目录建出来了但配额没设上。
         """
-        thread_id = uuid4().hex
         self.path(thread_id)
         return thread_id
 

@@ -23,7 +23,7 @@ class RunCreatorProtocol(Protocol):
     查状态是端点的事，改状态是 worker 的事，都不经过这里。
     """
 
-    async def create(self, *, run_id: str, thread_id: str) -> None:
+    async def create(self, *, run_id: str, thread_id: str, user_id: str) -> None:
         """记下一个刚提交的 run。"""
         ...
 
@@ -40,12 +40,16 @@ class RunSubmitter:
         self._repository = repository
         self._queue = queue
 
-    async def submit(self, *, thread_id: str, content: str) -> Run:
+    async def submit(self, *, thread_id: str, content: str, user_id: str) -> Run:
         """接下一次提问并立刻返回，执行由 worker 进行。
+
+        **调用方必须先用同一个 `user_id` 查到这个 thread**：`runs.user_id` 与
+        `threads.user_id` 的一致性就靠那一步，这里不再重查。
 
         Args:
             thread_id: 提问所属的会话。
             content: 教师的问题。
+            user_id: 提交的人。
 
         Returns:
             状态为 `queued` 的 run 记录，`id` 用于订阅事件与查询状态。
@@ -53,8 +57,8 @@ class RunSubmitter:
         run = Run(id=uuid4().hex, thread_id=thread_id, status=RunStatus.QUEUED)
         # 执行搬到 worker 之后，api 进程里关于一个 run 就只剩这一段。不绑身份的话，
         # 「按 run_id 把一次 run 的日志过滤出来」在 api 侧恒为空
-        with run_context(run_id=run.id, thread_id=run.thread_id):
-            await self._repository.create(run_id=run.id, thread_id=run.thread_id)
-            await self._queue.publish(RunTask(run_id=run.id, thread_id=run.thread_id, content=content))
+        with run_context(run_id=run.id, thread_id=run.thread_id, user_id=user_id):
+            await self._repository.create(run_id=run.id, thread_id=run.thread_id, user_id=user_id)
+            await self._queue.publish(RunTask(run_id=run.id, thread_id=run.thread_id, content=content, user_id=user_id))
             logger.info("run 已投递")
         return run

@@ -26,6 +26,7 @@ from run.submitter import RunSubmitter
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteWorkspace
 from store import postgres, redis
 from task.queue import TaskQueue
+from thread.repository import ThreadRepository
 from user.repository import UserRepository
 
 # 网关只投递不消费，consumer 名字用不上。给一个显式的常量而不是空串，
@@ -46,6 +47,7 @@ class Platform:
     engine: AsyncEngine
     cache: Redis
     user: UserRepository
+    thread: ThreadRepository
     session: SessionStore
     password: PasswordHasher
     # Cookie 的 max-age 要与 session 在 Redis 里的 TTL 一致。两边分别配的话，
@@ -86,6 +88,7 @@ async def build_platform(settings: Settings) -> Platform:
         engine=engine,
         cache=cache,
         user=UserRepository(engine),
+        thread=ThreadRepository(engine),
         session=SessionStore(cache, ttl_second=settings.session_ttl_second),
         password=PasswordHasher(),
         session_ttl_second=settings.session_ttl_second,
