@@ -104,6 +104,11 @@ class Worker:
         beat = asyncio.create_task(self._keep_alive(delivery.id))
         try:
             await self._executor.execute(delivery.task)
+        # 执行器的约定是「不抛」（它自己把一切转成 run.failed），但约定不是保证。
+        # 让异常逃出去只会变成一条没人认领的 Task exception，主循环照跑不误 ——
+        # 而那意味着这次失败在日志里只有一行框架的抱怨，不带 run_id
+        except Exception:
+            logger.exception("执行器抛出了异常，这一条任务按失败处理：run_id=%s", delivery.task.run_id)
         finally:
             beat.cancel()
             with contextlib.suppress(asyncio.CancelledError):

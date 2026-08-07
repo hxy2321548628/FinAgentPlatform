@@ -16,7 +16,7 @@
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import cast
+from typing import Protocol, cast
 
 from redis.asyncio import Redis
 
@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 # per-run 的事件条数上限。实测一次完整分析约 300 条，留两个数量级的余量：
 # 超出即意味着断线重连可能补不齐，宁可多占内存也不轻易触发。
 DEFAULT_MAX_LENGTH = 20_000
+
+# 一个 run 的事件流在 Redis 里留多久，秒。**这不是保留期** —— 保留期在 Postgres 那边，
+# 这里只决定「多久之后翻历史要走库而不是走 Redis」。取七天是因为断线重连、
+# 刷新页面、第二天回来接着看，这些都发生在几天之内
+DEFAULT_TTL_SECOND = 7 * 24 * 3600
 
 # `XREAD` 阻塞多久后回来看一眼。**不是轮询间隔** —— 新事件一到就立刻返回，
 # 这个数只决定「run 已经结束但终态事件在游标之前」那种情形多久能收尾
@@ -72,12 +77,33 @@ def stream_key(run_id: str) -> str:
     return f"{KEY_PREFIX}:{run_id}"
 
 
+class EventArchiveProtocol(Protocol):
+    """事件日志对归档的全部要求。
+
+    Stream 有条数上限也有 TTL，被裁掉或过期的那一段只能从这里补。
+    """
+
+    async def record(self, logged: LoggedEvent) -> None:
+        """把一条事件落进归档。"""
+        ...
+
+    async def replay(self, run_id: str, *, after: str | None = None, before: str | None = None) -> list[LoggedEvent]:
+        """从归档里读回一段事件。"""
+        ...
+
+    async def last(self, run_id: str) -> LoggedEvent | None:
+        """归档里这个 run 的最后一条事件。"""
+        ...
+
+
 class EventLog:
     """按 run 分流的事件日志。
 
     Args:
         client: Redis 客户端。
+        archive: 事件归档。不传则只有 Redis 里的那一段 —— 被裁掉的历史就真的没了。
         max_length: 每个 run 保留的事件条数上限。
+        ttl_second: 一个 run 的事件流在 Redis 里留多久。
         block_millisecond: 跟新事件时单次阻塞的时长。
     """
 
@@ -85,11 +111,15 @@ class EventLog:
         self,
         client: Redis,
         *,
+        archive: EventArchiveProtocol | None = None,
         max_length: int = DEFAULT_MAX_LENGTH,
+        ttl_second: int = DEFAULT_TTL_SECOND,
         block_millisecond: int = DEFAULT_BLOCK_MILLISECOND,
     ) -> None:
         self._client = client
+        self._archive = archive
         self._max_length = max_length
+        self._ttl = ttl_second
         self._block = block_millisecond
 
     async def append(self, event: Event) -> LoggedEvent:
@@ -107,19 +137,26 @@ class EventLog:
             # 「保留最近 N 条」这个承诺就变成了「大约 N 条」
             pipe.xadd(key, {PAYLOAD_FIELD: event.model_dump_json()}, maxlen=self._max_length, approximate=False)
             pipe.xlen(key)
-            assigned, length = await pipe.execute()
+            # 每次追加都续一次 TTL：过期时间从「最后一次有动静」起算，
+            # 而不是从 run 开始起算 —— 一次跑了几小时的分析不该跑到一半就把自己的历史清了
+            pipe.expire(key, self._ttl)
+            assigned, length, _ = await pipe.execute()
 
         if length >= self._max_length:
             logger.warning(
-                "事件日志已达上限，最早的事件被丢弃，断线重连可能补不齐：run_id=%s max_length=%d",
+                "事件日志已达上限，最早的事件被丢弃：run_id=%s max_length=%d。被裁掉的那段只能从归档读",
                 event.run_id,
                 self._max_length,
             )
-        identifier: str = assigned
-        return LoggedEvent(id=identifier, event=event)
+        logged = LoggedEvent(id=assigned, event=event)
+        if self._archive is not None:
+            # 同步落归档：异步追赶意味着「裁剪与归档之间有个窗口」，
+            # 而那个窗口里被裁掉的事件会变成一段不报错的空白
+            await self._archive.record(logged)
+        return logged
 
     async def read(self, run_id: str, *, after: str | None = None) -> list[LoggedEvent]:
-        """读取一个 run 的事件。
+        """读取一个 run 的事件，Stream 里没有的那段从归档补。
 
         Args:
             run_id: 目标 run。
@@ -131,9 +168,16 @@ class EventLog:
         Raises:
             InvalidEventIdError: `after` 不是合法的事件 id。
         """
-        start = STREAM_START if after is None else f"{EXCLUSIVE}{_validate(after)}"
-        entry = cast(list[StreamEntry], await self._client.xrange(stream_key(run_id), min=start, max=STREAM_END))
-        return [_decode(one) for one in entry]
+        cursor = None if after is None else _validate(after)
+        start = STREAM_START if cursor is None else f"{EXCLUSIVE}{cursor}"
+        fresh = cast(list[StreamEntry], await self._client.xrange(stream_key(run_id), min=start, max=STREAM_END))
+        live = [_decode(one) for one in fresh]
+        if self._archive is None:
+            return live
+        # 归档里取的是「游标之后、Stream 最早那条之前」那一段，两头都不含 ——
+        # 归档与 Stream 是重叠的（同一条事件两边都有），不划清界限就会重复推送
+        archived = await self._archive.replay(run_id, after=cursor, before=live[0].id if live else None)
+        return archived + live
 
     async def follow(self, run_id: str, *, after: str | None = None) -> AsyncIterator[LoggedEvent]:
         """先补齐历史，再持续产出新事件，直到 run 进入终态。
@@ -148,7 +192,15 @@ class EventLog:
         Raises:
             InvalidEventIdError: `after` 不是合法的事件 id。
         """
+        # 历史先一次读齐（含归档里那段），再切到 XREAD 跟新的。
+        # 不能一上来就 XREAD：它只看得见 Stream，被裁掉或过期的那段会静默缺失
         cursor = FROM_BEGINNING if after is None else _validate(after)
+        for logged in await self.read(run_id, after=after):
+            cursor = logged.id
+            yield logged
+            if logged.event.type in TERMINAL_EVENT_TYPE:
+                return
+
         key = stream_key(run_id)
         while True:
             # 先判「已经结束且游标在末尾」再阻塞：跑完之后才来订阅的连接不该白等一轮，
@@ -172,15 +224,19 @@ class EventLog:
     async def _ended(self, run_id: str, cursor: str) -> bool:
         """这个 run 是否已经结束，且游标已经走过了终态事件。
 
-        只看流里最后一条：终态事件是一个 run 最后发的东西，它之后不该再有别的。
+        只看最后一条：终态事件是一个 run 最后发的东西，它之后不该再有别的。
+        Stream 整条过期之后，「结束了没有」只能问归档 —— 不问的话，
+        订阅一个几个月前的 run 会永远挂着。
         """
-        last = cast(
+        entry = cast(
             list[StreamEntry],
             await self._client.xrevrange(stream_key(run_id), max=STREAM_END, min=STREAM_START, count=1),
         )
-        if not last:
+        logged = _decode(entry[0]) if entry else None
+        if logged is None and self._archive is not None:
+            logged = await self._archive.last(run_id)
+        if logged is None:
             return False
-        logged = _decode(last[0])
         if parse_event_id(logged.id) > parse_event_id(cursor):
             return False
         return logged.event.type in TERMINAL_EVENT_TYPE

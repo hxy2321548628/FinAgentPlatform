@@ -6,10 +6,15 @@
 
 只跑 online 模式：离线模式产出的是 SQL 文本，本项目没有「把 SQL 交给 DBA 执行」
 这个环节，留着只会多一条没人走的路径。
+
+**不调 `fileConfig`**（alembic 的模板默认会调）：它按 alembic.ini 重配整个 logging，
+默认还会 `disable_existing_loggers`。后果有两个 —— 生产里它会把 `log.configure()`
+装好的 JSON 输出顶掉，让迁移那几行变成夹在 JSON 中间的纯文本；测试里它会把 pytest
+的日志捕获handler 一并摘掉，于是「某某情况要记一条告警」那类断言全部失效，
+而失效的方式是静默的。日志配置本项目只有一处，就是 `log.configure()`。
 """
 
 import asyncio
-from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool
@@ -23,9 +28,6 @@ from config import StoreSettings
 import run.repository  # noqa: F401  isort:skip
 
 config = context.config
-
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
 
 config.set_main_option("sqlalchemy.url", StoreSettings().postgres_dsn())
 

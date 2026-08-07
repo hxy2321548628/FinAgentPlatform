@@ -17,6 +17,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from config import Settings
+from run.archive import EventArchive
 from run.log import EventLog
 from run.repository import RunRepository
 from run.submitter import RunSubmitter
@@ -67,7 +68,8 @@ async def build_platform(settings: Settings) -> Platform:
     repository = RunRepository(engine)
     return Platform(
         workspace=RemoteWorkspace(connection),
-        log=EventLog(cache),
+        # 网关只读事件，不写。给它归档是为了让「Stream 里已经没有的那段历史」也读得到
+        log=EventLog(cache, archive=EventArchive(engine)),
         submitter=RunSubmitter(repository=repository, queue=TaskQueue(cache, consumer=PRODUCER_NAME)),
         repository=repository,
         connection=connection,
