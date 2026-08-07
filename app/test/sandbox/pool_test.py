@@ -61,6 +61,23 @@ class Factory:
         return container
 
 
+class FakeClock:
+    """手动推进的单调时钟。
+
+    回收判据全是时间差，用真实时钟测只能靠 sleep 逼近 —— 而 sleep 在满负载的
+    测试里会被调度器拖长，表现为偶发的红。偶发的红比没有测试更糟。
+    """
+
+    def __init__(self) -> None:
+        self.reading = 0.0
+
+    def __call__(self) -> float:
+        return self.reading
+
+    def advance(self, second: float) -> None:
+        self.reading += second
+
+
 @pytest.fixture
 def factory() -> Factory:
     return Factory()
@@ -343,10 +360,11 @@ async def test_a_lease_nobody_touches_any_more_is_released(tmp_path: Path, facto
     lease>0 的 slot 既不受 idle 回收管、也不会被淘汰，而崩掉的那一侧再也不会来
     release。没有兜底的话，一次崩溃就永久少一个沙箱名额。
     """
-    pool = make_pool(tmp_path, factory, idle_timeout=0.0, lease_timeout=0.05)
+    clock = FakeClock()
+    pool = make_pool(tmp_path, factory, idle_timeout=0.0, lease_timeout=1800.0, clock=clock)
 
     await pool.acquire("thread-1")
-    await asyncio.sleep(0.1)
+    clock.advance(1801)
     await pool.sweep()
 
     assert factory.made[0].stopped
@@ -356,10 +374,11 @@ async def test_a_lease_nobody_touches_any_more_is_released(tmp_path: Path, facto
 
 async def test_a_lease_that_is_still_being_used_survives(tmp_path: Path, factory: Factory) -> None:
     """跑着的 run 每次工具调用都会经 `current` 摸一次容器，那就是它还活着的证据。"""
-    pool = make_pool(tmp_path, factory, idle_timeout=0.0, lease_timeout=0.05)
+    clock = FakeClock()
+    pool = make_pool(tmp_path, factory, idle_timeout=0.0, lease_timeout=1800.0, clock=clock)
 
     await pool.acquire("thread-1")
-    await asyncio.sleep(0.1)
+    clock.advance(1801)
     pool.current("thread-1")
     await pool.sweep()
 

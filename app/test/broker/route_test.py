@@ -287,7 +287,7 @@ async def test_artifacts_written_after_the_mark_are_reported(connection: BrokerC
     """产物判定在 broker 侧，因为只有它看得见宿主机上的文件与 mtime。"""
     workspace = RemoteWorkspace(connection)
     thread_id = await workspace.create()
-    since = time.time()
+    since = time.time_ns()
     output_dir = space.path(thread_id) / "outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "chart.png").write_bytes(b"png")

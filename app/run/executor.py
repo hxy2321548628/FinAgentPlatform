@@ -55,7 +55,7 @@ UPDATES_MODE = "updates"
 class WorkspaceProtocol(Protocol):
     """执行器对会话文件空间的全部要求。"""
 
-    async def artifact_since(self, thread_id: str, since: float) -> list[str]:
+    async def artifact_since(self, thread_id: str, since_ns: int) -> list[str]:
         """列出一次 run 产出的产物标识。"""
         ...
 
@@ -193,7 +193,7 @@ class RunExecutor:
         backend = self._backend(run.thread_id)
         tokens = TokenUsage()
         # 产物按 mtime 判定，基准要在 agent 动手之前取，否则本次的产出会被漏掉
-        started_at = time.time()
+        started_at = time.time_ns()
 
         async for ns, mode, payload in self._runner(backend, run.thread_id, run.content):
             tokens = tokens + _token_usage(mode, payload)

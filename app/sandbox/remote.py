@@ -349,7 +349,7 @@ class RemoteWorkspace:
             raise
         return str(result["filename"])
 
-    async def artifact_since(self, thread_id: str, since: float) -> list[str]:
+    async def artifact_since(self, thread_id: str, since_ns: int) -> list[str]:
         """列出一次 run 产出的产物标识。
 
         产物是 workspace 的事而不是工具的事：agent 从头到尾不知道有「产物」这个概念，
@@ -357,7 +357,7 @@ class RemoteWorkspace:
 
         Args:
             thread_id: 会话标识。
-            since: Unix 时间戳，通常取自这次 run 开始前。
+            since_ns: Unix 时间戳，纳秒。通常取自这次 run 开始前。
 
         Returns:
             产物标识，可直接拼产物端点下载。
@@ -365,7 +365,7 @@ class RemoteWorkspace:
         Raises:
             BrokerError: broker 不可达。
         """
-        result = await self._connection.call("GET", f"/threads/{thread_id}/artifacts", params={"since": since})
+        result = await self._connection.call("GET", f"/threads/{thread_id}/artifacts", params={"since_ns": since_ns})
         found = result.get("artifacts", [])
         return [str(one) for one in found] if isinstance(found, list) else []
 

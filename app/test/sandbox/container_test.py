@@ -256,7 +256,7 @@ def test_chart_written_by_execute_is_detected_as_an_artifact(workspace: Path) ->
             "plt.title('波动率')\n"
             f"plt.savefig('/workspace/{OUTPUT_DIR}/chart.png')\n",
         )
-        since = time.time()
+        since = time.time_ns()
         response = backend.execute(f"mkdir -p {OUTPUT_DIR} && python chart.py", timeout=60)
 
     assert response.exit_code == 0

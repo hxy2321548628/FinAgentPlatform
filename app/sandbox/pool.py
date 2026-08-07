@@ -48,6 +48,10 @@ DEFAULT_SWEEP_INTERVAL = 60.0
 # 收 thread_id 是因为容器要带着它做 label，broker 重启后靠 label 认领
 type ContainerFactory = Callable[[str, Path], ManagedContainerProtocol]
 type QueuePositionCallback = Callable[[int], None]
+# 单调时钟。做成可注入的不是为了「将来可能要换时间源」，而是因为回收判据全是时间差 ——
+# 用真实时钟测它们，只能靠 sleep 逼近，而 sleep 在满负载的测试里会被调度器拖长，
+# 表现为偶发的红。偶发的红比没有测试更糟：它教人忽略红色
+type Clock = Callable[[], float]
 
 
 class SandboxQueueTimeoutError(RuntimeError):
@@ -87,6 +91,7 @@ class SandboxPool:
         idle_timeout: 无人使用多久后回收，秒。
         queue_timeout: 排队等待的上限，秒。
         lease_timeout: 租约多久没人碰就强制归还，秒。持有方崩溃时的兜底。
+        clock: 单调时钟，只在测试里换成可控的。
         hardening: 容器的资源限额与隔离档位，不传则用默认值。
         container_factory: 造容器的方式，默认是 Docker。测试用它换成假容器。
     """
@@ -102,12 +107,14 @@ class SandboxPool:
         lease_timeout: float = DEFAULT_LEASE_TIMEOUT,
         hardening: Hardening | None = None,
         container_factory: ContainerFactory | None = None,
+        clock: Clock = time.monotonic,
     ) -> None:
         self._workspace = workspace
         self._max_container = max_container
         self._idle_timeout = idle_timeout
         self._queue_timeout = queue_timeout
         self._lease_timeout = lease_timeout
+        self._now = clock
         self._factory = container_factory or (
             lambda thread_id, workspace: DockerContainer(
                 thread_id=thread_id, workspace=workspace, image=image, hardening=hardening
@@ -143,7 +150,7 @@ class SandboxPool:
         slot = self._slot.get(thread_id)
         if slot is None:
             return None
-        slot.last_used = time.monotonic()
+        slot.last_used = self._now()
         return slot.container
 
     async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> ContainerProtocol:
@@ -208,7 +215,7 @@ class SandboxPool:
                     continue
                 container = self._factory(thread_id, self._workspace.path(thread_id))
                 container.adopt(container_id)
-                self._slot[thread_id] = _Slot(container=container, lease=0, last_used=time.monotonic())
+                self._slot[thread_id] = _Slot(container=container, lease=0, last_used=self._now())
                 logger.info("认领重启前的沙箱容器：thread_id=%s container=%s", thread_id, container_id[:12])
 
     async def release(self, thread_id: str) -> None:
@@ -221,14 +228,14 @@ class SandboxPool:
             slot = self._slot.get(thread_id)
             if slot is not None:
                 slot.lease = max(0, slot.lease - 1)
-                slot.last_used = time.monotonic()
+                slot.last_used = self._now()
             await self._pump()
 
     async def sweep(self) -> None:
         """强制归还失效的租约，回收 idle 超时的容器，并把腾出的名额分给排队者。"""
         async with self._lock:
             self._expire_lease()
-            deadline = time.monotonic() - self._idle_timeout
+            deadline = self._now() - self._idle_timeout
             stale = [
                 thread_id for thread_id, slot in self._slot.items() if slot.lease == 0 and slot.last_used <= deadline
             ]
@@ -247,7 +254,7 @@ class SandboxPool:
         只归零、不直接销毁：万一是一个格外慢的 run 还在跑，容器留着它仍能用，
         只是从此可被淘汰。销毁是紧接着的 idle 回收该做的判断。
         """
-        deadline = time.monotonic() - self._lease_timeout
+        deadline = self._now() - self._lease_timeout
         for thread_id, slot in self._slot.items():
             if slot.lease > 0 and slot.last_used <= deadline:
                 logger.warning(
@@ -290,7 +297,7 @@ class SandboxPool:
             # 是因为 acquire 一个 run 只发生一次，几十毫秒可以忽略
             if await asyncio.to_thread(slot.container.alive):
                 slot.lease += 1
-                slot.last_used = time.monotonic()
+                slot.last_used = self._now()
                 return slot.container
             logger.warning("沙箱容器已不在运行，重建：thread_id=%s", thread_id)
             await self._discard(thread_id)
@@ -307,7 +314,7 @@ class SandboxPool:
         """
         container = self._factory(thread_id, workspace)
         await asyncio.to_thread(container.start)
-        self._slot[thread_id] = _Slot(container=container, lease=1, last_used=time.monotonic())
+        self._slot[thread_id] = _Slot(container=container, lease=1, last_used=self._now())
         return container
 
     async def _discard(self, thread_id: str) -> None:

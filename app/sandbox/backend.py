@@ -144,11 +144,15 @@ class SandboxBackend(SandboxBackendProtocol):
             return ExecuteResponse(output=f"沙箱执行失败：{exc}", exit_code=EXECUTION_FAILED_EXIT_CODE)
         return ExecuteResponse(output=result.output, exit_code=result.exit_code)
 
-    def artifact_since(self, since: float) -> list[Path]:
+    def artifact_since(self, since_ns: int) -> list[Path]:
         """列出 `outputs/` 下在给定时刻之后写入的文件。
 
+        **判据用整数纳秒，不用 `st_mtime`。** 后者是 float，在当前 epoch 只有
+        238 纳秒的分辨率，舍入能把刚写下的产物压到 `since_ns` 之下 —— 产物被静默漏掉，
+        而且没有任何报错指向原因。
+
         Args:
-            since: Unix 时间戳，通常取自 `execute` 开始前。
+            since_ns: Unix 时间戳，纳秒。通常取自这次 run 开始前。
 
         Returns:
             宿主机上的产物路径，按路径排序。目录不存在时为空。
@@ -160,7 +164,7 @@ class SandboxBackend(SandboxBackendProtocol):
             path
             for path in output_dir.rglob("*")
             # 产物会被下载给教师，跟随符号链接等于把任意宿主文件当成产物送出去
-            if path.is_file() and not path.is_symlink() and path.stat().st_mtime >= since
+            if path.is_file() and not path.is_symlink() and path.stat().st_mtime_ns >= since_ns
         )
 
     def _upload_one(self, path: str, content: bytes) -> FileUploadResponse:

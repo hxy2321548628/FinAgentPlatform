@@ -52,8 +52,8 @@ class FakeWorkspace:
         self.produced: dict[str, list[str]] = {}
         self.asked: list[tuple[str, float]] = []
 
-    async def artifact_since(self, thread_id: str, since: float) -> list[str]:
-        self.asked.append((thread_id, since))
+    async def artifact_since(self, thread_id: str, since_ns: int) -> list[str]:
+        self.asked.append((thread_id, since_ns))
         return self.produced.get(thread_id, [])
 
 
@@ -479,7 +479,7 @@ async def test_artifacts_are_asked_for_from_before_the_agent_started(
     pool: FakePool, space: FakeWorkspace, log: EventLog
 ) -> None:
     """基准晚于 agent 动手的话，本轮自己的产出会被判成「上一轮的」而漏掉。"""
-    before = time.time()
+    before = time.time_ns()
     executor = make_executor(pool, space, log, token_chunk("好"))
 
     run = await executor.submit(thread_id=THREAD, content="一")
@@ -487,4 +487,4 @@ async def test_artifacts_are_asked_for_from_before_the_agent_started(
 
     asked_thread, asked_since = space.asked[0]
     assert asked_thread == THREAD
-    assert before <= asked_since <= time.time()
+    assert before <= asked_since <= time.time_ns()

@@ -89,14 +89,14 @@ async def save_file(thread_id: str, request: SaveRequest, broker: BrokerDep) -> 
 async def list_artifacts(
     thread_id: str,
     broker: BrokerDep,
-    since: Annotated[float, Query(description="Unix 时间戳，只列这之后写入的")],
+    since_ns: Annotated[int, Query(description="Unix 时间戳（纳秒），只列这之后写入的")],
 ) -> ArtifactListResponse:
     """列出本次 run 产出的产物。
 
     返回的是可下载的标识而不是宿主机路径 —— 宿主机的目录结构不该越过这层边界。
     """
     workspace = broker.workspace.path(thread_id)
-    found = broker.backend(thread_id).artifact_since(since)
+    found = broker.backend(thread_id).artifact_since(since_ns)
     return ArtifactListResponse(artifacts=[artifact_id(thread_id, workspace, one) for one in found])
 
 
