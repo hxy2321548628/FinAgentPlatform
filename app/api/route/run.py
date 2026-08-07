@@ -8,11 +8,12 @@ from fastapi.responses import StreamingResponse
 
 from api.error import invalid, not_found
 from api.platform import Platform, get_platform
-from api.schema import RunResponse
+from api.schema import ApproveRequest, RunResponse
 from api.security import CurrentUser
 from api.sse import heartbeat_stream
-from event.model import RunCancelledData, RunCancelledEvent, now_ms
+from event.model import InterruptData, RunCancelledData, RunCancelledEvent, RunStatus, now_ms
 from log import run_context
+from run.decision import DecisionError, check
 from run.log import InvalidEventIdError, parse_event_id
 from run.repository import Run
 
@@ -101,6 +102,56 @@ async def cancel_run(
     # 谎报会让前端把一次成功的分析显示成被中断
     current_run = await _require_run(platform, run_id, current.user_id)
     return RunResponse(id=current_run.id, thread_id=current_run.thread_id, status=current_run.status)
+
+
+@router.post("/{run_id}/approve", status_code=status.HTTP_202_ACCEPTED)
+async def approve_run(
+    run_id: str,
+    request: ApproveRequest,
+    current: CurrentUser,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> RunResponse:
+    """回传教师的决策，让 run 从中断点接着跑。
+
+    **决策用显式 `index`，重排由平台做** —— 让前端保证「决策顺序与待确认调用严格对齐」
+    是个迟早出错的契约，而它出错的方式是把 A 的决策套到 B 的调用上。
+
+    **恢复是一条新的队列任务**：审批期间这个 run 既不持有队列消息也不持有沙箱，
+    因此没有「原来那条消息」可以接着用。
+    """
+    run = await _require_run(platform, run_id, current.user_id)
+    if run.status is not RunStatus.WAITING_APPROVAL:
+        raise invalid(f"这个 run 不在等待确认：当前状态是 {run.status.value}")
+
+    try:
+        check(request.decisions, expected=await _pending_action_count(platform, run_id))
+    except DecisionError as exc:
+        raise invalid(str(exc)) from exc
+
+    with run_context(run_id=run_id, thread_id=run.thread_id, user_id=current.user_id):
+        if not await platform.repository.resume(run_id):
+            # 状态是刚才读到的，而这一句是原子的 —— 中间这段时间里教师可能点了停止
+            raise invalid("这个 run 已经不在等待确认了")
+        await platform.submitter.resubmit(
+            run_id=run_id,
+            thread_id=run.thread_id,
+            user_id=current.user_id,
+            decisions=request.decisions,
+        )
+
+    return RunResponse(id=run_id, thread_id=run.thread_id, status=RunStatus.QUEUED)
+
+
+async def _pending_action_count(platform: Platform, run_id: str) -> int:
+    """这次中断里有几个待确认的调用。
+
+    **读的是最后一条 `interrupt` 事件** —— 那正是教师看到的那一份，
+    用它来校验决策数才对得上人的操作。
+    """
+    for logged in reversed(await platform.log.read(run_id)):
+        if isinstance(logged.event.data, InterruptData):
+            return len(logged.event.data.actions)
+    return 0
 
 
 async def _require_run(platform: Platform, run_id: str, user_id: str) -> Run:

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from event.model import RunStatus
 from log import run_context
+from run.decision import Decision
 from run.repository import Run
 from task.queue import RunTask, TaskQueue
 
@@ -62,3 +63,22 @@ class RunSubmitter:
             await self._queue.publish(RunTask(run_id=run.id, thread_id=run.thread_id, content=content, user_id=user_id))
             logger.info("run 已投递")
         return run
+
+    async def resubmit(self, *, run_id: str, thread_id: str, user_id: str, decisions: list[Decision]) -> None:
+        """审批之后把同一个 run 重新投一次。
+
+        **不建新行**：`runs` 里那一行还是原来那个，只是状态从 `waiting_approval`
+        回到了 `queued`。一次 run 因此会在队列里出现多次 —— 每轮审批一次。
+
+        **不带教师的问题**：提问早就在 checkpoint 里了，重新发一遍只会让 agent
+        以为又被问了一次。
+
+        Args:
+            run_id: 要续跑的 run。
+            thread_id: 它所属的会话。
+            user_id: 审批的人。
+            decisions: 已经校验过的决策。
+        """
+        with run_context(run_id=run_id, thread_id=thread_id, user_id=user_id):
+            await self._queue.publish(RunTask(run_id=run_id, thread_id=thread_id, user_id=user_id, decisions=decisions))
+            logger.info("审批已回传，run 重新入队续跑")

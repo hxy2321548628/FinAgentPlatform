@@ -29,9 +29,12 @@ TABLE_NAME = "runs"
 # 而这条查询只关心「此刻还没结束的」，那永远是很小的一撮
 UNFINISHED_STATUS = (RunStatus.QUEUED, RunStatus.RUNNING)
 
-# 还能写终态的状态。已经有终态的 run 再写一次是幂等的空操作，不是错误 ——
-# 无论那一次写的是成功、失败还是取消
-CANCELLABLE_STATUS = UNFINISHED_STATUS
+# 还能改状态的那几态。已经走到终态的 run 再改一次是幂等的空操作，不是错误 ——
+# 无论那一次写的是成功、失败还是取消。
+#
+# **`waiting_approval` 在里面**：它不是终态，教师在审批期间点停止、或者审批超时，
+# 都要能把它转成 `cancelled`（架构 §5.4 的状态机上就有这两条边）
+CANCELLABLE_STATUS = (RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_APPROVAL)
 
 
 def _value_column(enum: type[StrEnum], *, nullable: bool = False) -> Column[Enum]:
@@ -146,9 +149,17 @@ class RunRepository:
             return None
         return record.to_run()
 
-    async def start(self, run_id: str) -> None:
-        """标记开跑。"""
-        await self._update(run_id, status=RunStatus.RUNNING)
+    async def start(self, run_id: str) -> bool:
+        """标记开跑。
+
+        **同样是条件更新**：一条已经取消的 run 若因为消息重投又被领走，
+        无条件写会把它从 `cancelled` 拉回 `running`，于是一次已经取消的分析
+        又跑了起来 —— 而状态与事件从此对不上。
+
+        Returns:
+            这一次调用是否真的改变了状态。
+        """
+        return await self._transit(run_id, status=RunStatus.RUNNING)
 
     async def succeed(self, run_id: str, *, tokens: TokenUsage) -> bool:
         """标记跑完，并记下这一次的 token 消耗。
@@ -193,28 +204,79 @@ class RunRepository:
             }
         return await self._finalize(run_id, **change)
 
-    async def _finalize(self, run_id: str, **change: object) -> bool:
-        """写一次终态，**只在这个 run 还没有终态时才写**。
+    async def wait_approval(self, run_id: str, *, tokens: TokenUsage) -> bool:
+        """把 run 挂到「等人确认」上，并记下到此为止的用量。
 
-        条件写在 SQL 的 WHERE 里，因此这一句是原子的 —— 谁改成了谁负责推终态事件，
-        另一边拿到 False 就安静退出。这一点有两个非它不可的场合：
+        **不是终态**，但走的是同一句条件更新：教师在最后一刻点了停止时，
+        `cancelled` 已经写下，这里就不该再把它拉回 `waiting_approval`。
 
-        - 教师在最后一刻点了停止：api 已经写下 `cancelled` 并推过事件，而 worker 那一侧
-          正好跑完。无条件写的话它会把状态盖回 `succeeded`，于是事件说已取消、
-          状态说已成功，两边对不上而且谁都不报错；
-        - 教师连点两下停止：无条件写会推出两条「已取消」。
+        Args:
+            run_id: 目标 run。
+            tokens: 到中断为止已经消耗的用量。
+
+        Returns:
+            这一次调用是否真的改变了状态。
+        """
+        return await self._transit(
+            run_id,
+            status=RunStatus.WAITING_APPROVAL,
+            tokens_cache_read=tokens.input_cache_read,
+            tokens_uncached=tokens.input_uncached,
+            tokens_output=tokens.output,
+        )
+
+    async def resume(self, run_id: str) -> bool:
+        """审批之后重新排队。
+
+        **只有 `waiting_approval` 的 run 能被恢复** —— 教师在审批期间点了停止，
+        或者审批超时转了 `cancelled`，这一句就该什么都不做。
+
+        Args:
+            run_id: 目标 run。
 
         Returns:
             这一次调用是否真的改变了状态。
         """
         identifier = _parse(run_id)
         if identifier is None:
-            logger.warning("run id 不是合法 uuid，终态未落库：run_id=%s", run_id)
+            return False
+        statement = (
+            update(RunRecord)
+            .where(col(RunRecord.id) == identifier, col(RunRecord.status) == RunStatus.WAITING_APPROVAL)
+            .values(status=RunStatus.QUEUED, ended_at=None)
+        )
+        async with AsyncSession(self._engine) as session:
+            result = await session.exec(statement)
+            await session.commit()
+        return bool(result.rowcount)
+
+    async def _finalize(self, run_id: str, **change: object) -> bool:
+        """写一次终态，顺手盖上结束时间。见 `_transit`。"""
+        return await self._transit(run_id, ended_at=datetime.now(UTC), **change)
+
+    async def _transit(self, run_id: str, **change: object) -> bool:
+        """改一次状态，**只在这个 run 还没走到终态时才改**。
+
+        条件写在 SQL 的 WHERE 里，因此这一句是原子的 —— 谁改成了谁负责推事件，
+        另一边拿到 False 就安静退出。这一点有几个非它不可的场合：
+
+        - 教师在最后一刻点了停止：api 已经写下 `cancelled` 并推过事件，而 worker 那一侧
+          正好跑完。无条件写的话它会把状态盖回 `succeeded`，于是事件说已取消、
+          状态说已成功，两边对不上而且谁都不报错；
+        - 教师连点两下停止：无条件写会推出两条「已取消」；
+        - 教师在审批期间点了停止：无条件写会把 `cancelled` 拉回 `waiting_approval`。
+
+        Returns:
+            这一次调用是否真的改变了状态。
+        """
+        identifier = _parse(run_id)
+        if identifier is None:
+            logger.warning("run id 不是合法 uuid，状态未落库：run_id=%s", run_id)
             return False
         statement = (
             update(RunRecord)
             .where(col(RunRecord.id) == identifier, col(RunRecord.status).in_(CANCELLABLE_STATUS))
-            .values(ended_at=datetime.now(UTC), **change)
+            .values(**change)
         )
         async with AsyncSession(self._engine) as session:
             result = await session.exec(statement)

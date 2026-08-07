@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from agent.factory import create_model, create_runner
+from agent.factory import Agent, create_model
 from config import Settings
 from run.archive import EventArchive
 from run.cancel import CancelFlag
@@ -86,7 +86,7 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
         pool=RemoteSandboxPool(connection),
         workspace=RemoteWorkspace(connection),
         log=EventLog(cache, archive=EventArchive(engine)),
-        runner=create_runner(model=create_model(settings), checkpointer=checkpoint.saver),
+        agent=Agent(model=create_model(settings), checkpointer=checkpoint.saver),
         repository=RunRepository(engine),
         cancel=CancelFlag(cache),
         backend_factory=backend_factory,

@@ -140,7 +140,9 @@ def test_run_started_serializes_to_the_contract_envelope() -> None:
         "ts": 1,
         "run_id": "r",
         "path": [],
-        "data": {"thread_id": "t"},
+        # `resumed` 是 P3 加的：一次 run 会多次入队，每轮审批之后都重新投递，
+        # 因此这个事件不再等于「第一次开跑」。契约只增字段，不改已有字段的语义
+        "data": {"thread_id": "t", "resumed": False},
     }
 
 

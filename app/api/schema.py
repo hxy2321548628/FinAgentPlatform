@@ -7,6 +7,7 @@
 from pydantic import BaseModel, Field
 
 from event.model import RunStatus
+from run.decision import Decision
 from user.model import UserRole
 
 
@@ -27,6 +28,16 @@ class MeResponse(BaseModel):
     id: str = Field(min_length=1, description="用户标识")
     name: str = Field(min_length=1, description="用户名")
     role: UserRole = Field(description="角色，前端据此决定是否显示管理入口")
+
+
+class ApproveRequest(BaseModel):
+    """审批回传。
+
+    每个待确认的调用回一个决策，**用显式 `index` 而不是依赖数组顺序** ——
+    缺失或重复的 index 一律 `VALIDATION_ERROR`。
+    """
+
+    decisions: list[Decision] = Field(min_length=1, description="教师的决策，每个待确认调用一个")
 
 
 class ThreadResponse(BaseModel):

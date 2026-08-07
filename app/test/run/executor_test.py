@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from io import StringIO
 from uuid import uuid4
 
@@ -19,9 +19,18 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from redis.asyncio import Redis
 
 from event.mapper import StreamChunk
-from event.model import EventType, RunErrorCode, RunFinishedData, RunStatus, TokenUsage
+from event.model import (
+    EventType,
+    InterruptAction,
+    InterruptData,
+    RunErrorCode,
+    RunFinishedData,
+    RunStatus,
+    TokenUsage,
+)
 from log import JsonFormatter
-from run.executor import AgentRunner, RunExecutor
+from run.decision import Decision, DecisionType
+from run.executor import RunExecutor
 from run.log import EventLog
 from sandbox.pool import SandboxQueueTimeoutError
 from sandbox.remote import AsyncQueuePositionCallback
@@ -78,8 +87,11 @@ class FakeRepository:
         self.tokens: dict[str, TokenUsage] = {}
         self.error: dict[str, tuple[RunErrorCode, str]] = {}
 
-    async def start(self, run_id: str) -> None:
+    async def start(self, run_id: str) -> bool:
+        if not self._open(run_id):
+            return False
         self.status[run_id] = RunStatus.RUNNING
+        return True
 
     async def succeed(self, run_id: str, *, tokens: TokenUsage) -> bool:
         if not self._open(run_id):
@@ -103,9 +115,16 @@ class FakeRepository:
         self.status[run_id] = RunStatus.CANCELLED
         return True
 
+    async def wait_approval(self, run_id: str, *, tokens: TokenUsage) -> bool:
+        if not self._open(run_id):
+            return False
+        self.tokens[run_id] = tokens
+        self.status[run_id] = RunStatus.WAITING_APPROVAL
+        return True
+
     def _open(self, run_id: str) -> bool:
         """条件更新的替身：已经有终态的 run 写不进去。"""
-        return self.status.get(run_id) in (None, RunStatus.QUEUED, RunStatus.RUNNING)
+        return self.status.get(run_id) in (None, RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_APPROVAL)
 
 
 class FakeCancelFlag:
@@ -121,6 +140,34 @@ class FakeCancelFlag:
 
     def raise_flag(self, run_id: str) -> None:
         self.raised.add(run_id)
+
+
+class FakeAgent:
+    """按给定的 chunk 流回放，并能在流结束后报告一个待确认的调用。"""
+
+    def __init__(self, runner: "AgentRunner") -> None:
+        self._runner = runner
+        self.asked: list[str] = []
+        self.resumed: list[list[dict[str, object]]] = []
+        # 下一次流结束后要报告的待确认调用。**用完即清** —— 续跑那一次不该再停下来
+        self.interrupt: list[InterruptAction] = []
+
+    def stream(self, backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+        self.asked.append(content)
+        return self._runner(backend, thread_id, content)
+
+    def resume(
+        self, backend: BackendProtocol, thread_id: str, decisions: list[dict[str, object]]
+    ) -> AsyncIterator[StreamChunk]:
+        self.resumed.append(decisions)
+        return self._runner(backend, thread_id, "")
+
+    async def pending(self, backend: BackendProtocol, thread_id: str) -> list[InterruptAction]:
+        waiting, self.interrupt = self.interrupt, []
+        return waiting
+
+
+type AgentRunner = Callable[[BackendProtocol, str, str], AsyncIterator[StreamChunk]]
 
 
 def chunk_stream(*chunk: StreamChunk) -> AsyncIterator[StreamChunk]:
@@ -185,13 +232,14 @@ def make_executor_with(
     log: EventLog,
     runner: AgentRunner,
     cancel: FakeCancelFlag | None = None,
+    agent: FakeAgent | None = None,
 ) -> tuple[RunExecutor, FakeRepository]:
     repository = FakeRepository()
     executor = RunExecutor(
         pool=pool,
         workspace=space,
         log=log,
-        runner=runner,
+        agent=agent or FakeAgent(runner),
         repository=repository,
         cancel=cancel or FakeCancelFlag(),
     )
@@ -688,3 +736,116 @@ async def test_an_uncancelled_run_still_checks_the_flag(pool: FakePool, space: F
 
     assert repository.status[run.run_id] is RunStatus.SUCCEEDED
     assert cancel.checked
+
+
+# ------------------------------------------------------------------ HITL 审批
+def _interrupt() -> list[InterruptAction]:
+    return [InterruptAction(index=0, tool_name="delete", args={"file_path": "/workspace/a.csv"})]
+
+
+async def test_a_run_that_hits_an_interrupt_waits_for_approval(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
+    agent = FakeAgent(lambda *_: chunk_stream(usage_chunk(100, 10)))
+    agent.interrupt = _interrupt()
+    executor, repository = make_executor_with(pool, space, log, agent._runner, agent=agent)
+    run = a_task()
+
+    await executor.execute(run)
+
+    assert repository.status[run.run_id] is RunStatus.WAITING_APPROVAL
+    assert (await types_of(log, run.run_id))[-1] == EventType.INTERRUPT.value
+
+
+async def test_an_interrupted_run_gives_its_sandbox_back(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    """挂起期间**不持有沙箱**：那正是「不占用任何 worker 资源，可挂起数小时」的字面实现。"""
+    agent = FakeAgent(lambda *_: chunk_stream())
+    agent.interrupt = _interrupt()
+    executor, _ = make_executor_with(pool, space, log, agent._runner, agent=agent)
+    run = a_task()
+
+    await executor.execute(run)
+
+    assert pool.released == [THREAD]
+
+
+async def test_an_interrupted_run_does_not_report_success(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    """流自然结束不等于跑完了 —— 中断也会让流结束。推 run.finished 会让教师以为完事了。"""
+    agent = FakeAgent(lambda *_: chunk_stream())
+    agent.interrupt = _interrupt()
+    executor, _ = make_executor_with(pool, space, log, agent._runner, agent=agent)
+    run = a_task()
+
+    await executor.execute(run)
+
+    assert EventType.RUN_FINISHED.value not in await types_of(log, run.run_id)
+
+
+async def test_the_interrupt_event_carries_the_pending_calls(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
+    agent = FakeAgent(lambda *_: chunk_stream())
+    agent.interrupt = _interrupt()
+    executor, _ = make_executor_with(pool, space, log, agent._runner, agent=agent)
+    run = a_task()
+
+    await executor.execute(run)
+
+    data = (await log.read(run.run_id))[-1].event.data
+    assert isinstance(data, InterruptData)
+    assert data.actions[0].tool_name == "delete"
+    assert data.actions[0].args == {"file_path": "/workspace/a.csv"}
+
+
+async def test_a_resumed_run_carries_the_decisions_to_the_agent(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
+    agent = FakeAgent(lambda *_: chunk_stream(usage_chunk(50, 5)))
+    executor, repository = make_executor_with(pool, space, log, agent._runner, agent=agent)
+    run = a_task().model_copy(update={"decisions": [Decision(index=0, type=DecisionType.APPROVE)]})
+
+    await executor.execute(run)
+
+    assert agent.resumed == [[{"type": "approve"}]]
+    assert agent.asked == []
+    assert repository.status[run.run_id] is RunStatus.SUCCEEDED
+
+
+async def test_a_resumed_run_says_so_in_run_started(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    """一次 run 会多次入队，`run.started` 因此不再等于「第一次开跑」。
+
+    分不清两者的话，「已完成的步骤没有重跑」那条保证就没法验。
+    """
+    agent = FakeAgent(lambda *_: chunk_stream())
+    executor, _ = make_executor_with(pool, space, log, agent._runner, agent=agent)
+    run = a_task().model_copy(update={"decisions": [Decision(index=0, type=DecisionType.APPROVE)]})
+
+    await executor.execute(run)
+
+    started = (await log.read(run.run_id))[0].event
+    assert started.data.resumed is True  # type: ignore[union-attr]
+
+
+async def test_a_first_run_says_it_is_not_a_resume(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    executor, _ = make_executor(pool, space, log)
+
+    run = a_task()
+    await executor.execute(run)
+
+    started = (await log.read(run.run_id))[0].event
+    assert started.data.resumed is False  # type: ignore[union-attr]
+
+
+async def test_an_interrupt_that_lost_the_race_pushes_nothing(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
+    """教师在这一刻点了停止：状态已经是 cancelled，就不该再把它拉回等待确认。"""
+    agent = FakeAgent(lambda *_: chunk_stream())
+    agent.interrupt = _interrupt()
+    executor, repository = make_executor_with(pool, space, log, agent._runner, agent=agent)
+    run = a_task()
+    repository.status[run.run_id] = RunStatus.CANCELLED
+
+    await executor.execute(run)
+
+    assert EventType.INTERRUPT.value not in await types_of(log, run.run_id)

@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
+from run.decision import Decision
 from store.redis import StreamEntry
 
 logger = logging.getLogger(__name__)
@@ -59,10 +60,18 @@ class RunTask(BaseModel):
 
     run_id: str = Field(min_length=1, description="run 标识，事件与元数据都按它归集")
     thread_id: str = Field(min_length=1, description="所属会话，沙箱与文件空间按它隔离")
-    content: str = Field(min_length=1, description="教师的问题")
+    # **续跑那一次不带问题**：教师的提问早就在 checkpoint 里了，重新发一遍
+    # 只会让 agent 以为又被问了一次
+    content: str = Field(default="", description="教师的问题。审批之后的续跑不带它")
     # worker 不拿它做任何判断（授权在提交那一刻就做完了），只把它带进日志 ——
     # 少了它，「这个用户今天的执行日志」在 worker 那一侧一条都过滤不出来
     user_id: str | None = Field(default=None, description="提交的人，只用于日志归集")
+    # **一次 run 会多次入队**：每轮审批之后都作为一条新任务重新投递。
+    # 带上决策就表示这是续跑，worker 据此从中断点恢复而不是从头开始
+    decisions: list[Decision] | None = Field(
+        default=None,
+        description="审批决策。为空表示这是第一次开跑",
+    )
 
 
 class Delivery(BaseModel):

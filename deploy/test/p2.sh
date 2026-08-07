@@ -269,11 +269,16 @@ else
     done
     [[ $final == succeeded ]] && pass "崩溃后 run 仍跑到 succeeded" || fail "崩溃后 run 没跑完：${final:-无状态}"
 
-    # **要验的是续跑而不是重跑**：从头来一遍也会成功。run.started 只应有一条 ——
-    # 重跑会让 worker 再发一次
-    started="$(curl -fsS -N "$BASE_URL/api/runs/$RUN_ID/events" 2>/dev/null | grep -c '^event: run.started')"
-    [[ $started == 1 ]] && pass "run.started 只有 1 条：接着跑的，不是从头重来" \
-        || fail "run.started 有 ${started:-0} 条 —— 看起来是重跑而不是续跑"
+    # **要验的是续跑而不是重跑**：从头来一遍也会成功。
+    #
+    # **判据在 P3 改过一次，但原意没变。** P3 之后一次 run 会多次入队（每轮审批一次），
+    # 因此 `run.started` 不再等于「这个 run 第一次开跑」—— 数它的总条数会把审批续跑
+    # 一并算成重跑。改成数 `"resumed":false` 的那些：**第一次开跑只能有一次**，
+    # 而崩溃恢复接着跑不会再产生一条。原意「已完成的步骤不重跑」一个字没松。
+    fresh="$(curl -fsS -N "$BASE_URL/api/runs/$RUN_ID/events" 2>/dev/null \
+        | grep '^data: ' | grep -c '"type":"run.started".*"resumed":false')"
+    [[ $fresh == 1 ]] && pass "第一次开跑只有 1 次：接着跑的，不是从头重来" \
+        || fail "第一次开跑有 ${fresh:-0} 次 —— 看起来是重跑而不是续跑"
 
     # 观察项，不设门槛（计划 §4）：崩溃恢复时工具重复执行了几次
     tool_call="$(curl -fsS -N "$BASE_URL/api/runs/$RUN_ID/events" 2>/dev/null | grep -c '^event: tool_call')"

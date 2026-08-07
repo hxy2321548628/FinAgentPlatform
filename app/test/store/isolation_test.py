@@ -34,6 +34,10 @@ SYSTEM_METHOD = {
     # 边界上发现标志时，以及取消端点 —— 而那个端点在调它之前已经用带 user 的查询
     # 确认过归属，查不到就是 404，走不到这一步
     (RunRepository, "cancel"),
+    # 同上，两者都是按 id 精确定位的状态流转：`wait_approval` 由 worker 在发现中断时调，
+    # `resume` 由审批端点调 —— 而那个端点在此之前已经用带 user 的查询确认过归属
+    (RunRepository, "wait_approval"),
+    (RunRepository, "resume"),
 }
 
 

@@ -35,6 +35,7 @@ from auth.session import DEFAULT_TTL_SECOND, SessionStore
 from broker.app import create_app as create_broker_app
 from broker.runtime import Broker
 from event.mapper import StreamChunk
+from event.model import InterruptAction
 from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
 from quota.usage import RunUsage
@@ -109,12 +110,29 @@ class Agent:
         self.side_effect: Exception | None = None
         self.asked: list[str] = []
         self.produce: dict[str, bytes] = {}
+        self.resumed: list[list[dict[str, object]]] = []
+        # 下一次流结束后报告的待确认调用。**用完即清**：续跑那一次不该再停下来
+        self.interrupt: list[InterruptAction] = []
         # 卡住不往下走，直到用例放行。**取消那几条用例非它不可**：假 agent 转眼就跑完，
         # 请求还没发出去 run 已经是终态了，验的就成了「取消一个已完成的 run」
         self.blocked = False
 
-    def __call__(self, backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+    def stream(self, backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
         self.asked.append(content)
+        return self._stream(backend)
+
+    def resume(
+        self, backend: BackendProtocol, thread_id: str, decisions: list[dict[str, object]]
+    ) -> AsyncIterator[StreamChunk]:
+        self.resumed.append(decisions)
+        return self._stream(backend)
+
+    async def pending(self, backend: BackendProtocol, thread_id: str) -> list[InterruptAction]:
+        """下一次流结束后要不要停在等人确认上。用完即清 —— 续跑那一次就不该再停。"""
+        waiting, self.interrupt = self.interrupt, []
+        return waiting
+
+    def _stream(self, backend: BackendProtocol) -> AsyncIterator[StreamChunk]:
 
         async def stream() -> AsyncIterator[StreamChunk]:
             while self.blocked:
@@ -237,7 +255,7 @@ def worker(
         pool=RemoteSandboxPool(connection),
         workspace=RemoteWorkspace(connection),
         log=log,
-        runner=agent,
+        agent=agent,
         repository=RunRepository(live_engine),
         cancel=CancelFlag(live_cache),
         backend_factory=backend_factory,

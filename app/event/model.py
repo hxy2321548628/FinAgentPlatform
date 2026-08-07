@@ -46,13 +46,11 @@ class EventType(StrEnum):
 
 
 class RunStatus(StrEnum):
-    """run 的生命周期状态。
-
-    `waiting_approval` 要等 HITL 审批落地才会出现。
-    """
+    """run 的生命周期状态。"""
 
     QUEUED = "queued"
     RUNNING = "running"
+    WAITING_APPROVAL = "waiting_approval"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -87,6 +85,10 @@ class RunStartedData(BaseModel):
     """`run.started` 事件的载荷。"""
 
     thread_id: str = Field(min_length=1, description="run 所属的会话")
+    # 一次 run 可能多次入队：每轮审批之后都会作为一条新任务重新投递。
+    # **因此这个事件不再等于「这个 run 第一次开跑」** —— 分不清两者的话，
+    # 「已完成的步骤没有重跑」那条保证就没法验
+    resumed: bool = Field(default=False, description="是审批之后的续跑，还是第一次开跑")
 
 
 class TokenUsage(BaseModel):
@@ -193,6 +195,28 @@ class ToolResultData(BaseModel):
     status: Literal["success", "error"] = Field(description="工具自身的成败，与 run 的成败无关")
 
 
+class InterruptAction(BaseModel):
+    """一次等着教师确认的工具调用。
+
+    DeepAgents 给的是 `action_requests` 与 `review_configs` **两个平行数组**，
+    worker 侧合并成一个并加上 `index` —— 前端不该被迫自己对齐两个数组的下标。
+    """
+
+    index: int = Field(ge=0, description="在本次中断里的下标，审批回传时按它对齐")
+    tool_name: str = Field(min_length=1, description="待确认的工具名")
+    args: dict[str, object] = Field(default_factory=dict, description="调用参数，形状由工具自己定义")
+    allowed_decisions: list[str] = Field(
+        default_factory=list,
+        description="这次调用允许哪几种决策，前端据此决定显示哪些按钮",
+    )
+
+
+class InterruptData(BaseModel):
+    """`interrupt` 事件的载荷。"""
+
+    actions: list[InterruptAction] = Field(description="待确认的调用，按 index 排列")
+
+
 class SandboxReadyData(BaseModel):
     """`sandbox.ready` 事件的载荷。
 
@@ -285,6 +309,17 @@ class ToolResultEvent(EventEnvelope):
     data: ToolResultData
 
 
+class InterruptEvent(EventEnvelope):
+    """agent 停在一次敏感调用之前，等教师确认。
+
+    **不是终态**：run 转 `waiting_approval`，事件流保持打开 —— 教师确认之后
+    同一条流上会接着出现续跑的事件。
+    """
+
+    type: Literal[EventType.INTERRUPT] = EventType.INTERRUPT
+    data: InterruptData
+
+
 type Event = (
     RunStartedEvent
     | RunFinishedEvent
@@ -297,6 +332,7 @@ type Event = (
     | ReasoningEvent
     | ToolCallEvent
     | ToolResultEvent
+    | InterruptEvent
 )
 
 # 出现即代表 run 已经结束，事件流可以收尾。SSE 端点靠它决定何时关闭连接。

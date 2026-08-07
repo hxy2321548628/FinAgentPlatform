@@ -16,6 +16,7 @@ from api.platform import Platform, get_platform
 from api.schema import RunRequest, RunResponse, ThreadResponse, UploadResponse
 from api.security import UNAUTHENTICATED_MESSAGE, CurrentUser
 from quota.usage import next_reset
+from run.approval import DEFAULT_PENDING_LIMIT, pending_count
 from sandbox.path import PathEscapeError
 from thread.repository import Thread
 
@@ -117,6 +118,13 @@ async def _require_quota(platform: Platform, user_id: str) -> None:
     if active >= allowance.concurrent_run:
         logger.info("并发超限，拒绝提交：user_id=%s active=%d limit=%d", user_id, active, allowance.concurrent_run)
         raise concurrency_limit(f"同时在跑的分析已达上限（{active}/{allowance.concurrent_run}），请等其中一个跑完")
+
+    # **待审批数与并发配额是两回事**：等人确认既不占 worker 也不占沙箱，因此不占并发；
+    # 但「不占资源」不等于「可以无限堆积」。这是防堆积的那道闸，与资源无关
+    waiting = await pending_count(platform.engine, user_id)
+    if waiting >= DEFAULT_PENDING_LIMIT:
+        logger.info("待审批堆积，拒绝提交：user_id=%s waiting=%d", user_id, waiting)
+        raise concurrency_limit(f"还有 {waiting} 个分析在等你确认，先处理掉再提交新的")
 
 
 async def _require_thread(platform: Platform, thread_id: str, user_id: str) -> Thread:
