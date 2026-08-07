@@ -38,6 +38,10 @@ DEFAULT_MAX_CONTAINER = 20
 DEFAULT_IDLE_TIMEOUT = 1800.0
 DEFAULT_QUEUE_TIMEOUT = 600.0
 
+# 租约多久没人碰就当持有方已经没了。要**远大于**一个 run 里两次工具调用之间的间隔
+# （模型思考几分钟顶天了），否则兜底自己就成了故障源
+DEFAULT_LEASE_TIMEOUT = 1800.0
+
 # 后台扫描 idle 容器的间隔。远小于 idle_timeout 即可，精确度对回收没有意义
 DEFAULT_SWEEP_INTERVAL = 60.0
 
@@ -82,6 +86,7 @@ class SandboxPool:
         max_container: 同时存活的容器数上限。
         idle_timeout: 无人使用多久后回收，秒。
         queue_timeout: 排队等待的上限，秒。
+        lease_timeout: 租约多久没人碰就强制归还，秒。持有方崩溃时的兜底。
         hardening: 容器的资源限额与隔离档位，不传则用默认值。
         container_factory: 造容器的方式，默认是 Docker。测试用它换成假容器。
     """
@@ -94,6 +99,7 @@ class SandboxPool:
         max_container: int = DEFAULT_MAX_CONTAINER,
         idle_timeout: float = DEFAULT_IDLE_TIMEOUT,
         queue_timeout: float = DEFAULT_QUEUE_TIMEOUT,
+        lease_timeout: float = DEFAULT_LEASE_TIMEOUT,
         hardening: Hardening | None = None,
         container_factory: ContainerFactory | None = None,
     ) -> None:
@@ -101,6 +107,7 @@ class SandboxPool:
         self._max_container = max_container
         self._idle_timeout = idle_timeout
         self._queue_timeout = queue_timeout
+        self._lease_timeout = lease_timeout
         self._factory = container_factory or (
             lambda thread_id, workspace: DockerContainer(
                 thread_id=thread_id, workspace=workspace, image=image, hardening=hardening
@@ -123,8 +130,9 @@ class SandboxPool:
     def current(self, thread_id: str) -> ContainerProtocol | None:
         """给出该 thread 眼下的容器，没有则返回 None。
 
-        **不申请、不排队、不改占用**。给文件工具用：它们直接读写宿主目录，
-        容器在不在都照常可用，为一次 `read_file` 去排队等一个容器是荒唐的。
+        **不申请、不排队、不改占用**，但会刷新最近使用时间：每次工具调用都会走到
+        这里，因此它是「持有租约的那一侧还活着」的现成证据，`sweep` 据此判断
+        一个久无人问津的租约是不是该强制归还。
 
         Args:
             thread_id: 会话标识。
@@ -133,7 +141,10 @@ class SandboxPool:
             正在跑的容器，或 None。
         """
         slot = self._slot.get(thread_id)
-        return None if slot is None else slot.container
+        if slot is None:
+            return None
+        slot.last_used = time.monotonic()
+        return slot.container
 
     async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> ContainerProtocol:
         """取得一个 thread 的容器，必要时排队等待。
@@ -214,8 +225,9 @@ class SandboxPool:
             await self._pump()
 
     async def sweep(self) -> None:
-        """回收 idle 超时的容器，并把腾出的名额分给排队者。"""
+        """强制归还失效的租约，回收 idle 超时的容器，并把腾出的名额分给排队者。"""
         async with self._lock:
+            self._expire_lease()
             deadline = time.monotonic() - self._idle_timeout
             stale = [
                 thread_id for thread_id, slot in self._slot.items() if slot.lease == 0 and slot.last_used <= deadline
@@ -224,6 +236,26 @@ class SandboxPool:
                 logger.info("沙箱 idle 超时，回收容器：thread_id=%s", thread_id)
                 await self._discard(thread_id)
             await self._pump()
+
+    def _expire_lease(self) -> None:
+        """把久无人问津的租约归零，在持锁状态下调用。
+
+        本进程之外的东西也能持有租约：api 在 `acquire` 与 `release` 之间崩溃，
+        broker 这边的 `lease` 就永远归不了零 —— 而 lease>0 的 slot 既不受 idle
+        回收管、也不会被淘汰，一次崩溃就永久少一个沙箱名额。
+
+        只归零、不直接销毁：万一是一个格外慢的 run 还在跑，容器留着它仍能用，
+        只是从此可被淘汰。销毁是紧接着的 idle 回收该做的判断。
+        """
+        deadline = time.monotonic() - self._lease_timeout
+        for thread_id, slot in self._slot.items():
+            if slot.lease > 0 and slot.last_used <= deadline:
+                logger.warning(
+                    "租约 %.0f 秒无人问津，判定持有方已不在，强制归还：thread_id=%s",
+                    self._lease_timeout,
+                    thread_id,
+                )
+                slot.lease = 0
 
     def start_sweeper(self, *, interval: float = DEFAULT_SWEEP_INTERVAL) -> None:
         """起一个后台任务定期回收 idle 容器，重复调用无效。

@@ -20,7 +20,12 @@ from sandbox.container import (
     DEFAULT_TMP_SIZE,
     Hardening,
 )
-from sandbox.pool import DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONTAINER, DEFAULT_QUEUE_TIMEOUT
+from sandbox.pool import (
+    DEFAULT_IDLE_TIMEOUT,
+    DEFAULT_LEASE_TIMEOUT,
+    DEFAULT_MAX_CONTAINER,
+    DEFAULT_QUEUE_TIMEOUT,
+)
 from sandbox.quota import DEFAULT_DISK_QUOTA, DEFAULT_QUOTA_COMMAND
 from sandbox.remote import DEFAULT_BROKER_URL
 
@@ -88,6 +93,11 @@ class Settings(BaseSettings):
         default=DEFAULT_QUEUE_TIMEOUT,
         gt=0,
         description="沙箱排队等待的上限，秒。超时的 run 转失败且标记可重试",
+    )
+    sandbox_lease_timeout: float = Field(
+        default=DEFAULT_LEASE_TIMEOUT,
+        gt=0,
+        description="租约多久没人碰就强制归还，秒。api 崩在 acquire 与 release 之间时的兜底",
     )
 
     # 加固清单里有中间档的几项。只读 rootfs、cap-drop、no-new-privileges 不在此列 ——

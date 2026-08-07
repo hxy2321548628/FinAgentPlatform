@@ -336,6 +336,56 @@ async def test_the_sweep_keeps_containers_that_are_still_within_the_idle_window(
     await pool.aclose()
 
 
+# ------------------------------------------------------------------ 租约失效兜底
+async def test_a_lease_nobody_touches_any_more_is_released(tmp_path: Path, factory: Factory) -> None:
+    """持有方若在 acquire 与 release 之间崩溃，这个名额本会被永久占住。
+
+    lease>0 的 slot 既不受 idle 回收管、也不会被淘汰，而崩掉的那一侧再也不会来
+    release。没有兜底的话，一次崩溃就永久少一个沙箱名额。
+    """
+    pool = make_pool(tmp_path, factory, idle_timeout=0.0, lease_timeout=0.05)
+
+    await pool.acquire("thread-1")
+    await asyncio.sleep(0.1)
+    await pool.sweep()
+
+    assert factory.made[0].stopped
+    assert pool.size == 0
+    await pool.aclose()
+
+
+async def test_a_lease_that_is_still_being_used_survives(tmp_path: Path, factory: Factory) -> None:
+    """跑着的 run 每次工具调用都会经 `current` 摸一次容器，那就是它还活着的证据。"""
+    pool = make_pool(tmp_path, factory, idle_timeout=0.0, lease_timeout=0.05)
+
+    await pool.acquire("thread-1")
+    await asyncio.sleep(0.1)
+    pool.current("thread-1")
+    await pool.sweep()
+
+    assert not factory.made[0].stopped
+    await pool.aclose()
+
+
+async def test_touching_a_thread_without_a_container_is_harmless(tmp_path: Path, factory: Factory) -> None:
+    pool = make_pool(tmp_path, factory)
+
+    assert pool.current("never-acquired") is None
+
+    await pool.aclose()
+
+
+async def test_a_long_run_is_not_cut_off_by_the_default_lease_window(tmp_path: Path, factory: Factory) -> None:
+    """默认窗口要远大于两次工具调用之间的间隔，否则兜底本身就成了故障源。"""
+    pool = make_pool(tmp_path, factory, idle_timeout=0.0)
+
+    await pool.acquire("thread-1")
+    await pool.sweep()
+
+    assert not factory.made[0].stopped
+    await pool.aclose()
+
+
 async def test_a_reclaimed_thread_gets_a_fresh_container_next_time(tmp_path: Path, factory: Factory) -> None:
     """回收只销毁容器，workspace 留在盘上 —— 下次重建后文件还在。"""
     pool = make_pool(tmp_path, factory, idle_timeout=0.0)

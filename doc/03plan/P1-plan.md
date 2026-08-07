@@ -56,7 +56,7 @@
 | 认证、RBAC、配额、限流 | 仍是固定假 `user_id`，无越权隔离 | P3 |
 | HITL 审批、主动取消 | run 仍只有四态 | P3 |
 | 工具幂等键去重 | 崩溃在工具执行途中仍会重复执行 | P3（**broker 拆分后落点已就位**，见步骤三） |
-| 跨进程租约的失效兜底 | api 若在 `acquire` 与 `release` 之间崩溃，broker 侧该容器的 `lease` 永远归不了零，既不被 idle 回收也不被驱逐 —— 一个沙箱名额被永久占住 | P2（**本期新增的缺口**：P0 单进程时有 `finally` 兜着，拆开进程后没有了。P2 拆 worker 时正面处理，见 [`sandbox/pool.py`](../../app/sandbox/pool.py) 的 `lease == 0` 判定） |
+| 跨进程租约的**精确**失效检测 | 兜底已于 2026-08-07 补上：`sweep` 会把 `SANDBOX_LEASE_TIMEOUT`（默认 1800 秒）内无人碰过的租约强制归零，见 [`sandbox/pool.py`](../../app/sandbox/pool.py) 的 `_expire_lease`。活跃信号取自 `current()` —— 每次工具调用都会走到它。**仍不精确的部分**：兜底是超时而非事件，崩溃后那个名额还要空占最多 30 分钟；且多 worker 后「谁的租约」无从区分 | P2（拆 worker 时连同 Redis 一起做成有主的租约） |
 | 内网 pypi 镜像（devpi） | agent 装不了任何包，只能用镜像预装的栈 | 本期定案不做，见 §2.2 |
 | workspace 归档回收 | 磁盘占用仍是「历史 thread 数 × 最多 5GB」，worst case TB 级 | [§6.5](../01design/01architecture.md) 待定，**P2 前必须排** |
 | 前端 | 仍只能 curl 验收 | 另行排期，[P0 §4](./P0-plan.md) 的遗留问题仍未关闭 |

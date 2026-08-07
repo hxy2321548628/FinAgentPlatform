@@ -95,6 +95,7 @@ def build_broker(settings: Settings) -> Broker:
         max_container=settings.sandbox_max_container,
         idle_timeout=settings.sandbox_idle_timeout,
         queue_timeout=settings.sandbox_queue_timeout,
+        lease_timeout=settings.sandbox_lease_timeout,
         hardening=settings.hardening(),
     )
     return Broker(workspace=workspace, pool=pool)
