@@ -6,7 +6,7 @@
 |---|---|---|
 | [P0-plan.md](./P0-plan.md) | agent 好不好用 —— 教师提问，agent 自己写 Python、跑、出图 | 已完成（2026-08-03，验收四条全过） |
 | [P1-plan.md](./P1-plan.md) | 不可信代码跑在这台机器上安不安全 —— gVisor、配额、broker 拆分 | 已完成（2026-08-07，验收六条全过） |
-| [P2-plan.md](./P2-plan.md) | 这台机器上的东西挂了会怎样 —— Postgres、Redis、worker 拆分 | 六步已实施（2026-08-07）；验收 ②③⑥ 已过，①④⑤ 待跑（要 LLM），见 [§8](./P2-plan.md) |
+| [P2-plan.md](./P2-plan.md) | 这台机器上的东西挂了会怎样 —— Postgres、Redis、worker 拆分 | 六步已实施、验收六条已过（2026-08-07，其中⑤ 首轮报红后修复）；租约记名这笔债未偿，见 [§8.2](./P2-plan.md) |
 
 配套的验收操作步骤在 [`doc/04acceptance-guide/`](../04acceptance-guide/)，验收脚本在 [`deploy/test/`](../../deploy/test/)。
 
