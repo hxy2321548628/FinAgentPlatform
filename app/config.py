@@ -39,6 +39,8 @@ from store.postgres import (
     build_dsn,
 )
 from store.redis import DEFAULT_URL
+from task.queue import DEFAULT_CLAIM_IDLE_MILLISECOND
+from worker.loop import DEFAULT_CONCURRENCY, DEFAULT_HEARTBEAT_SECOND
 
 # .env 在仓库根而不在 app/，且门禁（cwd=app/）与 uvicorn（cwd 不定）的工作目录并不一致，
 # 因此按本文件位置解析成绝对路径 —— 相对路径或向上搜索都会在某种场景下静默读到别的文件。
@@ -139,6 +141,22 @@ class Settings(StoreSettings):
     broker_url: str = Field(
         default=DEFAULT_BROKER_URL,
         description="sandbox-broker 的地址。它是唯一持有 docker.sock 的进程，只在内网监听",
+    )
+
+    worker_concurrency: int = Field(
+        default=DEFAULT_CONCURRENCY,
+        gt=0,
+        description="一个 worker 同时驱动几个 run。副本数解决的是可用性，这一项才是吞吐",
+    )
+    worker_heartbeat_second: float = Field(
+        default=DEFAULT_HEARTBEAT_SECOND,
+        gt=0,
+        description="worker 多久给自己持有的任务消息续一次命。要明显小于认领阈值",
+    )
+    worker_claim_idle_millisecond: int = Field(
+        default=DEFAULT_CLAIM_IDLE_MILLISECOND,
+        gt=0,
+        description="任务消息闲置多久后允许别的 worker 认领，毫秒。崩溃恢复的延迟上限就是它",
     )
 
     sandbox_image: str = Field(

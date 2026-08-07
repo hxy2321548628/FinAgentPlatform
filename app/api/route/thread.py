@@ -54,7 +54,7 @@ async def submit_run(
     """
     await _require_thread(platform, thread_id)
 
-    run = await platform.executor.submit(thread_id=thread_id, content=request.content)
+    run = await platform.submitter.submit(thread_id=thread_id, content=request.content)
     return RunResponse(id=run.id, thread_id=run.thread_id, status=run.status)
 
 

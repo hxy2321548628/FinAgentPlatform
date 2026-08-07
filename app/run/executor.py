@@ -1,18 +1,17 @@
-"""Run 执行器：领一次提问，申请沙箱，驱动智能体，把过程写成事件。
+"""Run 执行器：接一条任务，申请沙箱，驱动智能体，把过程写成事件。
 
-**提交与执行是分开的**：`submit` 立刻返回，执行在后台任务里跑 —— 一次分析要几分钟到
-几十分钟，请求-响应承载不了。教师通过订阅事件日志看进度，不是等这个调用返回。
+**这里只跑 worker 进程里的那一半。** 提交那一半在 `run/submitter.py` —— 一次分析要
+几分钟到几十分钟，请求-响应承载不了，两侧的交界是队列里的一条任务消息。教师通过订阅
+事件日志看进度。
 
 本期 run 只有四态（`queued → running → succeeded/failed`）：没有主动取消，没有 HITL
 审批，也没有自动重试。失败时只在 `run.failed` 里给出 `retryable`，重不重试由人决定。
 """
 
-import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Callable
 from typing import Protocol
-from uuid import uuid4
 
 from deepagents.backends.protocol import BackendProtocol
 
@@ -39,6 +38,7 @@ from run.log import EventLog
 from run.repository import Run
 from sandbox.pool import SandboxQueueTimeoutError
 from sandbox.remote import AsyncQueuePositionCallback, RemoteBackendFactory
+from task.queue import RunTask
 
 logger = logging.getLogger(__name__)
 
@@ -77,18 +77,10 @@ class SandboxPoolProtocol(Protocol):
 
 
 class RunRepositoryProtocol(Protocol):
-    """执行器对 run 元数据仓储的全部要求。
+    """执行器对 run 元数据仓储的全部要求：只有三次状态流转。
 
-    只有五个方法：查历史 run、扫未完成的 run 都不经执行器 —— 那是端点与恢复流程的事。
+    建行在提交那一侧，查状态在端点那一侧，都不经过执行器。
     """
-
-    async def create(self, *, run_id: str, thread_id: str) -> None:
-        """记下一个刚提交的 run。"""
-        ...
-
-    async def get(self, run_id: str) -> Run | None:
-        """按 id 查一次 run。"""
-        ...
 
     async def start(self, run_id: str) -> None:
         """标记开跑。"""
@@ -104,7 +96,7 @@ class RunRepositoryProtocol(Protocol):
 
 
 class RunExecutor:
-    """把提问变成一串事件。
+    """把一条任务变成一串事件。
 
     Args:
         pool: 沙箱池。
@@ -131,37 +123,18 @@ class RunExecutor:
         self._log = log
         self._runner = runner
         self._repository = repository
-        self._task: dict[str, asyncio.Task[None]] = {}
 
-    async def submit(self, *, thread_id: str, content: str) -> Run:
-        """接下一次提问并立刻返回，执行在后台进行。
+    async def execute(self, task: RunTask) -> None:
+        """跑完一条已经领到手的任务。
+
+        **不抛异常**：智能体那一侧什么都可能出事，但那些都该变成 `run.failed` 事件，
+        而不是让调用方（worker 的主循环）去接。
 
         Args:
-            thread_id: 提问所属的会话。
-            content: 教师的问题。
-
-        Returns:
-            状态为 `queued` 的 run 记录，`id` 用于订阅事件与查询状态。
+            task: 从队列里领到的任务。
         """
-        run = Run(id=uuid4().hex, thread_id=thread_id, status=RunStatus.QUEUED)
-        # 先落库再起任务：反过来的话，后台任务可能抢在这一行之前就去改状态
-        await self._repository.create(run_id=run.id, thread_id=run.thread_id)
-        self._task[run.id] = asyncio.create_task(self._drive(run, content))
-        return run
-
-    async def get(self, run_id: str) -> Run | None:
-        """按 id 查一次 run，不存在时返回 None。"""
-        return await self._repository.get(run_id)
-
-    async def wait(self, run_id: str) -> None:
-        """等一个 run 跑完。未知的 run 直接返回。"""
-        task = self._task.get(run_id)
-        if task is not None:
-            await task
-
-    async def aclose(self) -> None:
-        """等所有在跑的 run 结束。"""
-        await asyncio.gather(*self._task.values(), return_exceptions=True)
+        run = Run(id=task.run_id, thread_id=task.thread_id, status=RunStatus.RUNNING)
+        await self._drive(run, task.content)
 
     async def _drive(self, run: Run, content: str) -> None:
         # 每个 run 跑在自己的任务里，任务启动时会复制一份 context，

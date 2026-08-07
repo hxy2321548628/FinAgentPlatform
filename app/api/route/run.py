@@ -27,7 +27,7 @@ SSE_HEADER = {
 @router.get("/{run_id}")
 async def get_run(run_id: str, platform: Annotated[Platform, Depends(get_platform)]) -> RunResponse:
     """查一次 run 的当前状态。"""
-    run = await platform.executor.get(run_id)
+    run = await platform.repository.get(run_id)
     if run is None:
         message = f"run 不存在：{run_id}"
         raise not_found(message)
@@ -45,7 +45,7 @@ async def stream_events(
     带上 `Last-Event-ID` 就从那个 id 之后接着推，中间产生的事件全部补齐。
     流在 run 进入终态时自然结束。
     """
-    if await platform.executor.get(run_id) is None:
+    if await platform.repository.get(run_id) is None:
         message = f"run 不存在：{run_id}"
         raise not_found(message)
 

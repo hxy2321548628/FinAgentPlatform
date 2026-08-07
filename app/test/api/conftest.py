@@ -6,20 +6,22 @@
 
 假的只有两样：**沙箱池**（不起 Docker）与**智能体**（不打模型 API）。
 其余全是真的 —— 真的执行器、真的事件日志、真的 workspace、真的 broker 路由，
-以及**真的 Postgres**：`GET /runs/{id}` 现在读的是 `runs` 表，拿假仓储顶掉
-就等于不验它。库没起时这一整包会 skip。
+以及真的 Postgres 与 Redis：`GET /runs/{id}` 读的是 `runs` 表，事件流是 Stream，
+拿假的顶掉就等于不验它们。库没起时这一整包会 skip。
+
+**worker 与 api 恰好跑在同一个进程里，但中间仍然走真的队列**：`POST /runs` 只
+`XADD`，事件是 worker 从 `XREADGROUP` 领走之后才写的。同进程只是省掉一次
+`docker compose up`，投递与消费这条链路没有被绕过。
 """
 
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
-from typing import cast
 
 import httpx
 import pytest
 from deepagents.backends.protocol import BackendProtocol
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -31,19 +33,21 @@ from event.mapper import StreamChunk
 from run.executor import RunExecutor
 from run.log import EventLog
 from run.repository import RunRepository
+from run.submitter import RunSubmitter
 from sandbox.backend import SandboxBackend
 from sandbox.container import CommandResult
 from sandbox.pool import QueuePositionCallback
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
 from sandbox.workspace import Workspace
-from store.checkpoint import CONNECTION_KWARGS, CheckpointPool
+from task.queue import TaskQueue
+from worker.loop import Worker
 
 BROKER_URL = "http://broker.test"
 
-# 这两样在这里用不上：端点不碰 Redis，checkpointer 被假 agent 顶掉了。
-# 给的是没连过的对象 —— 建它们不发起连接
-UNUSED_CONNINFO = "postgresql://unused@127.0.0.1:1/unused"
-UNUSED_REDIS_URL = "redis://127.0.0.1:1/0"
+TEST_CONSUMER = "test-worker"
+
+# worker 的主循环靠它回到「该停了没」的判断上。默认 5 秒会让每条用例都多等一轮
+TEST_BLOCK_MILLISECOND = 50
 
 
 class FakeContainer:
@@ -131,25 +135,47 @@ def connection(broker_app: FastAPI) -> BrokerConnection:
 
 
 @pytest.fixture
-async def checkpoint_pool() -> AsyncIterator[CheckpointPool]:
-    created = cast(CheckpointPool, AsyncConnectionPool(conninfo=UNUSED_CONNINFO, kwargs=CONNECTION_KWARGS, open=False))
-    yield created
-    await created.close()
+def queue(live_cache: Redis) -> TaskQueue:
+    """测试用的队列。
+
+    阻塞时间取得很短：worker 的主循环靠它回到「该停了没」的判断上，
+    默认的 5 秒会让每条用例的收尾都等上一轮。
+    """
+    return TaskQueue(live_cache, consumer=TEST_CONSUMER, block_millisecond=TEST_BLOCK_MILLISECOND)
 
 
 @pytest.fixture
 def platform(
+    connection: BrokerConnection,
+    log: EventLog,
+    live_engine: AsyncEngine,
+    live_cache: Redis,
+    queue: TaskQueue,
+) -> Platform:
+    repository = RunRepository(live_engine)
+    return Platform(
+        workspace=RemoteWorkspace(connection),
+        log=log,
+        submitter=RunSubmitter(repository=repository, queue=queue),
+        repository=repository,
+        connection=connection,
+        backend_factory=RemoteBackendFactory(base_url=BROKER_URL),
+        engine=live_engine,
+        cache=live_cache,
+    )
+
+
+@pytest.fixture
+def worker(
     connection: BrokerConnection,
     space: Workspace,
     pool: FakePool,
     log: EventLog,
     agent: Agent,
     live_engine: AsyncEngine,
-    live_cache: Redis,
-    checkpoint_pool: CheckpointPool,
-) -> Platform:
-    workspace = RemoteWorkspace(connection)
-    remote_pool = RemoteSandboxPool(connection)
+    queue: TaskQueue,
+) -> Worker:
+    """跑在 api 同一个进程里的 worker。中间那条队列是真的。"""
 
     # backend 是同步的，没法走 ASGI 传输（那是纯异步的）。这里换成本地实现直接读写
     # 同一个 tmp 目录 —— agent 侧看到的接口一模一样，而 broker 那边读到的是同一批文件，
@@ -158,24 +184,14 @@ def platform(
         return SandboxBackend(workspace=space.path(thread_id), container=pool.current(thread_id) or FakeContainer())
 
     executor = RunExecutor(
-        pool=remote_pool,
-        workspace=workspace,
+        pool=RemoteSandboxPool(connection),
+        workspace=RemoteWorkspace(connection),
         log=log,
         runner=agent,
         repository=RunRepository(live_engine),
         backend_factory=backend_factory,
     )
-    return Platform(
-        workspace=workspace,
-        pool=remote_pool,
-        log=log,
-        executor=executor,
-        connection=connection,
-        backend_factory=RemoteBackendFactory(base_url=BROKER_URL),
-        engine=live_engine,
-        cache=live_cache,
-        checkpoint_pool=checkpoint_pool,
-    )
+    return Worker(queue=queue, executor=executor)
 
 
 @pytest.fixture
@@ -184,18 +200,20 @@ def api(platform: Platform) -> FastAPI:
 
 
 @pytest.fixture
-def client(api: FastAPI, live_cache: Redis, live_engine: AsyncEngine) -> Iterator[TestClient]:
-    """跑在 `TestClient` 自己那条事件循环上的客户端。
+def client(api: FastAPI, worker: Worker, live_cache: Redis, live_engine: AsyncEngine) -> Iterator[TestClient]:
+    """跑在 `TestClient` 自己那条事件循环上的客户端，外加一个同循环的 worker。
 
     **收尾要回到那条循环里做**：asyncio 的连接绑在创建它的循环上，而这些连接是应用在
     portal 的循环里建的。等回到 pytest 的循环再关，那条循环已经没了 ——
     报出来是 `Event loop is closed`，而这个消息一点都不指向真正的原因。
     """
     with TestClient(api) as opened:
+        assert opened.portal is not None
+        opened.portal.start_task_soon(worker.run)
         try:
             yield opened
         finally:
-            assert opened.portal is not None
+            opened.portal.call(worker.stop)
             opened.portal.call(live_cache.connection_pool.disconnect)
             opened.portal.call(live_engine.dispose)
 

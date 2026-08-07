@@ -18,7 +18,7 @@
 
 ```
 zuel-platform/
-├── app/            # Python 后端（uv 工程，虚拟环境在 app/.venv）。两个入口：api.app:app 与 broker.app:app
+├── app/            # Python 后端（uv 工程，虚拟环境在 app/.venv）。三个入口：api.app:app、broker.app:app、worker.main
 ├── frontend/       # React 前端（未开始）
 ├── deploy/         # 部署配置：compose.yml（nginx+api+broker+postgres+redis）、两个 Dockerfile、nginx.conf、环境搭建与验收脚本
 ├── doc/            # 设计文档，见上方文档地图
@@ -49,10 +49,11 @@ cd app && uv run alembic upgrade head    # 建 runs 等业务表。测试会自�
 # 环境（gVisor + XFS prjquota）。新机器要跑一次，脚本可重跑
 sudo bash deploy/setup-gvisor.sh && sudo bash deploy/setup-xfs.sh && sudo bash deploy/verify-env.sh
 
-# 起服务。**两个进程**：broker 持有 docker.sock，api 只发 HTTP 给它。
+# 起服务。**三个进程**：broker 持有 docker.sock；worker 驱动智能体；api 只投递任务与转 SSE。
 # cwd 必须在 app/ —— 模块路径是 api.app，从仓库根起会 ModuleNotFoundError
-cd app && uv run uvicorn broker.app:app --port 8100   # 先起它，api 依赖它
+cd app && uv run uvicorn broker.app:app --port 8100   # 先起它，另两个依赖它
 cd app && uv run uvicorn api.app:app --reload         # 另开一个终端
+cd app && uv run python -m worker.main                # 再开一个。不起它的话 run 会一直停在 queued
 ```
 
 整套跑起来（nginx + api + broker）用 Compose：

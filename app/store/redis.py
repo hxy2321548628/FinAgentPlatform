@@ -13,6 +13,11 @@ logger = logging.getLogger(__name__)
 # 开发机默认值，与 deploy/compose.yml 里 redis 服务对齐
 DEFAULT_URL = "redis://127.0.0.1:6379/0"
 
+# Stream 里的一条：id 与字段表。客户端建的时候开了 decode_responses，
+# 因此实际拿到的都是 str，而 redis-py 的签名把 bytes 与 None 也算在内 ——
+# 读命令那几处要 cast 一次，原因就是这个
+type StreamEntry = tuple[str, dict[str, str]]
+
 
 class RedisUnavailableError(RuntimeError):
     """连不上 Redis。

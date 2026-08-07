@@ -5,6 +5,9 @@
 
 **这个进程不碰 Docker，也不碰宿主机上的 workspace 目录** —— 沙箱与文件都在
 broker 那边，这里只有到它的一条 HTTP 连接。
+
+**它也不再驱动智能体**：模型、checkpointer、沙箱申请全在 worker 那边。网关剩下的
+只有三件事 —— 收提问并投进队列、查 run 的状态、把事件流转成 SSE。
 """
 
 from dataclasses import dataclass
@@ -13,14 +16,17 @@ from fastapi import Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from agent.factory import create_model, create_runner
 from config import Settings
-from run.executor import RunExecutor
 from run.log import EventLog
 from run.repository import RunRepository
-from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
+from run.submitter import RunSubmitter
+from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteWorkspace
 from store import postgres, redis
-from store.checkpoint import CheckpointPool, open_checkpoint
+from task.queue import TaskQueue
+
+# 网关只投递不消费，consumer 名字用不上。给一个显式的常量而不是空串，
+# 是为了万一有人拿它去 XREADGROUP 时能一眼看出是谁干的
+PRODUCER_NAME = "api"
 
 
 @dataclass(frozen=True)
@@ -28,15 +34,13 @@ class Platform:
     """网关持有的运行时。"""
 
     workspace: RemoteWorkspace
-    pool: RemoteSandboxPool
     log: EventLog
-    executor: RunExecutor
+    submitter: RunSubmitter
+    repository: RunRepository
     connection: BrokerConnection
     backend_factory: RemoteBackendFactory
     engine: AsyncEngine
     cache: Redis
-    # checkpointer 自己被 runner 闭包持着，这里留的是它那条池子 —— 应用关闭时要归还
-    checkpoint_pool: CheckpointPool
 
 
 async def build_platform(settings: Settings) -> Platform:
@@ -58,31 +62,18 @@ async def build_platform(settings: Settings) -> Platform:
     await postgres.check(engine)
     cache = redis.create_client(settings.redis_url)
     await redis.check(cache)
-    checkpoint = await open_checkpoint(settings.postgres_conninfo())
 
     connection = BrokerConnection(base_url=settings.broker_url)
-    workspace = RemoteWorkspace(connection)
-    pool = RemoteSandboxPool(connection)
-    log = EventLog(cache)
-    backend_factory = RemoteBackendFactory(base_url=settings.broker_url)
-    executor = RunExecutor(
-        pool=pool,
-        workspace=workspace,
-        log=log,
-        runner=create_runner(model=create_model(settings), checkpointer=checkpoint.saver),
-        repository=RunRepository(engine),
-        backend_factory=backend_factory,
-    )
+    repository = RunRepository(engine)
     return Platform(
-        workspace=workspace,
-        pool=pool,
-        log=log,
-        executor=executor,
+        workspace=RemoteWorkspace(connection),
+        log=EventLog(cache),
+        submitter=RunSubmitter(repository=repository, queue=TaskQueue(cache, consumer=PRODUCER_NAME)),
+        repository=repository,
         connection=connection,
-        backend_factory=backend_factory,
+        backend_factory=RemoteBackendFactory(base_url=settings.broker_url),
         engine=engine,
         cache=cache,
-        checkpoint_pool=checkpoint.pool,
     )
 
 

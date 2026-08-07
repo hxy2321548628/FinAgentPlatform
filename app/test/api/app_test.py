@@ -9,7 +9,7 @@ from pydantic import SecretStr
 from api.app import create_app
 from api.platform import build_platform
 from config import Settings
-from sandbox.remote import RemoteSandboxPool, RemoteWorkspace
+from sandbox.remote import RemoteWorkspace
 from store.postgres import PostgresUnavailableError
 from store.redis import RedisUnavailableError
 
@@ -53,10 +53,11 @@ async def test_a_platform_built_from_settings_wires_everything_together(tmp_path
     platform = await build_platform(settings)
 
     try:
-        # 装配阶段不该碰 broker、不该碰盘：这三样都只是拿到了一条到 broker 的连接
+        # 装配阶段不该碰 broker、不该碰盘：workspace 只是拿到了一条到 broker 的连接。
+        # **网关这一侧没有沙箱池、没有模型、没有 checkpointer** —— 那些都随 worker 走了
         assert isinstance(platform.workspace, RemoteWorkspace)
-        assert isinstance(platform.pool, RemoteSandboxPool)
-        assert await platform.executor.get("never-existed") is None
+        assert not hasattr(platform, "executor")
+        assert await platform.repository.get("never-existed") is None
     finally:
         await platform.engine.dispose()
         await platform.cache.aclose()
@@ -101,5 +102,5 @@ def test_an_app_without_an_injected_platform_builds_its_own(tmp_path: Path, monk
     monkeypatch.setattr("api.app.get_settings", lambda: settings)
 
     with TestClient(create_app()) as client:
-        assert client.app.state.platform.executor is not None  # type: ignore[attr-defined]
+        assert client.app.state.platform.submitter is not None  # type: ignore[attr-defined]
         assert client.get("/docs").status_code == 200

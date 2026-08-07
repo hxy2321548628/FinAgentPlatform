@@ -1,4 +1,4 @@
-# 内网单机部署：nginx + api + broker + postgres + redis 五个服务。
+# 内网单机部署：nginx + api + worker×2 + broker + postgres + redis。
 #
 #   docker compose -f deploy/compose.yml up -d --build
 #
@@ -43,6 +43,7 @@ services:
       REDIS_URL: redis://redis:6379/0
     # **不挂 docker.sock，也不挂 workspace** —— 这两条就是 ADR-0004 的全部内容。
     # api 被 agent 生成的内容影响之后，能做的最多是发几个 HTTP 请求给 broker。
+    # 拆出 worker 之后它连模型都不碰了：收提问投队列、查状态、把事件转 SSE，就这三件事。
     #
     # 两个存储等 healthcheck 过了再起 api：api 启动时就会体检连接，
     # 抢在 Postgres 初始化完成之前起来只会白白 restart 几轮
@@ -53,6 +54,38 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/app.Dockerfile
+    # 不是 HTTP 服务，因此没有 uvicorn，也不开端口
+    command: python -m worker.main
+    # 副本数解决的是「这个进程挂了怎么办」，不是吞吐 ——
+    # 吞吐靠 WORKER_CONCURRENCY，一个进程内并发驱动多个 run
+    deploy:
+      replicas: 2
+    env_file:
+      - ../.env
+    environment:
+      BROKER_URL: http://broker:8100
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+    # **迁移不由 worker 跑**：多副本会撞在同一把 DDL 锁上，那是 api 的活。
+    # 表还没建好时 worker 起来也无妨 —— 它要等到有任务投进来才碰 runs 表
+    depends_on:
+      broker:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # 滚动重启时给优雅停机留出时间：worker 收到 SIGTERM 后不再领新任务，
+    # 但会等在跑的 run 结束 —— 一次分析几十分钟，掐掉等于把烧过的 token 扔了。
+    # 默认的 10 秒远远不够
+    stop_grace_period: 30m
     restart: unless-stopped
 
   postgres:

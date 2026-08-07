@@ -1,4 +1,9 @@
-"""执行器的测试，用假 agent 与假沙箱池 —— 一律不打真实模型 API。"""
+"""执行器的测试，用假 agent 与假沙箱池 —— 一律不打真实模型 API。
+
+**执行器只跑 worker 那一半**：入口是一条已经领到手的任务，不是一次提交。
+「提交之后是不是立刻返回」在 submitter_test.py 里，「领到之后 ack 不 ack」
+在 test/worker/ 里。
+"""
 
 import asyncio
 import json
@@ -6,6 +11,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from io import StringIO
+from uuid import uuid4
 
 import pytest
 from deepagents.backends.protocol import BackendProtocol
@@ -15,11 +21,11 @@ from redis.asyncio import Redis
 from event.mapper import StreamChunk
 from event.model import EventType, RunErrorCode, RunFinishedData, RunStatus, TokenUsage
 from log import JsonFormatter
-from run.executor import RunExecutor
+from run.executor import AgentRunner, RunExecutor
 from run.log import EventLog
-from run.repository import Run
 from sandbox.pool import SandboxQueueTimeoutError
 from sandbox.remote import AsyncQueuePositionCallback
+from task.queue import RunTask
 
 THREAD = "thread-1"
 
@@ -61,37 +67,27 @@ class FakeWorkspace:
 
 
 class FakeRepository:
-    """内存里的 run 元数据。
+    """记下状态流转的假仓储。
 
-    真的那一套 (`runs` 表) 在 test/run/repository_test.py 里连真库验；
-    这里要验的是执行器的状态流转顺序，不是 SQL。
+    **建行不在这里**：那一步在提交侧（submitter），worker 领到任务时那一行早就有了。
+    真的那一套 SQL 在 test/run/repository_test.py 里连真库验。
     """
 
     def __init__(self) -> None:
-        self.run: dict[str, Run] = {}
+        self.status: dict[str, RunStatus] = {}
         self.tokens: dict[str, TokenUsage] = {}
         self.error: dict[str, tuple[RunErrorCode, str]] = {}
 
-    async def create(self, *, run_id: str, thread_id: str) -> None:
-        self.run[run_id] = Run(id=run_id, thread_id=thread_id, status=RunStatus.QUEUED)
-
-    async def get(self, run_id: str) -> Run | None:
-        return self.run.get(run_id)
-
     async def start(self, run_id: str) -> None:
-        self._move(run_id, RunStatus.RUNNING)
+        self.status[run_id] = RunStatus.RUNNING
 
     async def succeed(self, run_id: str, *, tokens: TokenUsage) -> None:
         self.tokens[run_id] = tokens
-        self._move(run_id, RunStatus.SUCCEEDED)
+        self.status[run_id] = RunStatus.SUCCEEDED
 
     async def fail(self, run_id: str, *, code: RunErrorCode, message: str) -> None:
         self.error[run_id] = (code, message)
-        self._move(run_id, RunStatus.FAILED)
-
-    def _move(self, run_id: str, status: RunStatus) -> None:
-        current = self.run[run_id]
-        self.run[run_id] = Run(id=current.id, thread_id=current.thread_id, status=status)
+        self.status[run_id] = RunStatus.FAILED
 
 
 def chunk_stream(*chunk: StreamChunk) -> AsyncIterator[StreamChunk]:
@@ -136,11 +132,26 @@ def log(live_cache: Redis) -> EventLog:
     return EventLog(live_cache)
 
 
-def make_executor(pool: FakePool, space: FakeWorkspace, log: EventLog, *chunk: StreamChunk) -> RunExecutor:
+def a_task(thread_id: str = THREAD, content: str = "一") -> RunTask:
+    """一条队列里领到的任务。真实的 run id 就是 uuid4().hex。"""
+    return RunTask(run_id=uuid4().hex, thread_id=thread_id, content=content)
+
+
+def make_executor(
+    pool: FakePool, space: FakeWorkspace, log: EventLog, *chunk: StreamChunk
+) -> tuple[RunExecutor, FakeRepository]:
     def runner(backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
         return chunk_stream(*chunk)
 
-    return RunExecutor(pool=pool, workspace=space, log=log, runner=runner, repository=FakeRepository())
+    return make_executor_with(pool, space, log, runner)
+
+
+def make_executor_with(
+    pool: FakePool, space: FakeWorkspace, log: EventLog, runner: AgentRunner
+) -> tuple[RunExecutor, FakeRepository]:
+    repository = FakeRepository()
+    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=runner, repository=repository)
+    return executor, repository
 
 
 async def artifacts_of(log: EventLog, run_id: str) -> list[str]:
@@ -161,122 +172,92 @@ async def types_of(log: EventLog, run_id: str) -> list[str]:
     return [one.event.model_dump()["type"] for one in await log.read(run_id)]
 
 
-# ------------------------------------------------------------------ 提交
-async def test_submit_returns_immediately_with_a_queued_run(
-    pool: FakePool, space: FakeWorkspace, log: EventLog
-) -> None:
-    """任务要跑几十分钟，提交必须立刻返回，不能等执行完。"""
-    executor = make_executor(pool, space, log, token_chunk("好"))
+# ------------------------------------------------------------------ 状态流转
+async def test_a_finished_run_ends_up_succeeded(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    executor, repository = make_executor(pool, space, log, token_chunk("好"))
+    run = a_task()
 
-    run = await executor.submit(thread_id=THREAD, content="算个波动率")
+    await executor.execute(run)
 
-    assert run.status is RunStatus.QUEUED
-    await executor.wait(run.id)
-
-
-async def test_each_run_gets_its_own_id(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
-    executor = make_executor(pool, space, log)
-
-    first = await executor.submit(thread_id=THREAD, content="一")
-    second = await executor.submit(thread_id=THREAD, content="二")
-
-    assert first.id != second.id
-    await executor.aclose()
-
-
-async def test_a_finished_run_is_queryable_by_id(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
-    executor = make_executor(pool, space, log)
-
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
-
-    found = await executor.get(run.id)
-    assert found is not None
-    assert found.status is RunStatus.SUCCEEDED
-
-
-async def test_an_unknown_run_is_not_found(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
-    executor = make_executor(pool, space, log)
-
-    assert await executor.get("never-existed") is None
+    assert repository.status[run.run_id] is RunStatus.SUCCEEDED
 
 
 # ------------------------------------------------------------------ 事件序列
 async def test_the_event_sequence_brackets_the_agent_output(
     pool: FakePool, space: FakeWorkspace, log: EventLog
 ) -> None:
-    executor = make_executor(pool, space, log, token_chunk("好"), token_chunk("的"))
+    executor, _ = make_executor(pool, space, log, token_chunk("好"), token_chunk("的"))
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    assert await types_of(log, run.id) == ["run.started", "sandbox.ready", "token", "token", "run.finished"]
+    assert await types_of(log, run.run_id) == ["run.started", "sandbox.ready", "token", "token", "run.finished"]
 
 
 async def test_run_started_carries_the_thread(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
-    executor = make_executor(pool, space, log)
+    executor, _ = make_executor(pool, space, log)
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    started = (await log.read(run.id))[0].event
+    started = (await log.read(run.run_id))[0].event
     assert started.data.thread_id == THREAD  # type: ignore[union-attr]
 
 
 async def test_every_event_carries_the_run_id(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
     """前端可能同时订阅多个 run，信封里没有 run_id 就没法路由。"""
-    executor = make_executor(pool, space, log, token_chunk("好"))
+    executor, _ = make_executor(pool, space, log, token_chunk("好"))
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    assert {one.event.run_id for one in (await log.read(run.id))} == {run.id}
+    assert {one.event.run_id for one in (await log.read(run.run_id))} == {run.run_id}
 
 
 async def test_event_ids_increase_monotonically_across_the_whole_run(
     pool: FakePool, space: FakeWorkspace, log: EventLog
 ) -> None:
-    executor = make_executor(pool, space, log, *[token_chunk(str(index)) for index in range(30)])
+    executor, _ = make_executor(pool, space, log, *[token_chunk(str(index)) for index in range(30)])
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    ids = [one.id for one in (await log.read(run.id))]
+    ids = [one.id for one in (await log.read(run.run_id))]
     assert ids == sorted(ids, key=lambda one: tuple(int(part) for part in one.split("-")))
 
 
 async def test_events_of_two_concurrent_runs_do_not_mix(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
-    executor = make_executor(pool, space, log, token_chunk("好"))
+    executor, _ = make_executor(pool, space, log, token_chunk("好"))
 
-    first = await executor.submit(thread_id="thread-1", content="一")
-    second = await executor.submit(thread_id="thread-2", content="二")
-    await executor.wait(first.id)
-    await executor.wait(second.id)
+    first, second = a_task(thread_id="thread-1"), a_task(thread_id="thread-2")
+    await asyncio.gather(executor.execute(first), executor.execute(second))
 
-    assert await types_of(log, first.id) == await types_of(log, second.id)
-    assert await types_of(log, first.id) == ["run.started", "sandbox.ready", "token", "run.finished"]
+    assert await types_of(log, first.run_id) == await types_of(log, second.run_id)
+    assert await types_of(log, first.run_id) == ["run.started", "sandbox.ready", "token", "run.finished"]
 
 
 # ------------------------------------------------------------------ token 计量
 async def test_run_finished_accumulates_the_tokens_across_model_calls(
     pool: FakePool, space: FakeWorkspace, log: EventLog
 ) -> None:
-    executor = make_executor(pool, space, log, usage_chunk(2916, 120), usage_chunk(4100, 80))
+    executor, _ = make_executor(pool, space, log, usage_chunk(2916, 120), usage_chunk(4100, 80))
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    assert await tokens_of(log, run.id) == TokenUsage(input_cache_read=0, input_uncached=2916 + 4100, output=120 + 80)
+    assert await tokens_of(log, run.run_id) == TokenUsage(
+        input_cache_read=0, input_uncached=2916 + 4100, output=120 + 80
+    )
 
 
 async def test_cache_hits_are_reported_apart_from_the_rest(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
     """§6.4：按 input 总数记会高估成本约 1.6 倍，两部分单价差得远，不能合并。"""
-    executor = make_executor(pool, space, log, usage_chunk(304640, 8701, cache_read=189312))
+    executor, _ = make_executor(pool, space, log, usage_chunk(304640, 8701, cache_read=189312))
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    assert await tokens_of(log, run.id) == TokenUsage(
+    assert await tokens_of(log, run.run_id) == TokenUsage(
         input_cache_read=189312,
         input_uncached=304640 - 189312,
         output=8701,
@@ -286,23 +267,23 @@ async def test_cache_hits_are_reported_apart_from_the_rest(pool: FakePool, space
 async def test_a_missing_cache_detail_counts_as_no_hit(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
     """换个不带 prompt cache 的模型时 `input_token_details` 整个不存在，不能因此崩掉。"""
     message = AIMessage(content="", usage_metadata={"input_tokens": 100, "output_tokens": 7, "total_tokens": 107})
-    executor = make_executor(pool, space, log, ((), "updates", {"model": {"messages": [message]}}))
+    executor, _ = make_executor(pool, space, log, ((), "updates", {"model": {"messages": [message]}}))
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    assert await tokens_of(log, run.id) == TokenUsage(input_cache_read=0, input_uncached=100, output=7)
+    assert await tokens_of(log, run.run_id) == TokenUsage(input_cache_read=0, input_uncached=100, output=7)
 
 
 async def test_tokens_are_zero_when_the_model_reports_no_usage(
     pool: FakePool, space: FakeWorkspace, log: EventLog
 ) -> None:
-    executor = make_executor(pool, space, log, token_chunk("好"))
+    executor, _ = make_executor(pool, space, log, token_chunk("好"))
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    assert await tokens_of(log, run.id) == TokenUsage()
+    assert await tokens_of(log, run.run_id) == TokenUsage()
 
 
 # ------------------------------------------------------------------ 排障日志
@@ -323,24 +304,24 @@ async def test_logs_emitted_during_a_run_carry_its_ids(pool: FakePool, space: Fa
 
         return stream()
 
-    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=noisy, repository=FakeRepository())
-    run = await executor.submit(thread_id=THREAD, content="一")
+    executor, _ = make_executor_with(pool, space, log, noisy)
+    run = a_task()
     try:
-        await executor.wait(run.id)
+        await executor.execute(run)
     finally:
         probe.removeHandler(handler)
 
     line = json.loads(sink.getvalue())
-    assert line["run_id"] == run.id
+    assert line["run_id"] == run.run_id
     assert line["thread_id"] == THREAD
 
 
 # ------------------------------------------------------------------ 沙箱
 async def test_the_sandbox_is_released_after_the_run(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
-    executor = make_executor(pool, space, log)
+    executor, _ = make_executor(pool, space, log)
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
     assert pool.acquired == [THREAD]
     assert pool.released == [THREAD]
@@ -359,24 +340,24 @@ async def test_the_sandbox_is_released_even_when_the_agent_blows_up(
 
         return stream()
 
-    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=exploding, repository=FakeRepository())
+    executor, _ = make_executor_with(pool, space, log, exploding)
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
     assert pool.released == [THREAD]
 
 
 async def test_queue_positions_are_emitted_as_events(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
     pool.queue_position = [3, 2, 1]
-    executor = make_executor(pool, space, log)
+    executor, _ = make_executor(pool, space, log)
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    queued = [one.event for one in (await log.read(run.id)) if one.event.type is EventType.SANDBOX_QUEUED]
+    queued = [one.event for one in (await log.read(run.run_id)) if one.event.type is EventType.SANDBOX_QUEUED]
     assert [one.data.position for one in queued] == [3, 2, 1]
-    assert (await types_of(log, run.id))[:5] == [
+    assert (await types_of(log, run.run_id))[:5] == [
         "run.started",
         "sandbox.queued",
         "sandbox.queued",
@@ -390,26 +371,26 @@ async def test_waiting_too_long_for_a_sandbox_fails_the_run_as_retryable(
 ) -> None:
     """排队超时是资源不足，不是请求有问题 —— 过一会儿重试是有意义的。"""
     pool.fail_with = SandboxQueueTimeoutError("等待沙箱超过 600 秒")
-    executor = make_executor(pool, space, log)
+    executor, repository = make_executor(pool, space, log)
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    failed = (await log.read(run.id))[-1].event
+    failed = (await log.read(run.run_id))[-1].event
     assert failed.type is EventType.RUN_FAILED
     assert failed.data.code is RunErrorCode.SANDBOX_QUEUE_TIMEOUT
     assert failed.data.retryable is True
-    assert (await executor.get(run.id)).status is RunStatus.FAILED  # type: ignore[union-attr]
+    assert repository.status[run.run_id] is RunStatus.FAILED
 
 
 async def test_a_failed_sandbox_acquisition_is_not_released(
     pool: FakePool, space: FakeWorkspace, log: EventLog
 ) -> None:
     pool.fail_with = SandboxQueueTimeoutError("等待沙箱超过 600 秒")
-    executor = make_executor(pool, space, log)
+    executor, _ = make_executor(pool, space, log)
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
     assert pool.released == []
 
@@ -423,13 +404,13 @@ async def test_an_agent_error_ends_the_run_as_failed(pool: FakePool, space: Fake
 
         return stream()
 
-    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=exploding, repository=FakeRepository())
+    executor, repository = make_executor_with(pool, space, log, exploding)
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    assert await types_of(log, run.id) == ["run.started", "sandbox.ready", "token", "run.failed"]
-    assert (await executor.get(run.id)).status is RunStatus.FAILED  # type: ignore[union-attr]
+    assert await types_of(log, run.run_id) == ["run.started", "sandbox.ready", "token", "run.failed"]
+    assert repository.status[run.run_id] is RunStatus.FAILED
 
 
 async def test_an_unclassified_error_is_not_retryable(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
@@ -442,12 +423,12 @@ async def test_an_unclassified_error_is_not_retryable(pool: FakePool, space: Fak
 
         return stream()
 
-    executor = RunExecutor(pool=pool, workspace=space, log=log, runner=exploding, repository=FakeRepository())
+    executor, _ = make_executor_with(pool, space, log, exploding)
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    failed = (await log.read(run.id))[-1].event
+    failed = (await log.read(run.run_id))[-1].event
     assert failed.data.code is RunErrorCode.INTERNAL  # type: ignore[union-attr]
     assert failed.data.retryable is False  # type: ignore[union-attr]
 
@@ -455,12 +436,12 @@ async def test_an_unclassified_error_is_not_retryable(pool: FakePool, space: Fak
 async def test_a_failing_run_always_gets_a_terminal_event(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
     """没有终态事件，订阅这个 run 的 SSE 连接会永远挂着。"""
     pool.fail_with = OSError("workspace 所在磁盘不可用")
-    executor = make_executor(pool, space, log)
+    executor, _ = make_executor(pool, space, log)
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
-    assert (await types_of(log, run.id))[-1] == "run.failed"
+    assert (await types_of(log, run.run_id))[-1] == "run.failed"
 
 
 # ------------------------------------------------------------------ 与事件流的衔接
@@ -468,23 +449,14 @@ async def test_a_follower_sees_the_whole_run_from_start_to_finish(
     pool: FakePool, space: FakeWorkspace, log: EventLog
 ) -> None:
     """步骤四的 SSE 端点就是这么用的：订阅先于事件产生。"""
-    executor = make_executor(pool, space, log, token_chunk("好"), token_chunk("的"))
-    run = await executor.submit(thread_id=THREAD, content="一")
+    executor, _ = make_executor(pool, space, log, token_chunk("好"), token_chunk("的"))
+    run = a_task()
 
-    received = [one.event.model_dump()["type"] async for one in log.follow(run.id)]
-    await executor.wait(run.id)
+    driving = asyncio.create_task(executor.execute(run))
+    received = [one.event.model_dump()["type"] async for one in log.follow(run.run_id)]
+    await driving
 
     assert received == ["run.started", "sandbox.ready", "token", "token", "run.finished"]
-
-
-# ------------------------------------------------------------------ 关闭
-async def test_closing_waits_for_running_tasks(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
-    executor = make_executor(pool, space, log, token_chunk("好"))
-    run = await executor.submit(thread_id=THREAD, content="一")
-
-    await executor.aclose()
-
-    assert (await types_of(log, run.id))[-1] == "run.finished"
 
 
 # ------------------------------------------------------------------ 产物
@@ -493,23 +465,23 @@ async def test_closing_waits_for_running_tasks(pool: FakePool, space: FakeWorksp
 async def test_run_finished_lists_what_this_run_produced(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
     """产物端点靠这些标识拼 URL，不给的话教师只能从答复文本里猜路径。"""
     space.produced[THREAD] = [f"{THREAD}/chart.png"]
-    executor = make_executor(pool, space, log, token_chunk("画好了"))
+    executor, _ = make_executor(pool, space, log, token_chunk("画好了"))
 
-    run = await executor.submit(thread_id=THREAD, content="画个图")
-    await executor.wait(run.id)
+    run = a_task(content="画个图")
+    await executor.execute(run)
 
-    assert await artifacts_of(log, run.id) == [f"{THREAD}/chart.png"]
+    assert await artifacts_of(log, run.run_id) == [f"{THREAD}/chart.png"]
 
 
 async def test_a_run_that_produced_nothing_reports_an_empty_list(
     pool: FakePool, space: FakeWorkspace, log: EventLog
 ) -> None:
-    executor = make_executor(pool, space, log, token_chunk("说明一下就好"))
+    executor, _ = make_executor(pool, space, log, token_chunk("说明一下就好"))
 
-    run = await executor.submit(thread_id=THREAD, content="解释一下")
-    await executor.wait(run.id)
+    run = a_task(content="解释一下")
+    await executor.execute(run)
 
-    assert await artifacts_of(log, run.id) == []
+    assert await artifacts_of(log, run.run_id) == []
 
 
 async def test_artifacts_are_asked_for_from_before_the_agent_started(
@@ -517,10 +489,10 @@ async def test_artifacts_are_asked_for_from_before_the_agent_started(
 ) -> None:
     """基准晚于 agent 动手的话，本轮自己的产出会被判成「上一轮的」而漏掉。"""
     before = time.time_ns()
-    executor = make_executor(pool, space, log, token_chunk("好"))
+    executor, _ = make_executor(pool, space, log, token_chunk("好"))
 
-    run = await executor.submit(thread_id=THREAD, content="一")
-    await executor.wait(run.id)
+    run = a_task(content="一")
+    await executor.execute(run)
 
     asked_thread, asked_since = space.asked[0]
     assert asked_thread == THREAD

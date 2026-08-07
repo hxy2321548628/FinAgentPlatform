@@ -21,13 +21,9 @@ from typing import cast
 from redis.asyncio import Redis
 
 from event.model import EVENT_ADAPTER, TERMINAL_EVENT_TYPE, Event
+from store.redis import StreamEntry
 
 logger = logging.getLogger(__name__)
-
-# Stream 里的一条：id 与字段表。客户端建的时候开了 decode_responses，
-# 因此实际拿到的都是 str，而 redis-py 的签名把 bytes 与 None 也算在内 ——
-# 读命令那几处要 cast 一次，原因就是这个
-type StreamEntry = tuple[str, dict[str, str]]
 
 # per-run 的事件条数上限。实测一次完整分析约 300 条，留两个数量级的余量：
 # 超出即意味着断线重连可能补不齐，宁可多占内存也不轻易触发。
