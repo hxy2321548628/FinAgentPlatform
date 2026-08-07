@@ -72,9 +72,22 @@ sudo bash deploy/test/hostile.sh  # 四条破坏性测试
 # P2 验收六条。②③⑥ 免费自验，①④ 要 LLM，⑤ 转调 p1.sh
 bash deploy/test/p2.sh                             # 六条全跑（有 LLM 费用）
 SKIP_LLM=1 SKIP_P1=1 bash deploy/test/p2.sh        # 只跑免费的三条，约 1 分钟
+
+# P3 验收七条。②③④⑤⑥ 免费自验，① 要 LLM，⑦ 转调 p2.sh
+bash deploy/test/p3.sh                             # 七条全跑（有 LLM 费用）
+SKIP_LLM=1 SKIP_P2=1 bash deploy/test/p3.sh        # 只跑免费的五条，约 3 分钟
+```
+
+**两个 cron 任务**（都可重跑，删/改的都是「早于某个时点」的东西）：
+
+```bash
+cd app && uv run python -m store.retention   # 事件与 checkpoint 的保留期清理
+cd app && uv run python -m run.approval      # 挂超过 24 小时的待审批转 cancelled
 ```
 
 `.env` 在**仓库根**（不在 `app/`），业务代码一律走 `pydantic_settings.BaseSettings` 读取，不直接 `os.getenv`。
+
+**首个管理员**由 `.env` 的 `ADMIN_NAME` / `ADMIN_PASSWORD` 在**空库时**建一次，之后再启动都不看它 —— 否则改过口令的账号会被一次重启改回去。**Redis 重启会把所有人踢下线**：session 存在那里，这不是故障，是选它的代价。
 
 沙箱 workspace 的宿主目录由 `SANDBOX_WORKSPACE_ROOT` 决定，默认落在仓库内的 `data/sandbox/`（已 gitignore）。compose 部署时**容器内外必须是同一个路径** —— broker 把它交给宿主机的 Docker 守护进程，那是在宿主机上解析的。
 

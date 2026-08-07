@@ -1377,6 +1377,9 @@ location /api/runs/ {
 - **`/data/sandbox` 所在文件系统须为 XFS 且以 `prjquota` 挂载** —— §7.3.5 的磁盘配额依赖它，[ADR-0015](./adr/0015-sandbox-disk-quota-xfs.md)。挂载选项改动要重启，事后补代价高
 - **沙箱运行用户的 uid/gid 须与 broker 进程对齐** —— 容器内代码写出的文件 broker 要能读写（[ADR-0016](./adr/0016-sandbox-filesystem-backend.md)）。不对齐会表现为「agent 写得进、读不出」，且症状不指向权限。**P0 探针已验证**：容器以 `--user $(id -u):$(id -g)` 运行时宿主侧读写正常
 - **沙箱镜像须预装中文字体，容器须设 `HOME` 与 `MPLCONFIGDIR`** —— 见 §7.3.5 的预装清单。漏掉不会报错，只会让 agent 白跑几轮、并把告警混进执行结果
+- **Redis 重启 = 全员重新登录**（2026-08-08，P3）—— session 存在 Redis（§7.2.2）。这不是故障，但运维要事先知道，否则一次例行重启会变成一片「怎么突然要重新登录」的报障
+- **首个管理员由 `.env` 的 `ADMIN_NAME` / `ADMIN_PASSWORD` 在空库时建一次**（2026-08-08，P3）—— 之后再启动都不看它。**改过管理员口令之后不要把 `.env` 里那两项删掉再重建库**，那会让空库判定再次成立。凭据会出现在进程环境里（`docker inspect` 看得到），这是 §7.1 接受过的同一类判断
+- **两个 cron 任务**（2026-08-08，P3）—— `python -m store.retention`（事件与 checkpoint 的保留期，§6.5）与 `python -m run.approval`（挂超过 24 小时的待审批转 `cancelled`，§5.4）。两者都可重跑，删/改的都是「早于某个时点」的东西
 
 ---
 
