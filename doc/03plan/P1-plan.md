@@ -14,6 +14,7 @@
 |---|---|---|---|
 | v0.1 | 2026-08-03 | hxy | 初稿。P0 已于同日完成（验收四条全过），本文覆盖上线前必须偿还的加固债 |
 | v0.2 | 2026-08-06 | hxy | **六个步骤全部完成，§4 通过条件六条全中**。关闭 §7 两项待决（`projid` 用 `crc32` 派生、`Workspace` 三处收进 broker）；§2 两处定案已回填上游文档；补记落地时发现的 workspace 属主坑与 gVisor 下 `--pids-limit` 的行为差异 |
+| v0.3 | 2026-08-07 | hxy | 六条改由 `deploy/test/p1.sh` 一次跑完，§4.1 换成该脚本的实测数据；补记 cache 命中率在两次实测间从 62% 掉到 15.5%，拆分口径的必要性得到二次印证 |
 
 > **本文档的职责**：回答 **「P1 具体怎么做、做到什么程度算完」**。
 >
@@ -148,16 +149,20 @@ bash deploy/test/p1.sh
 
 > 破坏性测试脚本要**先记基线再跑**（`free` / `df`），跑完比对。只看「命令报错了」不算通过 —— 要验的是宿主机没事，不是沙箱里的命令失败了。
 
-### 4.1 实测结果（2026-08-06，六条全中）
+### 4.1 实测结果（2026-08-07，六条全中）
+
+六条由 [`deploy/test/p1.sh`](../../deploy/test/p1.sh) 一次跑完，操作步骤见 [P1 验收指南](../04acceptance-guide/P1/P1验收指南.md)。
 
 | 条件 | 结果 |
 |---|---|
-| ① 四条破坏性测试 | ✅ 死循环 100.25% 限一核；fork 炸弹宿主进程数 501→504；`/workspace` 5120MB 处 `ENOSPC`；`/tmp` 512MiB 处 `ENOSPC`。内存与磁盘均回基线 |
-| ② P0 验收四条重跑 | ✅ 按 §6 分三次跑（步骤一 gVisor 下、步骤三经 broker、步骤四经 Nginx），中文四联图无缺字 |
-| ③ api 无 `docker.sock` | ✅ 容器内 `docker ps` 报 `Cannot connect to the Docker daemon`，且看不到宿主 workspace |
-| ④ broker 重启认领 | ✅ `kill -9` 后 `--rm` 容器仍在（步骤三的疑问就地证实），重启按 label 认领，同会话追问复用同一容器 |
-| ⑤ SSE 静默期存活 | ✅ 静默 100 秒经 Nginx 未断，收到 5 个心跳帧且都不带 `id:` |
-| ⑥ 日志与 token 口径 | ✅ 全部输出经 `jq` 逐行解析通过 |
+| ① 四条破坏性测试 | ✅ 死循环 100.30% 限一核；fork 炸弹宿主进程数 553→520；`/workspace` 5120MB 处 `ENOSPC`（宿主侧直接写同样被挡，容器重建后配额仍在）；`/tmp` 512MiB 处 `ENOSPC`。磁盘 30036→30036MB、内存 20633→20474MB，均回基线 |
+| ② P0 验收四条重跑 | ✅ 经 Nginx 全过：1631 条事件 id 严格递增不重不漏，`write_file`/`execute` 3 次，产物 `industry_analysis.png` 336686 字节，中文四联图无缺字（人眼确认） |
+| ③ api 无 `docker.sock` | ✅ 容器内 `docker ps` 报 `Cannot connect to the Docker daemon`，且看不到宿主 workspace。三条各配 broker 对照组，对照组均成立 |
+| ④ broker 重启认领 | ✅ `kill -9` 后 `--rm` 容器仍在（步骤三的疑问就地证实），重启按 label 认领，再申请复用同一容器，沙箱总数 0→1 无孤儿 |
+| ⑤ SSE 静默期存活 | ✅ 静默 90 秒经 Nginx 未断，5 个心跳帧且都不带 `id:`（id 行 4 = event 行 4），以 `SANDBOX_QUEUE_TIMEOUT` 收场故零 token |
+| ⑥ 日志与 token 口径 | ✅ api 10 行、broker 17 行全部可 `jq` 逐行解析，按 `run_id` 过滤得出该 run 的日志 |
+
+> **cache 命中率的波动值得注意**。本次 `input_cache_read=56704 / input_uncached=308423`，命中率仅 15.5%，而 [§6.4](../01design/01architecture.md) 记录的 P0 实测是 62%。同一份问题、同一份数据，差了四倍 —— 说明**按总量记 token 会高估多少，本身就是个不稳定的数**，拆分口径不是锦上添花。P3 做配额时若按固定折扣估算成本会失准，得按两个数分别累计。
 
 > **一处与预期不符，如实记下**：撞上 `--pids-limit` 时 **runsc 直接掀掉整个沙箱**，而不是像 runc 那样让 `fork` 干净地返回 `EAGAIN`。宿主机毫发无损、沙箱池的健康检查会重建，对平台可接受 —— 但与通过条件①「fork 炸弹被 `--pids-limit` 挡住」的字面预期不同：**挡住的是宿主机，不是那次 fork**。已写进 [`sandbox/container.py`](../../app/sandbox/container.py) 的注释。
 
