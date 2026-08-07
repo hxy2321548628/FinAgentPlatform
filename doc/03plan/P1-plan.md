@@ -52,13 +52,13 @@
 | 拆分 worker 进程 | agent 仍与网关同进程，`kill -9` 网关会带走在跑的 run | P2 |
 | Redis Streams 任务队列与事件通道 | 事件日志仍在内存，进程重启即丢 | P2 |
 | Postgres checkpointer | 仍用 `InMemorySaver`，进程重启无法恢复 | P2 |
-| MinIO 产物存储 | 产物仍直接从 workspace 读 | **已于 2026-08-07 改期到 P3**（[P2 计划 §2.1](./P2-plan.md)）：它不是 worker 拆分的前置，且租户前缀隔离依赖 P3 的用户模型 |
+| MinIO 产物存储 | 产物仍直接从 workspace 读 | **P4**（2026-08-08 落定，[P3 计划 §7.1](./P3-plan.md)）。中间在 P3 停过一站：2026-08-07 [P2 计划 §2.1](./P2-plan.md) 把它从 P2 挪到 P3，写 P3 计划时发现「依赖 P3 的用户模型」只说明它不能早于 P3，不等于必须在 P3 |
 | 认证、RBAC、配额、限流 | 仍是固定假 `user_id`，无越权隔离 | P3 |
 | HITL 审批、主动取消 | run 仍只有四态 | P3 |
 | 工具幂等键去重 | 崩溃在工具执行途中仍会重复执行 | P3（**broker 拆分后落点已就位**，见步骤三） |
 | 跨进程租约的**精确**失效检测 | 兜底已于 2026-08-07 补上：`sweep` 会把 `SANDBOX_LEASE_TIMEOUT`（默认 1800 秒）内无人碰过的租约强制归零，见 [`sandbox/pool.py`](../../app/sandbox/pool.py) 的 `_expire_lease`。活跃信号取自 `current()` —— 每次工具调用都会走到它。**仍不精确的部分**：兜底是超时而非事件，崩溃后那个名额还要空占最多 30 分钟；且多 worker 后「谁的租约」无从区分 | P2（拆 worker 时连同 Redis 一起做成有主的租约） |
 | 内网 pypi 镜像（devpi） | agent 装不了任何包，只能用镜像预装的栈 | 本期定案不做，见 §2.2 |
-| workspace 归档回收 | workspace 从不删除，磁盘只增不减 | **已于 2026-08-07 定案不做**（[§6.5](../01design/01architecture.md)）：实测典型会话仅 ~350KB，是配额的四个数量级以下，撞墙由个别异常会话而非数量累积推动。本期只加可见性（[`deploy/workspace-report.sh`](../../deploy/workspace-report.sh)），归档删除跟 MinIO 在 **P3** 落地（[P2 计划 §2.1](./P2-plan.md) 改期） |
+| workspace 归档回收 | workspace 从不删除，磁盘只增不减 | **已于 2026-08-07 定案不做**（[§6.5](../01design/01architecture.md)）：实测典型会话仅 ~350KB，是配额的四个数量级以下，撞墙由个别异常会话而非数量累积推动。本期只加可见性（[`deploy/workspace-report.sh`](../../deploy/workspace-report.sh)），归档删除跟 MinIO 走，该期次已于 2026-08-08 落定在 **P4**（[P3 计划 §7.1](./P3-plan.md)） |
 | 前端 | 仍只能 curl 验收 | 另行排期，[P0 §4](./P0-plan.md) 的遗留问题仍未关闭 |
 | 可观测性指标、链路追踪、成本看板 | 只有日志与 token 数，没有聚合视图 | P4 |
 
