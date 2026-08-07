@@ -24,7 +24,8 @@
 | v0.10 | 2026-07-31 | hxy | 新增下游[智能体设计](./03agent-design.md)与 ADR-0016；据此**改正 §5.6 工具集**（改用 DeepAgents 内置 8 工具）与 §5.5 文件系统映射；§8.5 补两条部署前提 |
 | v0.11 | 2026-08-02 | hxy | **P0 探针实测回填**：§5.2 Agent 层事件 payload 全部定案并新增 `reasoning` 类型；**§3.2 重放表改正**（HITL 不致工具重复执行）；§6.4 配额口径改按 cache 拆分；§7.3.5 预装清单补中文字体；关闭 §10.2 两条风险、新增一条；改正 `async_create_deep_agent` 与模型 ID 笔误 |
 | v0.12 | 2026-08-03 | hxy | 依探针⑤定案 §5.6 的**幂等键改用 `(thread_id, checkpoint_ns)`**（backend 拿不到 `tool_call_id`）；§10.2 关闭「幂等键无落点」，新增「键与框架扇出方式耦合」 |
-| v0.13 | 2026-08-07 | hxy | **§6.5 workspace 回收定案**：实测典型会话仅 ~350KB（配额的四个数量级以下），撞墙由个别异常会话而非数量累积推动，故 P1 不回收、只做可见性，归档删除跟 MinIO 在 P2 落地；另四问明确本期不定案并要求 P2 关闭 |
+| v0.13 | 2026-08-07 | hxy | **§6.5 workspace 回收定案**：实测典型会话仅 ~350KB（配额的四个数量级以下），撞墙由个别异常会话而非数量累积推动，故 P1 不回收、只做可见性 |
+| v0.14 | 2026-08-07 | hxy | 依 [P2 计划](../03plan/P2-plan.md) 回填三处：**§11 的 P2 一行补上 `runs` / `run_events` 元数据表**（原文只写 checkpointer，照字面做则 `GET /runs/{id}` 在拆分后失效）；**MinIO 改期到 P3**（§4.4 §6.5）；§6.5 四问的期次拆成 P2 两项 + P3 两项。另 §6.2 标注 `sandboxes` 表大概率不建，§8.5 补 Postgres 数据卷不得用匿名卷 |
 
 > **本文档的分工**：主文档回答**「系统是什么样」** —— 结构、契约、参数、现状。**「为什么这样选、否掉了什么」**在 [`adr/`](./adr/)，本文只在相应位置给出链接。
 >
@@ -353,7 +354,7 @@ services:
   pypi-mirror:      # devpi，供沙箱装包（也可指向校内已有镜像）
 ```
 
-> **P1 已落地的只有 `nginx` / `api` / `sandbox-broker` 三个**，见 [`deploy/compose.yml`](../../deploy/compose.yml)。其余各有偿还期次（[P1 计划 §1.3](../03plan/P1-plan.md)）：`postgres` / `redis` / `minio` 在 P2；`worker` 尚未从 api 拆出，也在 P2。
+> **P1 已落地的只有 `nginx` / `api` / `sandbox-broker` 三个**，见 [`deploy/compose.yml`](../../deploy/compose.yml)。其余各有偿还期次：`postgres` / `redis` 与 `worker` 拆分在 P2（[P2 计划](../03plan/P2-plan.md)）；**`minio` 已于 2026-08-07 改期到 P3**（[P2 计划 §2.1](../03plan/P2-plan.md)）。
 >
 > **`pypi-mirror` 未部署，且本期定案不做** —— 沙箱保持零出网，理由见上方 §7.3.3 陷阱一的回填。
 
@@ -971,6 +972,8 @@ erDiagram
 
 LangGraph 的 `checkpoints` / `checkpoint_writes` 表由 `AsyncPostgresSaver` 自建，不在此图中，也**不要手工改动**。
 
+> **`sandboxes` 表大概率永远不建**（2026-08-07）。设计它是为了存容器映射与 `projid`，但 P1 两个用途都用了更简单的方案：容器靠 label 认领（[`sandbox/container.py`](../../app/sandbox/container.py) 的 `running_sandbox`），`projid` 从 `thread_id` 派生而不查表（[ADR-0015](./adr/0015-sandbox-disk-quota-xfs.md) 原写的表映射已被取代）。留在图里是为了说明它为什么不需要，不是待办。
+
 **Session 不落 Postgres** —— 按 §7.2.2 存在 Redis，因此没有 `sessions` 表。
 
 #### 三个需要说明的设计选择
@@ -1047,7 +1050,7 @@ DeepSeek 有 prompt cache，`usage_metadata.input_token_details.cache_read` 直�
 
 ### 6.5 数据生命周期
 
-**workspace 回收已定案（2026-08-07）：P1 不回收，只做可见性；归档删除跟着 MinIO 在 P2 落地。**
+**workspace 回收已定案（2026-08-07）：P1 不回收，只做可见性；归档删除跟着 MinIO 在 P3 落地。**
 
 原先这里写的是「磁盘占用是**历史 thread 总数 × 最多 5GB**，不做会撞墙」。P1 跑完后实测把这个判断校准了：
 
@@ -1059,11 +1062,20 @@ DeepSeek 有 prompt cache，`usage_metadata.input_token_details.cache_read` 直�
 
 **5GB 是上限不是均值**，所以撞墙由**个别异常会话**推动，而不是由数量累积推动。据此：
 
-- **不做 TTL 删除**。为回收几百 KB 而毁掉教师的图表是坏交易，且删了拉不回来 —— 「归档到 MinIO 后删除本地副本，下次需要时拉回」这条原方案没错，**错的是它的前提眼下不存在**（MinIO 在 P2）。
+- **不做 TTL 删除**。为回收几百 KB 而毁掉教师的图表是坏交易，且删了拉不回来 —— 「归档到 MinIO 后删除本地副本，下次需要时拉回」这条原方案没错，**错的是它的前提眼下不存在**（MinIO 原排 P2，已于 2026-08-07 按 [P2 计划 §2.1](../03plan/P2-plan.md) 改期到 P3 —— 它不是 worker 拆分的前置，且路径的租户前缀隔离依赖 P3 的用户模型）。
 - **做可见性**：[`deploy/workspace-report.sh`](../../deploy/workspace-report.sh) 报磁盘水位并点名超过 1GB 的会话，超阈值退出码为 1，可直接挂 cron。它替代不了告警系统（那是 P4），但把「什么时候该管」变成了一个能自动回答的问题。
-- **重新评估的触发条件**：体检脚本连续报红，或单会话占用逼近配额成为常态 —— 届时 MinIO 归档要从 P2 里提前抽出来单做。
+- **重新评估的触发条件**：体检脚本连续报红，或单会话占用逼近配额成为常态 —— 届时 MinIO 归档要从 P3 里提前抽出来单做。
 
-> **另外四问本期不定案，因为对象还不存在。** `run_events` 与 checkpoint 的保留期要等 Postgres、归档降冷要等 MinIO，两者都在 P2；离职数据处置依赖 P3 的用户模型；备份频率见 §8.5。现在写出来的是推测而不是决策，P2 一开工就要推翻。**P2 规划时必须把这四项一并关闭**，不要再往后滚。
+> **另外四问的期次已于 2026-08-07 排定**（[P2 计划 §2.3](../03plan/P2-plan.md)）。原先这里写的是「P2 规划时必须把这四项一并关闭」，写那句时没核对四项各自的依赖 —— 实际只有两项在 P2 答得了：
+>
+> | 问题 | 期次 | 为什么 |
+> |---|---|---|
+> | `run_events` 与 checkpoint 的保留期 | **P2** | 两者都在 P2 落到 Postgres，保留期是它们自己的属性 |
+> | Postgres 备份频率与保留份数 | **P2** | §8.5 已列为上线前必办；checkpoint 一丢，中断任务就无法恢复 |
+> | 归档降冷 / 导出 | P3 | 依赖 MinIO |
+> | 教师离职 / 毕业后的数据处置 | P3 | 依赖用户模型 —— 现在连「谁的数据」都表达不了 |
+>
+> **不许无限往后滚这一条仍然成立**，只是「一并关闭」分成了两半。
 >
 > §2.4 的合规结论已解除本节的合规依赖，剩下的纯粹由运维成本驱动。
 
@@ -1323,6 +1335,7 @@ location /api/runs/ {
 ### 8.5 内网部署需提前落实的运维项
 
 - **Postgres 定时备份** —— checkpoint 丢失意味着中断的任务无法恢复。这不只是数据备份，也是功能可用性的一部分
+- **Postgres 的数据卷必须落在宿主机的持久化目录，不能用匿名卷** —— 否则 `docker compose down -v` 一次就把 checkpoint 全清了，而那正是 P2 花整期保住的东西。这条在 P2 起 Postgres 的那一刻就要做对，事后迁移数据卷代价高
 - **MinIO 磁盘容量监控** —— 产物只增不减，需配合 §6.5 的保留策略
 - **镜像分发方式** —— 内网可能拉不到 Docker Hub，需要私有 registry 或离线导入。**这一条容易被漏到上线当天才发现**
 - **`/data/sandbox` 所在文件系统须为 XFS 且以 `prjquota` 挂载** —— §7.3.5 的磁盘配额依赖它，[ADR-0015](./adr/0015-sandbox-disk-quota-xfs.md)。挂载选项改动要重启，事后补代价高
@@ -1412,7 +1425,7 @@ v0.2 时登记的三项阻塞已全部确认，**当前无阻塞项**：
 |---|---|---|
 | **P0** | FastAPI in-process 跑 DeepAgents + **裸 Docker 沙箱**（先跑通，加固后置）+ SSE 流式输出 | 教师能对话；agent 能写 Python 读 CSV、算出结果并返回图表。**四个探针已于 2026-08-02 全部完成**（下表），剩余的是 FastAPI 接入与 SSE |
 | **P1** | 沙箱加固（gVisor + 完整参数 + `/workspace` 5GB 配额 + `/tmp` 限容）+ sandbox-broker 拆分 + 生命周期管理 | 沙箱内运行 `while True` / fork 炸弹 / **写满 `/workspace`** / **写满 `/tmp`**，宿主机均不受影响 |
-| **P2** | 拆分 worker：Redis Streams + Postgres checkpointer | `kill -9` worker 后，任务能从 checkpoint 恢复继续 |
+| **P2** | 拆分 worker：Redis Streams + Postgres checkpointer + **`runs` / `run_events` 元数据表** | `kill -9` worker 后，任务能从 checkpoint 恢复继续。**要验的是「续跑」而不是「重跑」** —— 只看 run 最终成功不算通过，从头重来一遍也会成功。步骤分解见 [P2 实施计划](../03plan/P2-plan.md) |
 | **P3** | HITL 审批 + 取消 + 多用户隔离 + 配额限流（含 §6.4 的 cache 拆分口径）+ **§5.6 工具幂等键**（已与 HITL 解耦，见下） | 审批流程走通；`kill -9` 在工具执行途中，恢复后写操作不重复执行；30 并发压测不崩溃、不串数据 |
 | **P4** | 可观测性（OpenTelemetry）、产物存储完善、成本看板 | 能定位单个 run 的完整 trace 与 token 花费 |
 
