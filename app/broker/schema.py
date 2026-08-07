@@ -134,6 +134,15 @@ class DownloadResponse(BaseModel):
     files: list[DownloadItem] = Field(description="逐个文件的结果，顺序与请求一致")
 
 
+class AcquireRequest(BaseModel):
+    """申请沙箱。"""
+
+    holder: str = Field(
+        min_length=1,
+        description="谁在用。取 run 标识 —— 崩溃恢复接着跑的是同一个 run，因此重复申请是幂等的",
+    )
+
+
 class CreateThreadRequest(BaseModel):
     """给一个已经落表的会话建目录。"""
 

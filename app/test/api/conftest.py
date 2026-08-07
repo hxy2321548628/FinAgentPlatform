@@ -91,11 +91,13 @@ class FakePool:
         self.released: list[str] = []
         self.held: dict[str, FakeContainer] = {}
 
-    async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> FakeContainer:
+    async def acquire(
+        self, thread_id: str, *, holder: str, on_queued: QueuePositionCallback | None = None
+    ) -> FakeContainer:
         container = self.held.setdefault(thread_id, FakeContainer())
         return container
 
-    async def release(self, thread_id: str) -> None:
+    async def release(self, thread_id: str, *, holder: str) -> None:
         self.released.append(thread_id)
 
     def current(self, thread_id: str) -> FakeContainer | None:

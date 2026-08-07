@@ -418,7 +418,9 @@ class RemoteSandboxPool:
     def __init__(self, connection: BrokerConnection) -> None:
         self._connection = connection
 
-    async def acquire(self, thread_id: str, *, on_queued: AsyncQueuePositionCallback | None = None) -> None:
+    async def acquire(
+        self, thread_id: str, *, holder: str, on_queued: AsyncQueuePositionCallback | None = None
+    ) -> None:
         """申请沙箱，必要时排队等待。
 
         排位由 broker 用流式响应推过来，**不轮询** —— 排队可能持续几分钟，这期间
@@ -426,6 +428,7 @@ class RemoteSandboxPool:
 
         Args:
             thread_id: 会话标识。
+            holder: 谁在用，取 run 标识。同一个持有者重复申请是幂等的。
             on_queued: 排位回调，排位每变一次调一次。
 
         Raises:
@@ -434,7 +437,7 @@ class RemoteSandboxPool:
         """
         try:
             async with self._connection.raw.stream(
-                "POST", f"/threads/{thread_id}/sandbox", timeout=ACQUIRE_TIMEOUT
+                "POST", f"/threads/{thread_id}/sandbox", json={"holder": holder}, timeout=ACQUIRE_TIMEOUT
             ) as response:
                 response.raise_for_status()
                 async for event, data in _sse(response):
@@ -453,9 +456,9 @@ class RemoteSandboxPool:
         message = "申请沙箱失败：broker 的响应流提前结束"
         raise BrokerError(message)
 
-    async def release(self, thread_id: str) -> None:
-        """归还沙箱。容器不销毁，留给同一会话的后续 run 复用。"""
-        await self._connection.call("DELETE", f"/threads/{thread_id}/sandbox")
+    async def release(self, thread_id: str, *, holder: str) -> None:
+        """按持有者归还沙箱。容器不销毁，留给同一会话的后续 run 复用。"""
+        await self._connection.call("DELETE", f"/threads/{thread_id}/sandbox", params={"holder": holder})
 
 
 def _acquire_error(data: dict[str, object]) -> Exception:

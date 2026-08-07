@@ -96,12 +96,14 @@ class SandboxPoolProtocol(Protocol):
     它只要知道「沙箱备好了，可以开工了」。
     """
 
-    async def acquire(self, thread_id: str, *, on_queued: AsyncQueuePositionCallback | None = None) -> None:
+    async def acquire(
+        self, thread_id: str, *, holder: str, on_queued: AsyncQueuePositionCallback | None = None
+    ) -> None:
         """申请沙箱，必要时排队等待。"""
         ...
 
-    async def release(self, thread_id: str) -> None:
-        """归还沙箱。"""
+    async def release(self, thread_id: str, *, holder: str) -> None:
+        """按持有者归还沙箱。"""
         ...
 
 
@@ -242,7 +244,7 @@ class RunExecutor:
                 logger.warning("run 执行失败", exc_info=True)
                 await self._fail(run, RunErrorCode.INTERNAL, str(exc), retryable=False)
             finally:
-                await self._pool.release(run.thread_id)
+                await self._pool.release(run.thread_id, holder=run.id)
 
     async def _acquire(self, run: Run) -> bool:
         """申请沙箱，把排队过程写成事件。失败时结束 run 并返回 False。"""
@@ -253,7 +255,9 @@ class RunExecutor:
             )
 
         try:
-            await self._pool.acquire(run.thread_id, on_queued=announce)
+            # **持有者取 run 标识**：崩溃恢复接着跑的是同一个 run，它再申请一次
+            # 同一个容器时不该被算成第二个租约 —— 那一个永远不会有人来还
+            await self._pool.acquire(run.thread_id, holder=run.id, on_queued=announce)
         # 同上：容器起不来、磁盘满、排队超时都得转成 run.failed，不能让任务静默消失
         except Exception as exc:
             logger.warning("run 申请沙箱失败", exc_info=True)

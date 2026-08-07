@@ -28,6 +28,8 @@ from sandbox.remote import BrokerConnection, RemoteSandboxBackend, RemoteSandbox
 from sandbox.workspace import Workspace
 
 THREAD = "thread-1"
+# 租约的持有者。生产里取的是 run 标识 —— 崩溃恢复接着跑的是同一个 run
+HOLDER = "run-1"
 
 
 class FakeContainer:
@@ -53,7 +55,9 @@ class FakePool:
         self.fail_with: Exception | None = None
         self.container_gone = False
 
-    async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> FakeContainer:
+    async def acquire(
+        self, thread_id: str, *, holder: str, on_queued: QueuePositionCallback | None = None
+    ) -> FakeContainer:
         for position in self.queue_position:
             if on_queued is not None:
                 on_queued(position)
@@ -62,7 +66,7 @@ class FakePool:
             raise self.fail_with
         return self.held.setdefault(thread_id, FakeContainer())
 
-    async def release(self, thread_id: str) -> None:
+    async def release(self, thread_id: str, *, holder: str) -> None:
         self.released.append(thread_id)
 
     def current(self, thread_id: str) -> FakeContainer | None:
@@ -237,7 +241,7 @@ async def test_queue_positions_stream_back_before_ready(connection: BrokerConnec
     async def record(position: int) -> None:
         seen.append(position)
 
-    await RemoteSandboxPool(connection).acquire(THREAD, on_queued=record)
+    await RemoteSandboxPool(connection).acquire(THREAD, holder=HOLDER, on_queued=record)
 
     assert seen == [3, 2, 1]
     await connection.aclose()
@@ -249,7 +253,7 @@ async def test_no_position_is_reported_when_a_sandbox_is_free(connection: Broker
     async def record(position: int) -> None:
         seen.append(position)
 
-    await RemoteSandboxPool(connection).acquire(THREAD, on_queued=record)
+    await RemoteSandboxPool(connection).acquire(THREAD, holder=HOLDER, on_queued=record)
 
     assert seen == []
     await connection.aclose()
@@ -260,13 +264,13 @@ async def test_a_queue_timeout_survives_the_hop(connection: BrokerConnection, po
     pool.fail_with = SandboxQueueTimeoutError("等待沙箱超过 600 秒")
 
     with pytest.raises(SandboxQueueTimeoutError):
-        await RemoteSandboxPool(connection).acquire(THREAD)
+        await RemoteSandboxPool(connection).acquire(THREAD, holder=HOLDER)
 
     await connection.aclose()
 
 
 async def test_releasing_reaches_the_pool(connection: BrokerConnection, pool: FakePool) -> None:
-    await RemoteSandboxPool(connection).release(THREAD)
+    await RemoteSandboxPool(connection).release(THREAD, holder=HOLDER)
 
     assert pool.released == [THREAD]
     await connection.aclose()

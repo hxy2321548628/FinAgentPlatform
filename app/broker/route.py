@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from broker.runtime import Broker, get_broker
 from broker.schema import (
     AcquireErrorData,
+    AcquireRequest,
     ArtifactListResponse,
     CreateThreadRequest,
     DeleteRequest,
@@ -130,23 +131,27 @@ async def download_artifact(thread_id: str, relative_path: str, broker: BrokerDe
 
 # ------------------------------------------------------------------ 沙箱生命周期
 @router.post("/{thread_id}/sandbox")
-async def acquire_sandbox(thread_id: str, broker: BrokerDep) -> StreamingResponse:
+async def acquire_sandbox(thread_id: str, request: AcquireRequest, broker: BrokerDep) -> StreamingResponse:
     """申请沙箱，用流式响应把排队排位实时推回去。
 
     做成流而不是「先返回排位、再让对方轮询」：排队可能持续几分钟，轮询要么太密
     白烧 CPU、要么太疏让教师盯着一个不动的数字。流的另一头就挂在 `asyncio.Future`
     上等，一个字节都不会发，直到排位真的变了。
     """
-    return StreamingResponse(_acquire_stream(thread_id, broker), media_type=SSE_MEDIA_TYPE)
+    return StreamingResponse(_acquire_stream(thread_id, broker, request.holder), media_type=SSE_MEDIA_TYPE)
 
 
 @router.delete("/{thread_id}/sandbox", status_code=status.HTTP_204_NO_CONTENT)
-async def release_sandbox(thread_id: str, broker: BrokerDep) -> None:
-    """归还沙箱。容器不销毁，留给同一会话的后续 run 复用。"""
-    await broker.pool.release(thread_id)
+async def release_sandbox(
+    thread_id: str,
+    broker: BrokerDep,
+    holder: Annotated[str, Query(min_length=1, description="谁在还，与申请时的持有者一致")],
+) -> None:
+    """按持有者归还沙箱。容器不销毁，留给同一会话的后续 run 复用。"""
+    await broker.pool.release(thread_id, holder=holder)
 
 
-async def _acquire_stream(thread_id: str, broker: Broker) -> AsyncIterator[str]:
+async def _acquire_stream(thread_id: str, broker: Broker, holder: str) -> AsyncIterator[str]:
     """把一次申请的过程流出去：排位变化若干条，最后一条是就绪或失败。
 
     池的排位回调是**同步**的（它在持锁时调），没法在里面 yield，因此回调只往队列里
@@ -154,7 +159,7 @@ async def _acquire_stream(thread_id: str, broker: Broker) -> AsyncIterator[str]:
     等待，不轮询。
     """
     seat: asyncio.Queue[int] = asyncio.Queue()
-    acquiring = asyncio.create_task(broker.pool.acquire(thread_id, on_queued=seat.put_nowait))
+    acquiring = asyncio.create_task(broker.pool.acquire(thread_id, holder=holder, on_queued=seat.put_nowait))
     waiting: asyncio.Task[int] | None = None
 
     try:

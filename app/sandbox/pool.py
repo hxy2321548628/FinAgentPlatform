@@ -17,7 +17,7 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sandbox.container import (
@@ -67,9 +67,17 @@ class _Slot:
     """池里的一个容器及其占用情况。"""
 
     container: ManagedContainerProtocol
-    # 正在使用它的 run 数。大于 0 就不可被淘汰
-    lease: int
-    last_used: float
+    # **谁在用它**，不是「几个人在用」。记名而不是记数，是为了让重复申请变成幂等的：
+    # worker 崩溃后另一个副本会认领同一个 run 接着跑，它再申请一次同一个容器 ——
+    # 记数的话那就是第二个租约，而崩掉的那一个永远不会有人来还，
+    # 于是这个名额一直到租约超时（默认 30 分钟）才回池。记名则是同一个持有者，不重复计
+    holder: set[str] = field(default_factory=set)
+    last_used: float = 0.0
+
+    @property
+    def busy(self) -> bool:
+        """还有人用着吗。用着的容器既不可淘汰，也不受 idle 回收管。"""
+        return bool(self.holder)
 
 
 # 队列里靠身份区分申请，不比字段：两个申请的回调可能是同一个函数
@@ -153,11 +161,18 @@ class SandboxPool:
         slot.last_used = self._now()
         return slot.container
 
-    async def acquire(self, thread_id: str, *, on_queued: QueuePositionCallback | None = None) -> ContainerProtocol:
+    async def acquire(
+        self, thread_id: str, *, holder: str, on_queued: QueuePositionCallback | None = None
+    ) -> ContainerProtocol:
         """取得一个 thread 的容器，必要时排队等待。
+
+        **同一个持有者重复申请是幂等的**：worker 崩溃后另一个副本会认领同一个 run
+        接着跑，它再申请一次同一个容器。记数的话那就成了第二个租约，而崩掉的那一个
+        永远不会有人来还 —— 名额要等到租约超时（默认 30 分钟）才回池。
 
         Args:
             thread_id: 会话标识，同一会话复用同一个容器。
+            holder: 谁在用。取 run 标识 —— 崩溃恢复接着跑的是同一个 run。
             on_queued: 排队时的排位回调，排位每变一次调一次。不排队则一次也不调。
 
         Returns:
@@ -174,7 +189,7 @@ class SandboxPool:
         workspace = self._workspace.path(thread_id)
 
         async with self._lock:
-            container = await self._take(thread_id, workspace)
+            container = await self._take(thread_id, workspace, holder)
             if container is not None:
                 return container
             waiter = _Waiter(future=asyncio.get_running_loop().create_future(), on_queued=on_queued)
@@ -194,7 +209,7 @@ class SandboxPool:
         async with self._lock:
             # 名额是 _pump 许给本申请的，无论接下来起容器成不成，都在这里一次性归还
             self._reserved -= 1
-            return await self._start(thread_id, workspace)
+            return await self._start(thread_id, workspace, holder)
 
     async def reclaim(self) -> None:
         """认领 broker 重启前就已经在跑的沙箱容器。
@@ -203,7 +218,7 @@ class SandboxPool:
         带走它们。不认领的话它们既占着内存又不在池的账上：新申请会另起一个，旧的
         那个再也没有人回收，就是 ADR-0004 点名的孤儿泄漏。
 
-        认领回来的容器 `lease=0`：原先用着它的 run 随 broker 一起没了，
+        认领回来的容器**没有持有者**：原先用着它的 run 随 broker 一起没了，
         因此它现在是空闲的，该受 idle 回收管。
 
         Raises:
@@ -215,19 +230,23 @@ class SandboxPool:
                     continue
                 container = self._factory(thread_id, self._workspace.path(thread_id))
                 container.adopt(container_id)
-                self._slot[thread_id] = _Slot(container=container, lease=0, last_used=self._now())
+                self._slot[thread_id] = _Slot(container=container, last_used=self._now())
                 logger.info("认领重启前的沙箱容器：thread_id=%s container=%s", thread_id, container_id[:12])
 
-    async def release(self, thread_id: str) -> None:
-        """归还容器。容器不销毁，留给同一 thread 的后续 run 复用。
+    async def release(self, thread_id: str, *, holder: str) -> None:
+        """按持有者归还容器。容器不销毁，留给同一 thread 的后续 run 复用。
+
+        **只摘掉这一个持有者**：同一个会话上可能有别人也在用（并发的 run），
+        无差别清空会把还在跑的那个的容器变成可淘汰的。
 
         Args:
             thread_id: 会话标识。未持有时什么都不做。
+            holder: 谁在还。不是持有者时什么都不做。
         """
         async with self._lock:
             slot = self._slot.get(thread_id)
             if slot is not None:
-                slot.lease = max(0, slot.lease - 1)
+                slot.holder.discard(holder)
                 slot.last_used = self._now()
             await self._pump()
 
@@ -237,7 +256,7 @@ class SandboxPool:
             self._expire_lease()
             deadline = self._now() - self._idle_timeout
             stale = [
-                thread_id for thread_id, slot in self._slot.items() if slot.lease == 0 and slot.last_used <= deadline
+                thread_id for thread_id, slot in self._slot.items() if not slot.busy and slot.last_used <= deadline
             ]
             for thread_id in stale:
                 logger.info("沙箱 idle 超时，回收容器：thread_id=%s", thread_id)
@@ -247,22 +266,22 @@ class SandboxPool:
     def _expire_lease(self) -> None:
         """把久无人问津的租约归零，在持锁状态下调用。
 
-        本进程之外的东西也能持有租约：api 在 `acquire` 与 `release` 之间崩溃，
-        broker 这边的 `lease` 就永远归不了零 —— 而 lease>0 的 slot 既不受 idle
-        回收管、也不会被淘汰，一次崩溃就永久少一个沙箱名额。
+        **记名之后这条兜底仍然要留着。** 精确回收靠的是「另一方回来认领同一个 run」，
+        而那个前提本身也可能不成立 —— run 被取消、任务消息过期、或者持有方是 api
+        而它崩在 `acquire` 与 `release` 之间。删掉它等于把两层防护变成一层。
 
-        只归零、不直接销毁：万一是一个格外慢的 run 还在跑，容器留着它仍能用，
+        只清持有者、不直接销毁：万一是一个格外慢的 run 还在跑，容器留着它仍能用，
         只是从此可被淘汰。销毁是紧接着的 idle 回收该做的判断。
         """
         deadline = self._now() - self._lease_timeout
         for thread_id, slot in self._slot.items():
-            if slot.lease > 0 and slot.last_used <= deadline:
+            if slot.busy and slot.last_used <= deadline:
                 logger.warning(
                     "租约 %.0f 秒无人问津，判定持有方已不在，强制归还：thread_id=%s",
                     self._lease_timeout,
                     thread_id,
                 )
-                slot.lease = 0
+                slot.holder.clear()
 
     def start_sweeper(self, *, interval: float = DEFAULT_SWEEP_INTERVAL) -> None:
         """起一个后台任务定期回收 idle 容器，重复调用无效。
@@ -289,14 +308,14 @@ class SandboxPool:
             for thread_id in list(self._slot):
                 await self._discard(thread_id)
 
-    async def _take(self, thread_id: str, workspace: Path) -> ContainerProtocol | None:
+    async def _take(self, thread_id: str, workspace: Path, holder: str) -> ContainerProtocol | None:
         """在持锁状态下尝试立刻拿到容器，拿不到返回 None 表示要排队。"""
         slot = self._slot.get(thread_id)
         if slot is not None:
             # 探测要问 Docker，是一次子进程调用。放在 acquire 里而不是每次执行命令前，
             # 是因为 acquire 一个 run 只发生一次，几十毫秒可以忽略
             if await asyncio.to_thread(slot.container.alive):
-                slot.lease += 1
+                slot.holder.add(holder)
                 slot.last_used = self._now()
                 return slot.container
             logger.warning("沙箱容器已不在运行，重建：thread_id=%s", thread_id)
@@ -304,9 +323,9 @@ class SandboxPool:
 
         if not self._has_room() and not await self._evict_idle():
             return None
-        return await self._start(thread_id, workspace)
+        return await self._start(thread_id, workspace, holder)
 
-    async def _start(self, thread_id: str, workspace: Path) -> ContainerProtocol:
+    async def _start(self, thread_id: str, workspace: Path, holder: str) -> ContainerProtocol:
         """在持锁状态下起一个容器并登记。
 
         docker run 要一秒多，持锁等于让并发的申请串行启动。这是刻意的：
@@ -314,7 +333,7 @@ class SandboxPool:
         """
         container = self._factory(thread_id, workspace)
         await asyncio.to_thread(container.start)
-        self._slot[thread_id] = _Slot(container=container, lease=1, last_used=self._now())
+        self._slot[thread_id] = _Slot(container=container, holder={holder}, last_used=self._now())
         return container
 
     async def _discard(self, thread_id: str) -> None:
@@ -325,7 +344,7 @@ class SandboxPool:
 
     async def _evict_idle(self) -> bool:
         """在持锁状态下淘汰最久没人用的空闲容器，没有可淘汰的返回 False。"""
-        idle = [(slot.last_used, thread_id) for thread_id, slot in self._slot.items() if slot.lease == 0]
+        idle = [(slot.last_used, thread_id) for thread_id, slot in self._slot.items() if not slot.busy]
         if not idle:
             return False
         _, victim = min(idle)

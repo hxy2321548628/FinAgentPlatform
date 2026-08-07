@@ -48,18 +48,22 @@ class FakePool:
     def __init__(self) -> None:
         self.acquired: list[str] = []
         self.released: list[str] = []
+        self.holder: list[str] = []
         self.queue_position: list[int] = []
         self.fail_with: Exception | None = None
 
-    async def acquire(self, thread_id: str, *, on_queued: AsyncQueuePositionCallback | None = None) -> None:
+    async def acquire(
+        self, thread_id: str, *, holder: str, on_queued: AsyncQueuePositionCallback | None = None
+    ) -> None:
         for position in self.queue_position:
             if on_queued is not None:
                 await on_queued(position)
         if self.fail_with is not None:
             raise self.fail_with
         self.acquired.append(thread_id)
+        self.holder.append(holder)
 
-    async def release(self, thread_id: str) -> None:
+    async def release(self, thread_id: str, *, holder: str) -> None:
         self.released.append(thread_id)
 
 
@@ -849,3 +853,17 @@ async def test_an_interrupt_that_lost_the_race_pushes_nothing(
     await executor.execute(run)
 
     assert EventType.INTERRUPT.value not in await types_of(log, run.run_id)
+
+
+async def test_the_sandbox_is_held_in_the_name_of_the_run(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    """持有者取 run 标识 —— 崩溃恢复接着跑的是同一个 run，重新申请因此是幂等的。
+
+    取别的（比如 worker 名字）就白做了：换一个副本接着跑时持有者就变了，
+    崩掉的那个租约照样没人还。
+    """
+    executor, _ = make_executor(pool, space, log)
+    run = a_task()
+
+    await executor.execute(run)
+
+    assert pool.holder == [run.run_id]
