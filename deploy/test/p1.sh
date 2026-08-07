@@ -62,6 +62,27 @@ print(body)
 sandbox_of() { docker ps --filter "label=zuel.thread=$1" --format '{{.ID}}' | head -1; }
 managed_count() { docker ps -q --filter label=zuel.sandbox | wc -l; }
 
+broker_container() {
+    docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+        --filter label=com.docker.compose.service=broker
+}
+
+# 等 broker 真的能干活。`$1` 是不接受的旧容器 id：重建时旧容器要先优雅退出，
+# 那段时间里它还在跑、`/docs` 还答得动 —— 只探端口的话会探到一个正在关闭的进程，
+# 紧接着的请求就 500。这个坑让 ⑤ 假失败过一次
+wait_broker() {
+    local stale="${1:-}" deadline=$((SECONDS + 60)) current
+    while (( SECONDS < deadline )); do
+        current="$(broker_container)"
+        if [[ -n $current && $current != "$stale" ]] &&
+            in_broker python -c "import httpx; httpx.get('http://127.0.0.1:8100/docs', timeout=2)" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 cleanup() {
     [[ -n ${THREAD_HELD:-} ]] && docker rm -f "$(sandbox_of "$THREAD_HELD")" >/dev/null 2>&1
     # ⑤ 换过 broker 的配置，跑完必须换回来，否则整台机器就剩一个沙箱名额
@@ -117,9 +138,29 @@ curl -fsS "$BASE_URL/docs" >/dev/null || { echo "Nginx 没把 $BASE_URL 转发�
 [[ ${SKIP_HOSTILE:-0} == 1 ]] || sudo -v || { echo "① 需要 sudo，或用 SKIP_HOSTILE=1 跳过" >&2; exit 1; }
 
 LOG_SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-BASE_MANAGED=$(managed_count)
-info "网关 $BASE_URL ｜ workspace $WORKSPACE_ROOT ｜ 已有沙箱 $BASE_MANAGED 个"
 trap cleanup EXIT
+
+# ⑤ 要能用一个沙箱把池占满，所以先把名额压到 1、排队超时压到 90 秒。
+#
+# **一次性在这里改完，中途不再动 broker**：重建 broker 会让旧进程优雅退出，而优雅退出
+# 会走 pool.aclose() 把沙箱全销毁。夹在 ④ 与 ⑤ 之间做这件事，等于在验收半途把
+# ④ 刚认领好的容器毁掉，⑤ 再从一个说不清的状态起步
+cat > "$WORK_DIR/override.yml" <<YAML
+services:
+  broker:
+    environment:
+      SANDBOX_MAX_CONTAINER: "$MAX_CONTAINER"
+      SANDBOX_QUEUE_TIMEOUT: "$QUEUE_TIMEOUT"
+YAML
+OVERRIDDEN=1
+docker compose -f "$COMPOSE_FILE" -f "$WORK_DIR/override.yml" \
+    up -d --no-deps --force-recreate broker >/dev/null 2>&1
+wait_broker "$BROKER_ID" || { echo "broker 换配置后没起来：docker compose -f deploy/compose.yml logs broker" >&2; exit 1; }
+
+# 基线在换配置之后才量：上面那次重建会把先前留下的沙箱一并销毁，
+# 在它之前量出来的数对不上后面的账
+BASE_MANAGED=$(managed_count)
+info "网关 $BASE_URL ｜ workspace $WORKSPACE_ROOT ｜ 已有沙箱 $BASE_MANAGED 个 ｜ 名额临时压到 $MAX_CONTAINER"
 
 # ------------------------------------------------------------------ ③ 边界
 # 每条都配一个 broker 上的对照组。只验「api 上失败」的话，二进制不存在、
@@ -180,11 +221,10 @@ if [[ -n $THREAD_HELD ]]; then
         fail "broker 一崩沙箱就没了，认领无从谈起"
     fi
 
-    compose up -d --no-deps broker >/dev/null 2>&1
-    for _ in $(seq 30); do
-        in_broker python -c "import httpx; httpx.get('http://127.0.0.1:8100/docs', timeout=2)" 2>/dev/null && break
-        sleep 1
-    done
+    # start 而不是 up：up 会按 compose.yml 重新算一遍配置，把上面临时压下去的
+    # 名额又还原成 20，⑤ 就再也占不满池子了。start 拉起的是同一个容器
+    compose start broker >/dev/null 2>&1
+    wait_broker || fail "broker 重启后没起来"
 
     # 用裸 grep 而不是 jq 取 .message：日志是不是 JSON 由 ⑥ 负责断言，
     # 这里再依赖它一次的话，日志格式一坏就会连带谎报「没认领」
@@ -210,64 +250,64 @@ VERDICT[4]=$([[ $failed -eq $before ]] && echo 通过 || echo 未过)
 log "⑤ 排队静默期 SSE 不被 Nginx 掐断"
 
 before=$failed
-cat > "$WORK_DIR/override.yml" <<YAML
-services:
-  broker:
-    environment:
-      SANDBOX_MAX_CONTAINER: "$MAX_CONTAINER"
-      SANDBOX_QUEUE_TIMEOUT: "$QUEUE_TIMEOUT"
-YAML
-OVERRIDDEN=1
-docker compose -f "$COMPOSE_FILE" -f "$WORK_DIR/override.yml" up -d --no-deps --force-recreate broker >/dev/null 2>&1
-for _ in $(seq 30); do
-    in_broker python -c "import httpx; httpx.get('http://127.0.0.1:8100/docs', timeout=2)" 2>/dev/null && break
-    sleep 1
-done
+RUN_ID=""
 
-# 占住唯一的名额。重启后认领回来的容器 lease=0，要再申请一次才算被占用
-broker_call POST "/threads/$THREAD_HELD/sandbox" >/dev/null || fail "占位申请失败"
-
-THREAD_QUEUED="$(curl -fsS -X POST "$BASE_URL/api/threads" | jq -r .id)"
-RUN_ID="$(curl -fsS -X POST "$BASE_URL/api/threads/$THREAD_QUEUED/runs" \
-    -H 'Content-Type: application/json' \
-    -d '{"content":"这个 run 只用来占住排队位，不会真跑起来。"}' | jq -r .id)"
-info "排队中的 run $RUN_ID，将静默等待约 ${QUEUE_TIMEOUT}s"
-
-STARTED=$(date +%s)
-timeout "$HEARTBEAT_WINDOW" curl -sS -N "$BASE_URL/api/runs/$RUN_ID/events" > "$WORK_DIR/queued.sse"
-ELAPSED=$(( $(date +%s) - STARTED ))
-HEARTBEAT=$(grep -c '^:heartbeat' "$WORK_DIR/queued.sse")
-
-# 说清这条证明了什么：nginx.conf 已经把 /api/runs/ 的 proxy_read_timeout 抬到 3600s，
-# 所以「没被掐断」主要是那条配置的功劳，不是心跳的。心跳防的是浏览器、公司代理这些
-# 我们改不到配置的中间环节 —— 因此下面两条断言缺一不可，只看连接活着会把话说过头
-if (( ELAPSED >= 75 )); then
-    pass "连接静默存活 ${ELAPSED}s，越过了 60s 这道常见的空闲上限"
-else
-    fail "连接只活了 ${ELAPSED}s，没到能说明问题的时长"
+# ④ 末尾那次申请已经把唯一的名额占住了（lease=1），这里不必再动 broker。
+# 前置任何一步不成，就地判未过收工 —— 硬着头皮往下跑只会拿一个空的 run_id
+# 去撞后面三条断言，吐出一串指错方向的红字，还会把 ⑥ 一起拖下水
+QUEUED_READY=1
+if [[ $(managed_count) -ne $(( BASE_MANAGED + 1 )) ]]; then
+    fail "池子没被占满（沙箱 $(managed_count) 个，名额 $MAX_CONTAINER），造不出排队"
+    QUEUED_READY=0
 fi
 
-if (( HEARTBEAT >= HEARTBEAT_EXPECTED )); then
-    pass "收到 $HEARTBEAT 个心跳帧"
-else
-    fail "只收到 $HEARTBEAT 个心跳帧，少于预期的 $HEARTBEAT_EXPECTED 个"
+if (( QUEUED_READY )); then
+    THREAD_QUEUED="$(curl -fsS -X POST "$BASE_URL/api/threads" | jq -r .id)"
+    RUN_ID="$(curl -fsS -X POST "$BASE_URL/api/threads/$THREAD_QUEUED/runs" \
+        -H 'Content-Type: application/json' \
+        -d '{"content":"这个 run 只用来占住排队位，不会真跑起来。"}' | jq -r .id)"
+    [[ -n $RUN_ID && $RUN_ID != null ]] || { fail "提交排队用的 run 失败"; QUEUED_READY=0; RUN_ID=""; }
 fi
 
-# 心跳带 id 的话，客户端会把它记成 Last-Event-ID，重连时中间的真事件全被跳过
-ID_LINE=$(grep -c '^id:' "$WORK_DIR/queued.sse")
-EVENT_LINE=$(grep -c '^event:' "$WORK_DIR/queued.sse")
-if (( ID_LINE == EVENT_LINE )); then
-    pass "心跳不占事件 id（id 行 $ID_LINE = event 行 $EVENT_LINE）"
-else
-    fail "id 行 $ID_LINE ≠ event 行 $EVENT_LINE，心跳污染了 Last-Event-ID"
-fi
+if (( QUEUED_READY )); then
+    info "排队中的 run $RUN_ID，将静默等待约 ${QUEUE_TIMEOUT}s"
 
-if grep -q 'sandbox.queued' "$WORK_DIR/queued.sse" &&
-    grep '^data:' "$WORK_DIR/queued.sse" | sed 's/^data: *//' |
-    jq -e -s 'map(select(.type=="run.failed")) | .[0].data.code == "SANDBOX_QUEUE_TIMEOUT"' >/dev/null 2>&1; then
-    pass "确实排在队里，并以排队超时收场（这条没花任何 token）"
-else
-    fail "这个 run 没走排队超时那条路，静默期的成因存疑：$(grep -o 'run\.[a-z]*' "$WORK_DIR/queued.sse" | tail -1)"
+    STARTED=$(date +%s)
+    timeout "$HEARTBEAT_WINDOW" curl -sS -N "$BASE_URL/api/runs/$RUN_ID/events" > "$WORK_DIR/queued.sse"
+    ELAPSED=$(( $(date +%s) - STARTED ))
+    HEARTBEAT=$(grep -c '^:heartbeat' "$WORK_DIR/queued.sse")
+
+    # 说清这条证明了什么：nginx.conf 已经把 /api/runs/ 的 proxy_read_timeout 抬到 3600s，
+    # 所以「没被掐断」主要是那条配置的功劳，不是心跳的。心跳防的是浏览器、公司代理这些
+    # 我们改不到配置的中间环节 —— 因此下面两条断言缺一不可，只看连接活着会把话说过头
+    if (( ELAPSED >= 75 )); then
+        pass "连接静默存活 ${ELAPSED}s，越过了 60s 这道常见的空闲上限"
+    else
+        fail "连接只活了 ${ELAPSED}s，没到能说明问题的时长"
+    fi
+
+    if (( HEARTBEAT >= HEARTBEAT_EXPECTED )); then
+        pass "收到 $HEARTBEAT 个心跳帧"
+    else
+        fail "只收到 $HEARTBEAT 个心跳帧，少于预期的 $HEARTBEAT_EXPECTED 个"
+    fi
+
+    # 心跳带 id 的话，客户端会把它记成 Last-Event-ID，重连时中间的真事件全被跳过
+    ID_LINE=$(grep -c '^id:' "$WORK_DIR/queued.sse")
+    EVENT_LINE=$(grep -c '^event:' "$WORK_DIR/queued.sse")
+    if (( ID_LINE == EVENT_LINE )); then
+        pass "心跳不占事件 id（id 行 $ID_LINE = event 行 $EVENT_LINE）"
+    else
+        fail "id 行 $ID_LINE ≠ event 行 $EVENT_LINE，心跳污染了 Last-Event-ID"
+    fi
+
+    if grep -q 'sandbox.queued' "$WORK_DIR/queued.sse" &&
+        grep '^data:' "$WORK_DIR/queued.sse" | sed 's/^data: *//' |
+        jq -e -s 'map(select(.type=="run.failed")) | .[0].data.code == "SANDBOX_QUEUE_TIMEOUT"' >/dev/null 2>&1; then
+        pass "确实排在队里，并以排队超时收场（这条没花任何 token）"
+    else
+        fail "这个 run 没走排队超时那条路，静默期的成因存疑：$(grep -o 'run\.[a-z]*' "$WORK_DIR/queued.sse" | tail -1)"
+    fi
 fi
 VERDICT[5]=$([[ $failed -eq $before ]] && echo 通过 || echo 未过)
 
@@ -290,20 +330,34 @@ for service in api broker; do
     fi
 done
 
-FILTERED=$(jq -sr --arg run "$RUN_ID" '[.[] | select(.run_id == $run)] | length' "$WORK_DIR/api.log" 2>/dev/null)
-if [[ ${FILTERED:-0} -gt 0 ]]; then
-    pass "按 run_id 能把这一次 run 的 $FILTERED 行日志过滤出来"
+# 「按 run_id 过滤得出来」要有个 run 才验得了。⑤ 没造出 run 时这里报红的话，
+# 红字指向的是日志，真正的毛病却在上一条 —— 那种误导比不报还糟
+if [[ -z $RUN_ID ]]; then
+    info "⑤ 没造出 run，按 run_id 过滤这一条本轮无从验起"
+    RUN_FILTER_VERIFIED=0
 else
-    fail "api 日志里按 run_id=$RUN_ID 过滤不出任何行"
-fi
+    RUN_FILTER_VERIFIED=1
+    FILTERED=$(jq -sr --arg run "$RUN_ID" '[.[] | select(.run_id == $run)] | length' "$WORK_DIR/api.log" 2>/dev/null)
+    if [[ ${FILTERED:-0} -gt 0 ]]; then
+        pass "按 run_id 能把这一次 run 的 $FILTERED 行日志过滤出来"
+    else
+        fail "api 日志里按 run_id=$RUN_ID 过滤不出任何行"
+    fi
 
-if jq -se 'any(.[]; has("thread_id"))' "$WORK_DIR/api.log" >/dev/null 2>&1; then
-    pass "日志带 thread_id"
-else
-    fail "api 日志里没有一行带 thread_id"
+    if jq -se 'any(.[]; has("thread_id"))' "$WORK_DIR/api.log" >/dev/null 2>&1; then
+        pass "日志带 thread_id"
+    else
+        fail "api 日志里没有一行带 thread_id"
+    fi
 fi
 info "token 按 cache 拆分那半条由 ② 断言（acceptance.sh 末尾）"
-VERDICT[6]=$([[ $failed -eq $before ]] && echo 通过 || echo 未过)
+if [[ $failed -ne $before ]]; then
+    VERDICT[6]=未过
+elif (( RUN_FILTER_VERIFIED )); then
+    VERDICT[6]=通过
+else
+    VERDICT[6]="未验（缺 ⑤ 的 run）"
+fi
 
 # 后面两条要用干净的池子，先把占位的沙箱和临时配置还回去
 cleanup
@@ -356,8 +410,9 @@ if (( failed )); then
     printf '\n\033[31mP1 验收未全过。\033[0m\n'
     exit 1
 fi
-if [[ ${VERDICT[1]} != 通过 || ${VERDICT[2]} != 通过 ]]; then
+for index in 1 2 3 4 5 6; do
+    [[ ${VERDICT[$index]} == 通过 ]] && continue
     printf '\n\033[33m已验的都过了，但有条目未验 —— 不能据此判定 P1 验收通过。\033[0m\n'
     exit 2
-fi
+done
 printf '\n\033[32mP1 验收六条全过。\033[0m\n'
