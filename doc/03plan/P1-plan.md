@@ -58,7 +58,7 @@
 | 工具幂等键去重 | 崩溃在工具执行途中仍会重复执行 | P3（**broker 拆分后落点已就位**，见步骤三） |
 | 跨进程租约的**精确**失效检测 | 兜底已于 2026-08-07 补上：`sweep` 会把 `SANDBOX_LEASE_TIMEOUT`（默认 1800 秒）内无人碰过的租约强制归零，见 [`sandbox/pool.py`](../../app/sandbox/pool.py) 的 `_expire_lease`。活跃信号取自 `current()` —— 每次工具调用都会走到它。**仍不精确的部分**：兜底是超时而非事件，崩溃后那个名额还要空占最多 30 分钟；且多 worker 后「谁的租约」无从区分 | P2（拆 worker 时连同 Redis 一起做成有主的租约） |
 | 内网 pypi 镜像（devpi） | agent 装不了任何包，只能用镜像预装的栈 | 本期定案不做，见 §2.2 |
-| workspace 归档回收 | 磁盘占用仍是「历史 thread 数 × 最多 5GB」，worst case TB 级 | [§6.5](../01design/01architecture.md) 待定，**P2 前必须排** |
+| workspace 归档回收 | workspace 从不删除，磁盘只增不减 | **已于 2026-08-07 定案不做**（[§6.5](../01design/01architecture.md)）：实测典型会话仅 ~350KB，是配额的四个数量级以下，撞墙由个别异常会话而非数量累积推动。本期只加可见性（[`deploy/workspace-report.sh`](../../deploy/workspace-report.sh)），归档删除跟 MinIO 在 P2 落地 |
 | 前端 | 仍只能 curl 验收 | 另行排期，[P0 §4](./P0-plan.md) 的遗留问题仍未关闭 |
 | 可观测性指标、链路追踪、成本看板 | 只有日志与 token 数，没有聚合视图 | P4 |
 
