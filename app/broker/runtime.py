@@ -10,12 +10,14 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
+from broker.cache import ToolCache
 from config import Settings
 from sandbox.backend import SandboxBackend
 from sandbox.container import CommandResult, ContainerError
 from sandbox.pool import SandboxPool
 from sandbox.quota import NoQuota, QuotaProtocol, XfsQuota
 from sandbox.workspace import Workspace
+from store import redis
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,9 @@ class Broker:
 
     workspace: Workspace
     pool: SandboxPool
+    # 写操作的去重表。**可以没有** —— 没配 Redis 时去重整个关掉，
+    # 那只是回到没有它的从前，而不是让 broker 起不来
+    cache: ToolCache | None = None
 
     def backend(self, thread_id: str) -> SandboxBackend:
         """给一个 thread 组一个 backend。
@@ -98,7 +103,7 @@ def build_broker(settings: Settings) -> Broker:
         lease_timeout=settings.sandbox_lease_timeout,
         hardening=settings.hardening(),
     )
-    return Broker(workspace=workspace, pool=pool)
+    return Broker(workspace=workspace, pool=pool, cache=ToolCache(redis.create_client(settings.redis_url)))
 
 
 def _build_quota(settings: Settings) -> QuotaProtocol:

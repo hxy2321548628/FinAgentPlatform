@@ -39,6 +39,7 @@ from deepagents.backends.protocol import (
     SandboxBackendProtocol,
     WriteResult,
 )
+from langgraph.config import get_config
 
 from event.model import RunErrorCode
 from sandbox.path import PathEscapeError
@@ -64,6 +65,9 @@ EXECUTE_TIMEOUT = 180.0
 ACQUIRE_TIMEOUT = httpx.Timeout(None, connect=10.0)
 
 EXECUTION_FAILED_EXIT_CODE = 1
+
+# 幂等键的字段名，与 broker 侧的 `ToolRequest` 对齐
+IDEMPOTENCY_FIELD = "checkpoint_ns"
 
 BAD_REQUEST = 400
 
@@ -129,7 +133,7 @@ class RemoteSandboxBackend(SandboxBackendProtocol):
 
     def write(self, file_path: str, content: str) -> WriteResult:
         """写入文件，已存在则覆盖。"""
-        found = self._tool("write", {"file_path": file_path, "content": content})
+        found = self._tool("write", {"file_path": file_path, "content": content}, dedupe=True)
         return WriteResult(error=_text(found.get("error")), path=_text(found.get("path")))
 
     def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
@@ -142,6 +146,7 @@ class RemoteSandboxBackend(SandboxBackendProtocol):
                 "new_string": new_string,
                 "replace_all": replace_all,
             },
+            dedupe=True,
         )
         return EditResult(
             error=_text(found.get("error")),
@@ -151,7 +156,7 @@ class RemoteSandboxBackend(SandboxBackendProtocol):
 
     def delete(self, file_path: str) -> DeleteResult:
         """删除文件。"""
-        found = self._tool("delete", {"file_path": file_path})
+        found = self._tool("delete", {"file_path": file_path}, dedupe=True)
         return DeleteResult(error=_text(found.get("error")), path=_text(found.get("path")))
 
     def glob(self, pattern: str, path: str | None = None) -> GlobResult:
@@ -181,7 +186,9 @@ class RemoteSandboxBackend(SandboxBackendProtocol):
         抛出去会让整个 run 失败，而返回错误能让 LLM 自己决定下一步。
         """
         try:
-            found = self._tool("execute", {"command": command, "timeout": timeout}, timeout=EXECUTE_TIMEOUT)
+            found = self._tool(
+                "execute", {"command": command, "timeout": timeout}, timeout=EXECUTE_TIMEOUT, dedupe=True
+            )
         except BrokerError as exc:
             return ExecuteResponse(output=f"沙箱执行失败：{exc}", exit_code=EXECUTION_FAILED_EXIT_CODE)
         return ExecuteResponse(
@@ -205,9 +212,19 @@ class RemoteSandboxBackend(SandboxBackendProtocol):
             for one in _files_of(self._tool("download", {"paths": paths}))
         ]
 
-    def _tool(self, name: str, payload: Mapping[str, object], *, timeout: float = DEFAULT_TIMEOUT) -> dict[str, object]:
+    def _tool(
+        self,
+        name: str,
+        payload: Mapping[str, object],
+        *,
+        timeout: float = DEFAULT_TIMEOUT,
+        dedupe: bool = False,
+    ) -> dict[str, object]:
+        body = dict(payload)
+        if dedupe:
+            body[IDEMPOTENCY_FIELD] = _checkpoint_ns()
         try:
-            response = self._client.post(f"/threads/{self._thread_id}/tool/{name}", json=payload, timeout=timeout)
+            response = self._client.post(f"/threads/{self._thread_id}/tool/{name}", json=body, timeout=timeout)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise _fail(exc) from exc
@@ -461,6 +478,27 @@ async def _sse(response: httpx.Response) -> AsyncIterator[tuple[str, dict[str, o
             event = line.removeprefix("event:").strip()
         elif line.startswith("data:"):
             yield event, json.loads(line.removeprefix("data:").strip())
+
+
+def _checkpoint_ns() -> str | None:
+    """取这次工具调用的 `checkpoint_ns`，作为 broker 侧的去重键。
+
+    **这是 backend 唯一拿得到的、按调用唯一且重放稳定的东西。** `tool_call_id` 也满足
+    那两个条件，但签名里没有它、middleware 也不往下传，`get_config()` 里同样没有。
+
+    **拿不到就返回 None，去重随之关闭而不是报错**：工具也会在图之外被调用
+    （测试、将来的管理动作），那时没有 LangGraph 的上下文。少一层去重只是回到没有它的
+    从前，抛异常则会把一次正常的分析打断。
+    """
+    try:
+        configurable = get_config().get("configurable", {})
+    # 图之外调用时 LangGraph 抛 RuntimeError；不同版本的类型也可能不同，
+    # 因此这里按「取不到」处理而不是逐个枚举异常
+    except Exception:
+        logger.debug("拿不到 LangGraph 的上下文，这一次不去重")
+        return None
+    found = configurable.get(IDEMPOTENCY_FIELD)
+    return found if isinstance(found, str) else None
 
 
 def _text(value: object) -> str | None:

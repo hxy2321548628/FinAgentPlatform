@@ -149,6 +149,9 @@ services:
       # broker 容器内当前进程是 root，不显式指定的话沙箱会以 root 跑，
       # agent 写出的文件宿主侧读不了，且症状不指向权限
       SANDBOX_USER: ${SANDBOX_USER:?请设成宿主机上 workspace 的属主，形如 1000:1000}
+      # P3 起 broker 也要连 Redis（写操作去重表）。**漏了这一行就会连容器自己的
+      # 127.0.0.1**，而症状出现在第一次 delete/edit 上，不指向配置
+      REDIS_URL: redis://redis:6379/0
     volumes:
       # 唯一持有它的服务。给的是宿主机 root 权限，因此这个容器里不跑任何
       # 来自 agent 的东西 —— 它只认「哪个会话、做什么操作」

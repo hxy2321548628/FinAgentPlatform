@@ -34,6 +34,10 @@ def create_app(broker: Broker | None = None) -> FastAPI:
         owned = broker is None
         current = broker if broker is not None else build_broker(get_settings())
         if owned:
+            # **连不上就起不来**，与 api / worker 同一个规矩。P3 起 broker 也要连 Redis
+            # （写操作去重表）—— 不在这里体检的话，配错了要等到第一次 delete 才暴露
+            if current.cache is not None:
+                await current.cache.check()
             await current.pool.reclaim()
             current.pool.start_sweeper()
         app.state.broker = current

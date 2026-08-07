@@ -7,8 +7,10 @@ api 仍能读写任意会话的文件，边界就只剩一半 —— 而 P3 的�
 
 import asyncio
 import base64
-from collections.abc import AsyncIterator
-from typing import Annotated
+import logging
+from collections.abc import AsyncIterator, Callable
+from dataclasses import asdict
+from typing import TYPE_CHECKING, Annotated
 
 from deepagents.backends.protocol import (
     DeleteResult,
@@ -45,6 +47,7 @@ from broker.schema import (
     SaveRequest,
     SaveResponse,
     ThreadResponse,
+    ToolRequest,
     UploadRequest,
     UploadResponse,
     WriteRequest,
@@ -52,6 +55,11 @@ from broker.schema import (
 from event.model import RunErrorCode
 from sandbox.path import PathEscapeError, artifact_id
 from sandbox.pool import SandboxQueueTimeoutError
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/threads", tags=["broker"])
 
@@ -191,6 +199,46 @@ def _frame(event: str, data: BaseModel | None = None) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+# ------------------------------------------------------------------ 写操作去重
+#
+# **纯读工具不去重**（`ls` / `read` / `glob` / `grep`）：它们没有副作用，重放一次
+# 得到的就是当时该得到的东西，缓存反而会把「文件后来变了」这件事藏起来。
+async def _cached[Result: "DataclassInstance"](
+    broker: Broker, thread_id: str, request: ToolRequest, shape: type[Result]
+) -> Result | None:
+    """这次调用之前跑过吗？跑过就把当时的结果原样还回去。"""
+    if broker.cache is None or not request.checkpoint_ns:
+        return None
+    found = await broker.cache.get(thread_id, request.checkpoint_ns)
+    if found is None:
+        return None
+    logger.info("命中去重表，不进沙箱：thread_id=%s checkpoint_ns=%s", thread_id, request.checkpoint_ns)
+    return shape(**found)
+
+
+async def _remember(broker: Broker, thread_id: str, request: ToolRequest, result: "DataclassInstance") -> None:
+    """记下这次调用的结果。**成功与失败一视同仁** —— 只缓存成功等于没解决重放的问题。"""
+    if broker.cache is None or not request.checkpoint_ns:
+        return
+    await broker.cache.put(thread_id, request.checkpoint_ns, asdict(result))
+
+
+async def _once[Result: "DataclassInstance"](
+    broker: Broker,
+    thread_id: str,
+    request: ToolRequest,
+    shape: type[Result],
+    run: Callable[[], Result],
+) -> Result:
+    """跑一次写操作，同一个调用重放时直接给上一次的结果。"""
+    cached = await _cached(broker, thread_id, request, shape)
+    if cached is not None:
+        return cached
+    result = run()
+    await _remember(broker, thread_id, request, result)
+    return result
+
+
 # ------------------------------------------------------------------ 八个工具
 @router.post("/{thread_id}/tool/ls")
 async def tool_ls(thread_id: str, request: LsRequest, broker: BrokerDep) -> LsResult:
@@ -207,21 +255,39 @@ async def tool_read(thread_id: str, request: ReadRequest, broker: BrokerDep) -> 
 @router.post("/{thread_id}/tool/write")
 async def tool_write(thread_id: str, request: WriteRequest, broker: BrokerDep) -> WriteResult:
     """写入文件，已存在则覆盖。"""
-    return broker.backend(thread_id).write(request.file_path, request.content)
+    return await _once(
+        broker,
+        thread_id,
+        request,
+        WriteResult,
+        lambda: broker.backend(thread_id).write(request.file_path, request.content),
+    )
 
 
 @router.post("/{thread_id}/tool/edit")
 async def tool_edit(thread_id: str, request: EditRequest, broker: BrokerDep) -> EditResult:
-    """替换文件里的字符串。"""
-    return broker.backend(thread_id).edit(
-        request.file_path, request.old_string, request.new_string, request.replace_all
+    """替换文件里的字符串。
+
+    **重放时 `old_string` 已经不在了**，会返回一个首次执行时没有的错误 ——
+    这正是要去重的那一类。
+    """
+    return await _once(
+        broker,
+        thread_id,
+        request,
+        EditResult,
+        lambda: broker.backend(thread_id).edit(
+            request.file_path, request.old_string, request.new_string, request.replace_all
+        ),
     )
 
 
 @router.post("/{thread_id}/tool/delete")
 async def tool_delete(thread_id: str, request: DeleteRequest, broker: BrokerDep) -> DeleteResult:
-    """删除文件。"""
-    return broker.backend(thread_id).delete(request.file_path)
+    """删除文件。**重放时文件已经没了**，同上。"""
+    return await _once(
+        broker, thread_id, request, DeleteResult, lambda: broker.backend(thread_id).delete(request.file_path)
+    )
 
 
 @router.post("/{thread_id}/tool/glob")
@@ -241,9 +307,17 @@ async def tool_execute(thread_id: str, request: ExecuteRequest, broker: BrokerDe
     """在沙箱容器里执行 shell 命令。
 
     命令要跑到 120 秒，同步执行会把事件循环占住，因此丢进线程池。
+
+    **这是最需要去重的一个**：代码由 LLM 生成，可能追加写、累加计数、删文件 ——
+    重放一次就多做一遍。
     """
+    cached = await _cached(broker, thread_id, request, ExecuteResponse)
+    if cached is not None:
+        return cached
     backend = broker.backend(thread_id)
-    return await asyncio.to_thread(backend.execute, request.command, timeout=request.timeout)
+    result = await asyncio.to_thread(backend.execute, request.command, timeout=request.timeout)
+    await _remember(broker, thread_id, request, result)
+    return result
 
 
 @router.post("/{thread_id}/tool/upload")
