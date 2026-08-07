@@ -6,7 +6,8 @@
 |---|---|---|
 | [P0-plan.md](./P0-plan.md) | agent 好不好用 —— 教师提问，agent 自己写 Python、跑、出图 | 已完成（2026-08-03，验收四条全过） |
 | [P1-plan.md](./P1-plan.md) | 不可信代码跑在这台机器上安不安全 —— gVisor、配额、broker 拆分 | 已完成（2026-08-07，验收六条全过） |
-| [P2-plan.md](./P2-plan.md) | 这台机器上的东西挂了会怎样 —— Postgres、Redis、worker 拆分 | 六步已实施、验收六条已过（2026-08-07，其中⑤ 首轮报红后修复）；租约记名这笔债未偿，见 [§8.2](./P2-plan.md) |
+| [P2-plan.md](./P2-plan.md) | 这台机器上的东西挂了会怎样 —— Postgres、Redis、worker 拆分 | 已完成（2026-08-08，验收六条全过）；租约记名这笔债未偿，见 [§8.2](./P2-plan.md) |
+| [P3-plan.md](./P3-plan.md) | 谁在用、能用多少、人能不能插手 —— 认证隔离、配额限流、取消与 HITL、幂等键 | **草稿（2026-08-08），§7 六项待决未关闭，不可开工**。其中 §7.1（MinIO 归属）与 §7.2（四个数值）不定就无法开工 |
 
 配套的验收操作步骤在 [`doc/04acceptance-guide/`](../04acceptance-guide/)，验收脚本在 [`deploy/test/`](../../deploy/test/)。
 
