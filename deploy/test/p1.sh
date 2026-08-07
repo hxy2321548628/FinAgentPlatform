@@ -35,7 +35,9 @@ MAX_CONTAINER=1
 
 log() { printf '\n\033[36m━━ %s\033[0m\n' "$*"; }
 pass() { printf '\033[32m  ✅ %s\033[0m\n' "$*"; }
-fail() { printf '\033[31m  ❌ %s\033[0m\n' "$*"; failed=1; }
+# **累加而不是置 1**：下面每段都用 `before=$failed` 判断「本段有没有新的失败」，
+# 置 1 的话，前面已经红过一次之后这个判断就永远成立，后面每一段都会被记成通过
+fail() { printf '\033[31m  ❌ %s\033[0m\n' "$*"; failed=$((failed + 1)); }
 info() { printf '     %s\n' "$*"; }
 
 failed=0

@@ -68,6 +68,10 @@ SKIP_HOSTILE=1 SKIP_LLM=1 bash deploy/test/p1.sh   # 只跑免费的四条，约
 
 bash deploy/test/acceptance.sh    # P0 验收四条（真实 LLM 调用，有费用）
 sudo bash deploy/test/hostile.sh  # 四条破坏性测试
+
+# P2 验收六条。②③⑥ 免费自验，①④ 要 LLM，⑤ 转调 p1.sh
+bash deploy/test/p2.sh                             # 六条全跑（有 LLM 费用）
+SKIP_LLM=1 SKIP_P1=1 bash deploy/test/p2.sh        # 只跑免费的三条，约 1 分钟
 ```
 
 `.env` 在**仓库根**（不在 `app/`），业务代码一律走 `pydantic_settings.BaseSettings` 读取，不直接 `os.getenv`。

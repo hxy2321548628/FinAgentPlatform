@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 # 开发机默认值，与 deploy/compose.yml 里 redis 服务对齐
 DEFAULT_URL = "redis://127.0.0.1:6379/0"
 
+# 阻塞读的 socket 超时，秒。**必须大于任何一条阻塞命令的 BLOCK 时长。**
+#
+# redis-py 8 的默认值是 5 秒，与事件流 `XREAD BLOCK 5000` 和任务队列
+# `XREADGROUP BLOCK 5000` 正好撞在一起：worker 一空闲就刷 TimeoutError。
+# 这个坑单测抓不到 —— 用例里的阻塞都在几十毫秒就被唤醒了，从没真的等满过一轮
+DEFAULT_SOCKET_TIMEOUT = 30.0
+
 # Stream 里的一条：id 与字段表。客户端建的时候开了 decode_responses，
 # 因此实际拿到的都是 str，而 redis-py 的签名把 bytes 与 None 也算在内 ——
 # 读命令那几处要 cast 一次，原因就是这个
@@ -40,8 +47,8 @@ def create_client(url: str, *, database: int | None = None) -> Redis:
         可直接下命令的客户端。建它同样不会连接，须紧跟一次 `check`。
     """
     if database is None:
-        return Redis.from_url(url, decode_responses=True)
-    return Redis.from_url(url, db=database, decode_responses=True)
+        return Redis.from_url(url, decode_responses=True, socket_timeout=DEFAULT_SOCKET_TIMEOUT)
+    return Redis.from_url(url, db=database, decode_responses=True, socket_timeout=DEFAULT_SOCKET_TIMEOUT)
 
 
 async def check(client: Redis) -> None:
