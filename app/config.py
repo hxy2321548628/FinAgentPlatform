@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from auth.session import DEFAULT_TTL_SECOND as DEFAULT_SESSION_TTL_SECOND
 from sandbox.container import (
     DEFAULT_CPUS,
     DEFAULT_IMAGE,
@@ -141,6 +142,21 @@ class Settings(StoreSettings):
     broker_url: str = Field(
         default=DEFAULT_BROKER_URL,
         description="sandbox-broker 的地址。它是唯一持有 docker.sock 的进程，只在内网监听",
+    )
+
+    # 空库时用一次，之后再启动都不看它 —— 否则运维改过口令，一次重启就改回去了
+    admin_name: str = Field(
+        default="",
+        description="首个管理员的用户名。仅在 users 表为空时生效",
+    )
+    admin_password: SecretStr = Field(
+        default=SecretStr(""),
+        description="首个管理员的口令。仅在 users 表为空时生效，落库的只有 argon2id 哈希",
+    )
+    session_ttl_second: int = Field(
+        default=DEFAULT_SESSION_TTL_SECOND,
+        gt=0,
+        description="登录态多久不用就失效，秒。每次请求都会把它推回去，因此是滑动过期",
     )
 
     worker_concurrency: int = Field(

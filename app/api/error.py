@@ -72,6 +72,14 @@ def invalid(message: str) -> ApiError:
     return ApiError(status.HTTP_422_UNPROCESSABLE_CONTENT, ErrorCode.VALIDATION_ERROR, message)
 
 
+def unauthenticated(message: str) -> ApiError:
+    """未登录、session 过期，或用户名口令对不上。
+
+    **口令错与用户不存在返回同一句话**：分开说等于告诉试探的人「这个用户名是存在的」。
+    """
+    return ApiError(status.HTTP_401_UNAUTHORIZED, ErrorCode.UNAUTHENTICATED, message)
+
+
 def install_handler(app: FastAPI) -> None:
     """把框架抛出的异常统一收敛成上面的结构。
 

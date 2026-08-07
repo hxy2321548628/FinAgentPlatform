@@ -15,7 +15,9 @@
 """
 
 from collections.abc import AsyncIterator, Iterator
+from functools import partial
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -27,6 +29,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from api.app import create_app
 from api.platform import Platform
+from auth.password import PasswordHasher
+from auth.session import DEFAULT_TTL_SECOND, SessionStore
 from broker.app import create_app as create_broker_app
 from broker.runtime import Broker
 from event.mapper import StreamChunk
@@ -40,6 +44,8 @@ from sandbox.pool import QueuePositionCallback
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
 from sandbox.workspace import Workspace
 from task.queue import TaskQueue
+from user.model import UserRole
+from user.repository import User, UserRepository
 from worker.loop import Worker
 
 BROKER_URL = "http://broker.test"
@@ -48,6 +54,10 @@ TEST_CONSUMER = "test-worker"
 
 # worker 的主循环靠它回到「该停了没」的判断上。默认 5 秒会让每条用例都多等一轮
 TEST_BLOCK_MILLISECOND = 50
+
+# 用例里登录用的口令。**哈希参数同时调到最低档**（见 `hasher`）——
+# 默认档一次 64 MiB、几十毫秒，而这套用例每条都要登录一次
+TEST_PASSWORD = "口令-test"
 
 
 class FakeContainer:
@@ -145,12 +155,23 @@ def queue(live_cache: Redis) -> TaskQueue:
 
 
 @pytest.fixture
+def hasher() -> PasswordHasher:
+    """调到最低档的哈希器。
+
+    默认档一次要 64 MiB、几十毫秒，而这套用例每条都建号并登录一次 —— 那是上百次。
+    档位是构造参数而不是全局设置，正是为了这种场合能换掉；生产走的仍是默认档。
+    """
+    return PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
+
+
+@pytest.fixture
 def platform(
     connection: BrokerConnection,
     log: EventLog,
     live_engine: AsyncEngine,
     live_cache: Redis,
     queue: TaskQueue,
+    hasher: PasswordHasher,
 ) -> Platform:
     repository = RunRepository(live_engine)
     return Platform(
@@ -162,6 +183,10 @@ def platform(
         backend_factory=RemoteBackendFactory(base_url=BROKER_URL),
         engine=live_engine,
         cache=live_cache,
+        user=UserRepository(live_engine),
+        session=SessionStore(live_cache, ttl_second=DEFAULT_TTL_SECOND),
+        password=hasher,
+        session_ttl_second=DEFAULT_TTL_SECOND,
     )
 
 
@@ -199,9 +224,44 @@ def api(platform: Platform) -> FastAPI:
     return create_app(platform)
 
 
+def signup(
+    client: TestClient,
+    platform: Platform,
+    hasher: PasswordHasher,
+    *,
+    name: str,
+    role: UserRole = UserRole.TEACHER,
+) -> User:
+    """建一个账号。
+
+    **要在 `TestClient` 自己那条循环里建**：连接绑在创建它的循环上，在 pytest 那条
+    循环里建号会把连接留进池子，应用侧再取到它就挂死在读上 —— 症状是超时，不指向循环。
+    """
+    assert client.portal is not None
+    return client.portal.call(
+        partial(platform.user.create, name=name, password_hash=hasher.hash(TEST_PASSWORD), role=role)
+    )
+
+
+def login(client: TestClient, name: str) -> None:
+    """登录，Cookie 由客户端自己收下。"""
+    response = client.post("/api/auth/login", json={"name": name, "password": TEST_PASSWORD})
+    assert response.status_code == httpx.codes.OK, response.text
+
+
 @pytest.fixture
-def client(api: FastAPI, worker: Worker, live_cache: Redis, live_engine: AsyncEngine) -> Iterator[TestClient]:
+def client(
+    api: FastAPI,
+    worker: Worker,
+    live_cache: Redis,
+    live_engine: AsyncEngine,
+    platform: Platform,
+    hasher: PasswordHasher,
+) -> Iterator[TestClient]:
     """跑在 `TestClient` 自己那条事件循环上的客户端，外加一个同循环的 worker。
+
+    **已经登录**：业务端点全部要求登录，不登的话每条用例都停在 401。要验未登录的行为
+    就 `client.cookies.clear()`，那比再开一个客户端便宜。
 
     **收尾要回到那条循环里做**：asyncio 的连接绑在创建它的循环上，而这些连接是应用在
     portal 的循环里建的。等回到 pytest 的循环再关，那条循环已经没了 ——
@@ -211,6 +271,11 @@ def client(api: FastAPI, worker: Worker, live_cache: Redis, live_engine: AsyncEn
         assert opened.portal is not None
         opened.portal.start_task_soon(worker.run)
         try:
+            # **建号与登录也要在 try 里**：它们一旦抛出，收尾就轮不到执行，
+            # 而 worker 还挂在 portal 的循环里 —— 退出 TestClient 时会卡在 join 上，
+            # 于是真正的异常一个字都看不到，只看到整套用例挂住
+            owner = signup(opened, platform, hasher, name=f"teacher-{uuid4().hex[:8]}")
+            login(opened, owner.name)
             yield opened
         finally:
             opened.portal.call(worker.stop)

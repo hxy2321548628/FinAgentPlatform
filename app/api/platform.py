@@ -16,6 +16,8 @@ from fastapi import Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from auth.password import PasswordHasher
+from auth.session import SessionStore
 from config import Settings
 from run.archive import EventArchive
 from run.log import EventLog
@@ -24,6 +26,7 @@ from run.submitter import RunSubmitter
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteWorkspace
 from store import postgres, redis
 from task.queue import TaskQueue
+from user.repository import UserRepository
 
 # 网关只投递不消费，consumer 名字用不上。给一个显式的常量而不是空串，
 # 是为了万一有人拿它去 XREADGROUP 时能一眼看出是谁干的
@@ -42,6 +45,12 @@ class Platform:
     backend_factory: RemoteBackendFactory
     engine: AsyncEngine
     cache: Redis
+    user: UserRepository
+    session: SessionStore
+    password: PasswordHasher
+    # Cookie 的 max-age 要与 session 在 Redis 里的 TTL 一致。两边分别配的话，
+    # 短的那一侧到期时另一侧还留着 —— 症状是「明明还没登出却要重新登录」，或者反过来
+    session_ttl_second: int
 
 
 async def build_platform(settings: Settings) -> Platform:
@@ -76,6 +85,10 @@ async def build_platform(settings: Settings) -> Platform:
         backend_factory=RemoteBackendFactory(base_url=settings.broker_url),
         engine=engine,
         cache=cache,
+        user=UserRepository(engine),
+        session=SessionStore(cache, ttl_second=settings.session_ttl_second),
+        password=PasswordHasher(),
+        session_ttl_second=settings.session_ttl_second,
     )
 
 

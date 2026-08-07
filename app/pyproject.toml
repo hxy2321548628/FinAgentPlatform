@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "alembic>=1.19.0",
+    "argon2-cffi>=25.1.0",
     "deepagents>=0.7.1",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",

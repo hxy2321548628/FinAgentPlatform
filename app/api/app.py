@@ -1,21 +1,26 @@
 """FastAPI 应用的组装。
 
-**本期只做架构定的六个端点**，认证、管理、取消、审批都不在这里 —— 那几项各有各的
-前置条件（用户体系、HITL），本期一个都不满足。
-
 字段级的请求/响应文档以 `/docs` 的 OpenAPI 为准，不在这里手写第二份。
+
+**登录挂在路由器上，不逐个端点挂**：漏挂一个就是一个不需要登录的入口，
+而这种缺口不报错。`/auth` 是唯一不挂的那个 —— 还没登录的人正是要走它。
 """
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
 from api.error import install_handler
 from api.platform import Platform, build_platform
-from api.route import artifact, run, thread
+from api.route import artifact, auth, run, thread
+from api.security import require_user
+from auth.bootstrap import ensure_first_admin
 from config import get_settings
 from log import configure
+
+logger = logging.getLogger(__name__)
 
 API_PREFIX = "/api"
 
@@ -36,6 +41,14 @@ def create_app(platform: Platform | None = None) -> FastAPI:
         owned = platform is None
         current = platform if platform is not None else await build_platform(get_settings())
         app.state.platform = current
+        if owned:
+            settings = get_settings()
+            await ensure_first_admin(
+                repository=current.user,
+                hasher=current.password,
+                name=settings.admin_name,
+                password=settings.admin_password.get_secret_value(),
+            )
         try:
             yield
         finally:
@@ -53,8 +66,9 @@ def create_app(platform: Platform | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     install_handler(app)
+    app.include_router(auth.router, prefix=API_PREFIX)
     for router in (thread.router, run.router, artifact.router):
-        app.include_router(router, prefix=API_PREFIX)
+        app.include_router(router, prefix=API_PREFIX, dependencies=[Depends(require_user)])
     return app
 
 

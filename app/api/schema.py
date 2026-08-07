@@ -7,6 +7,26 @@
 from pydantic import BaseModel, Field
 
 from event.model import RunStatus
+from user.model import UserRole
+
+
+class LoginRequest(BaseModel):
+    """登录。"""
+
+    name: str = Field(min_length=1, description="用户名")
+    password: str = Field(min_length=1, description="口令。只用于校验，不落库也不进日志")
+
+
+class MeResponse(BaseModel):
+    """当前登录用户。
+
+    **不含「所属组」**：`groups` 两张表本期不建，组内共享资源也一样没有 ——
+    返回一个恒为空的字段只会让前端以为它将来会有东西。
+    """
+
+    id: str = Field(min_length=1, description="用户标识")
+    name: str = Field(min_length=1, description="用户名")
+    role: UserRole = Field(description="角色，前端据此决定是否显示管理入口")
 
 
 class ThreadResponse(BaseModel):
