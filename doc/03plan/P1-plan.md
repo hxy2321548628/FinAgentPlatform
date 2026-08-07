@@ -131,12 +131,11 @@ make all                                     # 门禁全绿
 docker build -f deploy/sandbox.Dockerfile -t zuel-sandbox:latest .
 docker compose -f deploy/compose.yml up -d   # nginx + api + broker
 
-# 破坏性测试：四条都在沙箱里跑，宿主机均不受影响
-bash deploy/test/hostile.sh                  # while True / fork 炸弹 / 写满 workspace / 写满 tmp
-
-# P0 的验收四条，经 Nginx 重跑一遍
-bash deploy/test/acceptance.sh
+# 六条一条命令跑完。③④⑤⑥ 由它自己验，① 转调 hostile.sh，② 转调 acceptance.sh
+bash deploy/test/p1.sh
 ```
+
+操作步骤、每条该看到什么、失败时看哪里，见 [P1 验收指南](../04acceptance-guide/P1/P1验收指南.md)。
 
 **通过条件**（六条全中才算完）：
 

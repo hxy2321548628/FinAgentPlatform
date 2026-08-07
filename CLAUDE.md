@@ -57,6 +57,10 @@ cd app && uv run uvicorn api.app:app --reload         # 另开一个终端
 export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 docker compose -f deploy/compose.yml up -d --build
 
+# P1 验收六条的总入口，转调下面两个脚本。操作步骤见 doc/04acceptance-guide/P1/
+bash deploy/test/p1.sh                             # 六条全跑（要 sudo，有 LLM 费用）
+SKIP_HOSTILE=1 SKIP_LLM=1 bash deploy/test/p1.sh   # 只跑免费的四条，约 3 分钟
+
 bash deploy/test/acceptance.sh    # P0 验收四条（真实 LLM 调用，有费用）
 sudo bash deploy/test/hostile.sh  # 四条破坏性测试
 ```
