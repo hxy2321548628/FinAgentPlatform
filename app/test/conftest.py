@@ -120,6 +120,15 @@ async def live_cache() -> AsyncIterator[Redis]:
     except RedisUnavailableError:
         await created.aclose()
         pytest.skip(SKIP_REDIS)
+
+    # **清空之前先确认连的是哪个库。** 这一句不是多余的谨慎：`db=` 曾被 URL 里的 `/0`
+    # 静默盖掉，于是每条用例都在冲业务库，而且投出去的测试任务被真的 worker 领走 ——
+    # 那是要花钱的模型调用。整件事没有一处报错，是靠一条断言里冒出真实中文回答才发现的
+    connected = created.connection_pool.connection_kwargs["db"]
+    if connected != TEST_DATABASE:
+        await created.aclose()
+        pytest.fail(f"测试连到了 {connected} 号库而不是 {TEST_DATABASE} 号，拒绝 flushdb")
+
     await created.flushdb()
     await created.connection_pool.disconnect()
     try:

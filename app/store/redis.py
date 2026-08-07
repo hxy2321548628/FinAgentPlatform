@@ -4,6 +4,7 @@
 """
 
 import logging
+from urllib.parse import urlsplit, urlunsplit
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
@@ -38,6 +39,10 @@ def create_client(url: str, *, database: int | None = None) -> Redis:
 
     **解码交给客户端**：事件的信封是 JSON 文本，调用方拿到 `str` 才不必每处自己 decode。
 
+    **库号改写在 URL 上，不走 `db=` 参数**：`Redis.from_url` 会让 URL 里的路径盖掉
+    同名关键字，而业务的 URL 正是以 `/0` 结尾 —— 传了 `database` 也照样连业务库，
+    且没有任何报错。
+
     Args:
         url: 形如 `redis://host:6379/0`。
         database: 覆盖 URL 里的逻辑库号。测试用它与业务数据分家 ——
@@ -46,9 +51,9 @@ def create_client(url: str, *, database: int | None = None) -> Redis:
     Returns:
         可直接下命令的客户端。建它同样不会连接，须紧跟一次 `check`。
     """
-    if database is None:
-        return Redis.from_url(url, decode_responses=True, socket_timeout=DEFAULT_SOCKET_TIMEOUT)
-    return Redis.from_url(url, db=database, decode_responses=True, socket_timeout=DEFAULT_SOCKET_TIMEOUT)
+    if database is not None:
+        url = urlunsplit(urlsplit(url)._replace(path=f"/{database}"))
+    return Redis.from_url(url, decode_responses=True, socket_timeout=DEFAULT_SOCKET_TIMEOUT)
 
 
 async def check(client: Redis) -> None:

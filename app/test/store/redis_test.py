@@ -15,6 +15,10 @@ from test.conftest import TEST_DATABASE
 # 一个不会有人监听的端口
 DEAD_URL = "redis://127.0.0.1:1/0"
 
+# 业务用的那个 URL 的形状：**末尾带库号**，而那正是覆盖出问题的地方
+BUSINESS_URL = "redis://127.0.0.1:6379/0"
+BUSINESS_DATABASE = 0
+
 # 演示故障模式用：故意把 socket 超时压到比 BLOCK 还短
 IMPATIENT_SECOND = 0.2
 PATIENT_BLOCK_MILLISECOND = 1_000
@@ -31,6 +35,25 @@ async def test_check_raises_when_redis_is_unreachable() -> None:
 
 async def test_check_passes_against_a_live_redis(live_cache: Redis) -> None:
     await check(live_cache)
+
+
+def test_the_database_argument_beats_the_database_in_the_url() -> None:
+    """`Redis.from_url(url, db=15)` 会被 URL 里的 `/0` **静默**盖掉。
+
+    而业务的 URL 正是以 `/0` 结尾。后果有两层，都不报错：每条用例开头的 `flushdb`
+    冲的是业务库，正在跑的 run 的事件与排队中的任务一起没；投出去的测试任务被真的
+    worker 领走，那是要花钱的模型调用，而事件流里会冒出没人写过的真实回答。
+    """
+    client = create_client(BUSINESS_URL, database=TEST_DATABASE)
+
+    assert client.connection_pool.connection_kwargs["db"] == TEST_DATABASE
+
+
+def test_no_database_argument_keeps_the_one_in_the_url() -> None:
+    """业务进程不传这个参数，库号就该由 URL 说了算。"""
+    client = create_client(BUSINESS_URL)
+
+    assert client.connection_pool.connection_kwargs["db"] == BUSINESS_DATABASE
 
 
 def test_the_socket_timeout_outlives_every_blocking_command() -> None:
