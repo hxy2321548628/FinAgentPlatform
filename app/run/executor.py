@@ -324,7 +324,6 @@ class RunExecutor:
         if not await self._repository.succeed(run.id, tokens=tokens):
             logger.info("run 已经有终态了，不再推 run.finished")
             return
-        collected = await self._collect(run, started_at, task.user_id)
         await self._emit(
             RunFinishedEvent(
                 ts=now_ms(),
@@ -332,18 +331,18 @@ class RunExecutor:
                 path=(),
                 data=RunFinishedData(
                     tokens=tokens,
-                    # **事件里仍是旧形状**：换成表主键会让保留期内的历史事件全部指向
-                    # 一个新端点不认识的 id，那要等端点同时认两种形状之后再换
-                    artifacts=[one.path for one in collected],
+                    artifacts=await self._collect(run, started_at, task.user_id),
                 ),
             )
         )
 
-    async def _collect(self, run: Run, since_ns: int, user_id: str | None) -> list[CollectedArtifact]:
-        """认领产物、传进对象存储、落表。
+    async def _collect(self, run: Run, since_ns: int, user_id: str | None) -> list[str]:
+        """认领产物、传进对象存储、落表，给出事件里要报的标识。
 
         Returns:
-            本次认领到的产物；无主的 run 为空。
+            产物标识。进了对象存储的报 `artifacts` 表主键；没进去的只能报旧形状
+            `{thread_id}/{相对路径}` —— 字节还在 workspace 里，端点按含不含 `/`
+            分辨这两种形状。无主的 run 为空。
         """
         if user_id is None:
             # 租户前缀取自提交的人，没有它就没有前缀可用。**按某个默认前缀上传是错的** ——
@@ -351,8 +350,8 @@ class RunExecutor:
             logger.warning("run 没有归属，产物不进对象存储：租户前缀无从取")
             return []
         collected = await self._workspace.collect(run.thread_id, since_ns=since_ns, user_id=user_id)
-        await self._artifacts.add(run.id, collected)
-        return collected
+        added = {one.s3_key: one.id for one in await self._artifacts.add(run.id, collected)}
+        return [added.get(one.s3_key or "", one.path) for one in collected]
 
     def _start(self, backend: BackendProtocol, run: Run, task: RunTask) -> AsyncIterator[StreamChunk]:
         """开跑或续跑。带着决策来的就是续跑，从中断点接着走。"""

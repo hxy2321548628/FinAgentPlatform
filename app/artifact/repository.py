@@ -11,10 +11,11 @@ import logging
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncEngine
-from sqlmodel import select
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from artifact.model import Artifact, ArtifactRecord, CollectedArtifact
+from run.repository import RunRecord
 
 logger = logging.getLogger(__name__)
 
@@ -72,3 +73,56 @@ class ArtifactRepository:
         async with AsyncSession(self._engine) as session:
             found = (await session.exec(statement)).all()
         return [one.to_artifact() for one in found]
+
+    async def get(self, artifact_id: str, *, user_id: str) -> Artifact | None:
+        """按主键查一个产物，**只查得到自己的那些**。
+
+        归属经 `runs.user_id` 判定 —— 产物自己不带 owner，而 run 带。与
+        `ThreadRepository` 同一条规矩：这一层不提供「不带 user 也能查」的入口，
+        端点那边就写不出漏掉过滤条件的越权。
+
+        Args:
+            artifact_id: 表主键。
+            user_id: 谁在查。
+
+        Returns:
+            找到的产物；不存在、或不属于这个人，都是 None。
+        """
+        if (identifier := _as_uuid(artifact_id)) is None:
+            return None
+        statement = (
+            select(ArtifactRecord)
+            .join(RunRecord, onclause=col(RunRecord.id) == col(ArtifactRecord.run_id))
+            .where(ArtifactRecord.id == identifier, RunRecord.user_id == UUID(user_id))
+        )
+        async with AsyncSession(self._engine) as session:
+            found = (await session.exec(statement)).first()
+        return None if found is None else found.to_artifact()
+
+    async def by_key(self, s3_key: str) -> Artifact | None:
+        """按对象键查一个产物。
+
+        **兼容期专用**：旧形状的 id 是「哪个会话的哪个文件」，拼得出键但拼不出主键。
+        不带 `user_id` 是因为键里已经含着租户前缀 —— 调用方正是用当前用户的 id 拼的它。
+
+        Args:
+            s3_key: 对象存储里的键。
+
+        Returns:
+            找到的产物；P4 之前的产物在表里没有行，返回 None。
+        """
+        statement = select(ArtifactRecord).where(ArtifactRecord.s3_key == s3_key)
+        async with AsyncSession(self._engine) as session:
+            found = (await session.exec(statement)).first()
+        return None if found is None else found.to_artifact()
+
+
+def _as_uuid(value: str) -> UUID | None:
+    """把外部来的标识解成 UUID，形状不对就是「查不到」。
+
+    端点收的是路径参数，什么都可能来 —— 抛 ValueError 会变成 500，而正确的回答是 404。
+    """
+    try:
+        return UUID(value)
+    except ValueError:
+        return None

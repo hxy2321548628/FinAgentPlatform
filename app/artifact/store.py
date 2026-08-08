@@ -6,6 +6,7 @@
 """
 
 import mimetypes
+from datetime import timedelta
 from pathlib import Path
 
 from minio import Minio
@@ -19,6 +20,10 @@ THREAD_SEGMENT = "thread"
 
 # 猜不出扩展名时的类型。产物多半是图，但也可能是 Excel、pickle 或别的什么
 DEFAULT_MIME = "application/octet-stream"
+
+# 预签名 URL 的有效期。它只在 nginx 与 MinIO 之间走一趟，几秒就够 ——
+# 给一分钟是留给慢盘与重试，再长就只是白白延长一条能下载的凭证的寿命
+PRESIGN_TTL = timedelta(minutes=1)
 
 
 def artifact_key(*, user_id: str, thread_id: str, relative_path: str) -> str:
@@ -87,3 +92,43 @@ class ArtifactStore:
             size=path.stat().st_size,
             s3_key=key,
         )
+
+    def presign(self, s3_key: str) -> str:
+        """签一条限时的下载 URL，**只发给 nginx，不发给浏览器**。
+
+        签名里带着 MinIO 的地址，那个地址浏览器够不着（服务不对外暴露端口）。
+        它经 `X-Accel-Redirect` 交给 nginx，由 nginx 取字节转给浏览器 ——
+        api 进程因此一个字节都不经手，而 MinIO 也不必开一个对外的面。
+
+        Args:
+            s3_key: 对象存储里的键。
+
+        Returns:
+            带签名的完整 URL。
+
+        Raises:
+            S3Error: 签不出来。
+        """
+        return self._client.presigned_get_object(self.bucket, s3_key, expires=PRESIGN_TTL)
+
+    def get(self, s3_key: str) -> bytes:
+        """把一个产物整个读回内存。
+
+        **只给「没有 nginx」的那条路用**（开发机直接跑 uvicorn）。生产走
+        `presign` + `X-Accel-Redirect`，字节根本不进这个进程。
+
+        Args:
+            s3_key: 对象存储里的键。
+
+        Returns:
+            产物内容。
+
+        Raises:
+            S3Error: 对象不存在，或连不上。
+        """
+        response = self._client.get_object(self.bucket, s3_key)
+        try:
+            return response.read()
+        finally:
+            response.close()
+            response.release_conn()

@@ -16,6 +16,8 @@ from fastapi import Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from artifact.repository import ArtifactRepository
+from artifact.store import ArtifactStore
 from auth.password import PasswordHasher
 from auth.session import SessionStore
 from config import Settings
@@ -52,6 +54,13 @@ class Platform:
     cache: Redis
     user: UserRepository
     thread: ThreadRepository
+    artifacts: ArtifactRepository
+    # 产物的对象存储。**只用来签 URL 与（没有 nginx 时）取字节**，从不写入 ——
+    # 写在 broker 那一侧，那是唯一碰得到 workspace 的进程
+    artifact: ArtifactStore | None
+    # 走不走 nginx 直发。开着时这个进程一个字节都不经手；关掉时自己从对象存储取回来
+    # 再转发，那是开发机直接跑 uvicorn 的路 —— X-Accel-Redirect 只在 nginx 后面有效
+    artifact_direct_send: bool
     session: SessionStore
     policy: QuotaPolicy
     cancel: CancelFlag
@@ -102,6 +111,9 @@ async def build_platform(settings: Settings) -> Platform:
         cache=cache,
         user=UserRepository(engine),
         thread=ThreadRepository(engine),
+        artifacts=ArtifactRepository(engine),
+        artifact=ArtifactStore(client=settings.minio_client(), bucket=settings.minio_bucket),
+        artifact_direct_send=settings.artifact_direct_send,
         policy=policy,
         cancel=CancelFlag(cache),
         usage=RunUsage(engine, output_weight=policy.output_weight),

@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from api.app import create_app
 from api.platform import Platform
 from artifact.repository import ArtifactRepository
+from artifact.store import ArtifactStore
 from auth.password import PasswordHasher
 from auth.session import DEFAULT_TTL_SECOND, SessionStore
 from broker.app import create_app as create_broker_app
@@ -171,8 +172,24 @@ def pool() -> FakePool:
 
 
 @pytest.fixture
-def broker_app(space: Workspace, pool: FakePool) -> FastAPI:
-    return create_broker_app(Broker(workspace=space, pool=pool))  # type: ignore[arg-type]
+def artifact_store() -> ArtifactStore | None:
+    """默认不配对象存储。
+
+    大多数用例不关心产物去了哪，配上就等于让整包用例都要求 MinIO 起着。
+    要验对象存储那条路的用例自己覆盖这个夹具（见 test/api/artifact_direct_test.py）。
+    """
+    return None
+
+
+@pytest.fixture
+def artifact_direct_send() -> bool:
+    """默认关掉直发。用例里没有 nginx，X-Accel-Redirect 发出去没人认。"""
+    return False
+
+
+@pytest.fixture
+def broker_app(space: Workspace, pool: FakePool, artifact_store: ArtifactStore | None) -> FastAPI:
+    return create_broker_app(Broker(workspace=space, pool=pool, artifact=artifact_store))  # type: ignore[arg-type]
 
 
 @pytest.fixture
@@ -212,6 +229,8 @@ def platform(
     live_cache: Redis,
     queue: TaskQueue,
     hasher: PasswordHasher,
+    artifact_store: ArtifactStore | None,
+    artifact_direct_send: bool,
 ) -> Platform:
     repository = RunRepository(live_engine)
     return Platform(
@@ -225,6 +244,9 @@ def platform(
         cache=live_cache,
         user=UserRepository(live_engine),
         thread=ThreadRepository(live_engine),
+        artifacts=ArtifactRepository(live_engine),
+        artifact=artifact_store,
+        artifact_direct_send=artifact_direct_send,
         policy=QuotaPolicy(),
         cancel=CancelFlag(live_cache),
         usage=RunUsage(live_engine),

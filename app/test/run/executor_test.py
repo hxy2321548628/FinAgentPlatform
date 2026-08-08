@@ -95,14 +95,17 @@ class FakeArtifactRepository:
 
     def __init__(self) -> None:
         self.added: list[tuple[str, list[CollectedArtifact]]] = []
+        # 落表之后发出去的主键，事件里报的就是它们
+        self.given: list[Artifact] = []
 
     async def add(self, run_id: str, collected: list[CollectedArtifact]) -> list[Artifact]:
         self.added.append((run_id, collected))
-        return [
+        self.given = [
             Artifact(id=uuid4().hex, run_id=run_id, s3_key=one.s3_key or "", mime=one.mime, size=one.size)
             for one in collected
             if one.s3_key is not None
         ]
+        return self.given
 
 
 def an_artifact(name: str = "chart.png", *, stored: bool = True) -> CollectedArtifact:
@@ -595,19 +598,39 @@ async def test_a_follower_sees_the_whole_run_from_start_to_finish(
 # ------------------------------------------------------------------ 产物
 # 「哪些文件算产物」的判定在 broker 侧（见 test/broker/），这里只验执行器有没有
 # 在正确的时间点去问、以及有没有把答案原样放进 run.finished。
-async def test_run_finished_lists_what_this_run_produced(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+async def test_run_finished_reports_the_table_id_of_a_stored_artifact(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
     """产物端点靠这些标识拼 URL，不给的话教师只能从答复文本里猜路径。
 
-    **本期事件里仍是旧形状**：换成表主键会让保留期内的历史事件全部指向一个新端点
-    不认识的 id，那要等端点同时认两种形状之后再换。
+    进了对象存储的报表主键 —— 那才是产物从此的身份。
     """
     space.produced[THREAD] = [an_artifact()]
+    artifacts = FakeArtifactRepository()
+    executor, _ = make_executor_with(
+        pool, space, log, lambda backend, thread_id, content: chunk_stream(token_chunk("画好了")), artifacts=artifacts
+    )
+
+    run = a_task(content="画个图")
+    await executor.execute(run)
+
+    assert await artifacts_of(log, run.run_id) == [one.id for one in artifacts.given]
+
+
+async def test_run_finished_falls_back_to_the_legacy_shape_when_the_upload_failed(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
+    """没进对象存储就没有表主键，只能报旧形状 —— 字节还在 workspace 里，仍下得动。
+
+    **不能因此一个都不报**：那次分析画出来的图就此从教师眼前消失，而且不报错。
+    """
+    space.produced[THREAD] = [an_artifact("gone.png", stored=False)]
     executor, _ = make_executor(pool, space, log, token_chunk("画好了"))
 
     run = a_task(content="画个图")
     await executor.execute(run)
 
-    assert await artifacts_of(log, run.run_id) == [f"{THREAD}/chart.png"]
+    assert await artifacts_of(log, run.run_id) == [f"{THREAD}/gone.png"]
 
 
 async def test_collected_artifacts_are_written_to_the_table(

@@ -13,8 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from artifact.model import CollectedArtifact
 from artifact.repository import ArtifactRepository
 from run.repository import RunRepository
+from test.conftest import FAKE_HASH
 from thread.repository import Thread
-from user.repository import User
+from user.model import UserRole
+from user.repository import User, UserRepository
 
 PNG_MIME = "image/png"
 
@@ -25,6 +27,14 @@ def a_stored(name: str = "chart.png", size: int = 8) -> CollectedArtifact:
         mime=PNG_MIME,
         size=size,
         s3_key=f"tenant/u-1/thread/t-1/{name}",
+    )
+
+
+@pytest.fixture
+async def other(live_engine: AsyncEngine) -> User:
+    """另一个账号。隔离要拿真人验，不能拿一个随手编的 uuid。"""
+    return await UserRepository(live_engine).create(
+        name=f"other-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.TEACHER
     )
 
 
@@ -100,6 +110,44 @@ async def test_the_uploaded_ones_are_written_even_when_a_sibling_failed(live_eng
     added = await repository.add(run_id, [a_stored("one.png"), unstored])
 
     assert [one.s3_key for one in added] == ["tenant/u-1/thread/t-1/one.png"]
+
+
+async def test_an_artifact_is_found_by_its_id(live_engine: AsyncEngine, run_id: str, owner: User) -> None:
+    repository = ArtifactRepository(live_engine)
+    added = await repository.add(run_id, [a_stored()])
+
+    found = await repository.get(added[0].id, user_id=owner.id)
+
+    assert found is not None
+    assert found.s3_key == "tenant/u-1/thread/t-1/chart.png"
+
+
+async def test_someone_elses_artifact_is_not_found(live_engine: AsyncEngine, run_id: str, other: User) -> None:
+    """越权与不存在给同一个回答，端点因此自然落到 404。"""
+    repository = ArtifactRepository(live_engine)
+    added = await repository.add(run_id, [a_stored()])
+
+    assert await repository.get(added[0].id, user_id=other.id) is None
+
+
+async def test_an_unknown_id_is_not_found(live_engine: AsyncEngine, owner: User) -> None:
+    assert await ArtifactRepository(live_engine).get(uuid4().hex, user_id=owner.id) is None
+
+
+async def test_an_artifact_is_found_by_its_object_key(live_engine: AsyncEngine, run_id: str) -> None:
+    """旧形状的 id 靠这一条换回主键 —— 兼容期内的历史事件全指着旧形状。"""
+    repository = ArtifactRepository(live_engine)
+    await repository.add(run_id, [a_stored()])
+
+    found = await repository.by_key("tenant/u-1/thread/t-1/chart.png")
+
+    assert found is not None
+    assert found.mime == PNG_MIME
+
+
+async def test_an_unknown_object_key_is_not_found(live_engine: AsyncEngine) -> None:
+    """P4 之前的产物在表里没有行，端点据此回落到 workspace。"""
+    assert await ArtifactRepository(live_engine).by_key("tenant/u-1/thread/t-1/never.png") is None
 
 
 async def test_an_artifact_of_an_unknown_run_is_refused(live_engine: AsyncEngine) -> None:

@@ -40,6 +40,11 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
+      # api 只用它签 URL，从不写入、也不取字节 —— 字节由 nginx 直发（P4 计划 §2.1）
+      MINIO_ENDPOINT: minio:9000
+      # **只有 nginx 后面才能开**：X-Accel-Redirect 是 nginx 的协议，直接跑 uvicorn
+      # 时浏览器只会收到一个空响应
+      ARTIFACT_DIRECT_SEND: "true"
     # **不挂 docker.sock，也不挂 workspace** —— 这两条就是 ADR-0004 的全部内容。
     # api 被 agent 生成的内容影响之后，能做的最多是发几个 HTTP 请求给 broker。
     # 拆出 worker 之后它连模型都不碰了：收提问投队列、查状态、把事件转 SSE，就这三件事。

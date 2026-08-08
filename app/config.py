@@ -119,6 +119,11 @@ class StoreSettings(BaseSettings):
         default=False,
         description="连 MinIO 走不走 TLS。内网无域名签不了受信证书，默认不走（ADR-0012）",
     )
+    artifact_direct_send: bool = Field(
+        default=False,
+        description="产物走不走 nginx 直发（X-Accel-Redirect）。**只在 nginx 后面有效**，"
+        "compose 部署置 true；直接跑 uvicorn 时留 false，否则浏览器只收到一个空响应",
+    )
 
     def minio_client(self) -> Minio:
         """按配置造一个 MinIO 客户端。
