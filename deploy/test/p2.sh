@@ -28,10 +28,8 @@ RECOVER_WINDOW=300
 # 探针用的任务条数。要多于 worker 副本数，才看得出「分给了谁」
 PROBE_TASK=6
 
-# run 转 running 之后等多久再 kill。**这个数太大就砍不到**：这道题实测约 20 秒跑完，
-# 等满 20 秒的话有一半概率 run 已经结束，那次验收什么都没验着。
-# 太小则砍在第一个 checkpoint 之前，验的成了「重投」而不是「续跑」
-KILL_DELAY=10
+# 等第一条 tool_result 最多等多久，秒。等到它才动刀，见 ① 处说明
+KILL_WINDOW=180
 
 log() { printf '\n\033[36m━━ %s\033[0m\n' "$*"; }
 pass() { printf '\033[32m  ✅ %s\033[0m\n' "$*"; }
@@ -272,7 +270,16 @@ else
         [[ $(run_status "$RUN_ID") == running ]] && break
         sleep 2
     done
-    sleep "$KILL_DELAY"
+
+    # **等第一条 tool_result 出现再动手，不用固定 sleep。** 这一刻两个条件同时成立：
+    # 至少有一个 checkpoint 可以续，而 run 还没跑完 —— 刀正好落在中间。
+    #
+    # 固定 sleep 赌不赢：这道题在 prompt 缓存热的时候十几秒就跑完了，2026-08-08
+    # 实测等满 20 秒与等满 10 秒各有一次砍空。**砍空不会报错**，它只会让这条验收
+    # 什么都没验着，而判据若不识别这种情况就会把它记成通过
+    timeout "$KILL_WINDOW" curl -fsS -b "$JAR" -N "$BASE_URL/api/runs/$RUN_ID/events" 2>/dev/null \
+        | grep -q -m1 '^event: tool_result'
+
     VICTIM="$(worker_ids | head -1)"
     docker kill -s KILL "$VICTIM" >/dev/null 2>&1
     info "已 kill -9 worker $VICTIM，等另一个副本认领（阈值 60 秒）"
@@ -321,9 +328,14 @@ else
             | length
           end' <<<"$EVENTS")"
 
+    # **砍空记「未验」而不是「未过」。** 与「跳过的条目记未验」是同一条规矩的另一半：
+    # 没触发到要测的场景，既算不上失败，更算不上通过 —— 记成失败会让人去查一个
+    # 并不存在的 bug，记成通过则等于这条门禁不存在
+    NOT_LANDED=0
     if (( starts < 2 )); then
+        NOT_LANDED=1
         info "这一次 kill 没砍到：run 在它生效前就跑完了（run.started 只有 $starts 条）"
-        fail "崩溃恢复没发生，这条**没验着**（不是通过）—— 重跑一次，或把 KILL_DELAY 调小"
+        info "崩溃恢复没发生，这条**没验着**（既不是通过也不是失败）—— 重跑一次即可"
     elif (( repeated == 0 )); then
         pass "真崩了（run.started $starts 条）且崩前已完成的工具一次都没重跑"
     else
@@ -341,7 +353,13 @@ else
     # 所以这里副本没回来不说明策略有问题，手工拉一把，好让后面几条仍在满编下跑
     compose up -d --no-recreate worker >/dev/null 2>&1
     wait_worker "$WORKER_COUNT" || info "worker 没回到 $WORKER_COUNT 个副本，后面几条会在减员状态下跑"
-    (( failed == before )) && VERDICT[1]=通过 || VERDICT[1]=未过
+    if (( failed != before )); then
+        VERDICT[1]=未过
+    elif (( NOT_LANDED )); then
+        VERDICT[1]="未验（这轮 kill 没砍到，重跑一次）"
+    else
+        VERDICT[1]=通过
+    fi
 fi
 
 # ------------------------------------------------------------------ ④ P0 回归
