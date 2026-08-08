@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { Overview } from './pages/Overview'
 
 export function WorkspaceRouter() {
   const placeholder = (label: string) => (
@@ -7,7 +8,7 @@ export function WorkspaceRouter() {
 
   return (
     <Routes>
-      <Route index element={placeholder('总览（Task 4 实现）')} />
+      <Route index element={<Overview />} />
       <Route path="chat" element={placeholder('分析对话（Plan 2 实现）')} />
       <Route path="chat/:threadId" element={placeholder('分析对话（Plan 2 实现）')} />
       <Route path="scenarios" element={placeholder('场景库（Plan 3 实现）')} />
