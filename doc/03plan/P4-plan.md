@@ -323,3 +323,32 @@ Prometheus 不走 MinIO —— 指标是小而密的时序数据，本地 TSDB �
 判据仍是闭区间 `>=`，而且**现在非闭不可**：粗粒度时钟下，与基准同一个 tick 内写下的产物 mtime 与基准完全相等，用 `>` 会把它们全漏掉。
 
 **验证**：复现脚本两轮判据都中；原来那两条偶发红的用例各连跑 100 轮全绿；`make all` 654 条全过。
+
+### 8.2 步骤一：MinIO 落地与 `artifacts` 表
+
+**三个实施时才定下来的取舍**：
+
+**一、MinIO 客户端放在 broker 里**（§6 把这一条列成了 P1 的回归风险）。产物的字节躺在 broker 独占的 workspace 里，让 api 或 worker 来传就得先把字节经 HTTP 搬过去 —— 凭空多一跳，还得给它们开一条本来不需要的文件通路。**落表仍在 worker**：broker 至今一行 SQL 都不发，为一张它自己不查的表开一条库连接不划算。于是形成 `mark → collect → add` 三步：broker 传字节并交回元数据，worker 顺手落表。
+
+**二、上传失败不升级成 run 失败。** 分析已经跑完了，字节也还在 workspace 里（§2.3 定案不删），仍按旧形状下得动 —— 为一次存储抖动扔掉几十分钟的分析与已经烧掉的 token 不划算。因此 `CollectedArtifact.s3_key` 可以为空，**空的那些不落表**：表里的每一行都必须指向一个真的对象，否则查出来的键下载不了，而那种 404 不指向原因。这与 §2.2 定好的「查不到再回落到 workspace」正好是同一条退路。失败记 `error` 而不是 `warning`，留给步骤七的告警收。
+
+**三、无主的 run 不上传。** 租户前缀取自提交的人（`tenant/{user_id}/thread/{thread_id}/`），而 `RunTask.user_id` 在类型上仍可为空（P3 之前投进队列的任务）。**按某个默认前缀上传是错的** —— 那正是「越权面」这类问题最典型的来源。这种 run 记一条 warning 并报零产物。
+
+**事件契约本期不动**：`run.finished` 里仍是旧形状 `{thread_id}/{相对路径}`。换成表主键要等步骤二把端点改成同时认两种形状，否则这中间产物就下不动了。
+
+**顺手清掉的孤儿**：`RemoteWorkspace.artifact_since` 与 broker 的 `GET /threads/{id}/artifacts` 因 `collect` 取代而再无调用方，一并删除。`SandboxBackend.artifact_since` 留着 —— `collect` 内部还用它。
+
+**验证**（2026-08-08，compose 全栈 + 一次真实分析）：
+
+| 判据 | 实测 |
+|---|---|
+| run 跑完 | `succeeded` |
+| 产物落表 | `s3_key = tenant/9cf9849d…/thread/737ab2d6…/index.png`，`mime=image/png`，`size=123650` |
+| 前缀正确 | 与 `tenant/{user_id}/thread/{thread_id}/` 逐段对上 |
+| 字节真在 MinIO 里 | `mc cat` 出来 123,650 字节，与 broker 从 workspace 直取的那份**逐字节等长** |
+| 事件仍是旧形状 | `artifacts: ["737ab2d6…/index.png"]` |
+| 门禁 | `make all` 679 条全过；MinIO 起来之后原本 skip 的 6 条产物用例全部真跑 |
+
+**§4 观察项记一笔**：这次真实分析未命中 token **113,612**（cache 命中 75,264，输出 1,992）。P3 的八个样本区间是 5,199–318,768，这一个落在区间内。
+
+**一个部署上的坑**：`mc ls local/artifact/tenant/{user_id}/` 列出来的路径是**相对于所给前缀**的（显示 `thread/…/index.png` 而不是完整键）。核对前缀时别把它当成「前缀没生成对」。

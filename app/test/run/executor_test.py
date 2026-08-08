@@ -17,6 +17,7 @@ from deepagents.backends.protocol import BackendProtocol
 from langchain_core.messages import AIMessage, AIMessageChunk
 from redis.asyncio import Redis
 
+from artifact.model import Artifact, CollectedArtifact
 from event.mapper import StreamChunk
 from event.model import (
     EventType,
@@ -36,6 +37,9 @@ from sandbox.remote import AsyncQueuePositionCallback
 from task.queue import RunTask
 
 THREAD = "thread-1"
+
+# 提交这次分析的人。产物在对象存储里的租户前缀就是它
+USER = "user-1"
 
 
 class FakePool:
@@ -67,23 +71,47 @@ class FakePool:
 
 
 class FakeWorkspace:
-    """按会话报出产物标识的假 workspace。真的产物判定在 broker 侧验。"""
+    """按会话报出产物的假 workspace。真的产物判定与上传在 broker 侧验。"""
 
     # 基准的定值。取一个认得出的数，好断言执行器交回来的就是它而不是自己读的墙钟
     STAMP = 1_700_000_000_000_000_000
 
     def __init__(self) -> None:
-        self.produced: dict[str, list[str]] = {}
-        self.asked: list[tuple[str, int]] = []
+        self.produced: dict[str, list[CollectedArtifact]] = {}
+        self.asked: list[tuple[str, int, str]] = []
         self.marked: list[str] = []
 
     async def mark(self, thread_id: str) -> int:
         self.marked.append(thread_id)
         return self.STAMP
 
-    async def artifact_since(self, thread_id: str, since_ns: int) -> list[str]:
-        self.asked.append((thread_id, since_ns))
+    async def collect(self, thread_id: str, *, since_ns: int, user_id: str) -> list[CollectedArtifact]:
+        self.asked.append((thread_id, since_ns, user_id))
         return self.produced.get(thread_id, [])
+
+
+class FakeArtifactRepository:
+    """记下落表了哪些产物的假仓储。真的那套 SQL 在 test/artifact/ 里连真库验。"""
+
+    def __init__(self) -> None:
+        self.added: list[tuple[str, list[CollectedArtifact]]] = []
+
+    async def add(self, run_id: str, collected: list[CollectedArtifact]) -> list[Artifact]:
+        self.added.append((run_id, collected))
+        return [
+            Artifact(id=uuid4().hex, run_id=run_id, s3_key=one.s3_key or "", mime=one.mime, size=one.size)
+            for one in collected
+            if one.s3_key is not None
+        ]
+
+
+def an_artifact(name: str = "chart.png", *, stored: bool = True) -> CollectedArtifact:
+    return CollectedArtifact(
+        path=f"{THREAD}/{name}",
+        mime="image/png",
+        size=8,
+        s3_key=f"tenant/{USER}/thread/{THREAD}/{name}" if stored else None,
+    )
 
 
 class FakeRepository:
@@ -223,9 +251,9 @@ def log(live_cache: Redis) -> EventLog:
     return EventLog(live_cache)
 
 
-def a_task(thread_id: str = THREAD, content: str = "一") -> RunTask:
+def a_task(thread_id: str = THREAD, content: str = "一", user_id: str | None = USER) -> RunTask:
     """一条队列里领到的任务。真实的 run id 就是 uuid4().hex。"""
-    return RunTask(run_id=uuid4().hex, thread_id=thread_id, content=content)
+    return RunTask(run_id=uuid4().hex, thread_id=thread_id, content=content, user_id=user_id)
 
 
 def make_executor(
@@ -244,6 +272,7 @@ def make_executor_with(
     runner: AgentRunner,
     cancel: FakeCancelFlag | None = None,
     agent: FakeAgent | None = None,
+    artifacts: FakeArtifactRepository | None = None,
 ) -> tuple[RunExecutor, FakeRepository]:
     repository = FakeRepository()
     executor = RunExecutor(
@@ -253,6 +282,7 @@ def make_executor_with(
         agent=agent or FakeAgent(runner),
         repository=repository,
         cancel=cancel or FakeCancelFlag(),
+        artifacts=artifacts or FakeArtifactRepository(),
     )
     return executor, repository
 
@@ -566,14 +596,63 @@ async def test_a_follower_sees_the_whole_run_from_start_to_finish(
 # 「哪些文件算产物」的判定在 broker 侧（见 test/broker/），这里只验执行器有没有
 # 在正确的时间点去问、以及有没有把答案原样放进 run.finished。
 async def test_run_finished_lists_what_this_run_produced(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
-    """产物端点靠这些标识拼 URL，不给的话教师只能从答复文本里猜路径。"""
-    space.produced[THREAD] = [f"{THREAD}/chart.png"]
+    """产物端点靠这些标识拼 URL，不给的话教师只能从答复文本里猜路径。
+
+    **本期事件里仍是旧形状**：换成表主键会让保留期内的历史事件全部指向一个新端点
+    不认识的 id，那要等端点同时认两种形状之后再换。
+    """
+    space.produced[THREAD] = [an_artifact()]
     executor, _ = make_executor(pool, space, log, token_chunk("画好了"))
 
     run = a_task(content="画个图")
     await executor.execute(run)
 
     assert await artifacts_of(log, run.run_id) == [f"{THREAD}/chart.png"]
+
+
+async def test_collected_artifacts_are_written_to_the_table(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
+    """产物的身份要长在表上，落表这一步漏掉的话，表永远是空的而事件照常有产物。"""
+    space.produced[THREAD] = [an_artifact()]
+    artifacts = FakeArtifactRepository()
+    executor, _ = make_executor_with(
+        pool, space, log, lambda backend, thread_id, content: chunk_stream(token_chunk("画好了")), artifacts=artifacts
+    )
+
+    run = a_task(content="画个图")
+    await executor.execute(run)
+
+    assert artifacts.added == [(run.run_id, [an_artifact()])]
+
+
+async def test_the_tenant_prefix_comes_from_the_submitter(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    """租户前缀是新的越权面：认领时交给 broker 的必须是提交这次分析的人。"""
+    executor, _ = make_executor(pool, space, log, token_chunk("好"))
+
+    await executor.execute(a_task())
+
+    assert space.asked == [(THREAD, FakeWorkspace.STAMP, USER)]
+
+
+async def test_a_run_without_an_owner_collects_nothing(
+    pool: FakePool, space: FakeWorkspace, log: EventLog, caplog: pytest.LogCaptureFixture
+) -> None:
+    """无主的 run 没有租户前缀可用，不能把产物塞进别人的前缀里。
+
+    只有 P3 之前投进队列的任务会这样，眼下已经没有 —— 但静默按某个默认前缀上传，
+    正是「越权面」这种问题最典型的来源。
+    """
+    space.produced[THREAD] = [an_artifact()]
+    executor, _ = make_executor(pool, space, log, token_chunk("好"))
+
+    with caplog.at_level(logging.WARNING):
+        run = a_task(user_id=None)
+        await executor.execute(run)
+
+    assert space.asked == []
+    assert await artifacts_of(log, run.run_id) == []
+    assert any("没有归属" in one.message for one in caplog.records)
 
 
 async def test_a_run_that_produced_nothing_reports_an_empty_list(
@@ -600,7 +679,7 @@ async def test_the_artifact_baseline_comes_from_the_workspace(
 
     await executor.execute(a_task(content="一"))
 
-    assert space.asked == [(THREAD, FakeWorkspace.STAMP)]
+    assert space.asked == [(THREAD, FakeWorkspace.STAMP, USER)]
 
 
 async def test_the_baseline_is_taken_before_the_agent_starts(

@@ -10,6 +10,7 @@ import base64
 import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 from deepagents.backends.protocol import (
@@ -26,12 +27,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from artifact.model import CollectedArtifact
+from artifact.store import ArtifactStore, guess_mime
 from broker.runtime import Broker, get_broker
 from broker.schema import (
     AcquireErrorData,
     AcquireRequest,
-    ArtifactListResponse,
+    ArtifactCollectResponse,
     ArtifactMarkResponse,
+    CollectedArtifactItem,
+    CollectRequest,
     CreateThreadRequest,
     DeleteRequest,
     DownloadItem,
@@ -55,8 +60,9 @@ from broker.schema import (
     WriteRequest,
 )
 from event.model import RunErrorCode
-from sandbox.path import PathEscapeError, artifact_id
+from sandbox.path import OUTPUT_DIR, PathEscapeError, artifact_id
 from sandbox.pool import SandboxQueueTimeoutError
+from store.object import CONNECT_ERROR
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -114,19 +120,53 @@ async def mark_artifacts(thread_id: str, broker: BrokerDep) -> ArtifactMarkRespo
     return ArtifactMarkResponse(since_ns=broker.backend(thread_id).artifact_mark())
 
 
-@router.get("/{thread_id}/artifacts")
-async def list_artifacts(
-    thread_id: str,
-    broker: BrokerDep,
-    since_ns: Annotated[int, Query(description="Unix 时间戳（纳秒），只列这之后写入的")],
-) -> ArtifactListResponse:
-    """列出本次 run 产出的产物。
+@router.post("/{thread_id}/artifacts/collect")
+async def collect_artifacts(thread_id: str, request: CollectRequest, broker: BrokerDep) -> ArtifactCollectResponse:
+    """认领本次 run 的产物，**顺手传进对象存储**。
 
-    返回的是可下载的标识而不是宿主机路径 —— 宿主机的目录结构不该越过这层边界。
+    上传放在这里而不是调用方那一侧：字节躺在这个进程独占的 workspace 里，
+    让 api 或 worker 来传就得先把字节经 HTTP 搬过去，凭空多一跳，
+    还得给它们开一条本来不需要的文件通路。
+
+    上传是同步的（minio 客户端没有异步接口），丢进线程池免得占住事件循环。
     """
     workspace = broker.workspace.path(thread_id)
-    found = broker.backend(thread_id).artifact_since(since_ns)
-    return ArtifactListResponse(artifacts=[artifact_id(thread_id, workspace, one) for one in found])
+    found = broker.backend(thread_id).artifact_since(request.since_ns)
+    collected = await asyncio.to_thread(
+        _upload_all, broker.artifact, thread_id=thread_id, user_id=request.user_id, workspace=workspace, found=found
+    )
+    return ArtifactCollectResponse(artifacts=[CollectedArtifactItem(**asdict(one)) for one in collected])
+
+
+def _upload_all(
+    store: ArtifactStore | None, *, thread_id: str, user_id: str, workspace: Path, found: list[Path]
+) -> list[CollectedArtifact]:
+    """把认领到的产物逐个传上去。"""
+    return [_upload_one(store, thread_id=thread_id, user_id=user_id, path=path, workspace=workspace) for path in found]
+
+
+def _upload_one(
+    store: ArtifactStore | None, *, thread_id: str, user_id: str, path: Path, workspace: Path
+) -> CollectedArtifact:
+    """传一个产物。传不上去只记一条 error，不让整次 run 失败。
+
+    **不把上传失败升级成 run 失败**：分析已经跑完了，字节也还在 workspace 里，
+    仍按旧形状下得动。为了一次存储抖动扔掉几十分钟的分析与已经烧掉的 token 不划算。
+    记 error 而不是 warning，是因为它该被告警收走 —— 产物没进对象存储是要人管的。
+    """
+    relative = path.relative_to(workspace / OUTPUT_DIR).as_posix()
+    if store is None:
+        logger.error("没有配对象存储，产物只留在 workspace 里：%s", relative)
+        return CollectedArtifact(
+            path=artifact_id(thread_id, workspace, path), mime=guess_mime(relative), size=path.stat().st_size
+        )
+    try:
+        return store.put(path, user_id=user_id, thread_id=thread_id, relative_path=relative)
+    except CONNECT_ERROR:
+        logger.error("产物传不进对象存储，只留在 workspace 里：%s", relative, exc_info=True)
+        return CollectedArtifact(
+            path=artifact_id(thread_id, workspace, path), mime=guess_mime(relative), size=path.stat().st_size
+        )
 
 
 @router.get("/{thread_id}/artifacts/{relative_path:path}")

@@ -17,6 +17,7 @@ from typing import Protocol
 
 from deepagents.backends.protocol import BackendProtocol
 
+from artifact.model import Artifact, CollectedArtifact
 from event.mapper import StreamChunk, map_chunk
 from event.model import (
     Event,
@@ -87,8 +88,19 @@ class WorkspaceProtocol(Protocol):
         """取一次 run 的产物判定基准。"""
         ...
 
-    async def artifact_since(self, thread_id: str, since_ns: int) -> list[str]:
-        """列出一次 run 产出的产物标识。"""
+    async def collect(self, thread_id: str, *, since_ns: int, user_id: str) -> list[CollectedArtifact]:
+        """认领一次 run 的产物，并把它们传进对象存储。"""
+        ...
+
+
+class ArtifactRepositoryProtocol(Protocol):
+    """执行器对产物仓储的全部要求：只有写。
+
+    查在端点那一侧，不经过执行器。
+    """
+
+    async def add(self, run_id: str, collected: list[CollectedArtifact]) -> list[Artifact]:
+        """记下一次 run 的产物。"""
         ...
 
 
@@ -166,6 +178,7 @@ class RunExecutor:
         log: 事件日志，执行过程中产生的一切都往这里写。
         agent: 智能体，负责开跑、续跑与「有没有在等人确认」。
         repository: run 元数据的仓储，状态流转往这里落。
+        artifacts: 产物仓储，认领到的产物往这里落。
         backend_factory: 按会话造 backend，不传则发 HTTP 给 broker。
     """
 
@@ -178,6 +191,7 @@ class RunExecutor:
         agent: AgentProtocol,
         repository: RunRepositoryProtocol,
         cancel: CancelFlagProtocol,
+        artifacts: ArtifactRepositoryProtocol,
         backend_factory: BackendFactory | None = None,
     ) -> None:
         self._pool = pool
@@ -187,6 +201,7 @@ class RunExecutor:
         self._agent = agent
         self._repository = repository
         self._cancel = cancel
+        self._artifacts = artifacts
 
     async def execute(self, task: RunTask) -> None:
         """跑完一条已经领到手的任务，或者把它停在「等人确认」上。
@@ -309,6 +324,7 @@ class RunExecutor:
         if not await self._repository.succeed(run.id, tokens=tokens):
             logger.info("run 已经有终态了，不再推 run.finished")
             return
+        collected = await self._collect(run, started_at, task.user_id)
         await self._emit(
             RunFinishedEvent(
                 ts=now_ms(),
@@ -316,10 +332,27 @@ class RunExecutor:
                 path=(),
                 data=RunFinishedData(
                     tokens=tokens,
-                    artifacts=await self._workspace.artifact_since(run.thread_id, started_at),
+                    # **事件里仍是旧形状**：换成表主键会让保留期内的历史事件全部指向
+                    # 一个新端点不认识的 id，那要等端点同时认两种形状之后再换
+                    artifacts=[one.path for one in collected],
                 ),
             )
         )
+
+    async def _collect(self, run: Run, since_ns: int, user_id: str | None) -> list[CollectedArtifact]:
+        """认领产物、传进对象存储、落表。
+
+        Returns:
+            本次认领到的产物；无主的 run 为空。
+        """
+        if user_id is None:
+            # 租户前缀取自提交的人，没有它就没有前缀可用。**按某个默认前缀上传是错的** ——
+            # 那正是「越权面」这类问题最典型的来源。只有 P3 之前投进队列的任务会走到这里
+            logger.warning("run 没有归属，产物不进对象存储：租户前缀无从取")
+            return []
+        collected = await self._workspace.collect(run.thread_id, since_ns=since_ns, user_id=user_id)
+        await self._artifacts.add(run.id, collected)
+        return collected
 
     def _start(self, backend: BackendProtocol, run: Run, task: RunTask) -> AsyncIterator[StreamChunk]:
         """开跑或续跑。带着决策来的就是续跑，从中断点接着走。"""

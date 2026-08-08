@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from api.app import create_app
 from api.platform import Platform
+from artifact.repository import ArtifactRepository
 from auth.password import PasswordHasher
 from auth.session import DEFAULT_TTL_SECOND, SessionStore
 from broker.app import create_app as create_broker_app
@@ -260,6 +261,7 @@ def worker(
         agent=agent,
         repository=RunRepository(live_engine),
         cancel=CancelFlag(live_cache),
+        artifacts=ArtifactRepository(live_engine),
         backend_factory=backend_factory,
     )
     return Worker(queue=queue, executor=executor)

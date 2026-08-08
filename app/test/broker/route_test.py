@@ -307,9 +307,38 @@ async def test_artifacts_written_after_the_mark_are_reported(connection: BrokerC
     output_dir = space.path(thread_id) / "outputs"
     (output_dir / "chart.png").write_bytes(b"png")
 
-    found = await workspace.artifact_since(thread_id, since)
+    collected = await workspace.collect(thread_id, since_ns=since, user_id="u-1")
 
-    assert found == [f"{thread_id}/chart.png"]
+    assert [one.path for one in collected] == [f"{thread_id}/chart.png"]
+    await connection.aclose()
+
+
+async def test_collecting_without_an_object_store_still_reports_the_artifact(
+    connection: BrokerConnection, space: Workspace
+) -> None:
+    """没配对象存储时退回「只认领不上传」，而不是让整次 run 失败。
+
+    这条用例跑在没有 MinIO 的 broker 上（`broker_url` 夹具就是这么组的），
+    因此它同时也验了「上传失败时的降级路径」—— 字节还在 workspace 里，仍然下得动。
+    """
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    since = await workspace.mark(thread_id)
+    (space.path(thread_id) / "outputs" / "chart.png").write_bytes(b"png")
+
+    collected = await workspace.collect(thread_id, since_ns=since, user_id="u-1")
+
+    assert [one.path for one in collected] == [f"{thread_id}/chart.png"]
+    assert collected[0].s3_key is None
+    await connection.aclose()
+
+
+async def test_a_run_that_produced_nothing_collects_nothing(connection: BrokerConnection, space: Workspace) -> None:
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    since = await workspace.mark(thread_id)
+
+    assert await workspace.collect(thread_id, since_ns=since, user_id="u-1") == []
     await connection.aclose()
 
 
@@ -322,7 +351,9 @@ async def test_the_mark_leaves_earlier_artifacts_behind(connection: BrokerConnec
     (output_dir / "previous.png").write_bytes(b"png")
     os.utime(output_dir / "previous.png", ns=(0, 0))
 
-    assert await workspace.artifact_since(thread_id, await workspace.mark(thread_id)) == []
+    since = await workspace.mark(thread_id)
+
+    assert await workspace.collect(thread_id, since_ns=since, user_id="u-1") == []
     await connection.aclose()
 
 

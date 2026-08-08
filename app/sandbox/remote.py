@@ -41,6 +41,7 @@ from deepagents.backends.protocol import (
 )
 from langgraph.config import get_config
 
+from artifact.model import CollectedArtifact
 from event.model import RunErrorCode
 from sandbox.path import PathEscapeError
 from sandbox.pool import SandboxQueueTimeoutError
@@ -393,25 +394,31 @@ class RemoteWorkspace:
             raise BrokerError(message)
         return found
 
-    async def artifact_since(self, thread_id: str, since_ns: int) -> list[str]:
-        """列出一次 run 产出的产物标识。
+    async def collect(self, thread_id: str, *, since_ns: int, user_id: str) -> list[CollectedArtifact]:
+        """认领一次 run 的产物，broker 会顺手把它们传进对象存储。
 
-        产物是 workspace 的事而不是工具的事：agent 从头到尾不知道有「产物」这个概念，
-        它只是往 `outputs/` 写文件，判定与编号都发生在平台这一侧。
+        **`user_id` 是对象存储的租户前缀**，broker 不连库、查不到归属，只能由这一侧带过去。
 
         Args:
             thread_id: 会话标识。
-            since_ns: Unix 时间戳，纳秒。取自 `mark`。
+            since_ns: 产物判定的基准，取自 `mark`。
+            user_id: 产出它们的人。
 
         Returns:
-            产物标识，可直接拼产物端点下载。
+            认领到的产物。`s3_key` 为空表示没能传进对象存储，字节仍在 workspace 里。
 
         Raises:
             BrokerError: broker 不可达。
         """
-        result = await self._connection.call("GET", f"/threads/{thread_id}/artifacts", params={"since_ns": since_ns})
+        result = await self._connection.call(
+            "POST",
+            f"/threads/{thread_id}/artifacts/collect",
+            json={"since_ns": since_ns, "user_id": user_id},
+        )
         found = result.get("artifacts", [])
-        return [str(one) for one in found] if isinstance(found, list) else []
+        if not isinstance(found, list):
+            return []
+        return [_to_collected(one) for one in found if isinstance(one, dict)]
 
     async def artifact(self, artifact: str) -> bytes:
         """取回一个产物的字节。
@@ -555,3 +562,13 @@ def _decode(content: object) -> bytes | None:
 def _files_of(result: dict[str, object]) -> list[dict[str, str]]:
     found = result.get("files", [])
     return found if isinstance(found, list) else []
+
+
+def _to_collected(item: dict[str, object]) -> CollectedArtifact:
+    """把 broker 回的一条产物元数据解回本地形状。形状由那一侧的同一份契约保证。"""
+    return CollectedArtifact(
+        path=str(item.get("path", "")),
+        mime=str(item.get("mime", "")),
+        size=_number(item.get("size")) or 0,
+        s3_key=_text(item.get("s3_key")),
+    )

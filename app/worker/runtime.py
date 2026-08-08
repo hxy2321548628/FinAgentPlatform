@@ -14,6 +14,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agent.factory import Agent, create_model
+from artifact.repository import ArtifactRepository
 from config import Settings
 from run.archive import EventArchive
 from run.cancel import CancelFlag
@@ -89,6 +90,7 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
         agent=Agent(model=create_model(settings), checkpointer=checkpoint.saver),
         repository=RunRepository(engine),
         cancel=CancelFlag(cache),
+        artifacts=ArtifactRepository(engine),
         backend_factory=backend_factory,
     )
     queue = TaskQueue(

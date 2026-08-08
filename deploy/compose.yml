@@ -1,11 +1,10 @@
-# 内网单机部署：nginx + api + worker×2 + broker + postgres + redis。
+# 内网单机部署：nginx + api + worker×2 + broker + postgres + redis + minio。
 #
 #   docker compose -f deploy/compose.yml up -d --build
 #
 # **沙箱容器不在这里声明** —— 它们由 broker 在运行时动态创建与销毁。
 #
-# 本期没有的（各自的偿还期次见 P2 计划 §1.3）：minio 在 P3，
-# pypi-mirror 定案不做（沙箱零出网）。
+# P4 起多一个 minio（产物存储）。pypi-mirror 定案不做（沙箱零出网）。
 #
 # **两个数据目录都是宿主机 bind mount，不是卷**：命名卷会被 `docker compose down -v`
 # 一并删掉，而那里面正是 P2 要保住的东西 —— checkpoint 一丢，中断的任务就再也接不上。
@@ -132,6 +131,28 @@ services:
       retries: 20
     restart: unless-stopped
 
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    # 9000 是 S3 API，9001 是控制台。控制台只给运维排查用
+    command: server /data --console-address ":9001"
+    # MINIO_ROOT_USER / MINIO_ROOT_PASSWORD 由 .env 直接喂给官方镜像，
+    # 与 api 侧读的 MINIO_ACCESS_KEY / MINIO_SECRET_KEY 是同一组值
+    env_file:
+      - ../.env
+    volumes:
+      - ${MINIO_DATA_DIR:-../data/minio}:/data
+    # 同 Postgres 与 Redis：只绑回环，验收脚本在宿主机上够得着即可。
+    # **不对内网开放** —— 产物下载走 nginx 代理，浏览器不直连 MinIO（P4 计划 §2.1）
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   broker:
     build:
       context: ..
@@ -152,6 +173,9 @@ services:
       # P3 起 broker 也要连 Redis（写操作去重表）。**漏了这一行就会连容器自己的
       # 127.0.0.1**，而症状出现在第一次 delete/edit 上，不指向配置
       REDIS_URL: redis://redis:6379/0
+      # P4 起 broker 也要连 MinIO：产物的字节躺在它独占的 workspace 里，
+      # 让 api 或 worker 来传就得先把字节经 HTTP 搬过去，还得给它们开一条文件通路
+      MINIO_ENDPOINT: minio:9000
     volumes:
       # 唯一持有它的服务。给的是宿主机 root 权限，因此这个容器里不跑任何
       # 来自 agent 的东西 —— 它只认「哪个会话、做什么操作」
@@ -163,4 +187,9 @@ services:
     # 不对外暴露端口：只有同一个内部网络里的 api 够得着
     expose:
       - "8100"
+    # 桶在启动时建一次。MinIO 还没就绪时 broker 会起不来，那正是想要的 ——
+    # 「能启动但一传就 500」会让之后每一次故障都多一个候选原因
+    depends_on:
+      minio:
+        condition: service_healthy
     restart: unless-stopped

@@ -181,10 +181,27 @@ class ArtifactMarkResponse(BaseModel):
     since_ns: int = Field(ge=0, description="Unix 时间戳（纳秒），取自 workspace 所在文件系统的时钟")
 
 
-class ArtifactListResponse(BaseModel):
-    """一次 run 产出的产物。"""
+class CollectRequest(BaseModel):
+    """认领一次 run 的产物，顺手传进对象存储。"""
 
-    artifacts: list[str] = Field(description="产物标识，形如 {thread_id}/{outputs 下的相对路径}")
+    since_ns: int = Field(ge=0, description="产物判定的基准，取自 mark")
+    # 对象存储的键按租户前缀隔离，而 broker 不连库、查不到归属，只能由调用方带过来
+    user_id: str = Field(min_length=1, description="产出它们的人，对象存储的租户前缀就是它")
+
+
+class CollectedArtifactItem(BaseModel):
+    """认领到的一个产物。"""
+
+    path: str = Field(description="旧形状标识，形如 {thread_id}/{outputs 下的相对路径}")
+    mime: str = Field(min_length=1, description="内容类型，按扩展名猜")
+    size: int = Field(ge=0, description="字节数")
+    s3_key: str | None = Field(default=None, description="对象存储里的键。没传上去时为空，字节仍在 workspace 里")
+
+
+class ArtifactCollectResponse(BaseModel):
+    """一次 run 认领到的全部产物。"""
+
+    artifacts: list[CollectedArtifactItem] = Field(description="本次认领到的产物")
 
 
 class QueuedData(BaseModel):
