@@ -12,7 +12,7 @@ interface ToolMessage {
   output?: string[]
 }
 interface AgentMessage { type: 'agent'; markdown: string }
-interface HitlMessage { type: 'hitl'; tool: string; args: string; resolved?: boolean }
+interface HitlMessage { type: 'hitl'; tool: string; args: string; resolved?: boolean; onApprove?: () => void; onReject?: () => void }
 interface ThinkingMessage { type: 'thinking' }
 
 type Message = UserMessage | ReasoningMessage | ToolMessage | AgentMessage | HitlMessage | ThinkingMessage
@@ -239,8 +239,8 @@ function HitlCard({ msg }: { msg: HitlMessage }) {
         {msg.tool}  {msg.args}
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const, marginBottom: showReply ? 12 : 0 }}>
-        <button onClick={() => setResolved(true)} style={{ padding: '7px 16px', background: 'var(--status-done)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>✓ 批准</button>
-        <button onClick={() => setResolved(true)} style={{ padding: '7px 16px', background: '#DC2626', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>✗ 拒绝</button>
+        <button onClick={() => { msg.onApprove?.(); setResolved(true) }} style={{ padding: '7px 16px', background: 'var(--status-done)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>✓ 批准</button>
+        <button onClick={() => { msg.onReject?.(); setResolved(true) }} style={{ padding: '7px 16px', background: '#DC2626', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>✗ 拒绝</button>
         <button onClick={() => setShowReply(s => !s)} style={{ padding: '7px 16px', background: 'transparent', color: '#92400E', border: '1px solid #FDE68A', borderRadius: 6, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>💬 直接回复</button>
       </div>
       {showReply && (
@@ -286,12 +286,12 @@ export function MessageList({ messages = MOCK_MESSAGES }: MessageListProps) {
     <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {messages.map((msg, i) => {
         switch (msg.type) {
-          case 'user': return <UserBubble key={i} msg={msg} />
-          case 'reasoning': return <ReasoningBlock key={i} msg={msg} />
-          case 'tool': return <ToolRow key={i} msg={msg} />
-          case 'agent': return <AgentBubble key={i} msg={msg} />
-          case 'hitl': return <HitlCard key={i} msg={msg} />
-          case 'thinking': return <ThinkingBubble key={i} />
+          case 'user': return <UserBubble key={`${msg.type}-${i}`} msg={msg} />
+          case 'reasoning': return <ReasoningBlock key={`${msg.type}-${i}`} msg={msg} />
+          case 'tool': return <ToolRow key={`${msg.type}-${i}`} msg={msg} />
+          case 'agent': return <AgentBubble key={`${msg.type}-${i}`} msg={msg} />
+          case 'hitl': return <HitlCard key={`${msg.type}-${i}`} msg={msg} />
+          case 'thinking': return <ThinkingBubble key={`${msg.type}-${i}`} />
           default: return null
         }
       })}

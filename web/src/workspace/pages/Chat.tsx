@@ -11,6 +11,7 @@ const DEFAULT_PANEL_WIDTH = 380
 export function Chat() {
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH)
   const [isRunning] = useState(false)
+  const [resizerHovered, setResizerHovered] = useState(false)
   const dragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(DEFAULT_PANEL_WIDTH)
@@ -57,11 +58,11 @@ export function Chat() {
         onMouseDown={onResizeStart}
         style={{
           width: 4, flexShrink: 0, cursor: 'col-resize',
-          background: 'var(--border-light)',
+          background: (resizerHovered || dragging.current) ? 'var(--action)' : 'var(--border-light)',
           transition: 'background 0.15s',
         }}
-        onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--action)'}
-        onMouseLeave={e => { if (!dragging.current) (e.currentTarget as HTMLElement).style.background = 'var(--border-light)' }}
+        onMouseEnter={() => setResizerHovered(true)}
+        onMouseLeave={() => setResizerHovered(false)}
       />
 
       {/* 右侧产物面板 */}
