@@ -89,12 +89,16 @@ compose exec -T minio sh -c "
 
 # **要先有一行 run**：`artifacts.run_id` 是外键，而这个新会话下还没跑过任何分析。
 # 直接插一行免得为这一条判据烧一次 LLM —— 这一条验的是取回那条路，不是执行那条路
+#
+# **`head -1` 不能省**：psql 把 `RETURNING` 的值和命令标签（`INSERT 0 1`）
+# 都打到 stdout，整段收下来就是一个两行的「id」，插下一行时必然失败
 RUN_ROW="$(psql_query "INSERT INTO runs
         (id, thread_id, user_id, status, tokens_cache_read, tokens_uncached, tokens_output, started_at)
     VALUES (gen_random_uuid(), '$THREAD', '$USER_ID', 'succeeded', 0, 0, 0, now())
-    RETURNING id;" 2>/dev/null | tr -d ' ')"
+    RETURNING id;" 2>/dev/null | head -1 | tr -d ' ')"
 ARTIFACT_PATH="$(psql_query "INSERT INTO artifacts (id, run_id, s3_key, mime, size)
-    VALUES (gen_random_uuid(), '$RUN_ROW', '$KEY', 'text/plain', 15) RETURNING id;" 2>/dev/null | tr -d ' ')"
+    VALUES (gen_random_uuid(), '$RUN_ROW', '$KEY', 'text/plain', 15)
+    RETURNING id;" 2>/dev/null | head -1 | tr -d ' ')"
 [[ -n $ARTIFACT_PATH ]] && pass "artifacts 行已建：$ARTIFACT_PATH" || fail "artifacts 行建不出来"
 
 # **判据是 nginx 直发路径成立**：api 回的是 `X-Accel-Redirect`，字节由 nginx 从

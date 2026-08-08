@@ -70,6 +70,10 @@ def run_rounds(root: Path, rounds: int, mark: Mark) -> tuple[int, list[int]]:
     for _ in range(rounds):
         workspace = root / uuid4().hex
         workspace.mkdir()
+        # **目录要自己建。** 取基准那一步刻意不建它 —— 那句 mkdir 跑在 broker 进程里，
+        # 而 broker 在容器里是 root，建出来的目录以宿主用户跑的沙箱写不进去。
+        # 真实里这个目录由沙箱建，这里就是在替沙箱做那件事
+        (workspace / OUTPUT_DIR).mkdir()
         backend = SandboxBackend(workspace=workspace, container=NoContainer())
         time.sleep(IDLE_SECOND)
         since = mark(backend, workspace)
