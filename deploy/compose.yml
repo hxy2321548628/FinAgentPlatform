@@ -1,10 +1,12 @@
-# 内网单机部署：nginx + api + worker×2 + broker + postgres + redis + minio。
+# 内网单机部署：nginx + api + worker×2 + broker + postgres + redis + minio
+# + prometheus + grafana。
 #
+#   mkdir -p data/prometheus data/grafana        # 只需一次，理由见下面 prometheus
 #   docker compose -f deploy/compose.yml up -d --build
 #
 # **沙箱容器不在这里声明** —— 它们由 broker 在运行时动态创建与销毁。
 #
-# P4 起多一个 minio（产物存储）。pypi-mirror 定案不做（沙箱零出网）。
+# P4 起多了 minio（产物存储）与可观测性那一套。pypi-mirror 定案不做（沙箱零出网）。
 #
 # **两个数据目录都是宿主机 bind mount，不是卷**：命名卷会被 `docker compose down -v`
 # 一并删掉，而那里面正是 P2 要保住的东西 —— checkpoint 一丢，中断的任务就再也接不上。
@@ -158,6 +160,49 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
+
+  # ---- 可观测性（P4 计划 §7.1 定案全套）----
+  #
+  # **两个数据目录都要先在宿主机上建好并归当前用户**：Docker 自动创建缺失的
+  # bind mount 目录时属主是 root，而这两个容器都以宿主用户跑，起来就会因为写不进去
+  # 而反复重启。`mkdir -p data/prometheus data/grafana` 一次即可
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 30 天。指标是看趋势与报警用的，留一年只是让磁盘白涨
+      - --storage.tsdb.retention.time=30d
+    # 与 broker 用同一个变量：它们都往宿主机 bind mount 里写，属主必须是宿主用户。
+    # 镜像默认的 nobody(65534) 写不进宿主用户的目录
+    user: ${SANDBOX_USER:?请设成宿主机上数据目录的属主，形如 1000:1000}
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${PROMETHEUS_DATA_DIR:-../data/prometheus}:/prometheus
+    # 只绑回环。看指标走 Grafana，这个端口只在排查「抓到没有」时用
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    user: ${SANDBOX_USER:?请设成宿主机上数据目录的属主，形如 1000:1000}
+    # GF_SECURITY_ADMIN_PASSWORD 直接以这个名字放在 .env 里，**不经 compose 插值** ——
+    # 插值只认 shell 里 export 过的值，而 .env 在仓库根，两边不是同一份
+    env_file:
+      - ../.env
+    volumes:
+      # 数据源与看板都由配置文件供给，不在界面上手点：手点出来的东西不进仓库、
+      # 不可 diff，换台机器就得有人凭记忆重配一遍
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboard:/etc/grafana/dashboard:ro
+      - ${GRAFANA_DATA_DIR:-../data/grafana}:/var/lib/grafana
+    # 同上只绑回环。这是运维页，从内网访问走 SSH 端口转发，不经 nginx 对外
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
     restart: unless-stopped
 
   broker:

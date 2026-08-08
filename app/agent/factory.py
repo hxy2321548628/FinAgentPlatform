@@ -15,6 +15,7 @@ from typing import Protocol, cast
 from deepagents import create_deep_agent
 from deepagents.backends.protocol import BackendProtocol
 from langchain.agents.middleware.human_in_the_loop import DecisionType, InterruptOnConfig
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -77,11 +78,13 @@ class SupportsAgent(Protocol):
         ...
 
 
-def create_model(settings: Settings) -> BaseChatModel:
+def create_model(settings: Settings, *, callback: BaseCallbackHandler | None = None) -> BaseChatModel:
     """按配置构造主模型。
 
     Args:
         settings: 平台配置。
+        callback: 挂在模型上的回调，指标埋点走它。**挂在模型上而不是逐次调用挂** ——
+            一次分析内部要调十几轮模型，逐次挂等于把「别忘了挂」重复十几遍。
 
     Returns:
         可供 DeepAgents 使用的聊天模型。
@@ -92,6 +95,7 @@ def create_model(settings: Settings) -> BaseChatModel:
         api_base=settings.deepseek_base_url,
         # 同一份数据同一个问题应该给出同一套算法，分析任务不需要发散
         temperature=0,
+        callbacks=[callback] if callback is not None else None,
     )
 
 

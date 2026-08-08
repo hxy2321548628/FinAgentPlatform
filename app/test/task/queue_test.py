@@ -120,6 +120,15 @@ async def test_an_acked_task_leaves_the_pending_list(queue: TaskQueue) -> None:
     assert await queue.pending_count() == 0
 
 
+async def test_a_queue_that_never_started_reports_no_backlog(live_cache: Redis) -> None:
+    """Consumer group 还没建出来时答 0，而不是抛。
+
+    全新部署到第一条任务投进来之间就是这个状态，而这个数要喂给抓取端点 ——
+    让它 500 的话，监控恰好在最该看它的那一段（刚部署完）是瞎的。
+    """
+    assert await make_queue(live_cache, "worker-never-started").pending_count() == 0
+
+
 async def test_another_worker_claims_what_a_dead_one_left_behind(live_cache: Redis) -> None:
     """验收标准①的前半段：worker 崩了，任务不能就此消失。"""
     dead = make_queue(live_cache, "worker-dead")

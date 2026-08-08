@@ -238,6 +238,7 @@ def platform(
         workspace=RemoteWorkspace(connection),
         log=log,
         submitter=RunSubmitter(repository=repository, queue=queue),
+        queue=queue,
         repository=repository,
         connection=connection,
         backend_factory=RemoteBackendFactory(base_url=BROKER_URL),

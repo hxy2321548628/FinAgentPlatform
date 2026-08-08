@@ -1,0 +1,38 @@
+# Prometheus 的抓取配置。
+#
+# **三个进程各抓各的**：api 与 broker 本就是 HTTP 服务，多一条 /metrics 路由即可；
+# worker 不是，它单独监听一个端口（WORKER_METRIC_PORT，默认 9101）。
+#
+# 抓的都是**容器网络内部地址**。api 的 /metrics 在 nginx 那一侧是 404 ——
+# 那条响应里带着用户名与他今天的 token，不该对内网其他机器敞开。
+
+global:
+  # 15 秒。指标是给人看趋势和报警用的，不是审计流水；再密只是让 TSDB 长得更快。
+  # broker 那一条每次会调一趟 docker CLI，间隔太小会让沙箱的申请归还跟着变慢
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: api
+    static_configs:
+      - targets: ["api:8000"]
+
+  - job_name: broker
+    static_configs:
+      - targets: ["broker:8100"]
+
+  # **worker 有两个副本，因此不能写死一个地址。** Docker 内嵌 DNS 对
+  # compose 服务名会返回全部副本的 A 记录，靠它把两个都发现出来。
+  #
+  # 写成 static_configs 的话只会抓到其中一个 —— 而那不会报错，
+  # 只会让 LLM 调用量看起来正好少一半
+  - job_name: worker
+    dns_sd_configs:
+      - names: ["worker"]
+        type: A
+        port: 9101
+
+  # 抓自己。没有它，「Prometheus 自己是不是还活着」这个问题只能靠人去看
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

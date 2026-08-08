@@ -50,6 +50,22 @@ ALWAYS_ON_ARGUMENT = (
     "--security-opt=no-new-privileges",
 )
 
+# docker stats 打印内存读数时用的单位。二进制与十进制两套都列上，理由见 `parse_memory`
+BYTE_UNIT = {
+    "B": 1,
+    "KiB": 1 << 10,
+    "MiB": 1 << 20,
+    "GiB": 1 << 30,
+    "TiB": 1 << 40,
+    "kB": 1_000,
+    "MB": 1_000_000,
+    "GB": 1_000_000_000,
+    "TB": 1_000_000_000_000,
+}
+
+# 单位里出现过的所有字母，用来把 `123.4MiB` 从右边剥到只剩数字
+UNIT_LETTER = "".join(BYTE_UNIT)
+
 # 单次执行的输出上限。一句 `while True: print(x)` 在 120 秒超时内能刷出几个 GB，
 # 原样收进网关就是一次 OOM。
 OUTPUT_LIMIT_BYTE = 1 << 20
@@ -371,6 +387,63 @@ def running_sandbox() -> dict[str, str]:
         if separator and thread_id:
             found[thread_id] = container_id
     return found
+
+
+def sandbox_memory() -> int:
+    """本机上所有沙箱容器合计占用的常驻内存，字节。
+
+    **沙箱并发上限直接由剩余内存决定**（架构 §4.4），而 `--memory=2g` 是上限不是实际
+    占用 —— 按上限推算容量会系统性地低估这台机器还装得下几个沙箱。
+
+    Returns:
+        合计字节数。一个沙箱都没跑时为 0。
+
+    Raises:
+        ContainerError: docker 调用失败。
+    """
+    running = running_sandbox()
+    if not running:
+        return 0
+    output = _run_docker(
+        ["stats", "--no-stream", "--format", "{{.MemUsage}}", *running.values()],
+        timeout=DOCKER_CLI_TIMEOUT,
+    )
+    return parse_memory(output)
+
+
+def parse_memory(output: str) -> int:
+    """把 `docker stats --format {{.MemUsage}}` 的输出加总成字节数。
+
+    每行形如 `123.4MiB / 2GiB`，斜杠后面是限额，不是占用。
+
+    **单位表两套都收**：docker 按二进制单位（MiB）打印，但同一个字段在别的版本 /
+    别的平台上出现过十进制单位（MB）。认错一套会让数字差 5%，而那个差值不会有任何
+    报错指出来。
+
+    Args:
+        output: docker stats 的多行输出。
+
+    Returns:
+        合计字节数。认不出来的行跳过并记警告。
+    """
+    total = 0
+    for line in output.splitlines():
+        used, _, _ = line.partition("/")
+        total += _parse_byte(used.strip())
+    return total
+
+
+def _parse_byte(text: str) -> int:
+    """把 `123.4MiB` 这样的一个量转成字节。认不出来时记警告并当 0。"""
+    if not text:
+        return 0
+    digit = text.rstrip(UNIT_LETTER)
+    unit = text[len(digit) :]
+    try:
+        return int(float(digit) * BYTE_UNIT[unit])
+    except (ValueError, KeyError):
+        logger.warning("docker stats 的内存读数认不出来，这一行当 0：%r", text)
+        return 0
 
 
 def _capped(command: str) -> str:

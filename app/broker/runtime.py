@@ -6,15 +6,17 @@ agent 生成的内容影响之后，能做的最多是发几个 HTTP 请求过�
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Annotated
 
-from fastapi import Request
+from fastapi import Depends, Request
 
 from artifact.store import ArtifactStore
 from broker.cache import ToolCache
 from config import Settings
+from metric.sandbox import MemoryReader
 from sandbox.backend import SandboxBackend
-from sandbox.container import CommandResult, ContainerError
+from sandbox.container import CommandResult, ContainerError, sandbox_memory
 from sandbox.pool import SandboxPool
 from sandbox.quota import NoQuota, QuotaProtocol, XfsQuota
 from sandbox.workspace import Workspace
@@ -64,6 +66,9 @@ class Broker:
     # 产物的对象存储。同上可以没有，那时产物只留在 workspace 里、按旧形状下载。
     # **生产不会是 None**：`build_broker` 一定装上它，且建桶失败就是启动失败
     artifact: ArtifactStore | None = None
+    # 沙箱合计内存的读法。默认就是去问 docker；做成字段是为了让抓取端点的用例
+    # 不必依赖「这台机器上恰好有 docker、且恰好没跑别的沙箱」
+    memory: MemoryReader = field(default=sandbox_memory)
 
     def backend(self, thread_id: str) -> SandboxBackend:
         """给一个 thread 组一个 backend。
@@ -150,3 +155,6 @@ def get_broker(request: Request) -> Broker:
     """路由取运行时的依赖项。"""
     broker: Broker = request.app.state.broker
     return broker
+
+
+BrokerDep = Annotated[Broker, Depends(get_broker)]

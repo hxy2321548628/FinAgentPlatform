@@ -12,6 +12,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from auth.session import DEFAULT_TTL_SECOND as DEFAULT_SESSION_TTL_SECOND
+from metric.exposition import DEFAULT_WORKER_PORT
 from quota.policy import (
     DEFAULT_CONCURRENT_RUN,
     DEFAULT_OUTPUT_WEIGHT,
@@ -250,6 +251,11 @@ class Settings(StoreSettings):
         default=DEFAULT_CLAIM_IDLE_MILLISECOND,
         gt=0,
         description="任务消息闲置多久后允许别的 worker 认领，毫秒。崩溃恢复的延迟上限就是它",
+    )
+    worker_metric_port: int = Field(
+        default=DEFAULT_WORKER_PORT,
+        ge=0,
+        description="worker 暴露指标的端口，Prometheus 从这里抓。0 表示不暴露；api 与 broker 走各自的 HTTP 端口",
     )
 
     sandbox_image: str = Field(

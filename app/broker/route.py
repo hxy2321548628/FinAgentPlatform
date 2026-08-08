@@ -23,13 +23,13 @@ from deepagents.backends.protocol import (
     ReadResult,
     WriteResult,
 )
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from artifact.model import CollectedArtifact
 from artifact.store import ArtifactStore, guess_mime
-from broker.runtime import Broker, get_broker
+from broker.runtime import Broker, BrokerDep
 from broker.schema import (
     AcquireErrorData,
     AcquireRequest,
@@ -70,8 +70,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/threads", tags=["broker"])
-
-BrokerDep = Annotated[Broker, Depends(get_broker)]
 
 SSE_MEDIA_TYPE = "text/event-stream"
 

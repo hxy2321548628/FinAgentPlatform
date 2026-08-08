@@ -50,6 +50,8 @@ def test_the_openapi_document_is_served(client: TestClient) -> None:
         "/api/runs/{run_id}/approve",
         "/api/artifacts/{artifact_id}",
         "/api/admin/usage",
+        # 唯一不在 /api 下、也不要求登录的端点。挡它的是 nginx，理由见 route/metric.py
+        "/metrics",
     }
 
 

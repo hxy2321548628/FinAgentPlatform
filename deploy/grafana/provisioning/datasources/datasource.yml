@@ -1,0 +1,21 @@
+# 数据源由配置文件供给，不在界面上手点。
+#
+# **所在目录必须叫 `datasources`（复数），这一条不归项目的命名规矩管** —— 那是
+# Grafana 写死的查找路径，不是我们的文件名。用单数时它一声不响地什么都不加载：
+# 容器起得来、日志无异常、界面能打开，只是数据源一个都没有。实测踩过一次。
+#
+# **手点出来的数据源只存在于 Grafana 自己的库里**：那个库一丢（换机器、清数据目录）
+# 就得有人凭记忆重配一遍，而看板里的每个 panel 都按 uid 引用它 —— 重配时 uid 一变，
+# 整块看板就成了一片「Datasource not found」。
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    # **uid 写死**。看板 JSON 里按它引用，让 Grafana 随机生成就对不上了
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

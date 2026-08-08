@@ -50,6 +50,9 @@ NEW_MESSAGE = ">"
 # XGROUP CREATE 撞上已存在的 group 时 Redis 回这个前缀
 GROUP_EXISTS = "BUSYGROUP"
 
+# 反过来：读一个还不存在的 Stream 或 group 时回这个前缀
+GROUP_MISSING = "NOGROUP"
+
 
 class RunTask(BaseModel):
     """一次待执行的分析。
@@ -197,10 +200,19 @@ class TaskQueue:
     async def pending_count(self) -> int:
         """还有多少条任务领了但没 ack。
 
+        **group 还没建出来时答 0，而不是抛。** 全新部署到第一条任务投进来之间就是这个
+        状态，而这个数要喂给抓取端点 —— 让它 500 的话，监控恰好在最该看它的那一段
+        （刚部署完）是瞎的。0 也确实是那时的实情：没有 group 就没有 pending。
+
         Returns:
             pending 列表的长度。
         """
-        summary = await self._client.xpending(TASK_STREAM, CONSUMER_GROUP)
+        try:
+            summary = await self._client.xpending(TASK_STREAM, CONSUMER_GROUP)
+        except ResponseError as exc:
+            if not str(exc).startswith(GROUP_MISSING):
+                raise
+            return 0
         count: int = summary["pending"]
         return count
 

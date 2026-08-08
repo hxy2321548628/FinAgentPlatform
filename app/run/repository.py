@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import Column, Enum, Index, text, update
+from sqlalchemy import Column, Enum, Index, func, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import Field, SQLModel, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -38,6 +38,11 @@ CANCELLABLE_STATUS = (RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_APP
 
 # 「这一程不是第一次开跑」的那几个前态。`queued` 不在里面 —— 那正是第一次的样子
 RESUMABLE_STATUS = (RunStatus.RUNNING, RunStatus.WAITING_APPROVAL)
+
+# 还活着的那几态。**与 `CANCELLABLE_STATUS` 眼下取值相同，但问的是两件事**：那边问
+# 「还能不能改它的状态」，这边问「它还在占着资源吗」。合成一个常量的话，将来任何一边
+# 变了都会悄悄改掉另一边的语义
+LIVE_STATUS = (RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_APPROVAL)
 
 
 class RunStart(StrEnum):
@@ -330,6 +335,24 @@ class RunRepository:
             )
             found = await session.exec(statement)
             return [record.to_run() for record in found.all()]
+
+    async def live_count(self) -> dict[RunStatus, int]:
+        """按状态数一遍还没走到终态的 run。
+
+        **只数活着的那几态。** 终态的累计数不在这里 —— 那是看板的活，做成指标只会得到
+        一条永远在涨的线。也正因为只数活的，这条查询的结果集永远是很小的一撮。
+
+        Returns:
+            `状态 → 个数`。一个都没有的状态不出现在结果里。
+        """
+        async with AsyncSession(self._engine) as session:
+            statement = (
+                select(col(RunRecord.status), func.count())
+                .where(col(RunRecord.status).in_(LIVE_STATUS))
+                .group_by(col(RunRecord.status))
+            )
+            found = await session.exec(statement)
+            return {status: count for status, count in found.all()}
 
     async def _update(self, run_id: str, **change: object) -> None:
         """改一行的若干列。目标行不存在时记警告后返回 —— 状态流转不该把 run 打断。"""

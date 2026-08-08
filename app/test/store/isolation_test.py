@@ -38,6 +38,11 @@ SYSTEM_METHOD = {
     # `resume` 由审批端点调 —— 而那个端点在此之前已经用带 user 的查询确认过归属
     (RunRepository, "wait_approval"),
     (RunRepository, "resume"),
+    # 抓取指标时按状态数一遍还活着的 run，出来的是**三个整数**，不是任何一行数据。
+    # 「此刻队列里积压了几个」与谁提交的无关，加上 user 过滤反而答不了这个问题。
+    # **它与成本看板的 per-user token 不是一回事**：那个带用户名，因此挡在管理员
+    # 身份后面（`report/usage.py` 是账本，不在这份清单管的仓储里）
+    (RunRepository, "live_count"),
 }
 
 

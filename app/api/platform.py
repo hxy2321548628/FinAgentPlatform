@@ -48,6 +48,10 @@ class Platform:
     workspace: RemoteWorkspace
     log: EventLog
     submitter: RunSubmitter
+    # 投递用的是 `submitter`，这里单独摆出来只为一件事：抓取指标时要看队列积压。
+    # 与 submitter 持有的是同一个实例 —— 各建一个的话，两处各自 `ensure_group`，
+    # 而积压读数来自哪一个就成了运气
+    queue: TaskQueue
     repository: RunRepository
     connection: BrokerConnection
     backend_factory: RemoteBackendFactory
@@ -98,6 +102,7 @@ async def build_platform(settings: Settings) -> Platform:
 
     connection = BrokerConnection(base_url=settings.broker_url)
     repository = RunRepository(engine)
+    queue = TaskQueue(cache, consumer=PRODUCER_NAME)
     policy = QuotaPolicy(
         token_daily=settings.quota_token_daily,
         concurrent_run=settings.quota_concurrent_run,
@@ -107,7 +112,8 @@ async def build_platform(settings: Settings) -> Platform:
         workspace=RemoteWorkspace(connection),
         # 网关只读事件，不写。给它归档是为了让「Stream 里已经没有的那段历史」也读得到
         log=EventLog(cache, archive=EventArchive(engine)),
-        submitter=RunSubmitter(repository=repository, queue=TaskQueue(cache, consumer=PRODUCER_NAME)),
+        submitter=RunSubmitter(repository=repository, queue=queue),
+        queue=queue,
         repository=repository,
         connection=connection,
         backend_factory=RemoteBackendFactory(base_url=settings.broker_url),
