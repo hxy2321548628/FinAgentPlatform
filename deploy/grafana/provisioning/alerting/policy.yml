@@ -1,0 +1,18 @@
+# 告警往哪儿走。只有一条通道，因此根策略直接指向飞书。
+#
+# **`group_interval` 与 `repeat_interval` 取得偏长**：这套东西面向的是一台内网单机、
+# 十几个教师。一条五分钟响一次的告警，两天之后就没有人再看群消息了 ——
+# 而那时它与没有告警是一回事。
+
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: feishu
+    group_by: [alertname]
+    # 第一条触发后等 30 秒再发，把同一批攒到一起
+    group_wait: 30s
+    # 同一组里出现新告警时，两次通知至少隔这么久
+    group_interval: 5m
+    # 一直没恢复的，多久重复提醒一次
+    repeat_interval: 4h

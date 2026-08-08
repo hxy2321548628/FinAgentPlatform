@@ -31,6 +31,13 @@ exporters:
     tls:
       insecure: true
 
+  # Loki 3.x 自带 OTLP 入口，不必再经 Promtail 或 Alloy 中转 ——
+  # 少一个服务、少一份要维护的采集配置
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
 service:
   pipelines:
     traces:
@@ -38,3 +45,10 @@ service:
       # memory_limiter 必须排在 batch 前面：先挡住，再攒
       processors: [memory_limiter, batch]
       exporters: [otlp]
+
+    # 日志由三个进程自己发过来，不去扒容器的 stdout —— 那要么给采集器挂
+    # 宿主机 root 才读得动的目录，要么装 docker 的日志驱动插件
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/loki]

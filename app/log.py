@@ -44,16 +44,26 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
-        # 启动、路由这些日志本就不属于任何 run，硬塞一个空值只会污染过滤条件
-        for name, value in (("run_id", _RUN_ID.get()), ("thread_id", _THREAD_ID.get()), ("user_id", _USER_ID.get())):
-            if value is not None:
-                line[name] = value
+        line.update(context())
 
         if record.exc_info is not None:
             line["exception"] = self.formatException(record.exc_info)
 
         # 中文转成 \uXXXX 之后连 grep 都用不了，而日志首先是给人看的
         return json.dumps(line, ensure_ascii=False, default=str)
+
+
+def context() -> dict[str, str]:
+    """当前这条执行链上的归集标识。
+
+    **启动、路由这些日志本就不属于任何 run**，因此没有值的键整个不出现 ——
+    硬塞一个空串只会污染过滤条件。
+
+    Returns:
+        `run_id` / `thread_id` / `user_id` 里有值的那几个。
+    """
+    found = (("run_id", _RUN_ID.get()), ("thread_id", _THREAD_ID.get()), ("user_id", _USER_ID.get()))
+    return {name: value for name, value in found if value is not None}
 
 
 @contextmanager

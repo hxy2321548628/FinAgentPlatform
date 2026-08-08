@@ -1,7 +1,7 @@
 # 内网单机部署：nginx + api + worker×2 + broker + postgres + redis + minio
-# + prometheus + grafana + tempo + otel-collector。
+# + prometheus + grafana + tempo + loki + otel-collector。
 #
-#   mkdir -p data/prometheus data/grafana data/tempo   # 只需一次，理由见下面 prometheus
+#   mkdir -p data/{prometheus,grafana,tempo,loki}      # 只需一次，理由见下面 prometheus
 #   docker compose -f deploy/compose.yml up -d --build
 #
 # **沙箱容器不在这里声明** —— 它们由 broker 在运行时动态创建与销毁。
@@ -231,6 +231,24 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  loki:
+    image: grafana/loki:3.6.0
+    command:
+      - -config.file=/etc/loki.yaml
+      # 同 Tempo：配置里的 ${MINIO_ACCESS_KEY} 靠它展开
+      - -config.expand-env=true
+    env_file:
+      - ../.env
+    user: ${SANDBOX_USER:?请设成宿主机上数据目录的属主，形如 1000:1000}
+    volumes:
+      - ./loki.yaml:/etc/loki.yaml:ro
+      # 索引与还没上传的块在本地盘，日志本体在 MinIO 上
+      - ${LOKI_DATA_DIR:-../data/loki}:/loki
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.140.0
     command: ["--config=/etc/otel-collector.yaml"]
@@ -238,6 +256,7 @@ services:
       - ./otel-collector.yaml:/etc/otel-collector.yaml:ro
     depends_on:
       - tempo
+      - loki
     restart: unless-stopped
 
   grafana:

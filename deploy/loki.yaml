@@ -1,0 +1,60 @@
+# Loki：日志的集中存储与检索。
+#
+# **后端同样是 MinIO**（P4 计划 §7.2），与 Tempo 共用一个对象存储，各占一个桶。
+#
+# 单机单副本。Loki 的分布式那一套（ring、多租户、副本）在这里全部退化成最简形态 ——
+# 一台机器上跑三个进程，引入分布式一致性只会多几个失效模式。
+#
+# 凭据走环境变量，启动参数里带 `-config.expand-env=true`。
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  # 默认 grpc 消息上限对单机来说绰绰有余，这里只是把它写出来避免默认值变动带来惊喜
+  grpc_listen_port: 9096
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    s3:
+      # **带协议前缀，与 Tempo 那边写法不同。** Tempo 收的是 `host:port`，
+      # Loki 3.x 换了 AWS SDK 之后要一个完整 URI —— 给 `minio:9000` 会以
+      # 「Custom endpoint was not a valid URI」起不来。两处不一致是三方约定，不是笔误
+      endpoint: http://minio:9000
+      bucketnames: log
+      access_key_id: ${MINIO_ACCESS_KEY}
+      secret_access_key: ${MINIO_SECRET_KEY}
+      # MinIO 只认路径式寻址：虚拟主机式要求 `bucket.minio` 解析得出来，而内网无 DNS
+      s3forcepathstyle: true
+      insecure: true
+
+schema_config:
+  configs:
+    - from: "2026-01-01"
+      store: tsdb
+      object_store: s3
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # OTLP 送来的 run_id / thread_id / trace_id 走的是结构化元数据这条路。
+  # **关掉它这些字段就整个丢了**，而丢了之后「按 run 过滤日志」就无从谈起
+  allow_structured_metadata: true
+  # 30 天，与 Prometheus 和 Tempo 对齐。三边不一致的话，
+  # 「指标上看得见、点进去没日志」的那一段会让人以为是坏了
+  retention_period: 720h
+
+compactor:
+  working_directory: /loki/compactor
+  # **保留期不是自动生效的**：不开这一项，上面那个 retention_period 只是一句注释，
+  # 而日志会一直堆在 MinIO 里
+  retention_enabled: true
+  delete_request_store: s3

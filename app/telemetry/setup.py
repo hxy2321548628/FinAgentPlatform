@@ -22,6 +22,8 @@ from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+from telemetry.log import install as install_log
+
 logger = logging.getLogger(__name__)
 
 # 三个进程在 trace 里的名字。Grafana 的服务图与「这一段是谁的」全靠它
@@ -58,7 +60,7 @@ def instrument_client() -> None:
 
 
 def configure(*, service_name: str, endpoint: str) -> None:
-    """把 span 接到 OTel Collector 上。
+    """把 span 与日志接到 OTel Collector 上。
 
     **端点留空即整个关掉**，与「没配磁盘配额就不设配额」同一个规矩：
     开发机上直接跑 uvicorn 时没有 collector，接不上就该是不接，而不是每条 span
@@ -69,14 +71,18 @@ def configure(*, service_name: str, endpoint: str) -> None:
         endpoint: OTel Collector 的 OTLP/HTTP 地址，形如 http://otel-collector:4318。
     """
     if not endpoint:
-        logger.info("未配 OTel 端点，本进程不上报 trace")
+        logger.info("未配 OTel 端点，本进程不上报 trace 与日志")
         return
-    provider = TracerProvider(resource=Resource.create({SERVICE_NAME: service_name}))
+    resource = Resource.create({SERVICE_NAME: service_name})
+    provider = TracerProvider(resource=resource)
     # 批量导出：一次分析产生几十上百个 span，逐个同步发等于把网络往返算进
     # 被观测的代码里 —— 那会让「观测」本身成为耗时的一部分
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces")))
     trace.set_tracer_provider(provider)
-    logger.info("trace 已接上：service=%s endpoint=%s", service_name, endpoint)
+    # **日志用同一份 resource**：两边的 service.name 不一致时，Grafana 里
+    # 「从这条 trace 跳到它的日志」会指向一个空结果，而那看起来像是没日志
+    install_log(resource=resource, endpoint=endpoint)
+    logger.info("trace 与日志已接上：service=%s endpoint=%s", service_name, endpoint)
 
 
 def _instrument_client() -> None:
