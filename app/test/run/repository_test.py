@@ -14,7 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from event.model import RunErrorCode, RunStatus, TokenUsage
-from run.repository import RunRepository
+from run.repository import RunRepository, RunStart
 from test.conftest import FAKE_HASH
 from thread.repository import Thread
 from user.model import UserRole
@@ -41,6 +41,52 @@ async def test_a_submitted_run_starts_out_queued(
     assert found is not None
     assert found.status is RunStatus.QUEUED
     assert found.thread_id == owned_thread.id
+
+
+# ------------------------------------------------------------ 开跑：是不是第一次
+# 前端拿这个答案决定「要不要把已经显示的对话重置」。答错的代价是一次崩溃恢复之后
+# 教师眼前的分析过程被清空重来 —— 而后台其实好好地接着跑。
+async def test_starting_a_queued_run_is_the_first_time(repository: RunRepository, submitted: str) -> None:
+    assert await repository.start(submitted) is RunStart.FIRST
+
+
+async def test_starting_a_running_run_is_a_resume(repository: RunRepository, submitted: str) -> None:
+    """崩溃之后消息重投，状态还停在 `running` —— 这一程是接着跑，不是重来。"""
+    await repository.start(submitted)
+
+    assert await repository.start(submitted) is RunStart.RESUMED
+
+
+async def test_starting_a_run_that_waits_for_approval_is_a_resume(repository: RunRepository, submitted: str) -> None:
+    """审批期间的重投同理。"""
+    await repository.start(submitted)
+    await repository.wait_approval(submitted, tokens=TokenUsage())
+
+    assert await repository.start(submitted) is RunStart.RESUMED
+
+
+async def test_starting_a_finished_run_is_refused(repository: RunRepository, submitted: str) -> None:
+    """已经有终态的 run 再被领走，硬跑下去等于让一次结束的分析又跑一遍，还多花一份 token。"""
+    await repository.start(submitted)
+    await repository.succeed(submitted, tokens=TokenUsage())
+
+    assert await repository.start(submitted) is RunStart.REFUSED
+
+
+async def test_starting_a_malformed_id_is_refused(repository: RunRepository) -> None:
+    assert await repository.start("not-a-uuid") is RunStart.REFUSED
+
+
+async def test_a_refused_start_does_not_touch_the_state(repository: RunRepository, submitted: str, owner: User) -> None:
+    """两步条件更新都得是原子的：第一步没命中，不能把终态改坏了才发现。"""
+    await repository.start(submitted)
+    await repository.cancel(submitted)
+
+    await repository.start(submitted)
+
+    found = await repository.get(submitted, user_id=owner.id)
+    assert found is not None
+    assert found.status is RunStatus.CANCELLED
 
 
 async def test_a_new_repository_still_sees_the_terminal_state(

@@ -511,8 +511,8 @@ worker ──XADD──▶ stream:run:{run_id} ──XREAD──▶ 网关 ─�
 
 | type | `data` | 触发时机 |
 |---|---|---|
-| `run.started` | `{ thread_id }` | worker 领取任务 |
-| `run.finished` | `{ status: "succeeded", tokens: { input_cache_read, input_uncached, output }, artifacts }` | 正常完成。`tokens` 按 §6.4 的口径拆分，**刻意不给总数** |
+| `run.started` | `{ thread_id, resumed }` | worker 领取任务。**`resumed` 的含义是「这不是第一次开跑」**，审批续跑与崩溃重投都为 `true` —— 两者对前端是同一件事：别把已经显示的对话重置（P4 步骤三定案） |
+| `run.finished` | `{ status: "succeeded", tokens: { input_cache_read, input_uncached, output }, artifacts }` | 正常完成。`tokens` 按 §6.4 的口径拆分，**刻意不给总数**。`artifacts` 是产物标识：进了对象存储的是 `artifacts` 表主键，没进去的仍是旧形状 `{thread_id}/{相对路径}`（P4 §2.2 的兼容期） |
 | `run.failed` | `{ code, message, retryable }` | 异常终止。`retryable` 由 §5.4 的错误分类决定 |
 | `run.cancelled` | `{}` | 教师取消或审批超时 |
 | `sandbox.queued` | `{ position }` | 沙箱排队中。**排位每次变化都推**（§8.1） |

@@ -36,6 +36,22 @@ UNFINISHED_STATUS = (RunStatus.QUEUED, RunStatus.RUNNING)
 # 都要能把它转成 `cancelled`（架构 §5.4 的状态机上就有这两条边）
 CANCELLABLE_STATUS = (RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_APPROVAL)
 
+# 「这一程不是第一次开跑」的那几个前态。`queued` 不在里面 —— 那正是第一次的样子
+RESUMABLE_STATUS = (RunStatus.RUNNING, RunStatus.WAITING_APPROVAL)
+
+
+class RunStart(StrEnum):
+    """一次 `start()` 的性质。
+
+    **`FIRST` 与 `RESUMED` 对前端的含义完全不同**：前者是新一轮分析开跑，后者是
+    「接着刚才那一程」—— 把已经显示的对话重置掉是错的。
+    """
+
+    FIRST = "first"
+    RESUMED = "resumed"
+    # 已经有终态了，这一次投递不该执行
+    REFUSED = "refused"
+
 
 def _value_column(enum: type[StrEnum], *, nullable: bool = False) -> Column[Enum]:
     """枚举列，**按值存而不是按名字**。
@@ -149,17 +165,26 @@ class RunRepository:
             return None
         return record.to_run()
 
-    async def start(self, run_id: str) -> bool:
-        """标记开跑。
+    async def start(self, run_id: str) -> RunStart:
+        """标记开跑，并回答**这是不是第一次开跑**。
 
         **同样是条件更新**：一条已经取消的 run 若因为消息重投又被领走，
         无条件写会把它从 `cancelled` 拉回 `running`，于是一次已经取消的分析
         又跑了起来 —— 而状态与事件从此对不上。
 
+        **拆成两步而不是一句 `IN (...)`**：先试 `queued → running`，命中就是第一次；
+        没命中再试 `running / waiting_approval → running`，命中就是重投接着跑。
+        一句话写不出这个区别 —— 它要的是「命中的是哪个前态」，而 `UPDATE` 只回答
+        「改了几行」。两步各自原子，中间那一刻状态再变也只会让第二步落空而已。
+
         Returns:
-            这一次调用是否真的改变了状态。
+            这一次开跑的性质。
         """
-        return await self._transit(run_id, status=RunStatus.RUNNING)
+        if await self._transit_from(run_id, (RunStatus.QUEUED,), status=RunStatus.RUNNING):
+            return RunStart.FIRST
+        if await self._transit_from(run_id, RESUMABLE_STATUS, status=RunStatus.RUNNING):
+            return RunStart.RESUMED
+        return RunStart.REFUSED
 
     async def succeed(self, run_id: str, *, tokens: TokenUsage) -> bool:
         """标记跑完，并记下这一次的 token 消耗。
@@ -254,6 +279,22 @@ class RunRepository:
         """写一次终态，顺手盖上结束时间。见 `_transit`。"""
         return await self._transit(run_id, ended_at=datetime.now(UTC), **change)
 
+    async def _transit_from(self, run_id: str, allowed: tuple[RunStatus, ...], **change: object) -> bool:
+        """改一次状态，**只在当前状态落在给定集合里时才改**。见 `_transit`，那是它的全集版本。"""
+        identifier = _parse(run_id)
+        if identifier is None:
+            logger.warning("run id 不是合法 uuid，状态未落库：run_id=%s", run_id)
+            return False
+        statement = (
+            update(RunRecord)
+            .where(col(RunRecord.id) == identifier, col(RunRecord.status).in_(allowed))
+            .values(**change)
+        )
+        async with AsyncSession(self._engine) as session:
+            result = await session.exec(statement)
+            await session.commit()
+        return bool(result.rowcount)
+
     async def _transit(self, run_id: str, **change: object) -> bool:
         """改一次状态，**只在这个 run 还没走到终态时才改**。
 
@@ -269,19 +310,7 @@ class RunRepository:
         Returns:
             这一次调用是否真的改变了状态。
         """
-        identifier = _parse(run_id)
-        if identifier is None:
-            logger.warning("run id 不是合法 uuid，状态未落库：run_id=%s", run_id)
-            return False
-        statement = (
-            update(RunRecord)
-            .where(col(RunRecord.id) == identifier, col(RunRecord.status).in_(CANCELLABLE_STATUS))
-            .values(**change)
-        )
-        async with AsyncSession(self._engine) as session:
-            result = await session.exec(statement)
-            await session.commit()
-        return bool(result.rowcount)
+        return await self._transit_from(run_id, CANCELLABLE_STATUS, **change)
 
     async def unfinished(self) -> list[Run]:
         """列出还没走到终态的 run。

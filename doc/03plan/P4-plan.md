@@ -389,3 +389,28 @@ Prometheus 不走 MinIO —— 指标是小而密的时序数据，本地 TSDB �
 ```
 
 中间那一行是关键：**没有它，「200」证明不了走的是回落分支**。这与[「先验证验证代码」](./P3-plan.md)是同一件事 —— 一条永远绿的判据等于没有判据。
+
+### 8.4 步骤三：`resumed` 的两个来源，缺一不可
+
+§7.4 给的实现是「`start()` 拆成两步条件更新：先试 `queued → running`，命中即首次；未命中再试其余前态，命中即续跑」。**这只覆盖了一半。**
+
+审批之后 `RunRepository.resume()` 把状态放回 **`queued`**，续跑那一程因此走的是第一步、报「首次」—— 而它明明是续跑。光看状态区分不出它。
+
+**定案：两个来源取并集。**
+
+```python
+resumed = task.decisions is not None or start is RunStart.RESUMED
+```
+
+| 来源 | 认得出的场景 | 认不出的 |
+|---|---|---|
+| 任务带决策 | 审批之后的续跑 | 崩溃重投（那一程不带决策）|
+| 前态是 `running` / `waiting_approval` | 崩溃或超时之后的重投 | 审批续跑（`resume()` 已把状态放回 `queued`）|
+
+`start()` 的返回值从 `bool` 换成 `RunStart` 三值枚举（`FIRST` / `RESUMED` / `REFUSED`）—— 一句 `UPDATE ... WHERE status IN (...)` 只回答「改了几行」，答不出「命中的是哪个前态」。两步各自原子；中间那一刻状态再变，也只会让第二步落空，不会写坏。
+
+**验证**（2026-08-08，compose 全栈 + 一次真实崩溃）：等第一条 `tool_result` 出现再 `kill -9` worker，run 最终 `succeeded`，两条 `run.started` 的 `resumed` 依次是 **`[false, true]`**。
+
+**判据先证明「真崩到了」**：`run.started` 少于两条就记未验、不许记通过 —— 那说明 kill 没生效或重投撞上了终态守卫，这一条什么都没验着。这正是 [P2 §① 那条判据两头都会骗人](./P3-plan.md)的教训。
+
+**同步改了三处**：架构 §5.2 的事件契约表（`run.started` 补上 `resumed` 及其新含义，`run.finished` 的 `artifacts` 说明两种形状）、`deploy/test/p2.sh` ① 那段解释「假红」成因的注释。[ADR-0013](../01design/adr/0013-event-anticorruption-layer-v2-stream.md) 全文不涉及这个字段，不必改。

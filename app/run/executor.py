@@ -44,7 +44,7 @@ from event.model import (
 from log import run_context
 from run.decision import to_resume
 from run.log import EventLog
-from run.repository import Run
+from run.repository import Run, RunStart
 from sandbox.pool import SandboxQueueTimeoutError
 from sandbox.remote import AsyncQueuePositionCallback, RemoteBackendFactory
 from task.queue import RunTask
@@ -128,8 +128,8 @@ class RunRepositoryProtocol(Protocol):
     建行在提交那一侧，查状态在端点那一侧，都不经过执行器。
     """
 
-    async def start(self, run_id: str) -> bool:
-        """标记开跑，并回答这一次是不是自己改的。"""
+    async def start(self, run_id: str) -> RunStart:
+        """标记开跑，并回答这一程是不是第一次开跑。"""
         ...
 
     async def succeed(self, run_id: str, *, tokens: TokenUsage) -> bool:
@@ -233,11 +233,20 @@ class RunExecutor:
 
             # 状态改不动就说明这个 run 已经走到终态了 —— 消息重投时会撞上这一条。
             # 硬跑下去等于让一次已经结束的分析又跑一遍，还多花一份 token
-            if not await self._repository.start(run.id):
+            start = await self._repository.start(run.id)
+            if start is RunStart.REFUSED:
                 logger.info("run 已经有终态了，这一次投递不再执行")
                 return
 
-            resumed = task.decisions is not None
+            # `resumed` 的含义是**「这不是第一次开跑」**，两个来源缺一不可：
+            #
+            # - 带着决策来的是审批之后的续跑，而 `resume()` 已经把状态放回了 `queued`，
+            #   光看状态与第一次开跑分不开；
+            # - 状态已经是 `running` / `waiting_approval` 的，是崩溃或超时之后的重投，
+            #   那一程不带决策。
+            #
+            # 崩溃恢复与审批续跑对前端是同一件事：**别把已经显示的对话重置**。
+            resumed = task.decisions is not None or start is RunStart.RESUMED
             await self._emit(
                 RunStartedEvent(
                     ts=now_ms(),

@@ -32,6 +32,7 @@ from log import JsonFormatter
 from run.decision import Decision, DecisionType
 from run.executor import RunExecutor
 from run.log import EventLog
+from run.repository import RunStart
 from sandbox.pool import SandboxQueueTimeoutError
 from sandbox.remote import AsyncQueuePositionCallback
 from task.queue import RunTask
@@ -129,11 +130,13 @@ class FakeRepository:
         self.tokens: dict[str, TokenUsage] = {}
         self.error: dict[str, tuple[RunErrorCode, str]] = {}
 
-    async def start(self, run_id: str) -> bool:
+    async def start(self, run_id: str) -> RunStart:
+        """两步条件更新的替身：`queued`（含没建过行）是第一次，其余可改的是续跑。"""
         if not self._open(run_id):
-            return False
+            return RunStart.REFUSED
+        first = self.status.get(run_id) in (None, RunStatus.QUEUED)
         self.status[run_id] = RunStatus.RUNNING
-        return True
+        return RunStart.FIRST if first else RunStart.RESUMED
 
     async def succeed(self, run_id: str, *, tokens: TokenUsage) -> bool:
         if not self._open(run_id):
@@ -965,6 +968,54 @@ async def test_a_first_run_says_it_is_not_a_resume(pool: FakePool, space: FakeWo
 
     started = (await log.read(run.run_id))[0].event
     assert started.data.resumed is False  # type: ignore[union-attr]
+
+
+async def test_a_crash_redelivery_says_it_is_a_resume(pool: FakePool, space: FakeWorkspace, log: EventLog) -> None:
+    """崩溃之后消息重投，状态还停在 `running`，任务里也没有决策。
+
+    **这一程从前报 `false`** —— `resumed` 那时只标「审批之后的续跑」。前端拿到 `false`
+    就会把已经显示的对话重置，而后台其实好好地接着跑。
+    """
+    executor, repository = make_executor(pool, space, log)
+    run = a_task()
+    repository.status[run.run_id] = RunStatus.RUNNING
+
+    await executor.execute(run)
+
+    started = (await log.read(run.run_id))[0].event
+    assert started.data.resumed is True  # type: ignore[union-attr]
+
+
+async def test_a_redelivery_during_approval_says_it_is_a_resume(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
+    """审批期间的重投同理，也不带决策。"""
+    executor, repository = make_executor(pool, space, log)
+    run = a_task()
+    repository.status[run.run_id] = RunStatus.WAITING_APPROVAL
+
+    await executor.execute(run)
+
+    started = (await log.read(run.run_id))[0].event
+    assert started.data.resumed is True  # type: ignore[union-attr]
+
+
+async def test_an_approval_resume_says_so_even_though_it_starts_from_queued(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
+    """审批之后 `resume()` 把状态放回 `queued`，光看状态与第一次开跑分不开。
+
+    **两个来源缺一不可**：状态只认得出「崩溃重投」，决策才认得出「审批续跑」。
+    """
+    agent = FakeAgent(lambda *_: chunk_stream())
+    executor, repository = make_executor_with(pool, space, log, agent._runner, agent=agent)
+    run = a_task().model_copy(update={"decisions": [Decision(index=0, type=DecisionType.APPROVE)]})
+    repository.status[run.run_id] = RunStatus.QUEUED
+
+    await executor.execute(run)
+
+    started = (await log.read(run.run_id))[0].event
+    assert started.data.resumed is True  # type: ignore[union-attr]
 
 
 async def test_an_interrupt_that_lost_the_race_pushes_nothing(
