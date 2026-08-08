@@ -24,6 +24,10 @@ import urllib3
 from alembic import command
 from alembic.config import Config
 from minio import Minio
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from psycopg import sql
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -230,6 +234,31 @@ async def live_engine(migrated: None) -> AsyncIterator[AsyncEngine]:
         yield created
     finally:
         await created.dispose()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def span_provider() -> InMemorySpanExporter:
+    """整包用例共用一个只写内存的 TracerProvider。
+
+    **装在这里而不是各自装**，因为 OTel 的 provider 是全局的、且只认第一次设置：
+    某一个用例文件自己装的话，装没装上就取决于收集顺序，而顺序变了不会报错，
+    只会让那些断言 span 的用例莫名其妙地红。
+
+    附带的好处是**每条用例都真的跑了一遍埋点**：探针在 `create_app` 里就挂上了，
+    没有 provider 时它们全落到空实现上 —— 那等于埋点从来没被执行过。
+    """
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    return exporter
+
+
+@pytest.fixture(autouse=True)
+def recorded_span(span_provider: InMemorySpanExporter) -> InMemorySpanExporter:
+    """每条用例开头清空一次，因此拿到的只有自己产生的 span。"""
+    span_provider.clear()
+    return span_provider
 
 
 @pytest.fixture

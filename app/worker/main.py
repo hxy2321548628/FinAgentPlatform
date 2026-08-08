@@ -15,6 +15,8 @@ import signal
 
 from config import get_settings
 from log import configure
+from telemetry.setup import WORKER_SERVICE, instrument_client
+from telemetry.setup import configure as configure_trace
 from worker.runtime import build_worker
 
 logger = logging.getLogger(__name__)
@@ -22,7 +24,11 @@ logger = logging.getLogger(__name__)
 
 async def serve() -> None:
     """起 worker，接住停机信号，收尾。"""
-    runtime = await build_worker(get_settings())
+    settings = get_settings()
+    # 这个进程没有 FastAPI 应用，只挂 httpx 探针 —— worker → broker 那几跳靠它自动串上
+    instrument_client()
+    configure_trace(service_name=WORKER_SERVICE, endpoint=settings.otel_endpoint)
+    runtime = await build_worker(settings)
     loop = asyncio.get_running_loop()
     for name in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(name, lambda: asyncio.create_task(runtime.worker.stop()))

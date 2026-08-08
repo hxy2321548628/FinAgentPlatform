@@ -19,3 +19,15 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
     editable: false
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      # 从一条 trace 跳到它同一时段的指标。**不配的话 trace 与指标是两座孤岛** ——
+      # 而排障时的下一个问题永远是「那会儿平台整体什么样」
+      tracesToMetrics:
+        datasourceUid: prometheus

@@ -1,7 +1,7 @@
 # 内网单机部署：nginx + api + worker×2 + broker + postgres + redis + minio
-# + prometheus + grafana。
+# + prometheus + grafana + tempo + otel-collector。
 #
-#   mkdir -p data/prometheus data/grafana        # 只需一次，理由见下面 prometheus
+#   mkdir -p data/prometheus data/grafana data/tempo   # 只需一次，理由见下面 prometheus
 #   docker compose -f deploy/compose.yml up -d --build
 #
 # **沙箱容器不在这里声明** —— 它们由 broker 在运行时动态创建与销毁。
@@ -49,6 +49,9 @@ services:
       # **只有 nginx 后面才能开**：X-Accel-Redirect 是 nginx 的协议，直接跑 uvicorn
       # 时浏览器只会收到一个空响应
       ARTIFACT_DIRECT_SEND: "true"
+      # 三个进程都只认这一个地址，不认 Tempo —— 换后端时应用侧一行不动。
+      # 留空即不上报，开发机直接跑 uvicorn 时走的正是那条
+      OTEL_ENDPOINT: http://otel-collector:4318
     # **不挂 docker.sock，也不挂 workspace** —— 这两条就是 ADR-0004 的全部内容。
     # api 被 agent 生成的内容影响之后，能做的最多是发几个 HTTP 请求给 broker。
     # 拆出 worker 之后它连模型都不碰了：收提问投队列、查状态、把事件转 SSE，就这三件事。
@@ -81,6 +84,7 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
+      OTEL_ENDPOINT: http://otel-collector:4318
     # **迁移不由 worker 跑**：多副本会撞在同一把 DDL 锁上，那是 api 的活。
     # 表还没建好时 worker 起来也无妨 —— 它要等到有任务投进来才碰 runs 表
     depends_on:
@@ -162,6 +166,27 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # 建 trace 与日志的桶。**MinIO 不会自动建桶，Tempo 与 Loki 也不会** ——
+  # 缺桶时它们起得来、只在写第一个块时失败，而那要等几分钟才发生。
+  #
+  # 用的是 minio 自己的镜像（里面就带 mc），不额外拉一个：产物那个桶由 broker
+  # 启动时建，这里只补上它管不着的两个
+  minio-init:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing local/trace local/log
+    env_file:
+      - ../.env
+    depends_on:
+      minio:
+        condition: service_healthy
+    # 一次性任务，跑完就退。不设 unless-stopped，否则它会被反复重启
+    restart: "no"
+
   # ---- 可观测性（P4 计划 §7.1 定案全套）----
   #
   # **两个数据目录都要先在宿主机上建好并归当前用户**：Docker 自动创建缺失的
@@ -183,6 +208,36 @@ services:
     # 只绑回环。看指标走 Grafana，这个端口只在排查「抓到没有」时用
     ports:
       - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.9.0
+    command:
+      - -config.file=/etc/tempo.yaml
+      # 配置文件里的 ${MINIO_ACCESS_KEY} 靠它展开。不开的话那两行会被当成字面量，
+      # 而症状是「连得上 MinIO 但一律 403」
+      - -config.expand-env=true
+    # MINIO_ACCESS_KEY / MINIO_SECRET_KEY 从这里来，与 broker 用的是同一组
+    env_file:
+      - ../.env
+    user: ${SANDBOX_USER:?请设成宿主机上数据目录的属主，形如 1000:1000}
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml:ro
+      # 预写日志是本地盘：trace 的块在 MinIO 上，但还没落块的那一段在这里，
+      # 进程重启时靠它补回去
+      - ${TEMPO_DATA_DIR:-../data/tempo}:/var/tempo
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.140.0
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otel-collector.yaml:ro
+    depends_on:
+      - tempo
     restart: unless-stopped
 
   grafana:
@@ -228,6 +283,7 @@ services:
       # P4 起 broker 也要连 MinIO：产物的字节躺在它独占的 workspace 里，
       # 让 api 或 worker 来传就得先把字节经 HTTP 搬过去，还得给它们开一条文件通路
       MINIO_ENDPOINT: minio:9000
+      OTEL_ENDPOINT: http://otel-collector:4318
     volumes:
       # 唯一持有它的服务。给的是宿主机 root 权限，因此这个容器里不跑任何
       # 来自 agent 的东西 —— 它只认「哪个会话、做什么操作」

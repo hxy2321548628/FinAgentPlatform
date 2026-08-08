@@ -252,6 +252,10 @@ class Settings(StoreSettings):
         gt=0,
         description="任务消息闲置多久后允许别的 worker 认领，毫秒。崩溃恢复的延迟上限就是它",
     )
+    otel_endpoint: str = Field(
+        default="",
+        description="OTel Collector 的 OTLP/HTTP 地址，形如 http://otel-collector:4318。留空即不上报 trace",
+    )
     worker_metric_port: int = Field(
         default=DEFAULT_WORKER_PORT,
         ge=0,

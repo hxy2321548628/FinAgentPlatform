@@ -508,3 +508,61 @@ resumed = task.decisions is not None or start is RunStart.RESUMED
 抓取一上线，`zuel_run` 第一屏就是 **queued 93、running 49、waiting_approval 1**。这些是 P0–P3 历次验收里 worker 被 kill 之后留下的、再没有人接手的 run —— 它们一直躺在库里，只是**在此之前没有任何一个地方会把这个数显示出来**。
 
 不在本期范围内修（没有「僵尸 run 清理」这一项），记在这里是因为它正好说明了这一步的价值：**这个数不是新产生的，是一直存在却看不见的。**
+
+### 8.7 步骤六：OTel Collector + Tempo，一个 run 的完整 trace
+
+**整条链路上只有一段要手接。** 其余全是探针自动完成的：
+
+| 跨越 | 怎么串上的 |
+|---|---|
+| 浏览器 → api | FastAPI 探针开根 span |
+| api → broker、worker → broker | httpx 探针把 traceparent 放进请求头，对面的 FastAPI 探针取出来 |
+| **api → worker** | **手接**：中间隔着一条 Redis 队列，没有请求头可放 |
+
+第三条是 `telemetry/context.py` 存在的全部理由：把 W3C 的 `traceparent` 塞进 `RunTask` 带过去。**漏了它不会报错**，只会让每个 run 断成互不相干的两条 trace —— 而验收 ① 要的「一个 run 的完整耗时」正好落在断口上。
+
+**四处「实施时才知道」的东西**：
+
+- **探针要分两步装。** `instrument()` 只挂中间件，必须在应用开始服务**之前**调用（Starlette 的中间件栈一旦建起来就加不进去）；而接后端要读配置，只能在 lifespan 里。分不开的话就得在 import 时读 `Settings` —— 而 CI 没有 `.env`，那会让整个模块 import 即失败。没配后端时探针照样在，span 落到 OTel 的空实现上，几乎不要钱。
+- **ASGI 探针默认给每次 `receive` / `send` 各开一个 span**，一次请求从 1 个变 4 个。SSE 那条更夸张：一个几十分钟的事件流每推一个事件就多一个 span。`exclude_spans=["receive","send"]` 关掉 —— 不关的话要找的那条 trace 会被自己的噪声埋掉。
+- **指标与追踪各挂一个回调，不合成一个。** 两者对 LLM 调用的失效方式完全不同：指标丢一个样本没人看得出来，trace 少一段则整条链路对不上。
+- **LLM 的 span 不能做成「当前 span」**（用 `start_span` 而不是 `start_as_current_span`）：一次分析里多轮调用是交错的，而「当前 span」只有一个 —— 互相顶替的话，后开的会认前一个当父，时间轴上就成了一串莫名其妙的嵌套。
+
+**终态结论钉在 `_emit` 这一个漏斗里**，不在七八个终态分支里逐个写。取的是「当前 span」而不是把 span 传下去 —— 逐处传等于让每一处都记得这件事，而漏一处不报错，只会让那条 trace 少一半信息。
+
+#### 8.7.1 一条测试自己会假过，被改掉了
+
+第一版写了「worker → broker 那一跳在同一条 trace 里」，用来证明 httpx 探针生效。**它证明不了。** 那套夹具里 broker 与 worker 同进程同任务，上下文靠 `contextvars` 就传过去了 —— 把 httpx 探针整个拆掉，那条断言照样绿。
+
+改成只声称它能证明的事（「broker 的应用挂上了探针」），**跨进程那一半明确交给 compose 全栈去验**。这与[「先验证验证代码」](./P3-plan.md)是同一件事：一条不会红的断言比没有断言更坏，因为它占着「已验证」的位置。
+
+队列那一跳则相反 —— worker 的主循环跑在自己的任务里，上下文是夹具建立时那一份，**同进程并不会让它假过**。拿掉 `trace=carry()` 实测立刻变红。
+
+#### 8.7.2 一条偶发红，真因是 span 比事件晚收尾
+
+`test_the_run_id_is_searchable_on_the_worker_span` 八次里红三次，报的是「一个 `run.execute` 都没有」。
+
+真因：**`run.execute` 是在终态事件发出去之后才结束的**（`with` 块还要退栈、归还沙箱），而 `drain()` 读到终态就返回了，两者差着几百微秒。断言跑在中间那一瞬。改成轮询等它收尾。
+
+第一次猜的是「上一条用例的 span 漏进了这一条的窗口」，据此改了过滤方式 —— 没用。**打印出实际数量才看见是 0 而不是 2**，方向正好相反。[这条教训 P3 记过一次](./P3-plan.md)。
+
+#### 8.7.3 验收 ①（2026-08-08，compose 全栈，真实分析）
+
+给 `run_id = 0d7cf087…`，在 Tempo 里检索 `{ .zuel.run_id = "…" }`，拿到一条跨三个服务的 trace：
+
+| 服务 | span | 耗时 |
+|---|---|---|
+| zuel-api | `POST /api/threads/{thread_id}/runs` | 15.1 ms |
+| zuel-worker | `run.execute` | **6317.1 ms** |
+| zuel-broker | `POST /threads/{thread_id}/sandbox` | 163.8 ms |
+| zuel-worker | `llm.call` | 2573.1 ms |
+| zuel-broker | `POST /threads/{thread_id}/tool/execute` | 73.2 ms |
+| zuel-worker | `llm.call` | 3299.5 ms |
+| zuel-broker | `POST /threads/{thread_id}/artifacts/collect` | 1.7 ms |
+| zuel-broker | `DELETE /threads/{thread_id}/sandbox` | 0.9 ms |
+
+`run.execute` 上的属性：`zuel.run_id` / `zuel.thread_id` / `zuel.user_id` / `zuel.status=run.finished` / `zuel.resumed=False` / **`zuel.token.input_cache_read=5888`、`input_uncached=165`、`output=234`** —— 与那次 `run.finished` 事件里的三元组逐位相同。
+
+**「能定位」落在一个具体页面上**：Grafana 看板「按 run 查链路」（`deploy/grafana/dashboard/run.json`），填一个 `run_id` 就是上面这张表。三块面板的 TraceQL **都经 Grafana 自己的数据源代理复查过**，不是只在 Tempo 上跑通 —— §8.6 刚踩过「看板存在但数据源 uid 对不上」。
+
+**验收 ① 通过。** 网关 / worker / LLM / sandbox 四段耗时齐全，token 三元组在同一个 span 上。

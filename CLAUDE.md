@@ -64,12 +64,14 @@ export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sand
 # Prometheus 与 Grafana 的数据目录**必须先建好并归当前用户**，只需一次。
 # Docker 自动创建缺失的 bind mount 目录时属主是 root，而这两个容器以宿主用户跑 ——
 # 不建的话它们会因为写不进去反复重启，而 `up -d` 那一刻是绿的
-sudo mkdir -p data/prometheus data/grafana && sudo chown "$(id -u):$(id -g)" data/prometheus data/grafana
+sudo mkdir -p data/prometheus data/grafana data/tempo && sudo chown "$(id -u):$(id -g)" data/prometheus data/grafana data/tempo
 
 docker compose -f deploy/compose.yml up -d --build
 
-# 指标看板：Grafana 在 127.0.0.1:3000（口令是 .env 的 GF_SECURITY_ADMIN_PASSWORD），
-# Prometheus 在 127.0.0.1:9090。**两个都只绑回环** —— 从别的机器看要 SSH 端口转发。
+# 看板都在 Grafana：127.0.0.1:3000（口令是 .env 的 GF_SECURITY_ADMIN_PASSWORD）。
+# 「平台概览」是六个指标，「按 run 查链路」填一个 run_id 就能看到它各段的耗时与 token。
+# Prometheus 在 127.0.0.1:9090；**Tempo 与 Collector 不映射端口**，只有 Grafana 够得着。
+# 三个都只绑回环 —— 从别的机器看要 SSH 端口转发。
 # api 的 /metrics 不要求登录，挡它的是 nginx 的 `location = /metrics { return 404; }`
 
 # P1 验收六条的总入口，转调下面两个脚本。操作步骤见 doc/04acceptance-guide/P1/

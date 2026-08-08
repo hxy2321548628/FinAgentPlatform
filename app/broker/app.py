@@ -17,6 +17,8 @@ from broker.route import router
 from broker.runtime import Broker, build_broker
 from config import get_settings
 from log import configure
+from telemetry.setup import BROKER_SERVICE, instrument
+from telemetry.setup import configure as configure_trace
 
 
 def create_app(broker: Broker | None = None) -> FastAPI:
@@ -33,7 +35,12 @@ def create_app(broker: Broker | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         owned = broker is None
-        current = broker if broker is not None else build_broker(get_settings())
+        current = broker
+        if current is None:
+            settings = get_settings()
+            current = build_broker(settings)
+            # 探针在 create_app 里就挂上了，这里才接后端：读配置只能在这时候
+            configure_trace(service_name=BROKER_SERVICE, endpoint=settings.otel_endpoint)
         if owned:
             # **连不上就起不来**，与 api / worker 同一个规矩。P3 起 broker 也要连 Redis
             # （写操作去重表）—— 不在这里体检的话，配错了要等到第一次 delete 才暴露
@@ -53,6 +60,7 @@ def create_app(broker: Broker | None = None) -> FastAPI:
         description="沙箱容器与会话目录的唯一入口。仅供 api 进程内部调用，不对外暴露。",
         lifespan=lifespan,
     )
+    instrument(app)
     app.include_router(router)
     app.include_router(metric.router)
     if broker is not None:

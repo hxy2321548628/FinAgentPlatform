@@ -14,6 +14,7 @@ from log import run_context
 from run.decision import Decision
 from run.repository import Run
 from task.queue import RunTask, TaskQueue
+from telemetry.context import carry
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,15 @@ class RunSubmitter:
         # 「按 run_id 把一次 run 的日志过滤出来」在 api 侧恒为空
         with run_context(run_id=run.id, thread_id=run.thread_id, user_id=user_id):
             await self._repository.create(run_id=run.id, thread_id=run.thread_id, user_id=user_id)
-            await self._queue.publish(RunTask(run_id=run.id, thread_id=run.thread_id, content=content, user_id=user_id))
+            await self._queue.publish(
+                RunTask(
+                    run_id=run.id,
+                    thread_id=run.thread_id,
+                    content=content,
+                    user_id=user_id,
+                    trace=carry(),
+                )
+            )
             logger.info("run 已投递")
         return run
 
@@ -80,5 +89,7 @@ class RunSubmitter:
             decisions: 已经校验过的决策。
         """
         with run_context(run_id=run_id, thread_id=thread_id, user_id=user_id):
-            await self._queue.publish(RunTask(run_id=run_id, thread_id=thread_id, user_id=user_id, decisions=decisions))
+            await self._queue.publish(
+                RunTask(run_id=run_id, thread_id=thread_id, user_id=user_id, decisions=decisions, trace=carry())
+            )
             logger.info("审批已回传，run 重新入队续跑")

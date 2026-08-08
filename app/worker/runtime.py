@@ -28,6 +28,7 @@ from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandbox
 from store import postgres, redis
 from store.checkpoint import CheckpointPool, open_checkpoint
 from task.queue import TaskQueue
+from telemetry.llm import callback as trace_callback
 from worker.loop import Worker
 
 logger = logging.getLogger(__name__)
@@ -91,13 +92,18 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
 
     connection = BrokerConnection(base_url=settings.broker_url)
     backend_factory = RemoteBackendFactory(base_url=settings.broker_url)
-    # **只有这个进程调模型**，因此「一次调用有多慢、失不失败」也只有它量得到
+    # **只有这个进程调模型**，因此「一次调用有多慢、失不失败」也只有它量得到。
+    # 指标与追踪各挂一个回调，不合成一个：前者攒的是所有调用的耗时分布，
+    # 后者给的是「这一次 run 里第 3 轮调用花了多久」，两者的失效方式完全不同
     llm = LlmMetric()
     executor = RunExecutor(
         pool=RemoteSandboxPool(connection),
         workspace=RemoteWorkspace(connection),
         log=EventLog(cache, archive=EventArchive(engine)),
-        agent=Agent(model=create_model(settings, callback=llm.callback()), checkpointer=checkpoint.saver),
+        agent=Agent(
+            model=create_model(settings, callback=[llm.callback(), trace_callback()]),
+            checkpointer=checkpoint.saver,
+        ),
         repository=RunRepository(engine),
         cancel=CancelFlag(cache),
         artifacts=ArtifactRepository(engine),

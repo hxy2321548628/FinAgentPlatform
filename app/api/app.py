@@ -19,6 +19,8 @@ from api.security import limit_by_user, require_user
 from auth.bootstrap import ensure_first_admin
 from config import get_settings
 from log import configure
+from telemetry.setup import API_SERVICE, instrument
+from telemetry.setup import configure as configure_trace
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,9 @@ def create_app(platform: Platform | None = None) -> FastAPI:
         app.state.platform = current
         if owned:
             settings = get_settings()
+            # 探针在 create_app 里就挂上了，这里才接后端 —— 读配置只能在这时候，
+            # 而中间件必须在应用开始服务之前加
+            configure_trace(service_name=API_SERVICE, endpoint=settings.otel_endpoint)
             await ensure_first_admin(
                 repository=current.user,
                 hasher=current.password,
@@ -66,6 +71,9 @@ def create_app(platform: Platform | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     install_handler(app)
+    # **必须在应用开始服务之前**：Starlette 的中间件栈一旦建起来就加不进新的中间件。
+    # 没配后端时它只是把 span 落到空实现上，几乎不要钱
+    instrument(app)
     app.include_router(auth.router, prefix=API_PREFIX)
     # 抓取端点不挂登录，也不带 /api 前缀 —— 挡它的是 nginx，理由写在 route/metric.py
     app.include_router(metric.router)
