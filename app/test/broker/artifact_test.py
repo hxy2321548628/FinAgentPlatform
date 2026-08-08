@@ -92,12 +92,24 @@ async def workspace(space: Workspace, store: ArtifactStore) -> AsyncIterator[Rem
         await connection.aclose()
 
 
+def written(path: Path, content: bytes) -> Path:
+    """写一个产物，目录不存在就先建。
+
+    **`mark()` 不再顺手建 `outputs/`** —— 它跑在 broker 进程里，那个进程在容器里是
+    root，建出来的目录以宿主用户跑的沙箱写不进去。真实里这个目录由沙箱自己建，
+    用例就在这里替它做。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return path
+
+
 async def test_a_collected_artifact_reports_its_object_key(
     workspace: RemoteWorkspace, space: Workspace, store: ArtifactStore, client: Minio
 ) -> None:
     thread_id = await workspace.create(uuid4().hex)
     since = await workspace.mark(thread_id)
-    (space.path(thread_id) / "outputs" / "chart.png").write_bytes(PNG)
+    written(space.path(thread_id) / "outputs" / "chart.png", PNG)
 
     collected = await workspace.collect(thread_id, since_ns=since, user_id="u-1")
 
@@ -114,7 +126,7 @@ async def test_the_bytes_really_land_in_the_bucket(
     """「报了一个 key」与「那个 key 真取得到字节」是两件事。"""
     thread_id = await workspace.create(uuid4().hex)
     since = await workspace.mark(thread_id)
-    (space.path(thread_id) / "outputs" / "chart.png").write_bytes(PNG)
+    written(space.path(thread_id) / "outputs" / "chart.png", PNG)
 
     collected = await workspace.collect(thread_id, since_ns=since, user_id="u-1")
 
@@ -128,7 +140,7 @@ async def test_two_users_land_under_different_prefixes(
     """租户前缀是新的越权面：两个人的产物不能落进同一个前缀。"""
     thread_id = await workspace.create(uuid4().hex)
     since = await workspace.mark(thread_id)
-    (space.path(thread_id) / "outputs" / "chart.png").write_bytes(PNG)
+    written(space.path(thread_id) / "outputs" / "chart.png", PNG)
 
     mine = await workspace.collect(thread_id, since_ns=since, user_id="u-1")
     yours = await workspace.collect(thread_id, since_ns=since, user_id="u-2")

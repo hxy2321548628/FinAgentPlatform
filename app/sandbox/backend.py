@@ -153,15 +153,20 @@ class SandboxBackend(SandboxBackendProtocol):
         两者最多差一个 tick，实测约 0.4 毫秒 —— 基准取墙钟的话，紧接着写下的产物
         mtime 反而更早，于是被判成「运行之前就有的」而**静默漏掉，没有任何报错**。
 
-        把 `outputs/` touch 一下再读它的 mtime，基准与判据就出自同一个时钟。
+        把会话目录 touch 一下再读它的 mtime，基准与判据就出自同一个时钟 ——
+        产物在它的子目录里，同一个文件系统同一份时钟。
+
+        **取的是会话目录而不是 `outputs/`，因为这里不能建目录。** 第一版在这里
+        `mkdir` 出 `outputs/`，而这个方法跑在 broker 进程里、那个进程是 root，
+        于是目录属主成了 root，**以宿主用户跑的沙箱一个字节都写不进去**。
+        症状完全不指向权限：`execute` 全部成功，agent 只是「选择」把图存到
+        `outputs_final/` 之类的地方，最后产物一个都没有。`outputs/` 该由沙箱自己建。
 
         Returns:
             Unix 时间戳，纳秒。交给 `artifact_since` 用。
         """
-        output_dir = self._workspace / OUTPUT_DIR
-        output_dir.mkdir(parents=True, exist_ok=True)
-        os.utime(output_dir, None)
-        return output_dir.stat().st_mtime_ns
+        os.utime(self._workspace, None)
+        return self._workspace.stat().st_mtime_ns
 
     def artifact_since(self, since_ns: int) -> list[Path]:
         """列出 `outputs/` 下在给定时刻之后写入的文件。

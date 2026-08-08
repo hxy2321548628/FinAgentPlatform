@@ -234,7 +234,7 @@ def test_id_is_the_container_id(backend: SandboxBackend) -> None:
 
 # ---------------------------------------------------------------- 产物判定的基准
 def test_the_mark_comes_from_the_filesystem_clock(backend: SandboxBackend, workspace: Path) -> None:
-    """基准必须与判据同源，取的就是 `outputs/` 自己的 mtime。
+    """基准必须与判据同源，取的是会话目录自己的 mtime。
 
     判据读的是 inode 时间戳，而内核给 inode 打的是**粗粒度时钟** —— NOHZ 下进程一空闲
     它就停在上一次 tick 上，落后 `time.time_ns()` 读到的细粒度时钟最多一个 tick。
@@ -242,19 +242,30 @@ def test_the_mark_comes_from_the_filesystem_clock(backend: SandboxBackend, works
     """
     mark = backend.artifact_mark()
 
-    assert mark == (workspace / OUTPUT_DIR).stat().st_mtime_ns
+    assert mark == workspace.stat().st_mtime_ns
 
 
-def test_the_mark_creates_the_output_directory(backend: SandboxBackend, workspace: Path) -> None:
-    """目录不存在时也要能取到基准 —— agent 是在那之后才往里写的。"""
+def test_the_mark_does_not_create_the_output_directory(backend: SandboxBackend, workspace: Path) -> None:
+    """**取基准这一步不能建目录。**
+
+    它跑在 broker 进程里，而那个进程在容器里是 root —— 建出来的 `outputs/` 属主是
+    root，以宿主用户跑的沙箱一个字节都写不进去。而症状完全不指向权限：`execute`
+    全部成功，agent 只是「选择」把图存到别的目录，最后产物一个都没有。
+    `outputs/` 该由沙箱自己建。
+
+    这不是假想：P4 步骤零的第一版就是这么写的，P0 验收在 §8.11 那一轮红在
+    「run.finished 里没有产物」上。
+    """
     backend.artifact_mark()
 
-    assert (workspace / OUTPUT_DIR).is_dir()
+    assert not (workspace / OUTPUT_DIR).exists()
 
 
 def test_a_file_written_after_the_mark_is_claimed(backend: SandboxBackend, workspace: Path) -> None:
     mark = backend.artifact_mark()
+    # 目录由沙箱自己建，取基准那一步不碰它 —— 这里就是在替沙箱做那件事
     chart = workspace / OUTPUT_DIR / "chart.png"
+    chart.parent.mkdir()
     chart.write_bytes(b"png")
 
     assert backend.artifact_since(mark) == [chart]

@@ -234,6 +234,20 @@ def test_upload_and_download_round_trip_bytes(backend: RemoteSandboxBackend) -> 
 
 
 # ------------------------------------------------------------------ 排队排位
+
+
+def written(path: Path, content: bytes) -> Path:
+    """写一个产物，目录不存在就先建。
+
+    **`mark()` 不再顺手建 `outputs/`** —— 它跑在 broker 进程里，那个进程在容器里是
+    root，建出来的目录以宿主用户跑的沙箱写不进去。真实里这个目录由沙箱自己建，
+    用例就在这里替它做。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return path
+
+
 async def test_queue_positions_stream_back_before_ready(connection: BrokerConnection, pool: FakePool) -> None:
     """排位靠流式响应跨进程推回来，不轮询。少了它教师会盯着一个不动的界面等几分钟。"""
     pool.queue_position = [3, 2, 1]
@@ -304,8 +318,7 @@ async def test_artifacts_written_after_the_mark_are_reported(connection: BrokerC
     workspace = RemoteWorkspace(connection)
     thread_id = await workspace.create(uuid4().hex)
     since = await workspace.mark(thread_id)
-    output_dir = space.path(thread_id) / "outputs"
-    (output_dir / "chart.png").write_bytes(b"png")
+    written(space.path(thread_id) / "outputs" / "chart.png", b"png")
 
     collected = await workspace.collect(thread_id, since_ns=since, user_id="u-1")
 
@@ -324,7 +337,7 @@ async def test_collecting_without_an_object_store_still_reports_the_artifact(
     workspace = RemoteWorkspace(connection)
     thread_id = await workspace.create(uuid4().hex)
     since = await workspace.mark(thread_id)
-    (space.path(thread_id) / "outputs" / "chart.png").write_bytes(b"png")
+    written(space.path(thread_id) / "outputs" / "chart.png", b"png")
 
     collected = await workspace.collect(thread_id, since_ns=since, user_id="u-1")
 
