@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 const MOCK_STATE = {
@@ -17,6 +18,12 @@ const MOCK_SESSIONS = [
   { id: '3', title: '基金最大回撤计算', time: '2 天前', status: 'done' as const, tokens: 8920 },
   { id: '4', title: 'Fama-French 三因子复现', time: '3 天前', status: 'done' as const, tokens: 45230 },
   { id: '5', title: '持仓集中度风险分析', time: '4 天前', status: 'failed' as const, tokens: 3210 },
+]
+
+const QUICK_ACTIONS = [
+  { label: '新建分析对话', desc: '直接描述需求，智能体开始工作', to: '/workspace/chat', icon: '💬' },
+  { label: '浏览场景库', desc: '从预设分析场景快速启动', to: '/workspace/scenarios', icon: '🗂' },
+  { label: '上传数据文件', desc: 'CSV、Excel、PDF 上传至工作区', to: '/workspace/data', icon: '📁' },
 ]
 
 const STATUS_COLOR = {
@@ -118,6 +125,8 @@ function ActionBanner() {
 
 export function Overview() {
   const navigate = useNavigate()
+  const [hoveredSession, setHoveredSession] = useState<string | null>(null)
+  const [hoveredAction, setHoveredAction] = useState<string | null>(null)
   const { tokenUsed, tokenQuota, monthlyRuns, outputFiles, agentCalls } = MOCK_STATE
   const tokenPct = Math.round(tokenUsed / tokenQuota * 100)
 
@@ -161,9 +170,10 @@ export function Overview() {
                   padding: '12px 16px',
                   borderBottom: i < MOCK_SESSIONS.length - 1 ? '1px solid var(--border-light)' : 'none',
                   cursor: 'pointer', transition: 'background 0.15s',
+                  background: hoveredSession === session.id ? 'var(--bg)' : 'transparent',
                 }}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                onMouseEnter={() => setHoveredSession(session.id)}
+                onMouseLeave={() => setHoveredSession(null)}
               >
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3 }}>
@@ -185,21 +195,20 @@ export function Overview() {
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>快速入口</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {[
-              { label: '新建分析对话', desc: '直接描述需求，智能体开始工作', to: '/workspace/chat', icon: '💬' },
-              { label: '浏览场景库', desc: '从预设分析场景快速启动', to: '/workspace/scenarios', icon: '🗂' },
-              { label: '上传数据文件', desc: 'CSV、Excel、PDF 上传至工作区', to: '/workspace/data', icon: '📁' },
-            ].map(item => (
+            {QUICK_ACTIONS.map(item => (
               <div
                 key={item.to}
                 onClick={() => navigate(item.to)}
                 style={{
-                  background: 'var(--surface)', border: '1px solid var(--border)',
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
                   borderRadius: 8, padding: '14px 16px', cursor: 'pointer',
                   transition: 'border-color 0.2s, box-shadow 0.2s',
+                  borderColor: hoveredAction === item.to ? 'var(--action-border)' : 'var(--border)',
+                  boxShadow: hoveredAction === item.to ? '0 2px 8px rgba(23,73,196,0.08)' : 'none',
                 }}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--action-border)'; (e.currentTarget as HTMLElement).style.boxShadow = '0 2px 8px rgba(23,73,196,0.08)' }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.boxShadow = 'none' }}
+                onMouseEnter={() => setHoveredAction(item.to)}
+                onMouseLeave={() => setHoveredAction(null)}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                   <span style={{ fontSize: 16 }}>{item.icon}</span>
