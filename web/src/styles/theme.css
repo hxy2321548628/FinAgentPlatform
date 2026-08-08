@@ -10,7 +10,7 @@
   --text-secondary: #5A6A7E;
   --text-muted:     #8E9BB0;
   --brand:          #0B2E5C;
-  --logo-red:       #A61B29;
+  --logo-red:       #08574E;
   --action:         #1749C4;
   --action-hover:   #1239A6;
   --action-light:   #EAF0FC;
@@ -19,6 +19,14 @@
   --status-active:  #1749C4;
   --status-pending: #8E9BB0;
   --status-warn:    #D97706;
+
+  /* ── Workspace sidebar ── */
+  --ws-sidebar-bg:      #0D1829;
+  --ws-sidebar-border:  rgba(255,255,255,0.08);
+  --ws-sidebar-text:    rgba(255,255,255,0.6);
+  --ws-sidebar-active:  rgba(255,255,255,0.95);
+  --ws-sidebar-hover:   rgba(255,255,255,0.08);
+  --ws-sidebar-accent:  #1e3a5f;
 }
 
 .dark { /* TODO */ }
