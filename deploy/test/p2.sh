@@ -28,6 +28,11 @@ RECOVER_WINDOW=300
 # 探针用的任务条数。要多于 worker 副本数，才看得出「分给了谁」
 PROBE_TASK=6
 
+# run 转 running 之后等多久再 kill。**这个数太大就砍不到**：这道题实测约 20 秒跑完，
+# 等满 20 秒的话有一半概率 run 已经结束，那次验收什么都没验着。
+# 太小则砍在第一个 checkpoint 之前，验的成了「重投」而不是「续跑」
+KILL_DELAY=10
+
 log() { printf '\n\033[36m━━ %s\033[0m\n' "$*"; }
 pass() { printf '\033[32m  ✅ %s\033[0m\n' "$*"; }
 # **累加而不是置 1**：下面每段都用 `before=$failed` 判断「本段有没有新的失败」，
@@ -63,7 +68,7 @@ wait_worker() {
     return 1
 }
 
-run_status() { curl -fsS "$BASE_URL/api/runs/$1" | jq -r .status; }
+run_status() { curl -fsS -b "$JAR" "$BASE_URL/api/runs/$1" | jq -r .status; }
 
 # ------------------------------------------------------------------ 前置检查
 log "前置检查"
@@ -96,6 +101,13 @@ for service in nginx api worker postgres redis; do
     }
 done
 curl -fsS "$BASE_URL/docs" >/dev/null || { echo "Nginx 没把 $BASE_URL 转发通" >&2; exit 1; }
+
+# P3 之后 /api/* 一律要会话 cookie。**重启不影响它**：session 存在 Redis 里，
+# 而 ② 重启的是 api / worker / broker 三个进程，Redis 不在其中
+source "$REPO_ROOT/deploy/test/session.sh"
+JAR="$(mktemp)"
+trap 'rm -f "$JAR"' EXIT
+USER_ID="$(zuel_open_session "$JAR")" || { echo "造不出账号或登不进去，①② 验不了" >&2; exit 1; }
 
 WORKER_COUNT="$(worker_ids | wc -l)"
 (( WORKER_COUNT >= 2 )) || { echo "worker 副本不足两个（当前 $WORKER_COUNT），③ 验不了" >&2; exit 1; }
@@ -188,7 +200,13 @@ fi
 # run 的终态与事件流的补齐。这两样正是本期从 api 内存里搬走的东西
 log "② 三个进程全部重启后，run 的终态与事件流都还在"
 
-SEED=$(in_api_python '
+# **会话行要真建，不能随手编一个 id**：P3 给 runs 加了指向 users 与 threads 的外键，
+# 编出来的 id 会被数据库当场拒掉。这里走接口建，与教师用的是同一条路径
+SEED_THREAD="$(curl -fsS -b "$JAR" -X POST "$BASE_URL/api/threads" | jq -r .id)"
+[[ -n $SEED_THREAD && $SEED_THREAD != null ]] || SEED_THREAD=""
+
+SEED=""
+[[ -z $SEED_THREAD ]] || SEED=$(in_api_python "
 import asyncio, uuid
 from api.platform import build_platform
 from config import get_settings
@@ -196,10 +214,10 @@ from event.model import RunFinishedData, RunFinishedEvent, TokenData, TokenEvent
 
 async def main():
     platform = await build_platform(get_settings())
-    run_id, thread_id = uuid.uuid4().hex, uuid.uuid4().hex
-    await platform.repository.create(run_id=run_id, thread_id=thread_id)
+    run_id, thread_id = uuid.uuid4().hex, '$SEED_THREAD'
+    await platform.repository.create(run_id=run_id, thread_id=thread_id, user_id='$USER_ID')
     first = await platform.log.append(
-        TokenEvent(ts=1, run_id=run_id, path=(), data=TokenData(text="重启前"))
+        TokenEvent(ts=1, run_id=run_id, path=(), data=TokenData(text='重启前'))
     )
     await platform.log.append(RunFinishedEvent(ts=2, run_id=run_id, path=(), data=RunFinishedData()))
     from event.model import TokenUsage
@@ -209,7 +227,7 @@ async def main():
     print(run_id, first.id)
 
 asyncio.run(main())
-') || SEED=""
+") || SEED=""
 
 read -r SEED_RUN SEED_CURSOR <<<"${SEED:-}"
 if [[ -z ${SEED_RUN:-} ]]; then
@@ -227,7 +245,7 @@ else
         || fail "重启后 run 的终态丢了：${status:-查不到}"
 
     # 带上游标重连：补齐的应该只有游标之后那一条，一条不多一条不少
-    replayed="$(curl -fsS -N -H "Last-Event-ID: $SEED_CURSOR" \
+    replayed="$(curl -fsS -b "$JAR" -N -H "Last-Event-ID: $SEED_CURSOR" \
         "$BASE_URL/api/runs/$SEED_RUN/events" 2>/dev/null | grep -c '^event:')"
     [[ $replayed == 1 ]] && pass "Last-Event-ID 仍能补齐：补了 $replayed 条，正是游标之后那一条" \
         || fail "重启后事件流补不齐：补了 ${replayed:-0} 条，应为 1 条"
@@ -242,8 +260,8 @@ if [[ ${SKIP_LLM:-0} == 1 ]]; then
     VERDICT[1]="未验（SKIP_LLM=1）"
     info "已跳过 —— 这条要真实调用 DeepSeek"
 else
-    THREAD_ID="$(curl -fsS -X POST "$BASE_URL/api/threads" | jq -r .id)"
-    RUN_ID="$(curl -fsS -X POST "$BASE_URL/api/threads/$THREAD_ID/runs" \
+    THREAD_ID="$(curl -fsS -b "$JAR" -X POST "$BASE_URL/api/threads" | jq -r .id)"
+    RUN_ID="$(curl -fsS -b "$JAR" -X POST "$BASE_URL/api/threads/$THREAD_ID/runs" \
         -H 'Content-Type: application/json' \
         -d '{"content":"用 Python 生成 200 个正态分布随机数，算均值与标准差，再画一张直方图存到 outputs/"}' \
         | jq -r .id)"
@@ -254,7 +272,7 @@ else
         [[ $(run_status "$RUN_ID") == running ]] && break
         sleep 2
     done
-    sleep 20
+    sleep "$KILL_DELAY"
     VICTIM="$(worker_ids | head -1)"
     docker kill -s KILL "$VICTIM" >/dev/null 2>&1
     info "已 kill -9 worker $VICTIM，等另一个副本认领（阈值 60 秒）"
@@ -269,20 +287,52 @@ else
     done
     [[ $final == succeeded ]] && pass "崩溃后 run 仍跑到 succeeded" || fail "崩溃后 run 没跑完：${final:-无状态}"
 
-    # **要验的是续跑而不是重跑**：从头来一遍也会成功。
+    EVENTS="$(curl -fsS -b "$JAR" -N "$BASE_URL/api/runs/$RUN_ID/events" 2>/dev/null \
+        | grep '^data: ' | sed 's/^data: //')"
+
+    # **判据不再数 `run.started` 的条数。** 数条数（无论数总数还是数 `"resumed":false`）
+    # 都是代理指标，而它两头都会骗人，2026-08-08 一次验收里两种错都撞上了：
     #
-    # **判据在 P3 改过一次，但原意没变。** P3 之后一次 run 会多次入队（每轮审批一次），
-    # 因此 `run.started` 不再等于「这个 run 第一次开跑」—— 数它的总条数会把审批续跑
-    # 一并算成重跑。改成数 `"resumed":false` 的那些：**第一次开跑只能有一次**，
-    # 而崩溃恢复接着跑不会再产生一条。原意「已完成的步骤不重跑」一个字没松。
-    fresh="$(curl -fsS -N "$BASE_URL/api/runs/$RUN_ID/events" 2>/dev/null \
-        | grep '^data: ' | grep -c '"type":"run.started".*"resumed":false')"
-    [[ $fresh == 1 ]] && pass "第一次开跑只有 1 次：接着跑的，不是从头重来" \
-        || fail "第一次开跑有 ${fresh:-0} 次 —— 看起来是重跑而不是续跑"
+    # - **假过**：run 在 kill 真正生效前就跑完了，重投撞上「已经有终态」的守卫、不再发
+    #   `run.started` —— 于是只有 1 条，判据记通过。可这次**根本没崩到**，什么都没验着。
+    # - **假红**：真崩了并且正确续跑（崩溃前四次工具调用一次都没重跑，续跑那程只花了
+    #   1529 未命中 token），但重投照样发一条 `run.started`，且 `resumed` 按定义是
+    #   `task.decisions is not None` —— 它只标「审批之后的续跑」，崩溃恢复本来就是 false。
+    #
+    # 改成直接断言那件要验的事，并且**先证明崩到了**：没崩到就记未验，不许记通过。
+    starts="$(jq -s '[.[] | select(.type=="run.started")] | length' <<<"$EVENTS")"
+
+    # 崩溃前已经成功返回过的 (工具名, 参数)，在崩溃之后不得再出现一次 ——
+    # 这就是「已完成的步骤不重跑」的字面意思，不经任何代理
+    repeated="$(jq -s '
+        . as $all
+        | [$all | to_entries[] | select(.value.type == "run.started") | .key] as $starts
+        | if ($starts | length) < 2 then -1
+          else
+            $starts[1] as $cut
+            | [$all[:$cut][] | select(.type == "tool_result") | .data.tool_call_id] as $done
+            | [$all[:$cut][]
+               | select(.type == "tool_call" and (.data.id | IN($done[])))
+               | {name: .data.name, args: (.data.args | tostring)}] as $finished
+            | [$all[$cut:][]
+               | select(.type == "tool_call")
+               | {name: .data.name, args: (.data.args | tostring)}]
+            | map(select(IN($finished[])))
+            | length
+          end' <<<"$EVENTS")"
+
+    if (( starts < 2 )); then
+        info "这一次 kill 没砍到：run 在它生效前就跑完了（run.started 只有 $starts 条）"
+        fail "崩溃恢复没发生，这条**没验着**（不是通过）—— 重跑一次，或把 KILL_DELAY 调小"
+    elif (( repeated == 0 )); then
+        pass "真崩了（run.started $starts 条）且崩前已完成的工具一次都没重跑"
+    else
+        fail "崩溃后重跑了 $repeated 次崩前就已经成功的工具调用 —— 这是重跑不是续跑"
+    fi
 
     # 观察项，不设门槛（计划 §4）：崩溃恢复时工具重复执行了几次
-    tool_call="$(curl -fsS -N "$BASE_URL/api/runs/$RUN_ID/events" 2>/dev/null | grep -c '^event: tool_call')"
-    tool_result="$(curl -fsS -N "$BASE_URL/api/runs/$RUN_ID/events" 2>/dev/null | grep -c '^event: tool_result')"
+    tool_call="$(jq -s '[.[] | select(.type == "tool_call")] | length' <<<"$EVENTS")"
+    tool_result="$(jq -s '[.[] | select(.type == "tool_result")] | length' <<<"$EVENTS")"
     info "【观察项】工具调用 $tool_call 次、返回 $tool_result 次 —— 差值即崩在工具执行途中的重跑次数"
     info "【观察项】这个数是 P2 §7 那项「幂等键先量后定」的输入，请记进计划文档"
 

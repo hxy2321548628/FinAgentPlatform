@@ -31,6 +31,10 @@ CONCURRENCY=30
 # 教师看到中断之后等多久点确认 —— 脚本这一侧不需要真等，取一个够 worker 落状态的数
 SETTLE_WINDOW=120
 
+# 一个 run 最多批几轮。**一次 run 可以中断多次**：教师改过参数之后 agent 可能再提一次
+# 敏感调用。上限是防跑飞，不是判据 —— 到了上限还没终态就算未过
+APPROVE_ROUND=4
+
 log() { printf '\n\033[36m━━ %s\033[0m\n' "$*"; }
 pass() { printf '\033[32m  ✅ %s\033[0m\n' "$*"; }
 fail() { printf '\033[31m  ❌ %s\033[0m\n' "$*"; failed=$((failed + 1)); }
@@ -84,23 +88,12 @@ TEACHER_A="p3-a-$STAMP"
 TEACHER_B="p3-b-$STAMP"
 SECRET="p3-secret-$STAMP"
 
-make_user() {
-    local name="$1" role="$2"
-    local hashed
-    hashed="$(in_api_python "
-from auth.password import PasswordHasher
-print(PasswordHasher().hash('$SECRET'))
-" | tr -d '\r')"
-    psql_query "INSERT INTO users (id, name, password_hash, role, is_active, created_at)
-                VALUES (gen_random_uuid(), '$name', '$hashed', '$role', true, now())
-                ON CONFLICT (name) DO NOTHING;" >/dev/null
-}
+# 造号与登录本身在 session.sh 里，四个验收脚本共用一份。这里只是把口令那一维绑成
+# $SECRET —— 本脚本要按名字点名（A / B / 管理员），而 session.sh 的一站式入口发的是随机名
+source "$REPO_ROOT/deploy/test/session.sh"
 
-login() {
-    local name="$1" jar="$2"
-    curl -fsS -c "$jar" -o /dev/null -X POST "$BASE_URL/api/auth/login" \
-        -H 'Content-Type: application/json' -d "{\"name\":\"$name\",\"password\":\"$SECRET\"}"
-}
+make_user() { zuel_make_user "$1" "$SECRET" "$2"; }
+login() { zuel_login "$1" "$SECRET" "$2"; }
 
 JAR_A="$(mktemp)"; JAR_B="$(mktemp)"; JAR_ADMIN="$(mktemp)"
 trap 'rm -f "$JAR_A" "$JAR_B" "$JAR_ADMIN"' EXIT
@@ -319,18 +312,38 @@ else
             edit) payload='{"decisions":[{"index":0,"type":"edit","edited_action":{"name":"delete","args":{"file_path":"/workspace/outputs/nothing.txt"}}}]}' ;;
             respond) payload='{"decisions":[{"index":0,"type":"respond","message":"我已经手工删过了"}]}' ;;
         esac
-        got="$(code "$JAR_A" -X POST "$BASE_URL/api/runs/$run_id/approve" -H 'Content-Type: application/json' -d "$payload")"
-        [[ $got == 202 ]] || { fail "$decision：审批回传返回 $got"; continue; }
+        # **批到终态为止，不是只批一轮。** 一次 run 可以中断多次 —— 实测 `edit` 就是：
+        # 教师把删除目标改成一个不存在的文件，agent 拿到结果之后又提了一次删除请求。
+        # 第一轮用被测的那种决策，之后若还有中断一律 approve，让它走到终态；
+        # 被测的仍是那一种决策的恢复路径
+        round=0
+        while (( round < APPROVE_ROUND )); do
+            [[ $(run_status "$JAR_A" "$run_id") == waiting_approval ]] || break
+            (( round == 0 )) && this="$payload" || this='{"decisions":[{"index":0,"type":"approve"}]}'
+            got="$(code "$JAR_A" -X POST "$BASE_URL/api/runs/$run_id/approve" -H 'Content-Type: application/json' -d "$this")"
+            [[ $got == 202 ]] || { fail "$decision：第 $((round + 1)) 轮审批回传返回 $got"; break; }
+            round=$((round + 1))
+            # 等它离开 waiting_approval：要么跑到终态，要么再提一次审批
+            deadline=$((SECONDS + RUN_WINDOW))
+            while (( SECONDS < deadline )); do
+                [[ $(run_status "$JAR_A" "$run_id") == queued || $(run_status "$JAR_A" "$run_id") == running ]] || break
+                sleep 3
+            done
+        done
 
-        if wait_status "$JAR_A" "$run_id" succeeded; then
-            pass "$decision：审批之后跑到 succeeded"
+        settled="$(run_status "$JAR_A" "$run_id")"
+        if [[ $settled == succeeded ]]; then
+            pass "$decision：审批 $round 轮之后跑到 succeeded"
         else
-            fail "$decision：审批之后没跑到终态（当前 $(run_status "$JAR_A" "$run_id")）"
+            fail "$decision：审批 $round 轮之后仍是 $settled（上限 $APPROVE_ROUND 轮）"
         fi
 
-        # 【观察项】每跑一次就记一个真实样本，攒成分布再回去校准 quota/policy.py 的初值
+        # 【观察项】记的是**审批探针**的量，不是一次完整分析的量 —— 这一条提交的只是
+        # 「把 README.md 删掉」，实测两三百，而 ANALYSIS_TOKEN 是十万量级。
+        # **别拿这组数去校准 ANALYSIS_TOKEN**，会把它压低两个数量级；
+        # 校准要用的样本是 acceptance.sh 末尾那行「token 口径按 cache 拆分」
         used="$(psql_query "SELECT tokens_uncached, tokens_output FROM runs WHERE id='$run_id';" | tr -d '[:space:]')"
-        info "【观察项】$decision 这一次的未命中 token / output：$used"
+        info "【观察项】$decision 这次审批探针的未命中 token / output：$used（探针量级，非分析量级）"
     done
 
     # index 校验：缺失与重复都要 VALIDATION_ERROR

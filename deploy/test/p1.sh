@@ -50,16 +50,22 @@ in_broker() { compose exec -T broker "$@"; }
 # broker 不对外暴露端口（ADR-0004），只能从它自己的容器里够着。
 # 镜像里没有 curl，用现成的 httpx
 broker_call() {
-    local method="$1" path="$2"
+    local method="$1" path="$2" payload="${3:-}"
     in_broker python -c "
 import sys, httpx
-with httpx.stream('$method', 'http://127.0.0.1:8100$path', timeout=None) as response:
+payload = '''$payload'''
+extra = {'json': __import__('json').loads(payload)} if payload else {}
+with httpx.stream('$method', 'http://127.0.0.1:8100$path', timeout=None, **extra) as response:
     body = ''.join(response.iter_text())
 if response.status_code >= 400:
     sys.exit(f'{response.status_code} {body}')
 print(body)
 "
 }
+
+# P3 步骤七给租约记了名：申请沙箱要说明「谁在用」。这里两次申请用同一个持有者 ——
+# ④ 验的正是 broker 重启认领之后同一个持有者再申请仍是原来那个容器
+HOLDER='{"holder":"p1-acceptance"}'
 
 sandbox_of() { docker ps --filter "label=zuel.thread=$1" --format '{{.ID}}' | head -1; }
 managed_count() { docker ps -q --filter label=zuel.sandbox | wc -l; }
@@ -139,6 +145,11 @@ curl -fsS "$BASE_URL/docs" >/dev/null || { echo "Nginx 没把 $BASE_URL 转发�
 # 人早走开了，回来看到的是一个卡在半路的验收
 [[ ${SKIP_HOSTILE:-0} == 1 ]] || sudo -v || { echo "① 需要 sudo，或用 SKIP_HOSTILE=1 跳过" >&2; exit 1; }
 
+# P3 之后 /api/* 一律要会话 cookie。cookie 放 WORK_DIR 里，跟着 cleanup 一起清
+source "$REPO_ROOT/deploy/test/session.sh"
+JAR="$WORK_DIR/cookie"
+zuel_open_session "$JAR" >/dev/null || { echo "造不出账号或登不进去，④⑤ 验不了" >&2; exit 1; }
+
 LOG_SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 trap cleanup EXIT
 
@@ -206,11 +217,11 @@ VERDICT[3]=$([[ $failed -eq $before ]] && echo 通过 || echo 未过)
 log "④ broker 崩溃重启后按 label 认领已有容器，不泄漏孤儿"
 
 before=$failed
-THREAD_HELD="$(curl -fsS -X POST "$BASE_URL/api/threads" | jq -r .id)"
+THREAD_HELD="$(curl -fsS -b "$JAR" -X POST "$BASE_URL/api/threads" | jq -r .id)"
 [[ -n $THREAD_HELD && $THREAD_HELD != null ]] || { fail "建会话失败"; THREAD_HELD=""; }
 
 if [[ -n $THREAD_HELD ]]; then
-    broker_call POST "/threads/$THREAD_HELD/sandbox" >/dev/null || fail "申请沙箱失败"
+    broker_call POST "/threads/$THREAD_HELD/sandbox" "$HOLDER" >/dev/null || fail "申请沙箱失败"
     CONTAINER_BEFORE="$(sandbox_of "$THREAD_HELD")"
     info "沙箱 ${CONTAINER_BEFORE:0:12} ｜ thread $THREAD_HELD"
 
@@ -237,7 +248,7 @@ if [[ -n $THREAD_HELD ]]; then
         fail "broker 重启后没认领这个容器，它已经是孤儿了"
     fi
 
-    broker_call POST "/threads/$THREAD_HELD/sandbox" >/dev/null || fail "认领后再申请失败"
+    broker_call POST "/threads/$THREAD_HELD/sandbox" "$HOLDER" >/dev/null || fail "认领后再申请失败"
     CONTAINER_AFTER="$(sandbox_of "$THREAD_HELD")"
     NOW_MANAGED=$(managed_count)
     if [[ $CONTAINER_AFTER == "$CONTAINER_BEFORE" ]] && (( NOW_MANAGED == BASE_MANAGED + 1 )); then
@@ -264,8 +275,8 @@ if [[ $(managed_count) -ne $(( BASE_MANAGED + 1 )) ]]; then
 fi
 
 if (( QUEUED_READY )); then
-    THREAD_QUEUED="$(curl -fsS -X POST "$BASE_URL/api/threads" | jq -r .id)"
-    RUN_ID="$(curl -fsS -X POST "$BASE_URL/api/threads/$THREAD_QUEUED/runs" \
+    THREAD_QUEUED="$(curl -fsS -b "$JAR" -X POST "$BASE_URL/api/threads" | jq -r .id)"
+    RUN_ID="$(curl -fsS -b "$JAR" -X POST "$BASE_URL/api/threads/$THREAD_QUEUED/runs" \
         -H 'Content-Type: application/json' \
         -d '{"content":"这个 run 只用来占住排队位，不会真跑起来。"}' | jq -r .id)"
     [[ -n $RUN_ID && $RUN_ID != null ]] || { fail "提交排队用的 run 失败"; QUEUED_READY=0; RUN_ID=""; }
@@ -275,7 +286,7 @@ if (( QUEUED_READY )); then
     info "排队中的 run $RUN_ID，将静默等待约 ${QUEUE_TIMEOUT}s"
 
     STARTED=$(date +%s)
-    timeout "$HEARTBEAT_WINDOW" curl -sS -N "$BASE_URL/api/runs/$RUN_ID/events" > "$WORK_DIR/queued.sse"
+    timeout "$HEARTBEAT_WINDOW" curl -sS -b "$JAR" -N "$BASE_URL/api/runs/$RUN_ID/events" > "$WORK_DIR/queued.sse"
     ELAPSED=$(( $(date +%s) - STARTED ))
     HEARTBEAT=$(grep -c '^:heartbeat' "$WORK_DIR/queued.sse")
 
@@ -377,6 +388,11 @@ trap - EXIT
 THREAD_HELD=""; THREAD_QUEUED=""; OVERRIDDEN=""
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
+
+# **必须等 broker 起完再往下走**：上面 cleanup 把它强制重建了，而 ② 的第一个动作
+# 就是建会话 —— api 建会话要调 broker 建目录，打在正启动的 broker 上就是 500。
+# 实测这条让 ② 整段红过一次，而报错只说「建会话失败」，不指向重建时序
+wait_broker || info "broker 重建后没在 60 秒内应答，② 可能会以「建会话失败」收场"
 
 # ------------------------------------------------------------------ ① 破坏性测试
 log "① 四条破坏性测试（要 sudo）"
