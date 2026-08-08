@@ -41,6 +41,7 @@ from event.model import InterruptAction
 from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
 from quota.usage import RunUsage
+from report.usage import UsageReport
 from run.cancel import CancelFlag
 from run.executor import RunExecutor
 from run.log import EventLog
@@ -250,6 +251,7 @@ def platform(
         policy=QuotaPolicy(),
         cancel=CancelFlag(live_cache),
         usage=RunUsage(live_engine),
+        usage_report=UsageReport(live_engine),
         rate=RateLimiter(live_cache, limit=TEST_RATE_LIMIT, window_second=TEST_RATE_WINDOW_SECOND),
         session=SessionStore(live_cache, ttl_second=DEFAULT_TTL_SECOND),
         password=hasher,

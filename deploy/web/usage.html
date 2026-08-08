@@ -1,0 +1,201 @@
+<!doctype html>
+<!--
+  成本看板。**运维页，不是教师用的产品前端** —— 后者仍无期次。
+
+  自包含：无构建、无框架、无外部请求，nginx 直接托管。做这一页的理由是
+  一个没人看的 JSON 端点落不了地；「看板」这个词本身就要求有东西可看。
+
+  它只呈现聚合数字。会话标题、提问、答复一个字都拿不到 ——
+  端点那一侧就没给（架构 §6.3）。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用量看板 · 金融学院智能体平台</title>
+<style>
+  :root {
+    --ink: #1a1a1a; --muted: #6b6b6b; --line: #e3e3e3; --bg: #fafafa;
+    --bar: #3b6ea5; --warn: #b4443c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1.5rem; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 -apple-system, "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  }
+  main { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .bar { display: flex; gap: .75rem; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; }
+  select, button, input {
+    font: inherit; padding: .35rem .6rem; border: 1px solid var(--line);
+    border-radius: 4px; background: #fff; color: inherit;
+  }
+  button { cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; background: #fff; }
+  th, td { padding: .5rem .7rem; text-align: right; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-weight: 600; font-size: .8rem; color: var(--muted); text-transform: none; }
+  tbody tr:hover { background: #f4f7fa; }
+  .role { color: var(--muted); font-size: .8rem; margin-left: .4rem; }
+  .spark { display: flex; align-items: flex-end; gap: 2px; height: 90px; background: #fff;
+           padding: .5rem; border: 1px solid var(--line); border-radius: 4px; overflow-x: auto; }
+  .spark div { flex: 0 0 14px; background: var(--bar); min-height: 1px; }
+  .spark div span { display: block; height: 100%; }
+  section { margin-bottom: 2rem; }
+  h2 { font-size: .95rem; margin: 0 0 .6rem; }
+  .msg { padding: .75rem 1rem; border-radius: 4px; background: #fff; border: 1px solid var(--line); }
+  .msg.bad { color: var(--warn); border-color: var(--warn); }
+  .login { display: flex; gap: .5rem; margin-top: .75rem; }
+  caption { caption-side: bottom; color: var(--muted); font-size: .8rem; padding-top: .5rem; text-align: left; }
+</style>
+</head>
+<body>
+<main>
+  <h1>用量看板</h1>
+  <p class="sub">
+    只有聚合数字。会话内容看不到 —— 管理员多的是账号与配额的管理能力，不是看别人会话的能力。
+  </p>
+
+  <div class="bar">
+    <label>窗口
+      <select id="days">
+        <option value="7">最近 7 天</option>
+        <option value="30" selected>最近 30 天</option>
+        <option value="90">最近 90 天</option>
+      </select>
+    </label>
+    <button id="reload">刷新</button>
+    <span class="sub" id="window"></span>
+  </div>
+
+  <div id="error" class="msg bad" hidden></div>
+
+  <form id="login" class="msg" hidden>
+    <div>需要管理员身份。</div>
+    <div class="login">
+      <input id="name" placeholder="用户名" autocomplete="username">
+      <input id="password" type="password" placeholder="口令" autocomplete="current-password">
+      <button type="submit">登录</button>
+    </div>
+  </form>
+
+  <div id="board" hidden>
+    <section>
+      <h2>每日未命中 token</h2>
+      <div class="spark" id="daily"></div>
+    </section>
+
+    <section>
+      <h2>谁花了多少</h2>
+      <table>
+        <caption>
+          按未命中 input token 从多到少排。命中 prompt cache 的那部分几乎不要钱，
+          因此不参与排序，但仍列出来 —— 命中率本身就是一个值得看的数。
+        </caption>
+        <thead>
+          <tr>
+            <th>用户</th><th>分析次数</th><th>未命中 input</th>
+            <th>命中 input</th><th>output</th><th>命中率</th>
+          </tr>
+        </thead>
+        <tbody id="users"></tbody>
+      </table>
+    </section>
+  </div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const number = new Intl.NumberFormat("zh-CN");
+
+  function show(which) {
+    for (const id of ["board", "login", "error"]) $(id).hidden = id !== which;
+  }
+
+  function fail(message) {
+    $("error").textContent = message;
+    show("error");
+  }
+
+  function renderDaily(daily) {
+    const peak = Math.max(1, ...daily.map((one) => one.uncached));
+    $("daily").innerHTML = "";
+    for (const one of daily) {
+      const bar = document.createElement("div");
+      bar.style.height = `${Math.max(1, Math.round((one.uncached / peak) * 100))}%`;
+      bar.title = `${one.day}：未命中 ${number.format(one.uncached)}，${one.runs} 次分析`;
+      $("daily").appendChild(bar);
+    }
+  }
+
+  function renderUsers(users) {
+    $("users").innerHTML = "";
+    for (const one of users) {
+      const total = one.cache_read + one.uncached;
+      // 命中率是「省下了多少」的直接读数。分母为 0 时不显示 —— 写个 0% 是在编数
+      const hit = total > 0 ? `${Math.round((one.cache_read / total) * 100)}%` : "—";
+      const row = document.createElement("tr");
+      row.innerHTML =
+        `<td>${escape(one.name)}<span class="role">${escape(one.role)}</span></td>` +
+        `<td>${number.format(one.runs)}</td>` +
+        `<td>${number.format(one.uncached)}</td>` +
+        `<td>${number.format(one.cache_read)}</td>` +
+        `<td>${number.format(one.output)}</td>` +
+        `<td>${hit}</td>`;
+      $("users").appendChild(row);
+    }
+  }
+
+  // 用户名由管理员创建，但仍然当作不可信文本处理 —— 一页运维界面不值得为它开一个注入面
+  function escape(text) {
+    const box = document.createElement("span");
+    box.textContent = text;
+    return box.innerHTML;
+  }
+
+  async function load() {
+    const days = $("days").value;
+    let response;
+    try {
+      response = await fetch(`/api/admin/usage?days=${days}`, { credentials: "same-origin" });
+    } catch (error) {
+      fail(`连不上平台：${error}`);
+      return;
+    }
+    if (response.status === 401 || response.status === 403) {
+      show("login");
+      return;
+    }
+    if (!response.ok) {
+      fail(`取用量失败：HTTP ${response.status}`);
+      return;
+    }
+    const body = await response.json();
+    $("window").textContent = `${body.since.slice(0, 10)} 起，共 ${body.days} 天`;
+    renderDaily(body.daily);
+    renderUsers(body.users);
+    show("board");
+  }
+
+  $("reload").addEventListener("click", load);
+  $("days").addEventListener("change", load);
+  $("login").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ name: $("name").value, password: $("password").value }),
+    });
+    if (!response.ok) {
+      fail("登录失败：用户名或口令不对");
+      return;
+    }
+    load();
+  });
+
+  load();
+</script>
+</body>
+</html>

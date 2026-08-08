@@ -18,6 +18,8 @@ services:
       - "${HTTP_PORT:-80}:80"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 成本看板那一页。自包含的静态文件，nginx 直接托管，不经 api
+      - ./web:/usr/share/nginx/html:ro
     depends_on:
       - api
     restart: unless-stopped

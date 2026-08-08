@@ -67,6 +67,16 @@ def not_found(message: str) -> ApiError:
     return ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.NOT_FOUND, message)
 
 
+def forbidden(message: str) -> ApiError:
+    """已经认出你是谁了，但你没有这个权限。
+
+    **与 `not_found` 分工明确**：越权访问**他人的资源**一律给 404（403 等于确认了
+    资源存在，可以拿来探测别人有哪些会话）；这里说的是「你的角色不够」，
+    那不泄露任何东西 —— 管理端点存不存在本来就写在 /docs 上。
+    """
+    return ApiError(status.HTTP_403_FORBIDDEN, ErrorCode.FORBIDDEN, message)
+
+
 def invalid(message: str) -> ApiError:
     """参数校验失败。"""
     return ApiError(status.HTTP_422_UNPROCESSABLE_CONTENT, ErrorCode.VALIDATION_ERROR, message)

@@ -4,6 +4,8 @@
 定义在事件包里，SSE 直接把它序列化出去。
 """
 
+from datetime import date, datetime
+
 from pydantic import BaseModel, Field
 
 from event.model import RunStatus
@@ -65,3 +67,38 @@ class RunResponse(BaseModel):
     id: str = Field(min_length=1, description="run 标识")
     thread_id: str = Field(min_length=1, description="所属会话")
     status: RunStatus = Field(description="当前状态")
+
+
+class UserUsageResponse(BaseModel):
+    """一个用户在窗口内的用量。**只有数字与身份，没有会话内容**。"""
+
+    user_id: str = Field(min_length=1, description="用户标识")
+    name: str = Field(min_length=1, description="用户名，看板上「谁」这一列")
+    role: UserRole = Field(description="角色。配额按角色分档，账因此也按角色看")
+    runs: int = Field(ge=0, description="跑过几次分析")
+    cache_read: int = Field(ge=0, description="命中 prompt cache 的 input token，几乎不要钱")
+    uncached: int = Field(ge=0, description="未命中的 input token，配额与成本都按它算")
+    output: int = Field(ge=0, description="output token")
+
+
+class DayUsageResponse(BaseModel):
+    """某一天的用量，跨全部用户。"""
+
+    day: date = Field(description="日期，UTC")
+    runs: int = Field(ge=0, description="当天跑过几次分析")
+    cache_read: int = Field(ge=0, description="命中 prompt cache 的 input token")
+    uncached: int = Field(ge=0, description="未命中的 input token")
+    output: int = Field(ge=0, description="output token")
+
+
+class UsageResponse(BaseModel):
+    """成本看板的数据。
+
+    **窗口一并回传**：看板上那个数是「哪一段时间的」，不写出来就没法核对。
+    """
+
+    since: datetime = Field(description="窗口起点（含）")
+    until: datetime = Field(description="窗口终点（不含）")
+    days: int = Field(gt=0, description="窗口长度，天")
+    users: list[UserUsageResponse] = Field(description="按未命中 token 从多到少排")
+    daily: list[DayUsageResponse] = Field(description="按天从早到晚排。没有 run 的那天不占一行")

@@ -10,14 +10,17 @@ from typing import Annotated
 
 from fastapi import Cookie, Depends, Request
 
-from api.error import rate_limited, unauthenticated
+from api.error import forbidden, rate_limited, unauthenticated
 from api.platform import Platform, get_platform
 from auth.session import COOKIE_NAME, Session
+from user.model import UserRole
 
 # 未登录与 session 过期给同一句话：两者对使用者是同一件事 —— 重新登录
 UNAUTHENTICATED_MESSAGE = "未登录或登录已过期，请重新登录"
 
 RATE_LIMITED_MESSAGE = "操作太快了，请稍后再试"
+
+NOT_ADMIN_MESSAGE = "需要管理员权限"
 
 # 认证前后按不同的东西限流：登录时还没有用户身份，只能按来源地址。
 # 前缀是为了让两类键不撞 —— 否则一个 IP 后面所有人的额度会被算成一份
@@ -55,6 +58,31 @@ async def require_user(
 # 端点要用当前用户时标这个类型。同一个请求里依赖只解析一次，
 # 因此路由器上挂了一份、端点再取一次，并不会多查一遍 Redis
 CurrentUser = Annotated[Session, Depends(require_user)]
+
+
+async def require_admin(current: CurrentUser) -> Session:
+    """认出当前用户并要求它是管理员，不是就 403。
+
+    **这里给 403 而不是 404。** 越权访问**他人的资源**要伪装成 404，否则那个回答本身
+    就确认了资源存在、可以被拿来探测；而「你不是管理员」不泄露任何东西 ——
+    管理端点存不存在本来就写在 `/docs` 上。
+
+    Args:
+        current: 当前用户。
+
+    Returns:
+        当前用户的身份。
+
+    Raises:
+        ApiError: 已登录但不是管理员。
+    """
+    if current.role is not UserRole.ADMIN:
+        raise forbidden(NOT_ADMIN_MESSAGE)
+    return current
+
+
+# 只有管理员打得开的端点标这个类型
+AdminUser = Annotated[Session, Depends(require_admin)]
 
 
 async def limit_by_user(
