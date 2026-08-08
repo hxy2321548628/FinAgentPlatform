@@ -31,6 +31,7 @@ from broker.schema import (
     AcquireErrorData,
     AcquireRequest,
     ArtifactListResponse,
+    ArtifactMarkResponse,
     CreateThreadRequest,
     DeleteRequest,
     DownloadItem,
@@ -100,6 +101,17 @@ async def save_file(thread_id: str, request: SaveRequest, broker: BrokerDep) -> 
     except PathEscapeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return SaveResponse(filename=saved.name, size=len(request.content))
+
+
+@router.post("/{thread_id}/artifacts/mark")
+async def mark_artifacts(thread_id: str, broker: BrokerDep) -> ArtifactMarkResponse:
+    """取一次 run 的产物判定基准。
+
+    **基准必须由这一侧给**：判据读的是宿主机上的 inode 时间戳，而调用方进程的墙钟
+    与它不同源，最多差一个 tick —— 自己取一个 `time.time_ns()` 会偶发把刚写下的产物
+    判成「运行之前就有的」而静默漏掉。
+    """
+    return ArtifactMarkResponse(since_ns=broker.backend(thread_id).artifact_mark())
 
 
 @router.get("/{thread_id}/artifacts")

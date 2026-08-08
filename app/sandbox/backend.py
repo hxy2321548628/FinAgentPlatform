@@ -12,6 +12,7 @@
 3. `execute` 与产物判定。
 """
 
+import os
 from pathlib import Path
 
 from deepagents.backends.filesystem import FilesystemBackend
@@ -143,6 +144,24 @@ class SandboxBackend(SandboxBackendProtocol):
         except ContainerError as exc:
             return ExecuteResponse(output=f"沙箱执行失败：{exc}", exit_code=EXECUTION_FAILED_EXIT_CODE)
         return ExecuteResponse(output=result.output, exit_code=result.exit_code)
+
+    def artifact_mark(self) -> int:
+        """取一个产物判定的基准时刻，**用文件系统自己的时钟**。
+
+        不能用 `time.time_ns()`：那读的是细粒度的 CLOCK_REALTIME，而内核给 inode 打
+        时间戳用的是**粗粒度时钟**（每个 tick 更新一次，NOHZ 下进程一空闲就停在那儿）。
+        两者最多差一个 tick，实测约 0.4 毫秒 —— 基准取墙钟的话，紧接着写下的产物
+        mtime 反而更早，于是被判成「运行之前就有的」而**静默漏掉，没有任何报错**。
+
+        把 `outputs/` touch 一下再读它的 mtime，基准与判据就出自同一个时钟。
+
+        Returns:
+            Unix 时间戳，纳秒。交给 `artifact_since` 用。
+        """
+        output_dir = self._workspace / OUTPUT_DIR
+        output_dir.mkdir(parents=True, exist_ok=True)
+        os.utime(output_dir, None)
+        return output_dir.stat().st_mtime_ns
 
     def artifact_since(self, since_ns: int) -> list[Path]:
         """列出 `outputs/` 下在给定时刻之后写入的文件。

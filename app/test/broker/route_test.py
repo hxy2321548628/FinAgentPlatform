@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import os
 import socket
 import threading
 import time
@@ -295,17 +296,33 @@ async def test_a_saved_file_lands_in_the_workspace(connection: BrokerConnection,
 
 
 async def test_artifacts_written_after_the_mark_are_reported(connection: BrokerConnection, space: Workspace) -> None:
-    """产物判定在 broker 侧，因为只有它看得见宿主机上的文件与 mtime。"""
+    """产物判定在 broker 侧，因为只有它看得见宿主机上的文件与 mtime。
+
+    **基准也向 broker 要**：判据读的是 inode 时间戳，而这一侧的墙钟与它不同源，
+    自己取一个 `time.time_ns()` 当基准会偶发漏掉刚写下的产物。
+    """
     workspace = RemoteWorkspace(connection)
     thread_id = await workspace.create(uuid4().hex)
-    since = time.time_ns()
+    since = await workspace.mark(thread_id)
     output_dir = space.path(thread_id) / "outputs"
-    output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "chart.png").write_bytes(b"png")
 
     found = await workspace.artifact_since(thread_id, since)
 
     assert found == [f"{thread_id}/chart.png"]
+    await connection.aclose()
+
+
+async def test_the_mark_leaves_earlier_artifacts_behind(connection: BrokerConnection, space: Workspace) -> None:
+    """上一次 run 的产物不该被这一次认领。"""
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    output_dir = space.path(thread_id) / "outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "previous.png").write_bytes(b"png")
+    os.utime(output_dir / "previous.png", ns=(0, 0))
+
+    assert await workspace.artifact_since(thread_id, await workspace.mark(thread_id)) == []
     await connection.aclose()
 
 

@@ -12,7 +12,6 @@
 """
 
 import logging
-import time
 from collections.abc import AsyncIterator, Callable
 from typing import Protocol
 
@@ -83,6 +82,10 @@ UPDATES_MODE = "updates"
 
 class WorkspaceProtocol(Protocol):
     """执行器对会话文件空间的全部要求。"""
+
+    async def mark(self, thread_id: str) -> int:
+        """取一次 run 的产物判定基准。"""
+        ...
 
     async def artifact_since(self, thread_id: str, since_ns: int) -> list[str]:
         """列出一次 run 产出的产物标识。"""
@@ -275,8 +278,10 @@ class RunExecutor:
         """消费智能体的流，逐个 chunk 映射成事件。"""
         backend = self._backend(run.thread_id)
         tokens = TokenUsage()
-        # 产物按 mtime 判定，基准要在 agent 动手之前取，否则本次的产出会被漏掉
-        started_at = time.time_ns()
+        # 产物按 mtime 判定，基准要在 agent 动手之前取，否则本次的产出会被漏掉。
+        # **基准向 workspace 要而不是读本进程的墙钟**：判据读的是宿主机上的 inode
+        # 时间戳，那是内核的粗粒度时钟，与这里的细粒度时钟最多差一个 tick
+        started_at = await self._workspace.mark(run.thread_id)
 
         async for ns, mode, payload in self._start(backend, run, task):
             tokens = tokens + _token_usage(mode, payload)

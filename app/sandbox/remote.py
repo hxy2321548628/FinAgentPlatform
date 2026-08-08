@@ -368,6 +368,31 @@ class RemoteWorkspace:
             raise
         return str(result["filename"])
 
+    async def mark(self, thread_id: str) -> int:
+        """取一次 run 的产物判定基准。
+
+        **基准向 broker 要而不是读本进程的墙钟**：判据读的是宿主机上的 inode 时间戳，
+        那是内核的粗粒度时钟，与这个进程读到的细粒度时钟最多差一个 tick ——
+        取墙钟会偶发把刚写下的产物判成「运行之前就有的」，静默漏掉且不报错。
+
+        Args:
+            thread_id: 会话标识。
+
+        Returns:
+            Unix 时间戳，纳秒。交给 `artifact_since` 用。
+
+        Raises:
+            BrokerError: broker 不可达，或给回的基准不是整数。
+        """
+        result = await self._connection.call("POST", f"/threads/{thread_id}/artifacts/mark")
+        found = result.get("since_ns")
+        # 拿不到基准就得炸。兜个默认值的话，0 会把历史产物全认领、`now` 会把本轮的
+        # 全漏掉 —— 两个方向都是错的，而且都不报错
+        if not isinstance(found, int):
+            message = f"broker 给回的产物基准不是整数：{found!r}"
+            raise BrokerError(message)
+        return found
+
     async def artifact_since(self, thread_id: str, since_ns: int) -> list[str]:
         """列出一次 run 产出的产物标识。
 
@@ -376,7 +401,7 @@ class RemoteWorkspace:
 
         Args:
             thread_id: 会话标识。
-            since_ns: Unix 时间戳，纳秒。通常取自这次 run 开始前。
+            since_ns: Unix 时间戳，纳秒。取自 `mark`。
 
         Returns:
             产物标识，可直接拼产物端点下载。

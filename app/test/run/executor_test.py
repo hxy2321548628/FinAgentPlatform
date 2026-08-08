@@ -8,7 +8,6 @@
 import asyncio
 import json
 import logging
-import time
 from collections.abc import AsyncIterator, Callable
 from io import StringIO
 from uuid import uuid4
@@ -70,9 +69,17 @@ class FakePool:
 class FakeWorkspace:
     """按会话报出产物标识的假 workspace。真的产物判定在 broker 侧验。"""
 
+    # 基准的定值。取一个认得出的数，好断言执行器交回来的就是它而不是自己读的墙钟
+    STAMP = 1_700_000_000_000_000_000
+
     def __init__(self) -> None:
         self.produced: dict[str, list[str]] = {}
-        self.asked: list[tuple[str, float]] = []
+        self.asked: list[tuple[str, int]] = []
+        self.marked: list[str] = []
+
+    async def mark(self, thread_id: str) -> int:
+        self.marked.append(thread_id)
+        return self.STAMP
 
     async def artifact_since(self, thread_id: str, since_ns: int) -> list[str]:
         self.asked.append((thread_id, since_ns))
@@ -580,19 +587,37 @@ async def test_a_run_that_produced_nothing_reports_an_empty_list(
     assert await artifacts_of(log, run.run_id) == []
 
 
-async def test_artifacts_are_asked_for_from_before_the_agent_started(
+async def test_the_artifact_baseline_comes_from_the_workspace(
+    pool: FakePool, space: FakeWorkspace, log: EventLog
+) -> None:
+    """基准要与判据同源，因此向 workspace 要，不读本进程的墙钟。
+
+    判据读的是宿主机上的 inode 时间戳，那是内核的粗粒度时钟；worker 这个进程的
+    `time.time_ns()` 读的是细粒度时钟，两者最多差一个 tick。取墙钟的话，本轮刚写下的
+    产物会偶发被判成「上一轮的」而**静默漏掉，没有任何报错**。
+    """
+    executor, _ = make_executor(pool, space, log, token_chunk("好"))
+
+    await executor.execute(a_task(content="一"))
+
+    assert space.asked == [(THREAD, FakeWorkspace.STAMP)]
+
+
+async def test_the_baseline_is_taken_before_the_agent_starts(
     pool: FakePool, space: FakeWorkspace, log: EventLog
 ) -> None:
     """基准晚于 agent 动手的话，本轮自己的产出会被判成「上一轮的」而漏掉。"""
-    before = time.time_ns()
-    executor, _ = make_executor(pool, space, log, token_chunk("好"))
+    marked_by_then: list[list[str]] = []
 
-    run = a_task(content="一")
-    await executor.execute(run)
+    def runner(backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+        marked_by_then.append(space.marked.copy())
+        return chunk_stream(token_chunk("好"))
 
-    asked_thread, asked_since = space.asked[0]
-    assert asked_thread == THREAD
-    assert before <= asked_since <= time.time_ns()
+    executor, _ = make_executor_with(pool, space, log, runner)
+
+    await executor.execute(a_task(content="一"))
+
+    assert marked_by_then == [[THREAD]]
 
 
 # ------------------------------------------------------------------ 主动取消

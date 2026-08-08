@@ -232,6 +232,45 @@ def test_id_is_the_container_id(backend: SandboxBackend) -> None:
     assert backend.id == "fake-container-id"
 
 
+# ---------------------------------------------------------------- 产物判定的基准
+def test_the_mark_comes_from_the_filesystem_clock(backend: SandboxBackend, workspace: Path) -> None:
+    """基准必须与判据同源，取的就是 `outputs/` 自己的 mtime。
+
+    判据读的是 inode 时间戳，而内核给 inode 打的是**粗粒度时钟** —— NOHZ 下进程一空闲
+    它就停在上一次 tick 上，落后 `time.time_ns()` 读到的细粒度时钟最多一个 tick。
+    基准取墙钟的话，刚写下的产物会被判成「运行之前就有的」而静默漏掉。
+    """
+    mark = backend.artifact_mark()
+
+    assert mark == (workspace / OUTPUT_DIR).stat().st_mtime_ns
+
+
+def test_the_mark_creates_the_output_directory(backend: SandboxBackend, workspace: Path) -> None:
+    """目录不存在时也要能取到基准 —— agent 是在那之后才往里写的。"""
+    backend.artifact_mark()
+
+    assert (workspace / OUTPUT_DIR).is_dir()
+
+
+def test_a_file_written_after_the_mark_is_claimed(backend: SandboxBackend, workspace: Path) -> None:
+    mark = backend.artifact_mark()
+    chart = workspace / OUTPUT_DIR / "chart.png"
+    chart.write_bytes(b"png")
+
+    assert backend.artifact_since(mark) == [chart]
+
+
+def test_a_file_written_before_the_mark_is_not_claimed(backend: SandboxBackend, workspace: Path) -> None:
+    """上一次 run 的产物不该被这一次认领。"""
+    output_dir = workspace / OUTPUT_DIR
+    output_dir.mkdir()
+    old = output_dir / "previous.png"
+    old.write_bytes(b"png")
+    os.utime(old, ns=(0, 0))
+
+    assert backend.artifact_since(backend.artifact_mark()) == []
+
+
 # -------------------------------------------------------------------- 产物判定
 def test_artifact_lists_files_written_under_outputs(backend: SandboxBackend, workspace: Path) -> None:
     since = time.time_ns()

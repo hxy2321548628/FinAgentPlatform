@@ -175,6 +175,12 @@ class SaveResponse(BaseModel):
     size: int = Field(ge=0, description="字节数")
 
 
+class ArtifactMarkResponse(BaseModel):
+    """产物判定的基准时刻。"""
+
+    since_ns: int = Field(ge=0, description="Unix 时间戳（纳秒），取自 workspace 所在文件系统的时钟")
+
+
 class ArtifactListResponse(BaseModel):
     """一次 run 产出的产物。"""
 
