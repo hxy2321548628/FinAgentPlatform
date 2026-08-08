@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinAgentPlatform · 金融学院智能体平台</title>
+  <link rel="stylesheet" href="shared.css">
+  <style>
+    body { background-color: var(--bg); }
+    .navbar { position: sticky; top: 0; }
+
+    /* ── Hero ── */
+    .hero-wrap { position: relative; overflow: hidden; }
+    .hero {
+      padding: 100px 80px 90px;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 60px; max-width: 1300px; margin: 0 auto; min-height: 560px;
+    }
+    .hero-left { flex: 1; max-width: 560px; }
+    .hero-title { font-size: 56px; font-weight: 900; line-height: 1.15; margin-bottom: 20px; }
+    .hero-title-dark { color: var(--text-primary); display: block; }
+    .hero-title-blue { color: var(--action); display: block; }
+    .cursor {
+      display: inline-block; width: 3px; height: 0.85em;
+      background: var(--action); vertical-align: text-bottom;
+      margin-left: 4px; animation: blink 1.1s step-end infinite;
+    }
+    .hero-subtitle {
+      font-size: 16px; color: var(--text-secondary); line-height: 1.75;
+      margin-bottom: 12px; max-width: 460px;
+    }
+    .hero-tagline { font-size: 14px; color: var(--text-muted); margin-bottom: 36px; line-height: 1.7; }
+    .hero-actions { display: flex; gap: 12px; align-items: center; }
+    .btn-hero {
+      display: inline-flex; align-items: center; gap: 8px;
+      height: 48px; padding: 0 28px;
+      background: var(--action); color: #fff; border: none;
+      border-radius: 8px; font-size: 15px; font-weight: 600;
+      cursor: pointer; font-family: inherit; text-decoration: none;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn-hero:hover { background: var(--action-hover); }
+    .btn-hero:active { transform: scale(0.97); }
+    .btn-hero-outline {
+      display: inline-flex; align-items: center; gap: 8px;
+      height: 48px; padding: 0 24px;
+      background: transparent; color: var(--text-primary);
+      border: 1.5px solid var(--border); border-radius: 8px;
+      font-size: 15px; font-weight: 500; cursor: pointer;
+      font-family: inherit; text-decoration: none;
+      transition: border-color 0.2s, background 0.2s, color 0.2s;
+    }
+    .btn-hero-outline:hover { border-color: var(--action-border); background: var(--action-light); color: var(--action); }
+
+    /* Dashboard 卡片 */
+    .hero-right { flex-shrink: 0; }
+    .dashboard-card {
+      background: var(--surface); border-radius: 10px; border: 1px solid var(--border);
+      box-shadow: 0 4px 8px rgba(11,46,92,0.06), 0 12px 40px rgba(11,46,92,0.10);
+      overflow: hidden; width: 460px;
+    }
+    .window-titlebar {
+      display: flex; align-items: center; gap: 6px;
+      padding: 12px 16px; background: #F7F9FC; border-bottom: 1px solid var(--border-light);
+    }
+    .window-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
+    .window-title {
+      font-size: 11px; color: var(--text-muted); margin-left: 8px;
+      letter-spacing: 0.04em; font-family: 'JetBrains Mono', monospace;
+    }
+    .card-body { padding: 18px; }
+    .card-task-desc { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 10px; }
+    .card-divider { border: none; border-top: 1px solid var(--border-light); margin: 8px 0; }
+    .log-row { display: flex; align-items: baseline; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; line-height: 1.9; }
+    .log-icon-done { color: var(--status-done); min-width: 12px; }
+    .log-icon-run  { color: var(--status-active); min-width: 12px; }
+    .log-icon-pend { color: var(--text-muted); min-width: 12px; }
+    .log-name { min-width: 76px; color: var(--text-secondary); }
+    .log-arg  { color: var(--text-muted); flex: 1; font-size: 11px; }
+    .log-time { color: var(--text-muted); font-size: 10px; }
+    .log-indent { padding-left: 20px; color: var(--text-muted); font-size: 11px; display: block; font-family: 'JetBrains Mono', monospace; line-height: 1.7; }
+    .log-status-run { color: var(--status-active); font-weight: 500; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+
+    /* Ticker */
+    .ticker-section { background: var(--bg); border-bottom: 1px solid var(--border); padding: 20px 0; overflow: hidden; }
+    .ticker-label { text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: 0.28em; color: var(--text-muted); margin-bottom: 14px; font-family: 'JetBrains Mono', monospace; }
+    .ticker-outer { overflow: hidden; }
+    .ticker-track { display: flex; animation: ticker-scroll 40s linear infinite; width: max-content; }
+    .ticker-item { padding: 0 28px; font-size: 13px; font-weight: 500; color: var(--text-secondary); border-right: 1px solid var(--border); white-space: nowrap; }
+  </style>
+</head>
+<body>
+
+  <!-- NAVBAR -->
+  <nav class="navbar">
+    <a class="logo" href="02-home.html">
+      <svg viewBox="12 3 24 34" fill="currentColor" style="height:24px;width:auto;color:var(--logo-red);flex-shrink:0;" aria-hidden="true">
+        <path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/>
+        <path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/>
+      </svg>
+      <span class="logo-text">FinAgentPlatform</span>
+    </a>
+    <div class="nav-links">
+      <a class="nav-link active" href="02-home.html">首页</a>
+      <a class="nav-link" href="04-scenarios.html">研究范式</a>
+      <a class="nav-link" href="05-capabilities.html">技术底座</a>
+      <a class="nav-link" href="06-data.html">数据要素</a>
+    </div>
+    <div class="nav-right">
+      <div class="avatar-wrap" id="avatarWrap">
+        <div class="nav-avatar" onclick="toggleAvatar()">张</div>
+        <div class="avatar-dropdown">
+          <div class="avatar-dropdown-user">
+            <div class="avatar-dropdown-name">张老师</div>
+            <div class="avatar-dropdown-email">zhang@fin.edu.cn</div>
+          </div>
+          <div class="avatar-dropdown-divider"></div>
+          <a class="avatar-dropdown-item" href="03-research.html" style="font-weight:600;color:var(--text-primary);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+            进入工作台
+          </a>
+          <div class="avatar-dropdown-divider"></div>
+          <a class="avatar-dropdown-item" href="05-settings.html">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            设置
+          </a>
+          <div class="avatar-dropdown-divider"></div>
+          <a class="avatar-dropdown-item danger" href="01-login.html">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            退出登录
+          </a>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero-wrap grid-bg">
+    <div class="hero">
+      <span class="deco-stamp" style="top:60px;left:80px;" id="deco1"></span>
+      <span class="deco-stamp" style="bottom:60px;right:80px;" id="deco2"></span>
+
+      <div class="hero-left">
+        <div class="status-badge" style="margin-bottom:32px;">
+          <span class="dot"></span>
+          智能体系统运行中 · 金融学院 AI 基础设施
+        </div>
+        <h1 class="hero-title">
+          <span class="hero-title-dark">当技术执行归于智能体</span>
+          <span class="hero-title-blue">学术思考回归学者<span class="cursor"></span></span>
+        </h1>
+        <p class="hero-subtitle">以智能体技术重构金融研究工作流，让学术判断力成为科研的唯一瓶颈。</p>
+        <p class="hero-tagline">金融学院 AI 原生科研环境，下一代研究者的工作方式。</p>
+        <div class="hero-actions">
+          <a class="btn-hero" href="03-research.html">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            进入平台
+          </a>
+          <a class="btn-hero-outline" href="04-scenarios.html">了解研究范式 →</a>
+        </div>
+      </div>
+
+      <div class="hero-right">
+        <div class="dashboard-card">
+          <div class="window-titlebar">
+            <div class="window-dot"></div><div class="window-dot"></div><div class="window-dot"></div>
+            <span class="window-title">agent_executor · run_0x8B3F</span>
+          </div>
+          <div class="card-body">
+            <div class="card-task-desc">任务：持仓 CSV 年化波动率分析</div>
+            <hr class="card-divider">
+            <div class="log-row"><span class="log-icon-done">✓</span><span class="log-name">read_file</span><span class="log-arg">portfolio.csv</span><span class="log-time">0.1s</span></div>
+            <div class="log-row"><span class="log-icon-done">✓</span><span class="log-name">write_file</span><span class="log-arg">volatility_analysis.py</span><span class="log-time">0.1s</span></div>
+            <div class="log-row"><span class="log-icon-run">◉</span><span class="log-name">execute</span><span class="log-arg">python volatility_analysis.py</span></div>
+            <span class="log-indent">└─ Computing sector volatility...</span>
+            <span class="log-indent">└─ Annualizing: 252 trading days</span>
+            <div class="log-row"><span class="log-icon-pend">○</span><span class="log-name">write_file</span><span class="log-arg">outputs/vol_chart.png</span></div>
+            <hr class="card-divider">
+            <div class="log-status-run">◉ 执行中 · 已用时 3.2s</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 战略价值区 -->
+  <section style="background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+    <div class="section-wrap">
+      <div class="section-tag">// STRATEGIC VALUE</div>
+      <h2 class="section-wrap-title">为金融学院创造的三项核心价值</h2>
+      <p class="section-wrap-desc">响应新质生产力发展战略，推进教育数字化转型，将大模型与智能体技术深度融入金融学科教学科研体系。</p>
+      <div class="value-cards-grid">
+        <div class="value-card" style="animation:card-enter 0.4s ease-out 0.05s both;">
+          <div class="value-card-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          </div>
+          <div class="value-card-title">科研范式升级</div>
+          <div class="value-card-body">将重复性数据处理工作自动化，让科研精力聚焦于真正的学术创新，使每位教师都能独立开展数据驱动研究。</div>
+          <ul class="value-card-list">
+            <li>论文量化复现：数天 → 小时级</li>
+            <li>企业风险分析：人工计算 → 对话完成</li>
+            <li>数据分析报告：助研支持 → 自主完成</li>
+          </ul>
+        </div>
+        <div class="value-card" style="animation:card-enter 0.4s ease-out 0.1s both;">
+          <div class="value-card-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <div class="value-card-title">AI 原生人才培养</div>
+          <div class="value-card-body">学生在真实智能体环境中完成课题研究，毕业即具备 AI 辅助科研能力，对标国际顶尖商学院 AI 教研体系。</div>
+          <ul class="value-card-list">
+            <li>学生用 AI 完成作业、课题、论文辅助</li>
+            <li>形成可量化的教育数字化成果</li>
+            <li>在新一轮教育 AI 竞争中建立先发优势</li>
+          </ul>
+        </div>
+        <div class="value-card" style="animation:card-enter 0.4s ease-out 0.15s both;">
+          <div class="value-card-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          </div>
+          <div class="value-card-title">自主知识资产沉淀</div>
+          <div class="value-card-body">每次分析的代码、数据与结论留存于学院服务器，形成可复用的知识资产，而非消耗在商业 SaaS 平台上。</div>
+          <ul class="value-card-list">
+            <li>数据不出校园，部署在学院内网</li>
+            <li>代码库持续积累，可供后续师生复用</li>
+            <li>学院自主掌控，不受单一商业平台绑定</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <!-- 战略横幅 -->
+    <div class="strategic-banner">
+      <div class="strategic-banner-text">
+        <strong>响应新质生产力发展战略 · 推进教育数字化转型</strong><br>
+        将大模型与智能体技术深度融入金融学科教学科研体系<br>
+        构建学院自主可控的 AI 基础设施，在新一轮教育 AI 竞争中建立先发优势
+      </div>
+    </div>
+  </section>
+
+  <!-- TICKER -->
+  <div class="ticker-section">
+    <div class="ticker-label">// ANALYSIS CAPABILITIES</div>
+    <div class="ticker-outer">
+      <div class="ticker-track">
+        <span class="ticker-item">持仓分析</span><span class="ticker-item">波动率计算</span><span class="ticker-item">收益归因</span><span class="ticker-item">风险敞口</span><span class="ticker-item">相关性矩阵</span><span class="ticker-item">回测验证</span><span class="ticker-item">因子模型</span><span class="ticker-item">行业比较</span><span class="ticker-item">时间序列</span><span class="ticker-item">数据清洗</span><span class="ticker-item">统计检验</span><span class="ticker-item">论文复现</span><span class="ticker-item">课题分析</span><span class="ticker-item">可视化图表</span><span class="ticker-item">财务报表</span><span class="ticker-item">宏观指标</span>
+        <span class="ticker-item">持仓分析</span><span class="ticker-item">波动率计算</span><span class="ticker-item">收益归因</span><span class="ticker-item">风险敞口</span><span class="ticker-item">相关性矩阵</span><span class="ticker-item">回测验证</span><span class="ticker-item">因子模型</span><span class="ticker-item">行业比较</span><span class="ticker-item">时间序列</span><span class="ticker-item">数据清洗</span><span class="ticker-item">统计检验</span><span class="ticker-item">论文复现</span><span class="ticker-item">课题分析</span><span class="ticker-item">可视化图表</span><span class="ticker-item">财务报表</span><span class="ticker-item">宏观指标</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 快速入口区 -->
+  <section class="grid-bg" style="position:relative;">
+    <div class="section-wrap">
+      <span class="deco-stamp" style="top:40px;right:80px;" id="deco3"></span>
+      <div class="section-tag">// GET STARTED</div>
+      <h2 class="section-wrap-title">开始使用</h2>
+      <p class="section-wrap-desc">三条路径快速上手，从第一个问题到第一份分析结果。</p>
+      <div class="entry-cards-grid">
+        <a class="entry-card" href="03-research.html">
+          <div class="entry-card-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <div class="entry-card-title">开始分析对话</div>
+          <div class="entry-card-desc">直接用自然语言描述分析需求，智能体立即编写代码、执行并返回结果。无需任何编程基础。</div>
+          <div class="entry-card-link">开始对话 →</div>
+        </a>
+        <a class="entry-card" href="06-data.html">
+          <div class="entry-card-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          </div>
+          <div class="entry-card-title">上传数据文件</div>
+          <div class="entry-card-desc">将 CSV、Excel、PDF 数据文件上传至您的专属工作区，上传后即可在对话中直接引用分析。</div>
+          <div class="entry-card-link">了解数据接入 →</div>
+        </a>
+        <a class="entry-card" href="04-scenarios.html">
+          <div class="entry-card-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          </div>
+          <div class="entry-card-title">浏览研究场景</div>
+          <div class="entry-card-desc">企业风险分析、论文量化复现、课题数据分析——查看典型场景的完整流程，找到最适合您的起点。</div>
+          <div class="entry-card-link">浏览场景 →</div>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer style="padding:32px 80px;background:var(--bg);border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+    <a href="02-home.html" style="display:flex;align-items:center;gap:8px;text-decoration:none;">
+      <svg viewBox="12 3 24 34" fill="currentColor" style="height:20px;color:var(--brand);">
+        <path d="M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z"/>
+        <path d="M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z"/>
+      </svg>
+      <span style="font-size:15px;font-weight:700;color:var(--text-primary);">FinAgentPlatform</span>
+    </a>
+    <span style="font-size:12px;color:var(--text-muted);">© 2026 金融学院智能体平台</span>
+    <div style="display:flex;gap:24px;">
+      <a href="04-scenarios.html" style="font-size:13px;color:var(--text-secondary);text-decoration:none;">研究范式</a>
+      <a href="05-capabilities.html" style="font-size:13px;color:var(--text-secondary);text-decoration:none;">技术底座</a>
+      <a href="06-data.html" style="font-size:13px;color:var(--text-secondary);text-decoration:none;">数据要素</a>
+    </div>
+  </footer>
+
+  <script>
+    function updateDecoStamps() {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const text = `ANALYSIS · ${hh}:${mm}`;
+      document.querySelectorAll('.deco-stamp').forEach(el => el.textContent = text);
+    }
+    updateDecoStamps();
+    setInterval(updateDecoStamps, 60000);
+    function toggleAvatar() {
+      event.stopPropagation();
+      document.getElementById('avatarWrap').classList.toggle('open');
+    }
+    document.addEventListener('click', () => {
+      const w = document.getElementById('avatarWrap');
+      if (w) w.classList.remove('open');
+    });
+  </script>
+</body>
+</html>

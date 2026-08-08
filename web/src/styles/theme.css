@@ -1,0 +1,130 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg:             #EDF0F5;
+  --surface:        #FFFFFF;
+  --border:         #D4DCE8;
+  --border-light:   #E8EDF4;
+  --text-primary:   #0D1829;
+  --text-secondary: #5A6A7E;
+  --text-muted:     #8E9BB0;
+  --brand:          #0B2E5C;
+  --logo-red:       #A61B29;
+  --action:         #1749C4;
+  --action-hover:   #1239A6;
+  --action-light:   #EAF0FC;
+  --action-border:  #BBCEF5;
+  --status-done:    #10B981;
+  --status-active:  #1749C4;
+  --status-pending: #8E9BB0;
+  --status-warn:    #D97706;
+}
+
+.dark { /* TODO */ }
+
+@theme inline {
+  --color-bg:             var(--bg);
+  --color-surface:        var(--surface);
+  --color-border:         var(--border);
+  --color-border-light:   var(--border-light);
+  --color-text-primary:   var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted:     var(--text-muted);
+  --color-brand:          var(--brand);
+  --color-action:         var(--action);
+  --color-action-hover:   var(--action-hover);
+  --color-action-light:   var(--action-light);
+  --color-action-border:  var(--action-border);
+  --color-status-done:    var(--status-done);
+  --color-status-active:  var(--status-active);
+  --color-status-pending: var(--status-pending);
+  --color-status-warn:    var(--status-warn);
+  --radius-input: 6px;
+  --radius-btn:   8px;
+  --radius-card:  10px;
+}
+
+/* ── Reset & base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Noto Sans SC', 'PingFang SC', '微软雅黑', sans-serif;
+  background-color: var(--bg);
+  color: var(--text-primary);
+  line-height: 1.6;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Grid background ── */
+.grid-bg {
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(rgba(11,46,92,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(11,46,92,0.035) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* ── Animations ── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@keyframes card-enter {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes progress-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.7; }
+}
+
+/* ── Section tag ── */
+.section-tag {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+/* ── Status badge ── */
+.status-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 14px; border: 1px solid var(--border);
+  border-radius: 100px; font-size: 13px; color: var(--text-secondary);
+  background: var(--surface);
+}
+.status-badge .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--status-done); flex-shrink: 0;
+  box-shadow: 0 0 0 2px rgba(16,185,129,0.2);
+}
+
+/* ── Navbar ── */
+.navbar {
+  height: 56px; flex-shrink: 0;
+  background: rgba(255,255,255,0.96); backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 40px; gap: 4px;
+  position: sticky; top: 0; z-index: 100;
+}
+
+/* ── Avatar dropdown ── */
+.avatar-dropdown {
+  position: absolute; top: calc(100% + 8px); right: 0;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 8px 24px rgba(11,46,92,0.12);
+  padding: 6px; min-width: 176px; z-index: 200;
+}

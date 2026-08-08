@@ -1,0 +1,29 @@
+import { Link } from 'react-router-dom'
+
+const LOGO_PATH_1 = 'M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z'
+const LOGO_PATH_2 = 'M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z'
+
+export function Footer() {
+  return (
+    <footer style={{
+      padding: '32px 80px', background: 'var(--bg)',
+      borderTop: '1px solid var(--border)',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    }}>
+      <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
+        <svg viewBox="12 3 24 34" fill="currentColor" style={{ height: 20, color: 'var(--brand)' }}>
+          <path d={LOGO_PATH_1} /><path d={LOGO_PATH_2} />
+        </svg>
+        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>FinAgentPlatform</span>
+      </Link>
+      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>© 2026 金融学院智能体平台</span>
+      <div style={{ display: 'flex', gap: 24 }}>
+        {[['研究范式', '/scenarios'], ['技术底座', '/capabilities'], ['数据要素', '/data']].map(([label, to]) => (
+          <Link key={to} to={to} style={{ fontSize: 13, color: 'var(--text-secondary)', textDecoration: 'none' }}>
+            {label}
+          </Link>
+        ))}
+      </div>
+    </footer>
+  )
+}

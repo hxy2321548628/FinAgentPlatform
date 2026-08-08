@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinDeepResearch · 设置</title>
+  <link rel="stylesheet" href="shared.css">
+  <style>
+    /* ── 设置页特有样式 ── */
+    body { min-height: 100vh; }
+    .navbar { position: sticky; top: 0; }
+
+    .page-content { max-width: 1100px; margin: 0 auto; padding: 40px; }
+
+    .page-header { margin-bottom: 32px; }
+    .page-tag { font-size: 10px; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.3em; color: var(--text-muted); margin-bottom: 8px; }
+    .page-title { font-size: 28px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; }
+    .page-desc { font-size: 14px; color: var(--text-secondary); }
+
+    /* ── 设置布局 ── */
+    .settings-layout { display: grid; grid-template-columns: 200px 1fr; gap: 24px; align-items: start; }
+
+    /* ── 左侧导航 ── */
+    .settings-nav { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; position: sticky; top: 76px; }
+    .settings-nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px; font-size: 13px; font-weight: 500;
+      color: var(--text-secondary); cursor: pointer;
+      border-left: 2px solid transparent;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      user-select: none;
+    }
+    .settings-nav-item:hover { background: var(--bg); color: var(--text-primary); }
+    .settings-nav-item.active { background: var(--action-light); color: var(--action); border-left-color: var(--action); font-weight: 600; }
+    .settings-nav-item svg { flex-shrink: 0; opacity: 0.7; }
+    .settings-nav-item.active svg { opacity: 1; }
+    .settings-nav-divider { height: 1px; background: var(--border-light); margin: 4px 0; }
+
+    /* ── 右侧内容区 ── */
+    .settings-section { display: none; flex-direction: column; gap: 20px; }
+    .settings-section.active { display: flex; }
+
+    /* ── 设置卡片 ── */
+    .settings-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .card-header { padding: 20px 24px 0; }
+    .card-title { font-size: 15px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+    .card-desc { font-size: 13px; color: var(--text-secondary); }
+    .card-body { padding: 20px 24px 24px; }
+    .card-divider { height: 1px; background: var(--border-light); margin: 0 24px; }
+    .card-footer { padding: 16px 24px; background: #FAFBFD; display: flex; align-items: center; justify-content: space-between; }
+
+    /* ── 表单元素 ── */
+    .form-grid { display: grid; gap: 20px; }
+    .form-grid-2 { grid-template-columns: 1fr 1fr; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-label { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+    .form-hint { font-size: 12px; color: var(--text-muted); }
+    .form-input {
+      height: 38px; padding: 0 12px;
+      border: 1px solid var(--border); border-radius: 7px;
+      font-size: 13px; color: var(--text-primary);
+      background: #F7F9FC; outline: none;
+      font-family: inherit; transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .form-input:focus { border-color: var(--action-border); background: #fff; box-shadow: 0 0 0 3px rgba(23,73,196,0.08); }
+    .form-input.mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; letter-spacing: 0.02em; }
+    .form-input-wrap { position: relative; }
+    .form-input-wrap .form-input { width: 100%; padding-right: 80px; }
+    .input-suffix { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; pointer-events: none; }
+    .form-textarea {
+      padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px;
+      font-size: 13px; color: var(--text-primary); background: #F7F9FC;
+      outline: none; font-family: inherit; resize: vertical; min-height: 80px;
+      transition: border-color 0.15s, box-shadow 0.15s; width: 100%;
+    }
+    .form-textarea:focus { border-color: var(--action-border); background: #fff; box-shadow: 0 0 0 3px rgba(23,73,196,0.08); }
+
+    /* 模型选择器 */
+    .model-select-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .model-option {
+      border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px;
+      cursor: pointer; transition: border-color 0.15s, background 0.15s;
+      position: relative;
+    }
+    .model-option:hover { border-color: var(--action-border); background: var(--action-light); }
+    .model-option.selected { border-color: var(--action); background: var(--action-light); }
+    .model-option.selected::after {
+      content: ''; position: absolute; top: 8px; right: 8px;
+      width: 8px; height: 8px; border-radius: 50%; background: var(--action);
+    }
+    .model-name { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 2px; }
+    .model-provider { font-size: 11px; color: var(--text-muted); }
+    .model-badge { display: inline-block; margin-top: 6px; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; letter-spacing: 0.05em; }
+    .badge-fast { background: #ECFDF5; color: #059669; border: 1px solid #A7F3D0; }
+    .badge-smart { background: #EFF6FF; color: #3B82F6; border: 1px solid #BFDBFE; }
+    .badge-cheap { background: #FFF7ED; color: #D97706; border: 1px solid #FDE68A; }
+
+    /* API Key 输入带显示/隐藏 */
+    .key-wrap { position: relative; }
+    .key-wrap .form-input { width: 100%; padding-right: 80px; }
+    .key-toggle { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); height: 24px; padding: 0 8px; border: none; background: transparent; font-size: 11px; color: var(--action); cursor: pointer; font-family: inherit; }
+    .key-toggle:hover { text-decoration: underline; }
+
+    /* 用量统计 */
+    .usage-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+    .usage-stat { background: var(--bg); border: 1px solid var(--border-light); border-radius: 8px; padding: 14px 16px; }
+    .usage-stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 6px; }
+    .usage-stat-value { font-size: 22px; font-weight: 700; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; line-height: 1; }
+    .usage-stat-unit { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+    .usage-bar-wrap { margin-bottom: 8px; }
+    .usage-bar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .usage-bar-label { font-size: 12px; color: var(--text-secondary); }
+    .usage-bar-val { font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-primary); }
+    .usage-bar-track { height: 6px; background: var(--border-light); border-radius: 3px; overflow: hidden; }
+    .usage-bar-fill { height: 100%; border-radius: 3px; background: var(--action); transition: width 0.4s; }
+    .usage-bar-fill.warn { background: var(--status-warn); }
+
+    /* 模型角色标签 */
+    .model-role-tag {
+      display: inline-flex; align-items: center;
+      padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;
+      letter-spacing: 0.05em; font-family: 'JetBrains Mono', monospace; flex-shrink: 0;
+    }
+    .tag-fast   { background: #ECFDF5; color: #059669; border: 1px solid #A7F3D0; }
+    .tag-deep   { background: #EFF6FF; color: #2563EB; border: 1px solid #BFDBFE; }
+    .tag-vision { background: #F5F3FF; color: #7C3AED; border: 1px solid #DDD6FE; }
+    .tag-embed  { background: #FFFBEB; color: #D97706; border: 1px solid #FDE68A; }
+
+    .card-header-row { display: flex; align-items: center; gap: 10px; }
+
+    /* 费用自动更新区 */
+    .cost-estimate {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; background: var(--bg); border: 1px solid var(--border-light);
+      border-radius: 7px;
+    }
+    .cost-label { font-size: 12px; color: var(--text-secondary); }
+    .cost-value { font-size: 16px; font-weight: 700; color: var(--action); font-family: 'JetBrains Mono', monospace; }
+
+    /* 只读价格字段 */
+    .form-input[readonly] { cursor: default; color: var(--text-secondary); background: var(--bg); }
+
+    /* 模型切换器 */
+    .model-switcher {
+      display: inline-flex; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 3px; gap: 2px;
+    }
+    .model-switch-btn {
+      display: flex; align-items: center; gap: 7px;
+      padding: 7px 18px; border: none; border-radius: 6px;
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      font-family: inherit; color: var(--text-secondary); background: transparent;
+      transition: background 0.15s, color 0.15s;
+    }
+    .model-switch-btn.active {
+      background: var(--surface); color: var(--text-primary);
+      box-shadow: 0 1px 4px rgba(11,46,92,0.1);
+    }
+
+    /* 飞书通知 */
+    .webhook-status { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #ECFDF5; border: 1px solid #A7F3D0; border-radius: 7px; font-size: 13px; color: #065F46; }
+    .webhook-status svg { flex-shrink: 0; }
+    .webhook-test-result { font-size: 12px; color: var(--status-done); display: none; }
+    .webhook-test-result.show { display: block; }
+
+    /* 账号 */
+    .account-avatar-row { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+    .account-avatar { width: 56px; height: 56px; border-radius: 50%; background: var(--action); color: #fff; font-size: 22px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .account-avatar-info { flex: 1; }
+    .account-name { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+    .account-email { font-size: 13px; color: var(--text-muted); }
+
+    .danger-zone { border: 1px solid #FECACA; border-radius: 12px; overflow: hidden; }
+    .danger-header { padding: 16px 20px; background: #FEF2F2; border-bottom: 1px solid #FECACA; }
+    .danger-title { font-size: 13px; font-weight: 600; color: #DC2626; }
+    .danger-body { padding: 20px; display: flex; align-items: center; justify-content: space-between; }
+    .danger-item-title { font-size: 13px; font-weight: 500; color: var(--text-primary); margin-bottom: 2px; }
+    .danger-item-desc { font-size: 12px; color: var(--text-muted); }
+
+    /* 保存反馈 */
+    .save-feedback { font-size: 12px; color: var(--status-done); display: flex; align-items: center; gap: 5px; opacity: 0; transition: opacity 0.3s; }
+    .save-feedback.show { opacity: 1; }
+
+    /* 测试连接按钮区 */
+    .test-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+    .test-result { font-size: 12px; }
+    .test-result.ok { color: var(--status-done); }
+    .test-result.err { color: #DC2626; }
+  </style>
+</head>
+<body class="grid-bg">
+
+  <!-- NAVBAR -->
+  <nav class="navbar">
+    <a class="logo" href="02-home.html">
+      <div class="logo-icon"><span></span><span></span><span></span></div>
+      <span class="logo-text">FinDeepResearch</span>
+    </a>
+    <div class="nav-links">
+      <a class="nav-link" href="02-home.html">首页</a>
+      <a class="nav-link" href="03-research.html">研究平台</a>
+      <a class="nav-link" href="04-knowledge.html">知识库</a>
+    </div>
+    <div class="nav-right">
+      <div class="avatar-wrap" id="avatarWrap">
+        <div class="nav-avatar" onclick="toggleAvatar()">A</div>
+        <div class="avatar-dropdown">
+          <div class="avatar-dropdown-user">
+            <div class="avatar-dropdown-name">Admin</div>
+            <div class="avatar-dropdown-email">admin@example.com</div>
+          </div>
+          <div class="avatar-dropdown-divider"></div>
+          <a class="avatar-dropdown-item" href="05-settings.html">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            设置
+          </a>
+          <div class="avatar-dropdown-divider"></div>
+          <div class="avatar-dropdown-item danger">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            退出登录
+          </div>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- PAGE CONTENT -->
+  <div class="page-content">
+
+    <!-- PAGE HEADER -->
+    <div class="page-header">
+      <div class="page-tag">// USER SETTINGS</div>
+      <h1 class="page-title">设置</h1>
+      <p class="page-desc">配置您的模型、API 接入参数与通知方式，设置仅对您本人生效</p>
+    </div>
+
+    <!-- SETTINGS LAYOUT -->
+    <div class="settings-layout">
+
+      <!-- 左侧导航 -->
+      <nav class="settings-nav">
+        <div class="settings-nav-item active" onclick="switchSection('model')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+          </svg>
+          模型配置
+        </div>
+        <div class="settings-nav-divider"></div>
+        <div class="settings-nav-item" onclick="switchSection('notify')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          通知
+        </div>
+        <div class="settings-nav-divider"></div>
+        <div class="settings-nav-item" onclick="switchSection('account')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </svg>
+          账号
+        </div>
+      </nav>
+
+      <!-- 右侧内容 -->
+      <div class="settings-right">
+
+        <!-- ① 模型配置 -->
+        <div class="settings-section active" id="section-model">
+
+          <!-- 本月用量 + 切换器 -->
+          <div class="settings-card">
+            <div class="card-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;">
+              <div>
+                <div class="card-title">本月用量</div>
+                <div class="card-desc">统计周期：2026-06-01 ~ 2026-06-30</div>
+              </div>
+              <div class="model-switcher">
+                <button class="model-switch-btn active" data-model="fast" onclick="switchModel('fast')">
+                  <span class="model-role-tag tag-fast" style="pointer-events:none">FAST</span>
+                  快速回复
+                </button>
+                <button class="model-switch-btn" data-model="deep" onclick="switchModel('deep')">
+                  <span class="model-role-tag tag-deep" style="pointer-events:none">DEEP</span>
+                  深度思考
+                </button>
+                <button class="model-switch-btn" data-model="embed" onclick="switchModel('embed')">
+                  <span class="model-role-tag tag-embed" style="pointer-events:none">EMBED</span>
+                  嵌入模型
+                </button>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="usage-stats">
+                <div class="usage-stat">
+                  <div class="usage-stat-label">SESSIONS</div>
+                  <div class="usage-stat-value" id="stat-sessions">15</div>
+                  <div class="usage-stat-unit" id="stat-sessions-unit">次调用</div>
+                </div>
+                <div class="usage-stat">
+                  <div class="usage-stat-label">INPUT</div>
+                  <div class="usage-stat-value" id="stat-input">800K</div>
+                  <div class="usage-stat-unit">tokens</div>
+                </div>
+                <div class="usage-stat">
+                  <div class="usage-stat-label">OUTPUT</div>
+                  <div class="usage-stat-value" id="stat-output">200K</div>
+                  <div class="usage-stat-unit" id="stat-output-unit">tokens</div>
+                </div>
+                <div class="usage-stat">
+                  <div class="usage-stat-label">COST</div>
+                  <div class="usage-stat-value" style="color:var(--action)" id="stat-cost">¥1.2</div>
+                  <div class="usage-stat-unit" id="stat-cost-unit">快速模型</div>
+                </div>
+              </div>
+              <div class="usage-bar-wrap">
+                <div class="usage-bar-header">
+                  <span class="usage-bar-label">Input Tokens 月度消耗</span>
+                  <span class="usage-bar-val" id="bar-input-val">800K / 5M</span>
+                </div>
+                <div class="usage-bar-track"><div class="usage-bar-fill" id="bar-input-fill" style="width:16%"></div></div>
+              </div>
+              <div class="usage-bar-wrap">
+                <div class="usage-bar-header">
+                  <span class="usage-bar-label">估算费用</span>
+                  <span class="usage-bar-val" id="bar-cost-val">¥1.2 / ¥200</span>
+                </div>
+                <div class="usage-bar-track"><div class="usage-bar-fill" id="bar-cost-fill" style="width:1%"></div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 快速回复模型 -->
+          <div class="settings-card" id="model-card-fast">
+            <div class="card-header">
+              <div class="card-header-row">
+                <span class="model-role-tag tag-fast">FAST</span>
+                <div>
+                  <div class="card-title">快速回复模型</div>
+                  <div class="card-desc">用于常规对话、工具结果汇总，优先速度与低延迟</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                <div class="form-grid form-grid-2">
+                  <div class="form-group">
+                    <label class="form-label">模型名称</label>
+                    <input class="form-input" type="text" value="gpt-4o-mini" placeholder="模型 ID" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">提供商</label>
+                    <input class="form-input" type="text" value="OpenAI" placeholder="如 OpenAI、DeepSeek" />
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">API Key</label>
+                  <div class="key-wrap">
+                    <input class="form-input mono" type="password" value="sk-••••••••••••••••••••••••••••••••Ax1m" placeholder="sk-..." />
+                    <button class="key-toggle" onclick="toggleKeyBtn(this)">显示</button>
+                  </div>
+                  <span class="form-hint">API Key 经 AES-256 加密存储</span>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">API Base URL</label>
+                  <input class="form-input mono" type="text" value="https://api.openai.com/v1" placeholder="留空使用默认地址" />
+                </div>
+                <div class="form-grid form-grid-2">
+                  <div class="form-group">
+                    <label class="form-label">Input 单价</label>
+                    <div class="form-input-wrap">
+                      <input class="form-input mono" id="fast-input-price" type="number" step="0.001" value="0.001" min="0" readonly />
+                      <span class="input-suffix">元 / 1K</span>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Output 单价</label>
+                    <div class="form-input-wrap">
+                      <input class="form-input mono" id="fast-output-price" type="number" step="0.001" value="0.002" min="0" readonly />
+                      <span class="input-suffix">元 / 1K</span>
+                    </div>
+                  </div>
+                </div>
+                <span class="form-hint">单价由模型提供商定价，随模型名称自动填入，不可手动修改</span>
+                <div class="cost-estimate">
+                  <span class="cost-label">本月该模型估算费用</span>
+                  <span class="cost-value" id="fast-cost-value">¥1.2</span>
+                </div>
+              </div>
+            </div>
+            <div class="card-divider"></div>
+            <div class="card-footer">
+              <div class="test-row">
+                <button class="btn-outline" style="height:34px;font-size:13px;" onclick="testConnectionBtn(this)">测试连接</button>
+                <span class="test-result ok" style="display:none">✓ 连接成功</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="save-feedback" id="fastSaveFeedback">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>已保存
+                </span>
+                <button class="btn-primary" onclick="saveSection('fastSaveFeedback')">保存</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 向量嵌入模型 -->
+          <div class="settings-card" id="model-card-embed" style="display:none">
+            <div class="card-header">
+              <div class="card-header-row">
+                <span class="model-role-tag tag-embed">EMBED</span>
+                <div>
+                  <div class="card-title">向量嵌入模型</div>
+                  <div class="card-desc">用于知识库文档切片的向量化与语义检索，模型固定为 bge-m3</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                <div class="form-grid form-grid-2">
+                  <div class="form-group">
+                    <label class="form-label">模型名称</label>
+                    <input class="form-input mono" type="text" value="bge-m3" readonly />
+                    <span class="form-hint">模型固定，不可更改</span>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">向量维度</label>
+                    <input class="form-input mono" type="text" value="1024" readonly />
+                    <span class="form-hint">由 bge-m3 默认输出维度决定</span>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">API Key</label>
+                  <div class="key-wrap">
+                    <input class="form-input mono" type="password" value="sk-••••••••••••••••••••••••••••••••Em3k" placeholder="sk-..." />
+                    <button class="key-toggle" onclick="toggleKeyBtn(this)">显示</button>
+                  </div>
+                  <span class="form-hint">API Key 经 AES-256 加密存储</span>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">API Base URL</label>
+                  <input class="form-input mono" type="text" value="https://api.siliconflow.cn/v1" placeholder="留空使用默认地址" />
+                  <span class="form-hint">支持接入第三方嵌入服务或私有部署</span>
+                </div>
+              </div>
+            </div>
+            <div class="card-divider"></div>
+            <div class="card-footer">
+              <div class="test-row">
+                <button class="btn-outline" style="height:34px;font-size:13px;" onclick="testConnectionBtn(this)">测试连接</button>
+                <span class="test-result ok" style="display:none">✓ 连接成功</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="save-feedback" id="embedSaveFeedback">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>已保存
+                </span>
+                <button class="btn-primary" onclick="saveSection('embedSaveFeedback')">保存</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 深度思考模型 -->
+          <div class="settings-card" id="model-card-deep" style="display:none">
+            <div class="card-header">
+              <div class="card-header-row">
+                <span class="model-role-tag tag-deep">DEEP</span>
+                <div>
+                  <div class="card-title">深度思考模型</div>
+                  <div class="card-desc">用于复杂推理、行研报告生成，优先准确性与分析深度</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                <div class="form-grid form-grid-2">
+                  <div class="form-group">
+                    <label class="form-label">模型名称</label>
+                    <input class="form-input" type="text" value="deepseek-r1" placeholder="模型 ID" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">提供商</label>
+                    <input class="form-input" type="text" value="DeepSeek" placeholder="如 OpenAI、DeepSeek" />
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">API Key</label>
+                  <div class="key-wrap">
+                    <input class="form-input mono" type="password" value="sk-••••••••••••••••••••••••••••••••Bk2p" placeholder="sk-..." />
+                    <button class="key-toggle" onclick="toggleKeyBtn(this)">显示</button>
+                  </div>
+                  <span class="form-hint">API Key 经 AES-256 加密存储</span>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">API Base URL</label>
+                  <input class="form-input mono" type="text" value="https://api.deepseek.com/v1" placeholder="留空使用默认地址" />
+                </div>
+                <div class="form-grid form-grid-2">
+                  <div class="form-group">
+                    <label class="form-label">Input 单价</label>
+                    <div class="form-input-wrap">
+                      <input class="form-input mono" id="deep-input-price" type="number" step="0.001" value="0.004" min="0" readonly />
+                      <span class="input-suffix">元 / 1K</span>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Output 单价</label>
+                    <div class="form-input-wrap">
+                      <input class="form-input mono" id="deep-output-price" type="number" step="0.001" value="0.016" min="0" readonly />
+                      <span class="input-suffix">元 / 1K</span>
+                    </div>
+                  </div>
+                </div>
+                <span class="form-hint">单价由模型提供商定价，随模型名称自动填入，不可手动修改</span>
+                <div class="cost-estimate">
+                  <span class="cost-label">本月该模型估算费用</span>
+                  <span class="cost-value" id="deep-cost-value">¥2.8</span>
+                </div>
+              </div>
+            </div>
+            <div class="card-divider"></div>
+            <div class="card-footer">
+              <div class="test-row">
+                <button class="btn-outline" style="height:34px;font-size:13px;" onclick="testConnectionBtn(this)">测试连接</button>
+                <span class="test-result ok" style="display:none">✓ 连接成功</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="save-feedback" id="deepSaveFeedback">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>已保存
+                </span>
+                <button class="btn-primary" onclick="saveSection('deepSaveFeedback')">保存</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ③ 通知 -->
+        <div class="settings-section" id="section-notify">
+
+          <div class="settings-card">
+            <div class="card-header">
+              <div class="card-title">飞书机器人通知</div>
+              <div class="card-desc">行研报告生成完成后，自动向飞书群发送报告摘要与链接</div>
+            </div>
+            <div class="card-body">
+              <div style="margin-bottom:16px;">
+                <div class="webhook-status">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                  Webhook 已配置，上次推送成功：2026-06-05 14:32
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Webhook URL</label>
+                <input class="form-input mono" type="text" value="https://open.feishu.cn/open-apis/bot/v2/hook/••••••••-••••-••••" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />
+                <span class="form-hint">在飞书群设置 → 群机器人 → 添加机器人 → 自定义机器人 中获取 Webhook 地址</span>
+              </div>
+              <div style="margin-top:16px;">
+                <div class="form-label" style="margin-bottom:10px;">推送内容</div>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                  <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-secondary);cursor:pointer;">
+                    <input type="checkbox" checked style="accent-color:var(--action);width:14px;height:14px;" />
+                    报告标题与摘要（前 500 字）
+                  </label>
+                  <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-secondary);cursor:pointer;">
+                    <input type="checkbox" checked style="accent-color:var(--action);width:14px;height:14px;" />
+                    报告访问链接
+                  </label>
+                  <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-secondary);cursor:pointer;">
+                    <input type="checkbox" style="accent-color:var(--action);width:14px;height:14px;" />
+                    Token 用量与费用
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="card-divider"></div>
+            <div class="card-footer">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <button class="btn-outline" style="height:34px;font-size:13px;" onclick="testWebhook()">发送测试消息</button>
+                <span class="webhook-test-result" id="webhookTestResult">✓ 测试消息已发送</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="save-feedback" id="notifySaveFeedback">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                  已保存
+                </span>
+                <button class="btn-primary" onclick="saveSection('notifySaveFeedback')">保存</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ③ 账号 -->
+        <div class="settings-section" id="section-account">
+
+          <!-- 账号信息 -->
+          <div class="settings-card">
+            <div class="card-header">
+              <div class="card-title">账号信息</div>
+            </div>
+            <div class="card-body">
+              <div class="account-avatar-row">
+                <div class="account-avatar">A</div>
+                <div class="account-avatar-info">
+                  <div class="account-name">Alice</div>
+                  <div class="account-email">alice@example.com</div>
+                </div>
+              </div>
+              <div class="form-grid form-grid-2">
+                <div class="form-group">
+                  <label class="form-label">用户名</label>
+                  <input class="form-input" type="text" value="Alice" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">邮箱</label>
+                  <input class="form-input" type="email" value="alice@example.com" />
+                </div>
+              </div>
+            </div>
+            <div class="card-divider"></div>
+            <div class="card-footer">
+              <span style="font-size:12px;color:var(--text-muted)">注册时间：2026-01-15</span>
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="save-feedback" id="accountSaveFeedback">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                  已保存
+                </span>
+                <button class="btn-primary" onclick="saveSection('accountSaveFeedback')">保存</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 修改密码 -->
+          <div class="settings-card">
+            <div class="card-header">
+              <div class="card-title">修改密码</div>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                <div class="form-group">
+                  <label class="form-label">当前密码</label>
+                  <input class="form-input" type="password" placeholder="输入当前密码" />
+                </div>
+                <div class="form-grid form-grid-2">
+                  <div class="form-group">
+                    <label class="form-label">新密码</label>
+                    <input class="form-input" type="password" placeholder="至少 8 位" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">确认新密码</label>
+                    <input class="form-input" type="password" placeholder="再次输入新密码" />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="card-divider"></div>
+            <div class="card-footer">
+              <span></span>
+              <button class="btn-primary" onclick="saveSection('pwdFeedback')">更新密码</button>
+            </div>
+          </div>
+
+          <!-- 危险区 -->
+          <div class="danger-zone">
+            <div class="danger-header">
+              <div class="danger-title">危险操作</div>
+            </div>
+            <div class="danger-body">
+              <div>
+                <div class="danger-item-title">注销账号</div>
+                <div class="danger-item-desc">永久删除您的账号及所有数据，此操作不可撤销</div>
+              </div>
+              <button class="btn-danger">注销账号</button>
+            </div>
+          </div>
+
+        </div>
+
+      </div><!-- /settings-right -->
+    </div><!-- /settings-layout -->
+
+  </div><!-- /page-content -->
+
+  <script>
+    function switchSection(name) {
+      document.querySelectorAll('.settings-nav-item').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.settings-section').forEach(el => el.classList.remove('active'));
+      event.currentTarget.classList.add('active');
+      document.getElementById('section-' + name).classList.add('active');
+    }
+
+    // 每个模型角色本月 token 用量（单位：千 tokens）
+    const MODEL_USAGE_K = {
+      fast: { in: 800, out: 200 },
+      deep: { in: 350, out: 90  },
+    };
+
+    const MODEL_STATS = {
+      fast:  { sessions: 15, sessionsUnit: '次调用', input: '800K', output: '200K', outputUnit: 'tokens', cost: '¥1.2', costUnit: '快速模型', inputBarVal: '800K / 5M',  inputBarPct: 16, costBarVal: '¥1.2 / ¥200', costBarPct: 1 },
+      deep:  { sessions: 9,  sessionsUnit: '次调用', input: '350K', output: '90K',  outputUnit: 'tokens', cost: '¥2.8', costUnit: '思考模型', inputBarVal: '350K / 5M',  inputBarPct:  7, costBarVal: '¥2.8 / ¥200', costBarPct: 1 },
+      embed: { sessions: 89, sessionsUnit: '次调用', input: '1.2M', output: '2.8K', outputUnit: 'vectors', cost: '¥0.8', costUnit: '嵌入模型', inputBarVal: '1.2M / 10M', inputBarPct: 12, costBarVal: '¥0.8 / ¥200', costBarPct: 1 },
+    };
+
+    function switchModel(role) {
+      document.querySelectorAll('.model-switch-btn').forEach(b => b.classList.remove('active'));
+      document.querySelector(`.model-switch-btn[data-model="${role}"]`).classList.add('active');
+      const s = MODEL_STATS[role];
+      document.getElementById('stat-sessions').textContent      = s.sessions;
+      document.getElementById('stat-sessions-unit').textContent = s.sessionsUnit;
+      document.getElementById('stat-input').textContent         = s.input;
+      document.getElementById('stat-output').textContent        = s.output;
+      document.getElementById('stat-output-unit').textContent   = s.outputUnit;
+      document.getElementById('stat-cost').textContent          = s.cost;
+      document.getElementById('stat-cost-unit').textContent     = s.costUnit;
+      document.getElementById('bar-input-val').textContent      = s.inputBarVal;
+      document.getElementById('bar-input-fill').style.width     = s.inputBarPct + '%';
+      document.getElementById('bar-cost-val').textContent       = s.costBarVal;
+      document.getElementById('bar-cost-fill').style.width      = s.costBarPct + '%';
+      document.getElementById('model-card-fast').style.display  = role === 'fast'  ? 'block' : 'none';
+      document.getElementById('model-card-deep').style.display  = role === 'deep'  ? 'block' : 'none';
+      document.getElementById('model-card-embed').style.display = role === 'embed' ? 'block' : 'none';
+    }
+
+    function toggleKeyBtn(btn) {
+      const input = btn.previousElementSibling;
+      if (input.type === 'password') { input.type = 'text'; btn.textContent = '隐藏'; }
+      else { input.type = 'password'; btn.textContent = '显示'; }
+    }
+
+    function testConnectionBtn(btn) {
+      const resultEl = btn.nextElementSibling;
+      resultEl.style.display = 'none';
+      resultEl.className = 'test-result ok';
+      setTimeout(() => { resultEl.style.display = 'inline'; }, 800);
+    }
+
+    function testWebhook() {
+      const el = document.getElementById('webhookTestResult');
+      el.classList.remove('show');
+      setTimeout(() => el.classList.add('show'), 600);
+    }
+
+    function saveSection(feedbackId) {
+      const el = document.getElementById(feedbackId);
+      if (!el) return;
+      el.classList.remove('show');
+      void el.offsetWidth;
+      el.classList.add('show');
+      setTimeout(() => el.classList.remove('show'), 2500);
+    }
+
+    function toggleAvatar() {
+      event.stopPropagation();
+      document.getElementById('avatarWrap').classList.toggle('open');
+    }
+    document.addEventListener('click', () => {
+      const w = document.getElementById('avatarWrap');
+      if (w) w.classList.remove('open');
+    });
+  </script>
+</body>
+</html>
