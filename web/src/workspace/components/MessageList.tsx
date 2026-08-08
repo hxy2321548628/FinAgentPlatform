@@ -1,7 +1,5 @@
 import { useState } from 'react'
 
-type MessageType = 'user' | 'reasoning' | 'tool' | 'agent' | 'hitl' | 'thinking'
-
 interface Attachment { name: string }
 interface UserMessage { type: 'user'; text: string; attachments?: Attachment[] }
 interface ReasoningMessage { type: 'reasoning'; text: string; done: boolean }

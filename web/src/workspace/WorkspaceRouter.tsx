@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Overview } from './pages/Overview'
+import { Chat } from './pages/Chat'
 
 export function WorkspaceRouter() {
   const placeholder = (label: string) => (
@@ -9,8 +10,8 @@ export function WorkspaceRouter() {
   return (
     <Routes>
       <Route index element={<Overview />} />
-      <Route path="chat" element={placeholder('分析对话（Plan 2 实现）')} />
-      <Route path="chat/:threadId" element={placeholder('分析对话（Plan 2 实现）')} />
+      <Route path="chat" element={<Chat />} />
+      <Route path="chat/:threadId" element={<Chat />} />
       <Route path="scenarios" element={placeholder('场景库（Plan 3 实现）')} />
       <Route path="agents" element={placeholder('智能体广场（Plan 3 实现）')} />
       <Route path="agents/new" element={placeholder('发布智能体（Plan 3 实现）')} />
