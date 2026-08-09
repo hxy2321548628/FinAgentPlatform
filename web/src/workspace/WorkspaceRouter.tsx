@@ -5,12 +5,13 @@ import { AgentScenarios } from './pages/AgentScenarios'
 import { AgentPlaza, PublishAgent } from './pages/AgentPlaza'
 import { MyData } from './pages/MyData'
 import { MyAgents } from './pages/MyAgents'
+import { AdminLayout } from './pages/admin/AdminLayout'
+import { AdminUsers } from './pages/admin/AdminUsers'
+import { AdminAgents } from './pages/admin/AdminAgents'
+import { AdminUsage } from './pages/admin/AdminUsage'
+import { AdminSystem } from './pages/admin/AdminSystem'
 
 export function WorkspaceRouter() {
-  const placeholder = (label: string) => (
-    <div style={{ padding: 40, color: 'var(--text-secondary)', fontSize: 14 }}>{label}</div>
-  )
-
   return (
     <Routes>
       <Route index element={<Overview />} />
@@ -21,7 +22,13 @@ export function WorkspaceRouter() {
       <Route path="agents/new" element={<PublishAgent />} />
       <Route path="data" element={<MyData />} />
       <Route path="my-agents" element={<MyAgents />} />
-      <Route path="admin/*" element={placeholder('管理后台（Plan 4 实现）')} />
+      <Route path="admin/*" element={<AdminLayout />}>
+        <Route index element={<AdminUsers />} />
+        <Route path="users" element={<AdminUsers />} />
+        <Route path="agents" element={<AdminAgents />} />
+        <Route path="usage" element={<AdminUsage />} />
+        <Route path="system" element={<AdminSystem />} />
+      </Route>
       <Route path="*" element={<Navigate to="/workspace" replace />} />
     </Routes>
   )
