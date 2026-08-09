@@ -97,25 +97,39 @@ export function Capabilities() {
               <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6, fontFamily: "'JetBrains Mono', monospace" }}>$ cat platform-stack.yml</span>
             </div>
             <div style={{ padding: '20px 24px' }}>
-              <pre style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, lineHeight: 1.9, color: 'var(--text-secondary)', whiteSpace: 'pre', margin: 0 }}>
-{``}<span style={{ color: 'var(--text-muted)' }}># 智能体层</span>{`
-`}<span style={{ color: 'var(--action)' }}>agent_framework</span>{`:   `}<span style={{ color: 'var(--text-primary)' }}>DeepAgents / LangGraph</span>{"   "}<span style={{ color: 'var(--text-muted)' }}># MIT License</span>{`
-`}<span style={{ color: 'var(--action)' }}>reasoning_model</span>{`:   `}<span style={{ color: 'var(--text-primary)' }}>deepseek-v4-pro</span>{"          "}<span style={{ color: 'var(--text-muted)' }}># 国产前沿模型</span>{`
-
-`}<span style={{ color: 'var(--text-muted)' }}># 执行层</span>{`
-`}<span style={{ color: 'var(--action)' }}>sandbox_runtime</span>{`:   `}<span style={{ color: 'var(--text-primary)' }}>Docker + gVisor (runsc)</span>{"  "}<span style={{ color: 'var(--text-muted)' }}># Google 开源</span>{`
-`}<span style={{ color: 'var(--action)' }}>event_transport</span>{`:   `}<span style={{ color: 'var(--text-primary)' }}>SSE (Server-Sent Events)</span>{" "}<span style={{ color: 'var(--text-muted)' }}># W3C 标准</span>{`
-`}<span style={{ color: 'var(--action)' }}>task_queue</span>{`:        `}<span style={{ color: 'var(--text-primary)' }}>Redis Streams</span>{"            "}<span style={{ color: 'var(--text-muted)' }}># 持久化事件流</span>{`
-
-`}<span style={{ color: 'var(--text-muted)' }}># 数据层</span>{`
-`}<span style={{ color: 'var(--action)' }}>checkpoint_store</span>{`:  `}<span style={{ color: 'var(--text-primary)' }}>PostgreSQL</span>{"               "}<span style={{ color: 'var(--text-muted)' }}># 状态持久化</span>{`
-`}<span style={{ color: 'var(--action)' }}>artifact_store</span>{`:    `}<span style={{ color: 'var(--text-primary)' }}>MinIO (S3-compatible)</span>{"    "}<span style={{ color: 'var(--text-muted)' }}># 院内对象存储</span>{`
-
-`}<span style={{ color: 'var(--text-muted)' }}># 接入层</span>{`
-`}<span style={{ color: 'var(--action)' }}>api_layer</span>{`:         `}<span style={{ color: 'var(--text-primary)' }}>FastAPI (Python)</span>{`
-`}<span style={{ color: 'var(--action)' }}>frontend</span>{`:          `}<span style={{ color: 'var(--text-primary)' }}>React + Vite + TypeScript</span>{`
-`}<span style={{ color: 'var(--action)' }}>deployment</span>{`:        `}<span style={{ color: 'var(--text-primary)' }}>Docker Compose · 单机内网部署</span>
-              </pre>
+              <pre style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, lineHeight: 1.9, color: 'var(--text-secondary)', whiteSpace: 'pre', margin: 0 }}>{[
+                ['comment', '# 智能体层'],
+                ['key', 'agent_framework', 'DeepAgents / LangGraph  ', '# MIT License'],
+                ['key', 'reasoning_model ', 'deepseek-v4-pro         ', '# 国产前沿模型'],
+                ['blank'],
+                ['comment', '# 执行层'],
+                ['key', 'sandbox_runtime ', 'Docker + gVisor (runsc) ', '# Google 开源'],
+                ['key', 'event_transport ', 'SSE (Server-Sent Events)', '# W3C 标准'],
+                ['key', 'task_queue      ', 'Redis Streams           ', '# 持久化事件流'],
+                ['blank'],
+                ['comment', '# 数据层'],
+                ['key', 'checkpoint_store', 'PostgreSQL              ', '# 状态持久化'],
+                ['key', 'artifact_store  ', 'MinIO (S3-compatible)   ', '# 院内对象存储'],
+                ['blank'],
+                ['comment', '# 接入层'],
+                ['key', 'api_layer       ', 'FastAPI (Python)'],
+                ['key', 'frontend        ', 'React + Vite + TypeScript'],
+                ['key', 'deployment      ', 'Docker Compose · 单机内网部署'],
+              ].map((row, i) => {
+                if (row[0] === 'blank') return <span key={i}>{'\n'}</span>
+                if (row[0] === 'comment') return (
+                  <span key={i} style={{ color: 'var(--text-muted)' }}>{row[1]}{'\n'}</span>
+                )
+                return (
+                  <span key={i}>
+                    <span style={{ color: 'var(--action)' }}>{row[1]}</span>
+                    <span>{':   '}</span>
+                    <span style={{ color: 'var(--text-primary)' }}>{row[2]}</span>
+                    {row[3] && <span style={{ color: 'var(--text-muted)' }}>{row[3]}</span>}
+                    {'\n'}
+                  </span>
+                )
+              })}</pre>
             </div>
             <div style={{ padding: '10px 24px 14px', borderTop: '1px solid var(--border-light)', fontSize: 11, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em' }}>
               全部组件均可在学院服务器独立运行，无需连接任何外部商业服务

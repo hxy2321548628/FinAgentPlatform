@@ -91,15 +91,18 @@ const FEATURED_SCENES: FeaturedScene[] = [
 ]
 
 const ALL_AGENTS: AgentCard[] = [
-  { id: '1', name: '企业财务异常检测', author: '张老师', subject: '金融', desc: '对报表关键科目进行稽核式比率检查，识别异常项并输出带证据的清单。', calls: 96, rating: 4.8, scenes: ['企业财务风险分析'] },
-  { id: '2', name: '计量方法鉴别器', author: '赵老师', subject: '经济', desc: '识别论文的识别策略类型，提取稳健性检验方法，标注识别威胁。', calls: 64, rating: 4.7, scenes: ['论文计量方法鉴别'] },
-  { id: '3', name: '公告语义分析', author: '平台 · 公共', subject: '金融', desc: '解读上市公司公告，识别经营/治理/前瞻三类风险信号。', calls: 88, rating: 4.6, scenes: [] },
-  { id: '4', name: '申请书结构解析', author: '孙老师', subject: '管理', desc: '解析基金申请书章节结构，对比已立项项目，输出改进建议。', calls: 38, rating: 4.5, scenes: ['课题申请书诊断'] },
-  { id: '5', name: '创新点分析', author: '张老师', subject: '金融', desc: '对比目标论文与近期文献，分析创新点表述与支撑证据充分性。', calls: 29, rating: 4.4, scenes: ['论文计量方法鉴别', '课题申请书诊断'] },
-  { id: '6', name: '量化因子筛选器', author: '李教授', subject: '金融', desc: '基于历史收益率构建多因子模型，筛选显著 alpha 因子组合。', calls: 52, rating: 4.7, scenes: ['量化因子研究'] },
+  { id: '1', name: '企业财务异常检测', author: '张老师', subject: '公司金融', desc: '对报表关键科目进行稽核式比率检查，识别异常项并输出带证据的清单。', calls: 96, rating: 4.8, scenes: ['企业财务风险分析'] },
+  { id: '2', name: '计量方法鉴别器', author: '赵老师', subject: '学术科研', desc: '识别论文的识别策略类型，提取稳健性检验方法，标注识别威胁。', calls: 64, rating: 4.7, scenes: ['论文计量方法鉴别'] },
+  { id: '3', name: '公告语义分析', author: '平台 · 公共', subject: '风险管理', desc: '解读上市公司公告，识别经营/治理/前瞻三类风险信号。', calls: 88, rating: 4.6, scenes: [] },
+  { id: '4', name: '申请书结构解析', author: '孙老师', subject: '学术科研', desc: '解析基金申请书章节结构，对比已立项项目，输出改进建议。', calls: 38, rating: 4.5, scenes: ['课题申请书诊断'] },
+  { id: '5', name: '创新点分析', author: '张老师', subject: '学术科研', desc: '对比目标论文与近期文献，分析创新点表述与支撑证据充分性。', calls: 29, rating: 4.4, scenes: ['论文计量方法鉴别', '课题申请书诊断'] },
+  { id: '6', name: '量化因子筛选器', author: '李教授', subject: '量化投资', desc: '基于历史收益率构建多因子模型，筛选显著 alpha 因子组合。', calls: 52, rating: 4.7, scenes: ['量化因子研究'] },
+  { id: '7', name: '持仓波动率分析', author: '王老师', subject: '资产管理', desc: '基于持仓数据计算各行业年化波动率，识别高风险持仓，生成减仓建议。', calls: 43, rating: 4.5, scenes: [] },
+  { id: '8', name: '财务报表核查', author: '陈老师', subject: '会计审计', desc: '按表关键科目勾稽关系做动态检查，识别三表数据不一致项，输出异常清单。', calls: 61, rating: 4.6, scenes: ['企业财务风险分析'] },
+  { id: '9', name: '信用风险评估', author: '刘老师', subject: '风险管理', desc: '基于财务指标构建信用评分模型，输出违约概率估计和风险等级。', calls: 35, rating: 4.3, scenes: [] },
 ]
 
-const SUBJECT_TABS = ['全部', '金融学', '经济学', '管理科学', '会计学']
+const SUBJECT_TABS = ['全部', '公司金融', '量化投资', '资产管理', '风险管理', '学术科研', '会计审计']
 const STATS = [
   { num: '12', label: '位老师已发布智能体' },
   { num: '847', label: '次分析任务已完成' },
@@ -224,7 +227,7 @@ export function Marketplace() {
   const [activeTab, setActiveTab] = useState<'scenes' | 'agents'>('scenes')
 
   const filteredAgents = ALL_AGENTS.filter(a =>
-    activeSubject === '全部' || a.subject === activeSubject.replace('学', '').replace('科学', '')
+    activeSubject === '全部' || a.subject === activeSubject
   )
 
   return (
