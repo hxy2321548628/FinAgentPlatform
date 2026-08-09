@@ -84,5 +84,10 @@ xfs_quota -x -c state "$MOUNT_POINT" | grep -A2 -i 'project quota state' | grep 
 
 log "完成。$MOUNT_POINT 已是 XFS + prjquota，且已放行免密 xfs_quota"
 log "平台以普通用户跑时，.env 里需设 SANDBOX_QUOTA_COMMAND='sudo xfs_quota'"
+# compose 部署时 broker 在容器里调 xfs_quota，而它要打开这个块设备 ——
+# 没有设备节点的话每条命令都只往 stderr 打一句然后退出 0，配额一个都设不上。
+# loop 号每次挂载都可能变，因此这里现查现报，而不是写死在文档里
+log "compose 部署前把承载 workspace 的块设备 export 给 compose："
+printf '    export SANDBOX_QUOTA_DEVICE=%s\n' "$(findmnt -no SOURCE --target "$MOUNT_POINT")"
 log "重启后需再跑一次本脚本；要开机自动挂载，往 /etc/fstab 加："
 printf '    %s %s xfs loop,prjquota 0 0\n' "$IMAGE_PATH" "$MOUNT_POINT"

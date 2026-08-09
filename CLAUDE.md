@@ -61,6 +61,11 @@ cd app && uv run python -m worker.main                # 再开一个。不起它
 ```bash
 export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 
+# **要磁盘配额就必须给这个**：broker 在容器里调 xfs_quota，而它要打开承载 workspace
+# 的块设备。缺了设备节点，它的每条命令都只往 stderr 打一句然后**退出 0** ——
+# 配额一个都设不上。loop 挂载重启后会换号，所以现查
+export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
+
 # Prometheus 与 Grafana 的数据目录**必须先建好并归当前用户**，只需一次。
 # Docker 自动创建缺失的 bind mount 目录时属主是 root，而这两个容器以宿主用户跑 ——
 # 不建的话它们会因为写不进去反复重启，而 `up -d` 那一刻是绿的

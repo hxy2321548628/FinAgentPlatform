@@ -311,6 +311,14 @@ services:
     # 设 project quota 要 CAP_SYS_ADMIN
     cap_add:
       - SYS_ADMIN
+    # **光有 CAP_SYS_ADMIN 不够**：xfs_quota 要打开承载 workspace 的那个块设备，
+    # 而容器里默认没有它的设备节点 —— 缺了这一条，它的每条命令都只往 stderr 打
+    # 一句 `cannot setup path for mount … No such device` 然后**退出 0**，
+    # 于是配额一个都设不上而无人知晓（实测过，见 P4 计划 §8.13.2）。
+    # 设备用 `findmnt -no SOURCE --target <workspace 根>` 查，export 给 compose。
+    # 默认落在 /dev/null 上：没挂 XFS 的机器本来就不设配额，映射它是无害的空操作
+    devices:
+      - ${SANDBOX_QUOTA_DEVICE:-/dev/null}:${SANDBOX_QUOTA_DEVICE:-/dev/null}
     # 不对外暴露端口：只有同一个内部网络里的 api 够得着
     expose:
       - "8100"
