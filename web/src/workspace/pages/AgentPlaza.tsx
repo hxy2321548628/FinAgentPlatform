@@ -62,6 +62,40 @@ function AgentCard({ agent, onDetail, onUse }: { agent: Agent; onDetail: () => v
   )
 }
 
+// 推荐场景数据（在工作台广场顶部展示，链接到场景库）
+const QUICK_SCENES = [
+  { id: 'risk', icon: '🏦', name: '企业风险分析', desc: '上传财报，自动识别财务风险信号', subject: '金融学', uses: 127 },
+  { id: 'paper', icon: '📑', name: '论文方法鉴别', desc: '识别计量策略缺陷，生成审阅意见', subject: '经济学', uses: 89 },
+  { id: 'grant', icon: '📋', name: '课题申请诊断', desc: '对标已立项项目，找出结构差距', subject: '管理科学', uses: 64 },
+  { id: 'factor', icon: '📈', name: '量化因子研究', desc: '构建因子，检验 alpha 显著性', subject: '金融学', uses: 52 },
+]
+
+function QuickSceneCard({ scene, onClick }: { scene: typeof QUICK_SCENES[0]; onClick: () => void }) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: hovered ? 'var(--action-light)' : 'var(--surface)',
+        border: `1px solid ${hovered ? 'var(--action-border)' : 'var(--border)'}`,
+        borderRadius: 10, padding: '16px 18px', cursor: 'pointer',
+        transition: 'all 0.15s', flexShrink: 0, width: 200,
+        display: 'flex', flexDirection: 'column' as const, gap: 8,
+      }}
+    >
+      <div style={{ fontSize: 24 }}>{scene.icon}</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: hovered ? 'var(--action)' : 'var(--text-primary)' }}>{scene.name}</div>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{scene.desc}</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', background: 'var(--bg)', padding: '1px 7px', borderRadius: 4 }}>{scene.subject}</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>▶ {scene.uses} 次</span>
+      </div>
+    </div>
+  )
+}
+
 export function AgentPlaza() {
   const navigate = useNavigate()
   const [activeSubject, setActiveSubject] = useState('全部')
@@ -81,8 +115,9 @@ export function AgentPlaza() {
     })
   }
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '32px 36px', background: 'var(--bg)' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28 }}>
+    <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
+      {/* 页头 */}
+      <div style={{ padding: '28px 36px 20px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
           <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }}>// AGENT PLAZA</div>
           <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>智能体广场</h1>
@@ -90,7 +125,25 @@ export function AgentPlaza() {
         </div>
         <button onClick={() => navigate('/workspace/agents/publish')} style={{ padding: '9px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>+ 发布我的智能体</button>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap' as const, gap: 10 }}>
+      {/* 推荐场景区（横向滚动） */}
+      <div style={{ background: 'var(--bg)', borderBottom: '1px solid var(--border)', padding: '16px 0 20px' }}>
+        <div style={{ padding: '0 36px', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>精选分析场景</div>
+          <button onClick={() => navigate('/workspace/scenarios')} style={{ fontSize: 12, color: 'var(--action)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>查看全部场景 →</button>
+        </div>
+        <div style={{ display: 'flex', gap: 12, padding: '0 36px', overflowX: 'auto', scrollbarWidth: 'none' as const }}>
+          {QUICK_SCENES.map(scene => (
+            <QuickSceneCard
+              key={scene.id}
+              scene={scene}
+              onClick={() => navigate('/workspace/scenarios')}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div style={{ padding: '20px 36px 32px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap' as const, gap: 10 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           {SUBJECTS_FILTER.map(s => (
             <button key={s} onClick={() => setActiveSubject(s)} style={{ padding: '5px 14px', borderRadius: 20, border: '1px solid ' + (activeSubject === s ? 'var(--action)' : 'var(--border)'), background: activeSubject === s ? 'var(--action)' : 'var(--surface)', color: activeSubject === s ? '#fff' : 'var(--text-secondary)', fontSize: 12, fontWeight: activeSubject === s ? 600 : 400, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s' }}>{s}</button>
@@ -108,6 +161,7 @@ export function AgentPlaza() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
         {filtered.map(agent => <AgentCard key={agent.id} agent={agent} onDetail={() => setDetailAgent(agent)} onUse={() => handleUse(agent)} />)}
       </div>
+      </div>  {/* 关闭 padding wrapper */}
 
       {/* 详情侧抽屉 */}
       {detailAgent && (

@@ -5,10 +5,11 @@ const LOGO_PATH_1 = 'M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,
 const LOGO_PATH_2 = 'M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z'
 
 const NAV_LINKS = [
-  { to: '/',             label: '首页',   end: true },
-  { to: '/scenarios',    label: '研究范式' },
-  { to: '/capabilities', label: '技术底座' },
-  { to: '/data',         label: '数据要素' },
+  { to: '/',             label: '首页',     end: true },
+  { to: '/marketplace', label: '智能体市场' },
+  { to: '/scenarios',   label: '研究范式' },
+  { to: '/capabilities',label: '技术底座' },
+  { to: '/data',        label: '数据要素' },
 ]
 
 export function Navbar() {
