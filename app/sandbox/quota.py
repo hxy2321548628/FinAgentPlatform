@@ -7,7 +7,10 @@ LLM 生成的代码可以往里写满宿主机磁盘。这是威胁表「写满�
 不进容器的，绕开了一切容器级限制，而目录配额照样管得住。
 """
 
+import fcntl
 import logging
+import os
+import struct
 import subprocess
 import zlib
 from collections.abc import Sequence
@@ -31,9 +34,13 @@ PROJECT_ID_SPACE = 0x7FFFFFFF
 # `report -p -N -b` 每行的字段依次是 projid、已用、软限、硬限，块以 1KB 计
 HARD_LIMIT_FIELD = 3
 
-# `project -c` 对没认领的目录会打「project identifier is not set」
-# 与「project inheritance flag is not set」，认领成功时这两句都不出现
-UNCLAIMED_MARKER = "not set"
+# 认领结果直接从 inode 上读，不看 xfs_quota 说什么：它在容器里（没有块设备节点）
+# 每条命令都只往 stderr 打一句然后退出 0，stdout 是空的 —— 而空输出读不出对错。
+# FS_IOC_FSGETXATTR 取 struct fsxattr，前五个 u32 是 xflags/extsize/nextents/projid/cowextsize
+FS_IOC_FSGETXATTR = 0x801C581F
+FS_XFLAG_PROJINHERIT = 0x00000200
+FSXATTR_BYTE = 28
+FSXATTR_HEAD = "=5I"
 
 
 def _hard_limit(line: str, identifier: int) -> int:
@@ -139,22 +146,47 @@ class XfsQuota:
     def _confirm(self, identifier: int, workspace: Path) -> None:
         """回读一次，确认这个目录真的归这个 project，且它身上真的有硬上限。
 
-        **退出码在这里骗过两次**：探不到挂载点（loop 挂载重启后没挂回来）、
-        认领的路径不存在（含被引号毁掉的路径），xfs_quota 都是把错误打到 stderr
-        却退出 0 —— 于是 check=True 一次都不触发，配额一个都没设上而日志里
-        连一条记录都没有。判据因此取回读值，不取退出码。
+        **退出码在这里骗过三次**：探不到挂载点（loop 挂载重启后没挂回来）、
+        认领的路径不存在（含被 shell 引号毁掉的路径）、容器里没有块设备节点，
+        xfs_quota 都是把错误打到 stderr 却退出 0 —— 于是 check=True 一次都不触发，
+        配额一个都没设上而日志里连一条记录都没有。判据因此取回读值，不取退出码。
 
-        **两样都要查**：`limit` 是设在 projid 上的，目录没认领它照样成功，
-        单看限额会得到一个「有上限但没人受它约束」的假绿。
+        **两样都要查，且都要拿到正面证据**：`limit` 是设在 projid 上的，目录没认领
+        它照样成功，单看限额会得到「有上限但没人受它约束」的假绿；而「没有报错」
+        同样不是证据 —— 容器里那三条命令的 stdout 全是空的。
         """
-        claim = self._run(f"project -c -p {workspace} {identifier}")
-        if UNCLAIMED_MARKER in claim:
-            message = f"配额没有生效（projid {identifier}）：{workspace} 没有被认领，xfs_quota 认不认得这个路径"
+        claimed, inheriting = self._claimed(workspace)
+        if claimed != identifier or not inheriting:
+            message = (
+                f"配额没有生效（projid {identifier}）：{workspace} 没有被认领 —— "
+                f"inode 上读到的 projid 是 {claimed}，继承标志 {inheriting}"
+            )
             raise QuotaError(message)
         report = self._run(f"report -p -N -b -n -L {identifier} -U {identifier}")
         if not any(_hard_limit(line, identifier) > 0 for line in report.splitlines()):
             message = f"配额没有生效（projid {identifier}）：回读不到硬上限，确认 {self._mount_point} 以 prjquota 挂载"
             raise QuotaError(message)
+
+    def _claimed(self, workspace: Path) -> tuple[int, bool]:
+        """读目录 inode 上的 project id 与继承标志。
+
+        Raises:
+            QuotaError: 这个目录的 projid 读不出来。
+        """
+        try:
+            descriptor = os.open(workspace, os.O_RDONLY)
+        except OSError as exc:
+            message = f"配额没有生效：打不开 {workspace}：{exc}"
+            raise QuotaError(message) from exc
+        try:
+            raw = fcntl.ioctl(descriptor, FS_IOC_FSGETXATTR, bytes(FSXATTR_BYTE))
+        except OSError as exc:
+            message = f"配额没有生效：读不到 {workspace} 上的 projid：{exc}"
+            raise QuotaError(message) from exc
+        finally:
+            os.close(descriptor)
+        xflag, _extsize, _nextents, projid, _cowextsize = struct.unpack(FSXATTR_HEAD, raw[:20])
+        return projid, bool(xflag & FS_XFLAG_PROJINHERIT)
 
     def _run(self, subcommand: str) -> str:
         argument = [*self._command, "-x", "-c", subcommand, str(self._mount_point)]

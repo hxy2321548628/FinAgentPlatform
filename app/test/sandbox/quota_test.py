@@ -1,7 +1,8 @@
 """配额的测试。
 
-派生与命令拼装是纯逻辑，这里全覆盖；「配额真的在 5GB 处触发 ENOSPC」需要 root
-与真 XFS，在 deploy/test/hostile.sh 里验。
+派生与命令拼装是纯逻辑，这里全覆盖。「配额真的触发 ENOSPC」那条也在这里，且
+**走产品代码、以普通用户身份写**：deploy/test/hostile.sh 自己拼命令，验的是
+「XFS 的机制成立」而不是「平台拼出来的命令对不对」，两者缺一不可。
 """
 
 import os
@@ -60,6 +61,14 @@ class RecordingQuota(XfsQuota):
         if not subcommand.startswith("report"):
             return ""
         return f"#{subcommand.split()[-1]} 0 0 5242880 00 [--------]"
+
+    def _claimed(self, workspace: Path) -> tuple[int, bool]:
+        """认领成功：把刚才 `project -s` 报的那个 projid 原样答回去。
+
+        子命令取倒数第二个元素而不是第 4 个 —— 命令前缀可能是 `sudo xfs_quota`
+        两段，写死下标会在那条用例上错位。
+        """
+        return int(self.ran[0][-2].split()[-1]), True
 
 
 def test_assign_claims_the_directory_then_sets_the_limit(tmp_path: Path) -> None:
@@ -122,34 +131,66 @@ def test_a_missing_quota_binary_raises(tmp_path: Path) -> None:
 
 # ------------------------------------------------------------------ 回读
 class ReportingQuota(XfsQuota):
-    """按给定的输出回答两步回读，别的子命令一概静默成功。"""
+    """按给定的报表回答限额回读，认领结果由 `claimed` 给定。
 
-    def __init__(self, report: str, claim: str = "", **argument: object) -> None:
+    两面分开给：一面是 xfs_quota 嘴上说的（报表），一面是文件系统上的事实
+    （inode 里的 projid）—— 实测这两面会不一致，而只信前者就会放过去。
+    """
+
+    def __init__(self, report: str, claimed: tuple[int, bool] = (0, False), **argument: object) -> None:
         super().__init__(**argument)  # type: ignore[arg-type]
         self._report = report
-        self._claim = claim
+        self._claimed_value = claimed
 
     def _run(self, subcommand: str) -> str:
-        if subcommand.startswith("report"):
-            return self._report
-        return self._claim if subcommand.startswith("project -c") else ""
+        return self._report if subcommand.startswith("report") else ""
+
+    def _claimed(self, workspace: Path) -> tuple[int, bool]:
+        return self._claimed_value
 
 
 def test_a_workspace_that_never_got_claimed_raises(tmp_path: Path) -> None:
     """**`limit` 是设在 projid 上的，目录没认领它照样成功。**
 
-    只回读限额会得到「有上限但没人受它约束」的假绿 —— 带空格的路径正是这样：
-    xfs_quota 在空格处把路径截断，认领的是一个不存在的目录，而它退出 0。
+    只回读限额会得到「有上限但没人受它约束」的假绿。两条真实路径都长这样：
+    带空格的路径被 xfs_quota 在空格处截断；容器里没有块设备节点时三条命令
+    全部只往 stderr 打一句然后退出 0。
     """
     identifier = project_id("thread-1")
     quota = ReportingQuota(
         f"#{identifier} 0 0 5242880 00 [--------]",
-        claim=f"{tmp_path} - project identifier is not set (inode=0, tree={identifier})",
+        claimed=(0, False),
         mount_point=tmp_path,
     )
 
     with pytest.raises(QuotaError, match="没有被认领"):
         quota.assign("thread-1", Path("/data/my sandbox/thread-1"))
+
+
+def test_a_workspace_claimed_by_another_project_raises(tmp_path: Path) -> None:
+    """认领上了但归错 project，等于受的是别人那份配额的约束。"""
+    identifier = project_id("thread-1")
+    quota = ReportingQuota(
+        f"#{identifier} 0 0 5242880 00 [--------]",
+        claimed=(identifier + 1, True),
+        mount_point=tmp_path,
+    )
+
+    with pytest.raises(QuotaError, match="没有被认领"):
+        quota.assign("thread-1", tmp_path / "thread-1")
+
+
+def test_a_workspace_without_the_inheritance_flag_raises(tmp_path: Path) -> None:
+    """继承标志没设的话，目录本身归了 project，而它里面新建的文件不归。"""
+    identifier = project_id("thread-1")
+    quota = ReportingQuota(
+        f"#{identifier} 0 0 5242880 00 [--------]",
+        claimed=(identifier, False),
+        mount_point=tmp_path,
+    )
+
+    with pytest.raises(QuotaError, match="没有被认领"):
+        quota.assign("thread-1", tmp_path / "thread-1")
 
 
 def test_a_quota_command_that_exits_zero_without_setting_anything_raises(tmp_path: Path) -> None:
@@ -167,7 +208,7 @@ def test_a_quota_command_that_exits_zero_without_setting_anything_raises(tmp_pat
 def test_a_project_reported_with_a_zero_hard_limit_raises(tmp_path: Path) -> None:
     """硬上限 0 就是「没有上限」，这个 project 照样能写满宿主机磁盘。"""
     identifier = project_id("thread-1")
-    quota = ReportingQuota(f"#{identifier} 0 0 0 00 [--------]", mount_point=tmp_path)
+    quota = ReportingQuota(f"#{identifier} 0 0 0 00 [--------]", claimed=(identifier, True), mount_point=tmp_path)
 
     with pytest.raises(QuotaError, match="配额没有生效"):
         quota.assign("thread-1", tmp_path / "thread-1")
@@ -175,7 +216,9 @@ def test_a_project_reported_with_a_zero_hard_limit_raises(tmp_path: Path) -> Non
 
 def test_a_report_about_some_other_project_raises(tmp_path: Path) -> None:
     """认的必须是本会话那个 projid —— 别人身上有配额不等于这一个有。"""
-    quota = ReportingQuota("#999999 0 0 5242880 00 [--------]", mount_point=tmp_path)
+    quota = ReportingQuota(
+        "#999999 0 0 5242880 00 [--------]", claimed=(project_id("thread-1"), True), mount_point=tmp_path
+    )
 
     with pytest.raises(QuotaError, match="配额没有生效"):
         quota.assign("thread-1", tmp_path / "thread-1")
@@ -183,7 +226,7 @@ def test_a_report_about_some_other_project_raises(tmp_path: Path) -> None:
 
 def test_a_project_reported_with_a_real_hard_limit_passes(tmp_path: Path) -> None:
     identifier = project_id("thread-1")
-    quota = ReportingQuota(f"#{identifier} 0 0 5242880 00 [--------]", mount_point=tmp_path)
+    quota = ReportingQuota(f"#{identifier} 0 0 5242880 00 [--------]", claimed=(identifier, True), mount_point=tmp_path)
 
     quota.assign("thread-1", tmp_path / "thread-1")
 
@@ -195,7 +238,7 @@ def test_the_read_back_asks_only_about_this_project(tmp_path: Path) -> None:
 
     quota.assign("thread-1", tmp_path / "thread-1")
 
-    assert quota.ran[3][3] == f"report -p -N -b -n -L {identifier} -U {identifier}"
+    assert quota.ran[2][3] == f"report -p -N -b -n -L {identifier} -U {identifier}"
 
 
 # ------------------------------------------------------------------ 不设配额
