@@ -12,6 +12,7 @@ interface Thread {
 
 const MOCK_THREADS: Thread[] = [
   { id: '1', title: '新能源行业波动率分析', time: '进行中', status: 'running' },
+  { id: 'multi', title: '【多智能体】公司全面风险评估', time: '昨天 09:15', status: 'done' },
   { id: '2', title: 'A 股收益归因分解', time: '昨天 14:32', status: 'done' },
   { id: '3', title: 'Fama-French 三因子复现', time: '2 天前', status: 'done' },
   { id: '4', title: '持仓集中度风险分析', time: '3 天前', status: 'failed' },

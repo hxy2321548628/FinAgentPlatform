@@ -198,7 +198,11 @@ export function MyAgents() {
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                   {agent.status === 'created' && !agent.isDeploying && (
                     <>
-                      <button onClick={() => navigate('/workspace/my-agents/create')} style={{ padding: '6px 14px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>编辑</button>
+                      <button
+                        onClick={() => navigate('/workspace/chat', { state: { agentId: agent.id, agentName: agent.name, agentAuthor: agent.subject, agentDataNeeded: '' } })}
+                        style={{ padding: '6px 14px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                      >直接对话</button>
+                      <button onClick={() => navigate('/workspace/my-agents/create')} style={{ padding: '6px 14px', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>编辑</button>
                       <button onClick={() => navigate('/workspace/agents/publish')} style={{ padding: '6px 14px', background: 'transparent', color: 'var(--action)', border: '1px solid var(--action-border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>发布到广场</button>
                     </>
                   )}

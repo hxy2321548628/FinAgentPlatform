@@ -111,6 +111,30 @@ export function AgentPlaza() {
     })
   }
 
+  const [showPublishModal, setShowPublishModal] = useState(false)
+  const [publishSelectedId, setPublishSelectedId] = useState('')
+  const [publishDesc, setPublishDesc] = useState('')
+  const [publishDataNeeded, setPublishDataNeeded] = useState('')
+  const [publishSubmitted, setPublishSubmitted] = useState(false)
+
+  const createdAgents = [
+    { id: '5', name: '股价动量因子筛选', subject: '量化投资' },
+    { id: '7', name: '舆情监控 Agent', subject: '风险管理' },
+  ]
+
+  const handlePublishSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!publishSelectedId || !publishDesc.trim()) return
+    setPublishSubmitted(true)
+    setTimeout(() => {
+      setShowPublishModal(false)
+      setPublishSubmitted(false)
+      setPublishSelectedId('')
+      setPublishDesc('')
+      setPublishDataNeeded('')
+    }, 1500)
+  }
+
   return (
     <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
       {/* 页头 */}
@@ -121,7 +145,7 @@ export function AgentPlaza() {
           <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>浏览并使用学院老师发布的分析智能体，共 {MOCK_AGENTS.length} 个</p>
         </div>
         <button
-          onClick={() => navigate('/workspace/agents/publish')}
+          onClick={() => setShowPublishModal(true)}
           style={{ padding: '9px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}
         >+ 发布我的智能体</button>
       </div>
@@ -270,6 +294,69 @@ export function AgentPlaza() {
                 使用此 Agent 开始分析 →
               </button>
             </div>
+          </div>
+        </>
+      )}
+
+      {/* 发布弹窗 */}
+      {showPublishModal && (
+        <>
+          <div onClick={() => setShowPublishModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.4)', backdropFilter: 'blur(4px)', zIndex: 300 }} />
+          <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 32, width: 480, zIndex: 301, boxShadow: '0 20px 60px rgba(11,46,92,0.2)' }}>
+            {publishSubmitted ? (
+              <div style={{ textAlign: 'center' as const, padding: '24px 0' }}>
+                <div style={{ fontSize: 36, marginBottom: 12 }}>✓</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>已提交审核</div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>审核通过后将出现在广场</div>
+              </div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+                  <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>发布智能体到广场</div>
+                  <button onClick={() => setShowPublishModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>×</button>
+                </div>
+                <form onSubmit={handlePublishSubmit}>
+                  <div style={{ marginBottom: 18 }}>
+                    <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }}>
+                      选择要发布的智能体 <span style={{ color: '#DC2626' }}>*</span>
+                    </label>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+                      只有「已创建」状态的智能体可以申请发布到广场
+                      {createdAgents.length === 0 && (
+                        <span>，没有已创建的智能体？<button type="button" onClick={() => { setShowPublishModal(false); navigate('/workspace/my-agents/create') }} style={{ background: 'none', border: 'none', color: 'var(--action)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, padding: 0, textDecoration: 'underline' }}>去创建智能体</button></span>
+                      )}
+                    </div>
+                    {createdAgents.length > 0 ? (
+                      <select
+                        value={publishSelectedId}
+                        onChange={e => setPublishSelectedId(e.target.value)}
+                        style={{ width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: publishSelectedId ? 'var(--text-primary)' : 'var(--text-muted)', outline: 'none', cursor: 'pointer', boxSizing: 'border-box' as const }}
+                      >
+                        <option value="">-- 请选择 --</option>
+                        {createdAgents.map(a => <option key={a.id} value={a.id}>{a.name}（{a.subject}）</option>)}
+                      </select>
+                    ) : (
+                      <div style={{ padding: '10px 14px', background: 'var(--bg)', border: '1px dashed var(--border)', borderRadius: 7, fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' as const }}>
+                        暂无已创建的智能体，<button type="button" onClick={() => { setShowPublishModal(false); navigate('/workspace/my-agents/create') }} style={{ background: 'none', border: 'none', color: 'var(--action)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, padding: 0, textDecoration: 'underline' }}>去创建智能体</button>
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ marginBottom: 18 }}>
+                    <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>广场展示描述 <span style={{ color: '#DC2626' }}>*</span></label>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>简短说明这个智能体能解决什么问题，200 字以内</div>
+                    <textarea value={publishDesc} onChange={e => setPublishDesc(e.target.value)} placeholder="如：对财报关键科目进行稽核式比率检查，识别异常项并输出清单" maxLength={200} style={{ width: '100%', minHeight: 80, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', resize: 'vertical' as const, background: 'var(--surface)', outline: 'none', boxSizing: 'border-box' as const, color: 'var(--text-primary)' }} />
+                  </div>
+                  <div style={{ marginBottom: 24 }}>
+                    <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>所需数据</label>
+                    <input value={publishDataNeeded} onChange={e => setPublishDataNeeded(e.target.value)} placeholder="如：财报 CSV / Excel" style={{ width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', outline: 'none', boxSizing: 'border-box' as const, color: 'var(--text-primary)' }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                    <button type="button" onClick={() => setShowPublishModal(false)} style={{ padding: '9px 20px', background: 'var(--surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
+                    <button type="submit" disabled={!publishSelectedId || !publishDesc.trim()} style={{ padding: '9px 20px', background: (!publishSelectedId || !publishDesc.trim()) ? 'var(--text-muted)' : 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: (!publishSelectedId || !publishDesc.trim()) ? 'default' : 'pointer', fontFamily: 'inherit' }}>提交审核</button>
+                  </div>
+                </form>
+              </>
+            )}
           </div>
         </>
       )}
