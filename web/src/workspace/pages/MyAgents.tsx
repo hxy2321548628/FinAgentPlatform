@@ -32,10 +32,20 @@ const STATUS_STYLE: Record<AgentStatus, { bg: string; color: string }> = {
 }
 
 const MOCK_MY_AGENTS: MyAgent[] = [
-  { id: '1', name: '企业财务异常检测', subject: '金融学', type: 'prompt',   status: 'published', calls: 96, rating: 4.8, publishedAt: '2026-07-20' },
-  { id: '2', name: '创新点对比分析',   subject: '金融学', type: 'prompt',   status: 'reviewing', submittedAt: '2026-08-07 14:22' },
-  { id: '3', name: '股价动量因子筛选', subject: '金融学', type: 'prompt',   status: 'created' },
-  { id: '4', name: '财报 OCR 解析',   subject: '会计学', type: 'deployed', status: 'created', isDeploying: true },
+  // 已发布（申请了场景库）
+  { id: '1', name: '企业财务异常检测',  subject: '金融学', type: 'prompt',   status: 'published', calls: 96,  rating: 4.8, publishedAt: '2026-07-20', applyingScenario: true },
+  // 已发布（正常）
+  { id: '2', name: '计量方法鉴别器',    subject: '经济学', type: 'prompt',   status: 'published', calls: 41,  rating: 4.5, publishedAt: '2026-08-01' },
+  // 待审核（申请发布广场，等管理员审核）
+  { id: '3', name: '创新点对比分析',    subject: '金融学', type: 'prompt',   status: 'reviewing', submittedAt: '2026-08-09 14:22' },
+  // 待审核（独立部署 agent 申请发布广场）
+  { id: '4', name: '财报实时爬取 Agent', subject: '会计学', type: 'deployed', status: 'reviewing', submittedAt: '2026-08-09 16:05' },
+  // 已创建（普通 Prompt，可编辑和发布）
+  { id: '5', name: '股价动量因子筛选',  subject: '金融学', type: 'prompt',   status: 'created' },
+  // 已创建（独立部署，部署中过渡态）
+  { id: '6', name: '财报 OCR 解析',    subject: '会计学', type: 'deployed', status: 'created', isDeploying: true },
+  // 已创建（独立部署，已部署完成，可正常使用）
+  { id: '7', name: '舆情监控 Agent',   subject: '金融学', type: 'deployed', status: 'created', isDeploying: false },
 ]
 
 const TABS: AgentStatus[] = ['created', 'reviewing', 'published']
