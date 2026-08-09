@@ -148,7 +148,7 @@ export function CreateAgent() {
                 ))}
               </div>
               <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 16px', fontSize: 13, color: '#92400E', lineHeight: 1.7 }}>
-                💡 联系时请说明：智能体功能需求、需要接入的外部数据源或工具、预期输入输出格式。联系后点击「确认创建」，智能体将以「部署中」状态保存。
+                💡 点击「确认创建」后，智能体将以「部署中」状态保存至「我的智能体」，同时请联系以上负责人说明需求（功能描述、所需数据源或工具、预期输入输出格式）。负责人完成部署后会将状态更新为「已创建」，届时即可正常调用和发布。
               </div>
             </div>
           )}
