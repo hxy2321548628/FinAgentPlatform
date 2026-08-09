@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 // 状态：草稿 → 已创建 → 待审核（申请发布广场）→ 已发布
-// 下线后回到"已创建"，申请场景库在"已发布"状态标记
-type AgentStatus = 'draft' | 'created' | 'reviewing' | 'published'
+// 独立部署 agent 创建后状态为 deploying
+type AgentStatus = 'draft' | 'created' | 'deploying' | 'reviewing' | 'published'
 type AgentType = 'prompt' | 'deployed'
 
 interface MyAgent {
@@ -20,14 +20,16 @@ interface MyAgent {
 }
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
-  draft: '草稿',
-  created: '已创建',
+  draft:     '草稿',
+  created:   '已创建',
+  deploying: '部署中',
   reviewing: '待审核',
   published: '已发布',
 }
 const STATUS_STYLE: Record<AgentStatus, { bg: string; color: string }> = {
   draft:     { bg: 'var(--bg)',   color: 'var(--text-muted)' },
   created:   { bg: '#EFF6FF',    color: '#2563EB' },
+  deploying: { bg: '#F5F3FF',    color: '#7C3AED' },
   reviewing: { bg: '#FFFBEB',    color: 'var(--status-warn)' },
   published: { bg: '#ECFDF5',    color: 'var(--status-done)' },
 }
@@ -36,11 +38,11 @@ const MOCK_MY_AGENTS: MyAgent[] = [
   { id: '1', name: '企业财务异常检测', subject: '金融学', type: 'prompt',    status: 'published', calls: 96, rating: 4.8, publishedAt: '2026-07-20' },
   { id: '2', name: '创新点对比分析',   subject: '金融学', type: 'prompt',    status: 'reviewing', submittedAt: '2026-08-07 14:22' },
   { id: '3', name: '股价动量因子筛选', subject: '金融学', type: 'prompt',    status: 'created' },
-  { id: '4', name: '财报 OCR 解析',   subject: '会计学', type: 'deployed',  status: 'created' },
+  { id: '4', name: '财报 OCR 解析',   subject: '会计学', type: 'deployed',  status: 'deploying' },
   { id: '5', name: '量化回测框架',     subject: '金融学', type: 'prompt',    status: 'draft' },
 ]
 
-const TABS: AgentStatus[] = ['draft', 'created', 'reviewing', 'published']
+const TABS: AgentStatus[] = ['draft', 'created', 'deploying', 'reviewing', 'published']
 
 export function MyAgents() {
   const navigate = useNavigate()
@@ -69,6 +71,7 @@ export function MyAgents() {
   const emptyText: Record<AgentStatus, string> = {
     draft:     '没有草稿',
     created:   '还没有已创建的智能体',
+    deploying: '没有正在部署的智能体',
     reviewing: '没有待审核的智能体',
     published: '还没有发布到广场的智能体',
   }
@@ -170,6 +173,9 @@ export function MyAgents() {
                       <button onClick={() => navigate('/workspace/my-agents/create')} style={{ padding: '6px 14px', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>编辑</button>
                       <button onClick={() => handleOffline(agent.id)} style={{ padding: '6px 14px', background: 'transparent', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>下线</button>
                     </>
+                  )}
+                  {agent.status === 'deploying' && (
+                    <span style={{ fontSize: 12, color: '#7C3AED', padding: '6px 0' }}>🚀 后台部署中，请等待通知</span>
                   )}
                   {agent.status === 'reviewing' && (
                     <span style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>等待审核</span>
