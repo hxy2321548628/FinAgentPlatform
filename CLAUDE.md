@@ -90,12 +90,16 @@ bash deploy/test/p3.sh                             # 七条全跑（有 LLM 费�
 SKIP_LLM=1 SKIP_P2=1 bash deploy/test/p3.sh        # 只跑免费的五条，约 3 分钟
 ```
 
-**两个 cron 任务**（都可重跑，删/改的都是「早于某个时点」的东西）：
+**三个 cron 任务**（都可重跑）：
 
 ```bash
 cd app && uv run python -m store.retention   # 事件与 checkpoint 的保留期清理
 cd app && uv run python -m run.approval      # 挂超过 24 小时的待审批转 cancelled
+cd app && uv run python -m run.reaper        # 库里还活着、队列里已没有的 run 转 failed(ORPHANED)
 ```
+
+**收割器的判据是「队列里还有没有它」，不是「跑了多久」** —— 一次分析本来就可能跑几十分钟。
+它同时看 pending 列表与还没投递的消息：只看 pending 的话，worker 满负荷时排着队的 run 会被整批错杀。
 
 `.env` 在**仓库根**（不在 `app/`），业务代码一律走 `pydantic_settings.BaseSettings` 读取，不直接 `os.getenv`。
 

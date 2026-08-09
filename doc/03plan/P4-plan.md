@@ -526,7 +526,7 @@ resumed = task.decisions is not None or start is RunStart.RESUMED
 - `RunRepository.unfinished()` **没有任何生产调用方**，只剩定义与迁移里的索引注释。它的 docstring 明写「调用方是 worker 的启动路径」，而 `worker/runtime.py` 与 `worker/main.py` 里没有任何回扫动作。**崩溃恢复完全靠 Redis 的 pending 列表**（`XAUTOCLAIM`），库回扫这一层从来没接上 —— 后果见 §8.6.3。
 - `run_events` 里有 **1241 条孤儿事件**（对应的 run 不在 `runs` 表里）。已用删除前的备份逐一核对过：**它们一条也不涉及本次删掉的 142 个 run**，是更早的历史遗留。`run_events` 对 `runs` 没有外键，所以这种孤儿不会被数据库拦住。
 
-**平台仍然没有僵尸 run 的自动清理**（唯一的清扫器 `run/approval.py` 只管 `waiting_approval`）。这次是手工清的，下一次验收 kill 掉 worker 还会再攒出来。真要修，形态是现成的：照 `run/approval.py` 那个 cron 的样子，把「活着但超时未动」的 run 转 `cancelled`。
+**2026-08-09 已修**：`run/reaper.py`，第三个 cron。判据不是当初设想的「活着但超时未动」—— 那会误杀一次正常的长分析，见 §8.6.3。
 
 #### 8.6.3 顺着僵尸问出来的：一个 worker 挂了，另一个接得住吗
 
@@ -558,7 +558,31 @@ resumed = task.decisions is not None or start is RunStart.RESUMED
 
 这三处任何一处抛，异常冒到 `_handle`，那里 `logger.exception` 记一笔然后照样 ack。**此后没有任何东西会再碰这个 run** —— 它不在 pending 列表里，而库回扫那一层（`unfinished()`）没有调用方。教师看到的是一个永远停在「排队中」或「执行中」的分析。
 
-要补的话形态很清楚：worker 启动时调一次 `unfinished()`，把查出来的 run 重新投进队列。`start()` 的条件更新与 `_cancel.is_raised()` 的开跑前检查已经保证了重投是安全的 —— 缺的只是触发它的那一下。**本期不做**（P4 是可观测性，不是恢复语义），登记在此。
+**2026-08-09 已补，但不是用当初设想的办法。** 原方案（worker 启动时调 `unfinished()` 重投）查下去发现有两处走不通：
+
+| 挡住它的 | 具体是什么 |
+|---|---|
+| **多副本双重执行** | compose 里 `replicas: 2`。两边同时回扫、同时重投，第二个 worker 的 `start()` 会撞上 `running → running` 拿到 `RESUMED` 而照跑不误 —— 同一个 run 并发跑两遍，共用一个 thread 的沙箱、写同一份 checkpoint |
+| **重投就是自动重试** | 而 `run/executor.py` 的模块 docstring 明写「重不重试由人决定」。（顺带查出架构 §5.4 设计的是「run 级自动重试上限 1 次」，与实现对不上，**那条分叉尚未裁决**，已就地登记在架构 §5.4） |
+
+**改成了单进程 cron `run/reaper.py`，把孤儿判成 `failed` 且 `retryable=true`** —— 那正是这个项目自己把决定权交回给人的机制，前端据此显示重试按钮。两个问题一起没有：单进程没有副本竞争，判失败不是重试。
+
+**判据只有一条：队列里还有没有它。** 不能用「跑了多久」代替 —— 一次分析本来就可能跑几十分钟，而 pending 列表里有健康 worker 每 15 秒续的命，那才是活着的证据。「在队列里」同时包含两种：
+
+- **pending 列表里的** —— 有人领走还没 ack；
+- **还没投递的** —— worker 并发满了的时候，`queued` 的 run 会合法地在流里等很久。少了这一半，一次积压就会把整批还没轮到的 run 整批错杀。
+
+再加一段十分钟的宽限期，挡的是「先读库、再读队列」这两步之间的时间差。
+
+**真实部署上做过完整的三态验证**（同一个 run，只改队列里那条消息的状态）：
+
+| 消息状态 | 收割器 | run 落到 |
+|---|---|---|
+| 还没投递 | 不动 | `running` |
+| pending（有人拿着） | 不动 | `running` |
+| 已 ack | 收割 | `failed` / `ORPHANED` |
+
+**第三行是关键**：没有它，前两行的「0 个」也可能只是因为这个收割器什么都不收。事件流里确实推出了 `run.failed` 且 `retryable: true`，重跑一次是 0 个。
 
 ### 8.7 步骤六：OTel Collector + Tempo，一个 run 的完整 trace
 
