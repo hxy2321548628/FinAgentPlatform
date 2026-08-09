@@ -83,7 +83,7 @@ function WorkspaceTree({ files }: { files: WorkspaceFile[] }) {
   const rootFiles = files.filter(f => !f.isOutput)
   return (
     <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
-      <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.2em', color: 'var(--text-muted)', marginBottom: 10 }}>// WORKSPACE</div>
+      <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.2em', color: 'var(--text-muted)', marginBottom: 10 }}>// 分析产物</div>
       {outputFiles.filter(f => f.type === 'png').map(f => (
         <div key={f.name} style={{ marginBottom: 10 }}>
           <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 120, padding: 12, color: 'var(--text-muted)', fontSize: 12 }}>
