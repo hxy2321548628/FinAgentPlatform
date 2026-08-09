@@ -41,7 +41,7 @@ const MOCK_PENDING_AGENTS: PendingAgent[] = [
     id: '5', name: '课题申请书诊断', author: '陈老师', subject: '管理科学', type: 'prompt',
     desc: '对国家自然科学基金申请书进行结构诊断，对比同领域已立项项目，识别差距并给出修改建议。',
     dataNeeded: '申请书 PDF',
-    prompt: '你是一位经验丰富的科研项目评审专家。\n\n请对上传的申请书进行以下诊断：\n1. 检查立项依据的论证逻辑：政策背景 → 研究缺口 → 本研究切入点是否成立\n2. 核查研究内容与研究目标的对应关系，是否存在目标虚高或内容不足\n3. 比对研究方案的技术路线是否清晰、创新点是否有文献支撑\n4. 输出差距清单，每条附具体修改建议，并引用同类已立项项目的处理方式',
+    prompt: '你是一位经验丰富的科研项目评审专家。\n\n请对上传的申请书进行以下诊断：\n1. 检查立项依据的论证逻辑：政策背景 → 研究缺口 → 本研究切入点是否成立\n2. 核查研究内容与研究目标的对应关系，是否存在目标虚高或内容不足\n3. 比对研究方案的技术路线是否清晰、创新点是否有文献支撑\n4. 输出差距清单，每条附具体修改建议',
     submittedAt: '2026-08-09 11:20',
   },
 ]
@@ -59,12 +59,39 @@ export function AdminAgents() {
   const [agents, setAgents] = useState(MOCK_PENDING_AGENTS)
   const [detailId, setDetailId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+  const [rejectError, setRejectError] = useState(false)
+  const [showApproveConfirm, setShowApproveConfirm] = useState<string | null>(null)
+
   const detailAgent = agents.find(a => a.id === detailId)
 
-  const handleApprove = (id: string) => { setAgents(prev => prev.filter(a => a.id !== id)); if (detailId === id) setDetailId(null) }
-  const handleReject = (id: string) => { setAgents(prev => prev.filter(a => a.id !== id)); if (detailId === id) { setDetailId(null); setRejectReason('') } }
+  const handleApprove = (id: string) => {
+    setAgents(prev => prev.filter(a => a.id !== id))
+    if (detailId === id) setDetailId(null)
+    setShowApproveConfirm(null)
+  }
 
-  const thStyle: React.CSSProperties = { padding: '10px 16px', textAlign: 'left', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid var(--border)', background: 'var(--bg)' }
+  const handleReject = (id: string) => {
+    if (!rejectReason.trim()) {
+      setRejectError(true)
+      return
+    }
+    setRejectError(false)
+    setAgents(prev => prev.filter(a => a.id !== id))
+    if (detailId === id) { setDetailId(null); setRejectReason('') }
+  }
+
+  const openDetail = (id: string) => {
+    setDetailId(id)
+    setRejectReason('')
+    setRejectError(false)
+  }
+
+  const thStyle: React.CSSProperties = {
+    padding: '10px 16px', textAlign: 'left', fontSize: 11,
+    color: 'var(--text-muted)', fontWeight: 600,
+    textTransform: 'uppercase', letterSpacing: '0.08em',
+    borderBottom: '1px solid var(--border)', background: 'var(--bg)',
+  }
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px', background: 'var(--bg)' }}>
@@ -77,6 +104,7 @@ export function AdminAgents() {
           {agents.length} 个待审核
         </span>
       </div>
+
       {agents.length === 0 ? (
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '60px 20px', textAlign: 'center' as const }}>
           <div style={{ fontSize: 32, marginBottom: 12 }}>✓</div>
@@ -85,7 +113,9 @@ export function AdminAgents() {
       ) : (
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead><tr>{['智能体名称','类型','创建者','学科','提交时间','操作'].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
+            <thead>
+              <tr>{['智能体名称', '类型', '创建者', '学科', '提交时间', '操作'].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
+            </thead>
             <tbody>
               {agents.map((agent, i) => (
                 <tr key={agent.id} style={{ borderBottom: i < agents.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
@@ -99,11 +129,11 @@ export function AdminAgents() {
                   <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{agent.subject}</td>
                   <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{agent.submittedAt}</td>
                   <td style={{ padding: '12px 16px' }}>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button onClick={() => setDetailId(agent.id)} style={{ padding: '5px 12px', background: 'transparent', color: 'var(--action)', border: '1px solid var(--action-border)', borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>查看详情</button>
-                      <button onClick={() => handleApprove(agent.id)} style={{ padding: '5px 12px', background: 'var(--status-done)', color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>通过</button>
-                      <button onClick={() => handleReject(agent.id)} style={{ padding: '5px 12px', background: 'transparent', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>拒绝</button>
-                    </div>
+                    {/* 只有一个蓝色「审核」按钮 */}
+                    <button
+                      onClick={() => openDetail(agent.id)}
+                      style={{ padding: '5px 14px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                    >审核</button>
                   </td>
                 </tr>
               ))}
@@ -111,10 +141,13 @@ export function AdminAgents() {
           </table>
         </div>
       )}
+
+      {/* 审核侧抽屉 */}
       {detailAgent && (
         <>
           <div onClick={() => setDetailId(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.3)', zIndex: 200 }} />
-          <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 480, background: 'var(--surface)', borderLeft: '1px solid var(--border)', zIndex: 201, display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 24px rgba(11,46,92,0.12)' }}>
+          <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 520, background: 'var(--surface)', borderLeft: '1px solid var(--border)', zIndex: 201, display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 24px rgba(11,46,92,0.12)' }}>
+            {/* 抽屉头 */}
             <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{detailAgent.name}</div>
@@ -124,26 +157,80 @@ export function AdminAgents() {
               </div>
               <button onClick={() => setDetailId(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>×</button>
             </div>
+
+            {/* 抽屉内容 */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
               <InfoRow label="创建者" value={detailAgent.author} />
               <InfoRow label="学科" value={detailAgent.subject} />
               <InfoRow label="所需数据" value={detailAgent.dataNeeded} />
+              <InfoRow label="提交时间" value={detailAgent.submittedAt} />
+
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>功能描述</div>
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>{detailAgent.desc}</div>
               </div>
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 8 }}>系统提示词</div>
-                <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '12px 14px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-secondary)', lineHeight: 1.8, whiteSpace: 'pre-wrap' as const }}>{detailAgent.prompt}</div>
+
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 8 }}>
+                  {detailAgent.type === 'deployed' ? '部署需求说明' : '系统提示词'}
+                </div>
+                <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '12px 14px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-secondary)', lineHeight: 1.8, whiteSpace: 'pre-wrap' as const }}>
+                  {detailAgent.prompt}
+                </div>
               </div>
+
+              {/* 拒绝理由输入 */}
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 8 }}>拒绝理由（可选）</div>
-                <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="填写拒绝理由，将通知给创建者..." style={{ width: '100%', minHeight: 80, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', resize: 'vertical' as const, background: 'var(--surface)', outline: 'none', boxSizing: 'border-box' as const, color: 'var(--text-primary)' }} />
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6 }}>
+                  拒绝理由
+                  <span style={{ fontWeight: 400, color: '#DC2626', marginLeft: 6, textTransform: 'none', letterSpacing: 0 }}>拒绝时必填</span>
+                </div>
+                <textarea
+                  value={rejectReason}
+                  onChange={e => { setRejectReason(e.target.value); setRejectError(false) }}
+                  placeholder="填写拒绝理由，将通知给创建者（提示词不够具体、内容不符合平台规范等）..."
+                  style={{
+                    width: '100%', minHeight: 90, padding: '8px 12px',
+                    border: `1px solid ${rejectError ? '#DC2626' : 'var(--border)'}`,
+                    borderRadius: 6, fontSize: 12, fontFamily: 'inherit',
+                    resize: 'vertical' as const, background: 'var(--surface)',
+                    outline: 'none', boxSizing: 'border-box' as const, color: 'var(--text-primary)',
+                    transition: 'border-color 0.15s',
+                  }}
+                />
+                {rejectError && (
+                  <div style={{ fontSize: 12, color: '#DC2626', marginTop: 4 }}>请填写拒绝理由后再提交</div>
+                )}
               </div>
             </div>
+
+            {/* 抽屉底部操作 */}
             <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10 }}>
-              <button onClick={() => handleApprove(detailAgent.id)} style={{ flex: 1, padding: 9, background: 'var(--status-done)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>✓ 通过</button>
-              <button onClick={() => handleReject(detailAgent.id)} style={{ flex: 1, padding: 9, background: '#DC2626', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>✗ 拒绝</button>
+              <button
+                onClick={() => setShowApproveConfirm(detailAgent.id)}
+                style={{ flex: 1, padding: 11, background: 'var(--status-done)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+              >✓ 通过</button>
+              <button
+                onClick={() => handleReject(detailAgent.id)}
+                style={{ flex: 1, padding: 11, background: '#DC2626', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+              >✗ 拒绝</button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* 通过确认弹窗 */}
+      {showApproveConfirm && (
+        <>
+          <div onClick={() => setShowApproveConfirm(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.5)', zIndex: 300 }} />
+          <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 32, width: 400, zIndex: 301, boxShadow: '0 20px 60px rgba(11,46,92,0.2)' }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>确认通过审核</div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: 24 }}>
+              通过后，该智能体将发布到广场，所有用户均可使用。请确认内容符合平台规范。
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowApproveConfirm(null)} style={{ padding: '8px 20px', background: 'var(--surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
+              <button onClick={() => handleApprove(showApproveConfirm)} style={{ padding: '8px 20px', background: 'var(--status-done)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>确认通过</button>
             </div>
           </div>
         </>

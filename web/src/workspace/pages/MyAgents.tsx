@@ -37,18 +37,18 @@ const MOCK_MY_AGENTS: MyAgent[] = [
   { id: '1', name: '企业财务异常检测',  subject: '金融学', type: 'prompt',   status: 'published', calls: 96,  rating: 4.8, publishedAt: '2026-07-20', applyingScenario: true },
   // 已发布（正常）
   { id: '2', name: '计量方法鉴别器',    subject: '经济学', type: 'prompt',   status: 'published', calls: 41,  rating: 4.5, publishedAt: '2026-08-01' },
-  // 待审核（申请发布广场，等管理员审核）
+  // 待审核（正常等待中）
   { id: '3', name: '创新点对比分析',    subject: '金融学', type: 'prompt',   status: 'reviewing', submittedAt: '2026-08-09 14:22' },
-  // 待审核（独立部署 agent 申请发布广场）
+  // 待审核（独立部署）
   { id: '4', name: '财报实时爬取 Agent', subject: '会计学', type: 'deployed', status: 'reviewing', submittedAt: '2026-08-09 16:05' },
-  // 已创建（普通 Prompt，可编辑和发布）
+  // 待审核（审核被拒绝，显示拒绝理由，可修改后重新提交）
+  { id: '8', name: '宏观政策解读助手', subject: '经济学', type: 'prompt',   status: 'reviewing', submittedAt: '2026-08-07 10:30', rejectedReason: '系统提示词过于宽泛，未明确分析步骤与输出格式，建议细化分析逻辑后重新提交。' },
+  // 已创建（普通 Prompt）
   { id: '5', name: '股价动量因子筛选',  subject: '金融学', type: 'prompt',   status: 'created' },
-  // 已创建（独立部署，部署中过渡态）
+  // 已创建（独立部署，部署中）
   { id: '6', name: '财报 OCR 解析',    subject: '会计学', type: 'deployed', status: 'created', isDeploying: true },
-  // 已创建（独立部署，已部署完成，可正常使用）
+  // 已创建（独立部署，已完成）
   { id: '7', name: '舆情监控 Agent',   subject: '金融学', type: 'deployed', status: 'created', isDeploying: false },
-  // 已创建（被拒绝，需修改后重新提交发布）
-  { id: '8', name: '宏观政策解读助手', subject: '经济学', type: 'prompt',   status: 'created', rejectedReason: '系统提示词过于宽泛，未明确分析步骤与输出格式，建议细化分析逻辑后重新提交。' },
 ]
 
 const TABS: AgentStatus[] = ['created', 'reviewing', 'published']
@@ -183,10 +183,10 @@ export function MyAgents() {
                     {agent.calls !== undefined && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{agent.calls} 次调用</span>}
                     {agent.rating !== undefined && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>⭐ {agent.rating}</span>}
                   </div>
-                  {/* 拒绝理由展示 */}
+                  {/* 拒绝理由（待审核 Tab 里展示）*/}
                   {agent.rejectedReason && (
                     <div style={{ fontSize: 12, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '7px 12px', marginTop: 4 }}>
-                      <span style={{ fontWeight: 600 }}>拒绝理由：</span>{agent.rejectedReason}
+                      <span style={{ fontWeight: 600 }}>审核未通过：</span>{agent.rejectedReason}
                     </div>
                   )}
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
@@ -196,16 +196,10 @@ export function MyAgents() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                  {agent.status === 'created' && !agent.isDeploying && !agent.rejectedReason && (
+                  {agent.status === 'created' && !agent.isDeploying && (
                     <>
                       <button onClick={() => navigate('/workspace/my-agents/create')} style={{ padding: '6px 14px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>编辑</button>
                       <button onClick={() => navigate('/workspace/agents/publish')} style={{ padding: '6px 14px', background: 'transparent', color: 'var(--action)', border: '1px solid var(--action-border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>发布到广场</button>
-                    </>
-                  )}
-                  {agent.rejectedReason && (
-                    <>
-                      <button onClick={() => navigate('/workspace/my-agents/create')} style={{ padding: '6px 14px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>修改</button>
-                      <button onClick={() => navigate('/workspace/agents/publish')} style={{ padding: '6px 14px', background: 'transparent', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>重新发布</button>
                     </>
                   )}
                   {agent.status === 'created' && agent.isDeploying && (
@@ -217,8 +211,11 @@ export function MyAgents() {
                       <button onClick={() => handleOffline(agent.id)} style={{ padding: '6px 14px', background: 'transparent', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>下线</button>
                     </>
                   )}
-                  {agent.status === 'reviewing' && (
+                  {agent.status === 'reviewing' && !agent.rejectedReason && (
                     <span style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>等待审核</span>
+                  )}
+                  {agent.status === 'reviewing' && agent.rejectedReason && (
+                    <button onClick={() => navigate('/workspace/my-agents/create')} style={{ padding: '6px 14px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>修改后重新提交</button>
                   )}
                 </div>
               </div>
