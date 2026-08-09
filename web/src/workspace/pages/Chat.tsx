@@ -184,53 +184,52 @@ export function Chat() {
         <ChatInput isRunning={isRunning} />
       </div>
 
-      {/* 拖拽分隔条 + 收起/展开触发器 */}
-      <div
-        onMouseDown={onResizeStart}
-        style={{
-          width: panelVisible ? 4 : 24,
-          flexShrink: 0,
-          cursor: panelVisible ? 'col-resize' : 'default',
-          background: panelVisible
-            ? ((resizerHovered || dragging.current) ? 'var(--action)' : 'var(--border-light)')
-            : 'var(--border-light)',
-          transition: 'background 0.15s, width 0.2s',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          position: 'relative',
-        }}
-        onMouseEnter={() => setResizerHovered(true)}
-        onMouseLeave={() => setResizerHovered(false)}
-      >
-        {/* 收起/展开按钮 */}
-        <button
-          onClick={(e) => { e.stopPropagation(); setPanelVisible(v => !v) }}
-          title={panelVisible ? '收起面板' : '展开面板'}
-          style={{
-            position: 'absolute',
-            top: '50%', transform: 'translateY(-50%)',
-            width: 20, height: 36,
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            borderRadius: panelVisible ? '4px 0 0 4px' : '0 4px 4px 0',
-            cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: 'var(--text-muted)',
-            fontSize: 10,
-            left: panelVisible ? -20 : 0,
-            zIndex: 10,
-            transition: 'left 0.2s, color 0.15s',
-            boxShadow: '-2px 0 6px rgba(11,46,92,0.06)',
-          }}
-          onMouseEnter={e => (e.currentTarget.style.color = 'var(--action)')}
-          onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
-        >
-          {panelVisible ? '›' : '‹'}
-        </button>
-      </div>
-
-      {/* 右侧产物面板 */}
+      {/* 拖拽分隔条 */}
       {panelVisible && (
-        <div style={{ width: panelWidth, flexShrink: 0 }}>
+        <div
+          onMouseDown={onResizeStart}
+          style={{
+            width: 4, flexShrink: 0, cursor: 'col-resize',
+            background: (resizerHovered || dragging.current) ? 'var(--action)' : 'var(--border-light)',
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={() => setResizerHovered(true)}
+          onMouseLeave={() => setResizerHovered(false)}
+        />
+      )}
+
+      {/* 右侧产物面板 + 展开按钮（面板隐藏时显示） */}
+      {!panelVisible && (
+        <button
+          onClick={() => setPanelVisible(true)}
+          title="展开面板"
+          style={{
+            width: 24, flexShrink: 0, border: 'none', cursor: 'pointer',
+            background: 'var(--border-light)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'var(--text-muted)', fontSize: 12, transition: 'background 0.15s, color 0.15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--action-light)'; e.currentTarget.style.color = 'var(--action)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'var(--border-light)'; e.currentTarget.style.color = 'var(--text-muted)' }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+      )}
+      {panelVisible && (
+        <div style={{ width: panelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column' as const, overflow: 'hidden' }}>
+          {/* 面板顶部控制条 */}
+          <div style={{ height: 32, flexShrink: 0, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', background: 'var(--surface)' }}>
+            <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.2em', color: 'var(--text-muted)' }}>分析面板</span>
+            <button
+              onClick={() => setPanelVisible(false)}
+              title="收起面板"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', padding: 4, borderRadius: 4, transition: 'color 0.15s' }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'var(--action)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          </div>
           <ArtifactPanel />
         </div>
       )}
