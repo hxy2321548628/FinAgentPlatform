@@ -68,7 +68,7 @@ function StepBar({ current }: { current: Step }) {
 export function CreateAgent() {
   const navigate = useNavigate()
   const [step, setStep] = useState<Step>('info')
-  const [agentType, setAgentType] = useState<AgentType | null>(null)
+  const [_agentType, setAgentType] = useState<AgentType | null>(null)
 
   // 基本信息
   const [name, setName] = useState('')
@@ -92,33 +92,14 @@ export function CreateAgent() {
   const handlePromptSave = (e: React.FormEvent) => {
     e.preventDefault()
     if (!prompt.trim()) return
-    setStep('done')
-    setTimeout(() => navigate('/workspace/my-agents'), 1200)
+    navigate('/workspace/my-agents', { state: { toast: '智能体已创建，进入「已创建」状态' } })
   }
 
   const handleDeployedCreate = () => {
-    // 独立部署：填完联系信息后创建，状态为"部署中"
-    setStep('done')
-    setTimeout(() => navigate('/workspace/my-agents'), 1200)
+    navigate('/workspace/my-agents', { state: { toast: '申请已提交，后台团队将与你联系，智能体状态为「部署中」' } })
   }
 
-  // 完成状态
-  if (step === 'done') {
-    const isDeploy = agentType === 'deployed'
-    return (
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
-        <div style={{ textAlign: 'center' as const }}>
-          <div style={{ fontSize: 40, marginBottom: 16 }}>{isDeploy ? '🚀' : '✓'}</div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>
-            {isDeploy ? '申请已提交' : '创建成功'}
-          </div>
-          <div style={{ fontSize: 14, color: 'var(--text-muted)' }}>
-            {isDeploy ? '后台团队将与你联系，智能体状态为「部署中」' : '智能体已保存至「已创建」，跳转中...'}
-          </div>
-        </div>
-      </div>
-    )
-  }
+  // done 状态不再需要，直接跳转
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '32px 36px', background: 'var(--bg)' }}>

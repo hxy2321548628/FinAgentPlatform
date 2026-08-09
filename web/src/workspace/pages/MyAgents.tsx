@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 
 // 状态：草稿 → 已创建 → 待审核（申请发布广场）→ 已发布
 // 独立部署 agent 创建后状态为 deploying
@@ -46,10 +46,19 @@ const TABS: AgentStatus[] = ['draft', 'created', 'deploying', 'reviewing', 'publ
 
 export function MyAgents() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [activeTab, setActiveTab] = useState<AgentStatus>('created')
   const [agents, setAgents] = useState(MOCK_MY_AGENTS)
   const [showScenarioModal, setShowScenarioModal] = useState(false)
   const [selectedAgentForScenario, setSelectedAgentForScenario] = useState('')
+  const [toast, setToast] = useState<string | null>((location.state as { toast?: string })?.toast ?? null)
+
+  // toast 3 秒后自动消失
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(t)
+  }, [toast])
 
   const filtered = agents.filter(a => a.status === activeTab)
 
@@ -101,6 +110,20 @@ export function MyAgents() {
           </button>
         </div>
       </div>
+
+      {/* Toast 提示 */}
+      {toast && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          background: '#ECFDF5', border: '1px solid #A7F3D0',
+          borderRadius: 8, padding: '10px 16px', marginBottom: 20,
+          fontSize: 13, color: '#065F46',
+          animation: 'card-enter 0.3s ease-out',
+        }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          {toast}
+        </div>
+      )}
 
       {/* Tab */}
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
