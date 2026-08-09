@@ -37,7 +37,7 @@ export function AdminUsage() {
           </thead>
           <tbody>
             {MOCK_USER_USAGE.map((u, i) => (
-              <tr key={u.name} style={{ borderBottom: i < MOCK_USER_USAGE.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
+              <tr key={i} style={{ borderBottom: i < MOCK_USER_USAGE.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
                 <td style={{ padding: '12px 20px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: i < 3 ? 'var(--action)' : 'var(--text-muted)', fontWeight: i < 3 ? 700 : 400 }}>#{i + 1}</td>
                 <td style={{ padding: '12px 20px', fontWeight: 500, color: 'var(--text-primary)' }}>{u.name}</td>
                 <td style={{ padding: '12px 20px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--text-secondary)' }}>{u.tokens.toLocaleString()}</td>
