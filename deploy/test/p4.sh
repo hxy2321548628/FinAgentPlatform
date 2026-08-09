@@ -69,6 +69,21 @@ for service in api broker worker prometheus grafana tempo loki otel-collector mi
 done
 pass "九个服务都在跑"
 
+# **compose.yml 里 SANDBOX_USER 是必填插值**，而本脚本靠 `compose exec` 查库、放产物、
+# 判 resumed。没设的话每次 exec 都以插值失败告终，而判据只收到一个空输出 —— 症状是
+# 「账对不上」「token 对不上」，指向看板与 trace 而不是指向这里。实测栽过一次。
+# 取的是**正在跑的 broker 那一份**：exec 附着到已有容器，值只需能让插值过去，
+# 而与栈实际启动时用的值一致最省事。p1 / p2 / p3 都自己补了这一步，本脚本原来漏了
+BROKER_ENV="$(docker inspect "$(docker ps -q \
+    --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+    --filter label=com.docker.compose.service=broker)" \
+    --format '{{range .Config.Env}}{{println .}}{{end}}')"
+export SANDBOX_USER="${SANDBOX_USER:-$(grep -m1 '^SANDBOX_USER=' <<<"$BROKER_ENV" | cut -d= -f2-)}"
+export SANDBOX_WORKSPACE_ROOT="${SANDBOX_WORKSPACE_ROOT:-$(grep -m1 '^SANDBOX_WORKSPACE_ROOT=' <<<"$BROKER_ENV" | cut -d= -f2-)}"
+[[ -n $SANDBOX_USER ]] || { echo "broker 的环境里没有 SANDBOX_USER，栈不是按文档起的" >&2; exit 1; }
+compose exec -T postgres true >/dev/null 2>&1 \
+    || { echo "compose exec 不通（插值或容器有问题），后面的判据会整片假红" >&2; exit 1; }
+
 source "$REPO_ROOT/deploy/test/session.sh"
 JAR="$(mktemp)"; trap 'rm -f "$JAR"' EXIT
 USER_ID="$(zuel_open_session "$JAR")" || { echo "建号或登录失败" >&2; exit 1; }

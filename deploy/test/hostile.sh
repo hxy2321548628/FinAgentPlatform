@@ -32,6 +32,18 @@ info() { printf '     %s\n' "$*"; }
 
 [[ $EUID -eq 0 ]] || { echo "需要 root：sudo bash $0" >&2; exit 1; }
 command -v xfs_quota >/dev/null || { echo "缺 xfs_quota，先跑 deploy/setup-xfs.sh" >&2; exit 1; }
+
+# 装了 xfsprogs 不等于 workspace 在带 prjquota 的 XFS 上 —— setup-xfs.sh 挂的 loop
+# 设备**重启后不会自动挂回来**，而那之后这里的每个 limit 都设不上。
+# 不拦的话 ③ 会照着 5g 的限额往宿主机根分区实写 20 GB（三次），最后报一句
+# 「没在限额处停下」—— 真因只出现在 xfs_quota 的 stderr 里，判据本身不指向它。
+# **不能用 `xfs_quota -c state` 探**：它探不到挂载点时照样退出 0，是一条永远绿的判据
+QUOTA_MOUNT="$(findmnt -no FSTYPE,OPTIONS --target "$WORKSPACE_ROOT")"
+[[ $QUOTA_MOUNT == xfs* && $QUOTA_MOUNT == *prjquota* ]] || {
+    echo "$WORKSPACE_ROOT 不在带 prjquota 的 XFS 上（现在是 ${QUOTA_MOUNT:-未知})" >&2
+    echo "先跑 sudo bash deploy/setup-xfs.sh，再重启栈让 broker 看见新挂载" >&2
+    exit 1
+}
 docker image inspect "$SANDBOX_IMAGE" >/dev/null 2>&1 || { echo "缺镜像 $SANDBOX_IMAGE" >&2; exit 1; }
 
 failed=0
