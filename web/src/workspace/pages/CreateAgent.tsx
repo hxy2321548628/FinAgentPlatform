@@ -40,6 +40,7 @@ export function CreateAgent() {
   const [desc, setDesc] = useState('')
   const [agentType, setAgentType] = useState<AgentType | null>(null)
   const [prompt, setPrompt] = useState('')
+  const [deployNote, setDeployNote] = useState('')
 
   const canSave = name.trim() && desc.trim() && agentType !== null &&
     (agentType === 'deployed' || prompt.trim())
@@ -146,6 +147,23 @@ export function CreateAgent() {
                     </a>
                   </div>
                 ))}
+              </div>
+              {/* 给负责人带句话 */}
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>
+                  给负责人带句话
+                </label>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.6 }}>
+                  可以简要阐述 Agent 的技术栈和使用的工具，方便对接。
+                </div>
+                <textarea
+                  value={deployNote}
+                  onChange={e => setDeployNote(e.target.value)}
+                  placeholder={'例如：该 Agent 基于 LangChain 实现，需要调用内部 Wind 数据接口和 PostgreSQL 数据库，预计输入财报 Excel，输出 JSON 格式的风险评分结果。'}
+                  style={{ width: '100%', minHeight: 100, padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', resize: 'vertical' as const, background: '#F7F9FC', outline: 'none', boxSizing: 'border-box' as const, color: 'var(--text-primary)', lineHeight: 1.7 }}
+                  onFocus={e => (e.target.style.borderColor = 'var(--action)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+                />
               </div>
               <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 16px', fontSize: 13, color: '#92400E', lineHeight: 1.7 }}>
               <span style={{ display: 'inline-flex', alignItems: 'flex-start', gap: 8 }}>
