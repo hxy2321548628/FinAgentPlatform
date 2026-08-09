@@ -12,8 +12,9 @@ interface MyAgent {
   subject: string
   type: AgentType
   status: AgentStatus
-  isDeploying?: boolean       // 独立部署 agent 的过渡标记，管理员确认部署完成后清除
-  applyingScenario?: boolean  // 是否正在申请上架场景库
+  isDeploying?: boolean
+  applyingScenario?: boolean
+  rejectedReason?: string     // 有值表示被拒绝，内容为拒绝理由
   calls?: number
   rating?: number
   publishedAt?: string
@@ -46,6 +47,8 @@ const MOCK_MY_AGENTS: MyAgent[] = [
   { id: '6', name: '财报 OCR 解析',    subject: '会计学', type: 'deployed', status: 'created', isDeploying: true },
   // 已创建（独立部署，已部署完成，可正常使用）
   { id: '7', name: '舆情监控 Agent',   subject: '金融学', type: 'deployed', status: 'created', isDeploying: false },
+  // 已创建（被拒绝，需修改后重新提交发布）
+  { id: '8', name: '宏观政策解读助手', subject: '经济学', type: 'prompt',   status: 'created', rejectedReason: '系统提示词过于宽泛，未明确分析步骤与输出格式，建议细化分析逻辑后重新提交。' },
 ]
 
 const TABS: AgentStatus[] = ['created', 'reviewing', 'published']
@@ -164,22 +167,28 @@ export function MyAgents() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' as const }}>
                     <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{agent.name}</span>
-                    {/* 独立部署类型标签 */}
                     {agent.type === 'deployed' && (
                       <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE' }}>独立部署</span>
                     )}
-                    {/* 部署中过渡标签 */}
                     {agent.isDeploying && (
                       <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE' }}>🔧 部署中</span>
                     )}
+                    {agent.rejectedReason && (
+                      <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA' }}>已拒绝</span>
+                    )}
                     <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: STATUS_STYLE[agent.status].bg, color: STATUS_STYLE[agent.status].color }}>{STATUS_LABEL[agent.status]}</span>
-                    {/* 申请场景库中标记 */}
                     {agent.applyingScenario && (
                       <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: '#FFFBEB', color: 'var(--status-warn)', border: '1px solid #FDE68A' }}>🕐 申请场景库中</span>
                     )}
                     {agent.calls !== undefined && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{agent.calls} 次调用</span>}
                     {agent.rating !== undefined && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>⭐ {agent.rating}</span>}
                   </div>
+                  {/* 拒绝理由展示 */}
+                  {agent.rejectedReason && (
+                    <div style={{ fontSize: 12, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '7px 12px', marginTop: 4 }}>
+                      <span style={{ fontWeight: 600 }}>拒绝理由：</span>{agent.rejectedReason}
+                    </div>
+                  )}
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     {agent.subject}
                     {agent.publishedAt && ` · ${agent.publishedAt} 发布`}
@@ -187,10 +196,16 @@ export function MyAgents() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                  {agent.status === 'created' && !agent.isDeploying && (
+                  {agent.status === 'created' && !agent.isDeploying && !agent.rejectedReason && (
                     <>
                       <button onClick={() => navigate('/workspace/my-agents/create')} style={{ padding: '6px 14px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>编辑</button>
                       <button onClick={() => navigate('/workspace/agents/publish')} style={{ padding: '6px 14px', background: 'transparent', color: 'var(--action)', border: '1px solid var(--action-border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>发布到广场</button>
+                    </>
+                  )}
+                  {agent.rejectedReason && (
+                    <>
+                      <button onClick={() => navigate('/workspace/my-agents/create')} style={{ padding: '6px 14px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>修改</button>
+                      <button onClick={() => navigate('/workspace/agents/publish')} style={{ padding: '6px 14px', background: 'transparent', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>重新发布</button>
                     </>
                   )}
                   {agent.status === 'created' && agent.isDeploying && (

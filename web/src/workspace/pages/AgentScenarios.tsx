@@ -74,7 +74,14 @@ export function AgentScenarios() {
         ))}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-        {filtered.map(scenario => <ScenarioCard key={scenario.id} scenario={scenario} onStart={() => navigate('/workspace/chat')} />)}
+        {filtered.map(scenario => <ScenarioCard key={scenario.id} scenario={scenario} onStart={() => navigate('/workspace/chat', {
+          state: scenario.agentName ? {
+            agentId: scenario.id,
+            agentName: scenario.agentName,
+            agentAuthor: scenario.agentAuthor ?? scenario.author,
+            agentDataNeeded: '',
+          } : null
+        })} />)}
       </div>
     </div>
   )
