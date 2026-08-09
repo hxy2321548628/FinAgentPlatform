@@ -13,10 +13,11 @@ interface NavItem {
 }
 
 const ADMIN_SUB_ITEMS = [
-  { to: '/workspace/admin/users',  label: '用户管理' },
-  { to: '/workspace/admin/agents', label: '智能体审核' },
-  { to: '/workspace/admin/usage',  label: '用量看板' },
-  { to: '/workspace/admin/system', label: '系统状态' },
+  { to: '/workspace/admin/users',     label: '用户管理' },
+  { to: '/workspace/admin/agents',    label: '智能体审核' },
+  { to: '/workspace/admin/scenarios', label: '场景管理' },
+  { to: '/workspace/admin/usage',     label: '用量看板' },
+  { to: '/workspace/admin/system',    label: '系统状态' },
 ]
 
 const NAV_GROUPS: { items: NavItem[] }[] = [

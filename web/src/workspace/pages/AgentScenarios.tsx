@@ -11,13 +11,15 @@ interface Scenario {
   steps: number
   author: string
   uses: number
+  agentName?: string   // 关联的 agent 名称
+  agentAuthor?: string // agent 创建者，platform 表示平台内置
 }
 
 const SUBJECTS = ['全部', '金融学', '会计学', '经济学', '管理科学']
 
 const MOCK_SCENARIOS: Scenario[] = [
-  { id: 'risk', name: '企业风险分析', subject: '金融学', subjectTag: '金融学 · 产业研究', desc: '上传财报 CSV，识别偿债/盈利/运营风险信号，输出带证据链的风险报告草稿。', tags: ['财务分析', '风险识别', '报告生成'], steps: 5, author: '金融学院', uses: 127 },
-  { id: 'replicate', name: '论文量化复现', subject: '金融学', subjectTag: '金融学 / 经济学 · 学术研究', desc: '上传数据集，复现回归模型，验证论文中的 alpha 显著性，输出复现报告。', tags: ['计量方法', '回归分析', '复现验证'], steps: 4, author: '金融学院', uses: 89 },
+  { id: 'risk', name: '企业风险分析', subject: '金融学', subjectTag: '金融学 · 产业研究', desc: '上传财报 CSV，识别偿债/盈利/运营风险信号，输出带证据链的风险报告草稿。', tags: ['财务分析', '风险识别', '报告生成'], steps: 5, author: '金融学院', uses: 127, agentName: '企业财务异常检测', agentAuthor: '张老师' },
+  { id: 'replicate', name: '论文量化复现', subject: '金融学', subjectTag: '金融学 / 经济学 · 学术研究', desc: '上传数据集，复现回归模型，验证论文中的 alpha 显著性，输出复现报告。', tags: ['计量方法', '回归分析', '复现验证'], steps: 4, author: '金融学院', uses: 89, agentName: '计量方法识别', agentAuthor: '赵老师' },
   { id: 'survey', name: '课题数据分析', subject: '管理科学', subjectTag: '全学科 · 科研支持', desc: '上传问卷或面板数据，进行描述统计、假设检验与可视化，输出分析结论。', tags: ['描述统计', '假设检验', '可视化'], steps: 4, author: '金融学院', uses: 203 },
   { id: 'factor', name: '量化因子研究', subject: '金融学', subjectTag: '金融学 · 量化投资', desc: '上传股票行情数据，构建因子序列，检验 alpha 显著性，生成因子收益图表。', tags: ['因子模型', 'Fama-French', 'alpha 检验'], steps: 5, author: '金融学院', uses: 64 },
 ]
@@ -44,6 +46,12 @@ function ScenarioCard({ scenario, onStart }: { scenario: Scenario; onStart: () =
         <span>📊 {scenario.steps} 步分析 · 👤 {scenario.author}</span>
         <span>▶ {scenario.uses} 次</span>
       </div>
+      {scenario.agentName && (
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', paddingTop: 6 }}>
+          基于智能体：<span style={{ color: 'var(--action)', fontWeight: 500 }}>{scenario.agentName}</span>
+          {scenario.agentAuthor && <span> · {scenario.agentAuthor}</span>}
+        </div>
+      )}
       <button onClick={onStart} style={{ width: '100%', padding: '9px 0', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', transition: 'background 0.15s' }}>开始分析 →</button>
     </div>
   )
