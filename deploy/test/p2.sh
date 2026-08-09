@@ -280,9 +280,22 @@ else
     timeout "$KILL_WINDOW" curl -fsS -b "$JAR" -N "$BASE_URL/api/runs/$RUN_ID/events" 2>/dev/null \
         | grep -q -m1 '^event: tool_result'
 
-    VICTIM="$(worker_ids | head -1)"
+    # **要砍到真正在跑它的那个副本。** 有两个副本，砍「第一个」是在赌五成 ——
+    # 2026-08-09 实测赌输一次：刀落在闲着的那个身上，run 在另一个副本上一路跑完，
+    # 判据只能记「未验」。结构化日志里带 run_id，按它挑就不必赌
+    VICTIM=""
+    for candidate in $(worker_ids); do
+        if docker logs --since 10m "$candidate" 2>&1 | grep -q "$RUN_ID"; then
+            VICTIM="$candidate"
+            break
+        fi
+    done
+    if [[ -z $VICTIM ]]; then
+        VICTIM="$(worker_ids | head -1)"
+        info "日志里认不出哪个副本在跑它，退回砍第一个 —— 这一轮可能砍空"
+    fi
     docker kill -s KILL "$VICTIM" >/dev/null 2>&1
-    info "已 kill -9 worker $VICTIM，等另一个副本认领（阈值 60 秒）"
+    info "已 kill -9 worker $VICTIM（日志里认出它在跑这个 run），等另一个副本认领（阈值 60 秒）"
 
     before=$failed
     deadline=$((SECONDS + RECOVER_WINDOW))
