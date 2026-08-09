@@ -45,7 +45,10 @@ function AgentCard({ agent, onDetail, onUse }: { agent: Agent; onDetail: () => v
   return (
     <div onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ background: 'var(--surface)', border: '1px solid ' + (hovered ? 'var(--action-border)' : 'var(--border)'), borderRadius: 10, padding: 24, display: 'flex', flexDirection: 'column' as const, gap: 10, boxShadow: hovered ? '0 4px 16px rgba(23,73,196,0.08)' : 'none', transition: 'border-color 0.2s, box-shadow 0.2s' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <button onClick={onDetail} style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0, textAlign: 'left' as const }}>📊 {agent.name}</button>
+        <button onClick={onDetail} style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0, textAlign: 'left' as const, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: 'var(--action)', flexShrink: 0 }}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+          {agent.name}
+        </button>
         <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", flexShrink: 0, marginLeft: 8 }}>{agent.version}</span>
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{agent.author} · {agent.subject}</div>
@@ -53,7 +56,10 @@ function AgentCard({ agent, onDetail, onUse }: { agent: Agent; onDetail: () => v
       <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0', borderTop: '1px solid var(--border-light)', borderBottom: '1px solid var(--border-light)' }}>需要：{agent.dataNeeded}</div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-muted)' }}>
         <span>▶ {agent.calls} 次调用</span>
-        <span style={{ color: '#F59E0B', fontWeight: 600 }}>⭐ {agent.rating}</span>
+        <span style={{ color: '#F59E0B', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="#F59E0B" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          {agent.rating}
+        </span>
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
         <button onClick={onDetail} style={{ flex: 1, padding: '7px 0', background: 'transparent', color: 'var(--action)', border: '1px solid var(--action-border)', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>查看详情</button>
@@ -247,7 +253,10 @@ export function AgentPlaza() {
           <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 460, background: 'var(--surface)', borderLeft: '1px solid var(--border)', zIndex: 201, display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 24px rgba(11,46,92,0.12)' }}>
             <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>📊 {detailAgent.name}</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: 'var(--action)', flexShrink: 0 }}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+                  {detailAgent.name}
+                </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{detailAgent.author} · {detailAgent.subject} · {detailAgent.version}</div>
               </div>
               <button onClick={() => setDetailAgent(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>×</button>
@@ -423,7 +432,9 @@ export function PublishAgent() {
 
         {MOCK_CREATED_AGENTS.length === 0 ? (
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '48px 24px', textAlign: 'center' as const }}>
-            <div style={{ fontSize: 32, marginBottom: 12 }}>🤖</div>
+            <div style={{ marginBottom: 12, color: 'var(--text-muted)' }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+            </div>
             <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 8 }}>暂无可发布的智能体</div>
             <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>需要先在「我的智能体」中创建并保存智能体</div>
             <button onClick={() => navigate('/workspace/my-agents/create')} style={{ padding: '8px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>去创建智能体</button>

@@ -154,7 +154,9 @@ export function MyAgents() {
       {/* 列表 */}
       {filtered.length === 0 ? (
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '48px 20px', textAlign: 'center' as const }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>✨</div>
+          <div style={{ marginBottom: 12, color: 'var(--action)' }}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </div>
           <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }}>{emptyText[activeTab]}</div>
           {activeTab !== 'reviewing' && (            <button onClick={() => navigate('/workspace/my-agents/create')} style={{ marginTop: 8, padding: '8px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>+ 创建智能体</button>
           )}
@@ -171,17 +173,26 @@ export function MyAgents() {
                       <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE' }}>独立部署</span>
                     )}
                     {agent.isDeploying && (
-                      <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE' }}>🔧 部署中</span>
+                      <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        部署中
+                      </span>
                     )}
                     {agent.rejectedReason && (
                       <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA' }}>已拒绝</span>
                     )}
                     <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: STATUS_STYLE[agent.status].bg, color: STATUS_STYLE[agent.status].color }}>{STATUS_LABEL[agent.status]}</span>
                     {agent.applyingScenario && (
-                      <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: '#FFFBEB', color: 'var(--status-warn)', border: '1px solid #FDE68A' }}>🕐 申请场景库中</span>
+                      <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: '#FFFBEB', color: 'var(--status-warn)', border: '1px solid #FDE68A', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        申请场景库中
+                      </span>
                     )}
                     {agent.calls !== undefined && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{agent.calls} 次调用</span>}
-                    {agent.rating !== undefined && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>⭐ {agent.rating}</span>}
+                    {agent.rating !== undefined && <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="#F59E0B" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                      {agent.rating}
+                    </span>}
                   </div>
                   {/* 拒绝理由（待审核 Tab 里展示）*/}
                   {agent.rejectedReason && (

@@ -166,7 +166,10 @@ export function Chat() {
         {/* 多 Agent 协作标题横幅 */}
         {isMultiAgent && (
           <div style={{ padding: '10px 24px', background: '#F5F3FF', borderBottom: '1px solid #DDD6FE', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-            <span style={{ fontSize: 13, color: '#7C3AED', fontWeight: 600 }}>🤖 多智能体协作 · 公司全面风险评估</span>
+            <span style={{ fontSize: 13, color: '#7C3AED', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/><circle cx="8" cy="6" r="2.5"/><circle cx="16" cy="6" r="2.5"/></svg>
+              多智能体协作 · 公司全面风险评估
+            </span>
             <span style={{ fontSize: 12, color: '#7C3AED', opacity: 0.7 }}>调用了 3 个智能体 · 分析完成</span>
             <button
               onClick={() => setShowSceneModal(true)}
@@ -241,7 +244,9 @@ export function Chat() {
           <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 32, width: 480, zIndex: 301, boxShadow: '0 20px 60px rgba(11,46,92,0.2)' }}>
             {sceneSubmitted ? (
               <div style={{ textAlign: 'center' as const, padding: '24px 0' }}>
-                <div style={{ fontSize: 36, marginBottom: 12 }}>🎯</div>
+                <div style={{ marginBottom: 12, color: '#7C3AED' }}>
+                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+                </div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>申请已提交</div>
                 <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>管理员审核通过后将出现在场景库</div>
               </div>

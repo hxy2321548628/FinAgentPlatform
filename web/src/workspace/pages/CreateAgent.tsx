@@ -93,7 +93,7 @@ export function CreateAgent() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <TypeOption
                 selected={agentType === 'prompt'}
-                icon="💬"
+                icon={<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>}
                 title="Prompt 智能体"
                 desc="通过系统提示词定义分析角色和步骤，无需代码，填写即可使用。"
                 accentColor="var(--action)"
@@ -101,7 +101,7 @@ export function CreateAgent() {
               />
               <TypeOption
                 selected={agentType === 'deployed'}
-                icon="🚀"
+                icon={<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M22 2L11 13"/><path d="M22 2L15 22 11 13 2 9l20-7z"/></svg>}
                 title="独立部署 Agent"
                 desc="需要自定义工具或外部 API 接入，由后台团队协助部署。"
                 accentColor="#7C3AED"
@@ -148,7 +148,10 @@ export function CreateAgent() {
                 ))}
               </div>
               <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 16px', fontSize: 13, color: '#92400E', lineHeight: 1.7 }}>
-                💡 点击「确认创建」后，智能体将以「部署中」状态保存至「我的智能体」，同时请联系以上负责人说明需求（功能描述、所需数据源或工具、预期输入输出格式）。负责人完成部署后会将状态更新为「已创建」，届时即可正常调用和发布。
+              <span style={{ display: 'inline-flex', alignItems: 'flex-start', gap: 8 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                点击「确认创建」后，智能体将以「部署中」状态保存至「我的智能体」，同时请联系以上负责人说明需求（功能描述、所需数据源或工具、预期输入输出格式）。负责人完成部署后会将状态更新为「已创建」，届时即可正常调用和发布。
+              </span>
               </div>
             </div>
           )}
@@ -180,7 +183,7 @@ export function CreateAgent() {
 }
 
 function TypeOption({ selected, icon, title, desc, accentColor, onClick }: {
-  selected: boolean; icon: string; title: string; desc: string; accentColor: string; onClick: () => void
+  selected: boolean; icon: React.ReactNode; title: string; desc: string; accentColor: string; onClick: () => void
 }) {
   const [hovered, setHovered] = useState(false)
   const active = selected || hovered
@@ -199,7 +202,7 @@ function TypeOption({ selected, icon, title, desc, accentColor, onClick }: {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-        <span style={{ fontSize: 20 }}>{icon}</span>
+        <span style={{ display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}>{icon}</span>
         <span style={{ fontSize: 14, fontWeight: 700, color: active ? accentColor : 'var(--text-primary)' }}>{title}</span>
         {selected && (
           <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 600, color: accentColor }}>✓ 已选择</span>

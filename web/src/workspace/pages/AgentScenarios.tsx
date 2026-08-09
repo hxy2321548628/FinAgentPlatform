@@ -43,7 +43,13 @@ function ScenarioCard({ scenario, onStart }: { scenario: Scenario; onStart: () =
         ))}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 10, borderTop: '1px solid var(--border-light)', fontSize: 12, color: 'var(--text-muted)' }}>
-        <span>📊 {scenario.steps} 步分析 · 👤 {scenario.author}</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          {scenario.steps} 步分析
+          <span style={{ margin: '0 4px', color: 'var(--border)' }}>·</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          {scenario.author}
+        </span>
         <span>▶ {scenario.uses} 次</span>
       </div>
       {scenario.agentName && (

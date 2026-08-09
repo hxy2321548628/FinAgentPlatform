@@ -51,7 +51,9 @@ export function MyData() {
         onClick={() => fileInputRef.current?.click()}
         style={{ border: '1.5px dashed ' + (dragOver ? 'var(--action)' : 'var(--border)'), borderRadius: 10, padding: 28, textAlign: 'center' as const, background: dragOver ? 'var(--action-light)' : 'var(--surface)', marginBottom: 20, cursor: 'pointer', transition: 'border-color 0.2s, background 0.2s' }}
       >
-        <div style={{ fontSize: 24, marginBottom: 8 }}>📁</div>
+        <div style={{ marginBottom: 8, color: 'var(--action-border)' }}>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        </div>
         <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>拖拽文件到此处，或点击上传</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>支持 CSV · XLSX · PDF · TXT，单文件最大 50 MB</div>
       </div>
