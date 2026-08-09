@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 
 type RunStatus = 'running' | 'done' | 'waiting' | 'queued'
 
@@ -43,22 +43,22 @@ const MOCK_STEPS: StepItem[] = [
 ]
 
 // ── 文件类型图标和颜色 ──────────────────────────────────────────
-const FILE_CONFIG: Record<WorkspaceFile['type'], { icon: string; color: string; bg: string }> = {
-  csv:   { icon: '📊', color: '#059669', bg: '#ECFDF5' },
-  py:    { icon: '⌨️', color: '#2563EB', bg: '#EFF6FF' },
-  png:   { icon: '🖼️', color: '#7C3AED', bg: '#F5F3FF' },
-  md:    { icon: '📄', color: '#D97706', bg: '#FFFBEB' },
-  other: { icon: '📁', color: '#6B7280', bg: '#F9FAFB' },
+const FILE_CONFIG: Record<WorkspaceFile['type'], { icon: React.ReactNode; color: string; bg: string }> = {
+  csv:   { icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>, color: '#059669', bg: '#ECFDF5' },
+  py:    { icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>, color: '#2563EB', bg: '#EFF6FF' },
+  png:   { icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>, color: '#7C3AED', bg: '#F5F3FF' },
+  md:    { icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>, color: '#D97706', bg: '#FFFBEB' },
+  other: { icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>, color: '#6B7280', bg: '#F9FAFB' },
 }
 
-const STEP_TOOL_LABEL: Record<string, string> = {
-  '读取持仓数据': '📂',
-  '生成波动率分析脚本': '📝',
-  '执行分析': '⚙️',
-  '修正代码后重新执行': '🔄',
-  '读取持仓数据（减仓计算）': '📂',
-  '生成减仓方案脚本': '📝',
-  '计算减仓明细': '⚙️',
+const STEP_TOOL_LABEL: Record<string, React.ReactNode> = {
+  '读取持仓数据': <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>,
+  '生成波动率分析脚本': <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+  '执行分析': <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>,
+  '修正代码后重新执行': <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>,
+  '读取持仓数据（减仓计算）': <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>,
+  '生成减仓方案脚本': <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+  '计算减仓明细': <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>,
 }
 
 // ── 子组件 ──────────────────────────────────────────────────────
@@ -103,7 +103,7 @@ function FileSection({ files }: { files: WorkspaceFile[] }) {
       {outputs.filter(f => f.type === 'png').map(f => (
         <div key={f.name} style={{ marginBottom: 12 }}>
           <div style={{ background: 'var(--bg)', border: '1px dashed var(--border)', borderRadius: 8, height: 140, display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 12 }}>
-            <span style={{ fontSize: 28 }}>🖼️</span>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: '#7C3AED' }}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{f.desc}</span>
             <span style={{ fontSize: 11 }}>{f.name} · {f.size}</span>
           </div>
@@ -118,7 +118,7 @@ function FileSection({ files }: { files: WorkspaceFile[] }) {
         const fc = FILE_CONFIG[f.type]
         return (
           <div key={f.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: fc.bg, borderRadius: 7, border: `1px solid ${fc.color}22`, marginBottom: 8 }}>
-            <span style={{ fontSize: 16, flexShrink: 0 }}>{fc.icon}</span>
+            <span style={{ display: 'flex', alignItems: 'center', flexShrink: 0, color: fc.color }}>{fc.icon}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{f.desc}</div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{f.name} · {f.size}</div>
@@ -143,7 +143,7 @@ function FileSection({ files }: { files: WorkspaceFile[] }) {
               return (
                 <div key={f.name}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}>
-                    <span style={{ fontSize: 13 }}>{fc.icon}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', color: fc.color }}>{fc.icon}</span>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{f.name}</div>
                       {f.desc && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{f.desc} · {f.size}</div>}
@@ -195,7 +195,7 @@ function StepsSection({ steps }: { steps: StepItem[] }) {
             const isDone = step.status === 'done'
             const statusColor = isFailed ? '#DC2626' : isRunning ? 'var(--action)' : isDone ? 'var(--status-done)' : 'var(--text-muted)'
             const statusIcon = isFailed ? '✗' : isRunning ? '◉' : isDone ? '✓' : '○'
-            const icon = STEP_TOOL_LABEL[step.label] ?? '🔧'
+            const icon = STEP_TOOL_LABEL[step.label] ?? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
 
             return (
               <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', paddingBottom: 10, position: 'relative' as const }}>
@@ -210,7 +210,7 @@ function StepsSection({ steps }: { steps: StepItem[] }) {
                 {/* 内容 */}
                 <div style={{ flex: 1, paddingTop: 2 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 12 }}>{icon}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', color: 'var(--text-muted)' }}>{icon}</span>
                     <span style={{ fontSize: 13, color: isFailed ? '#DC2626' : 'var(--text-primary)', fontWeight: 500 }}>{step.label}</span>
                     {step.time && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto', flexShrink: 0 }}>{step.time}</span>}
                   </div>

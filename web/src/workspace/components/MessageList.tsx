@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 
 interface Attachment { name: string }
 interface UserMessage { type: 'user'; text: string; attachments?: Attachment[] }
@@ -20,19 +20,19 @@ interface ThinkingMessage { type: 'thinking' }
 
 type Message = UserMessage | ReasoningMessage | ToolMessage | AgentMessage | HitlMessage | ThinkingMessage
 
-const TOOL_LABEL: Record<string, { label: string; icon: string }> = {
-  read_file:  { label: '读取数据文件', icon: '📂' },
-  write_file: { label: '生成分析代码', icon: '📝' },
-  execute:    { label: '执行计算',     icon: '⚙️' },
-  edit_file:  { label: '修正代码',     icon: '✏️' },
-  delete:     { label: '删除文件',     icon: '🗑' },
-  ls:         { label: '查看目录',     icon: '📁' },
-  glob:       { label: '搜索文件',     icon: '🔍' },
-  grep:       { label: '搜索内容',     icon: '🔎' },
+const TOOL_LABEL: Record<string, { label: string; icon: React.ReactNode }> = {
+  read_file:  { label: '读取数据文件', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> },
+  write_file: { label: '生成分析代码', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> },
+  execute:    { label: '执行计算',     icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg> },
+  edit_file:  { label: '修正代码',     icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> },
+  delete:     { label: '删除文件',     icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg> },
+  ls:         { label: '查看目录',     icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> },
+  glob:       { label: '搜索文件',     icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> },
+  grep:       { label: '搜索内容',     icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg> },
 }
 
 function getToolInfo(name: string, arg: string) {
-  const info = TOOL_LABEL[name] ?? { label: name, icon: '🔧' }
+  const info = TOOL_LABEL[name] ?? { label: name, icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> }
   let desc = arg
   if (name === 'execute' && arg.startsWith('python ')) desc = `运行 ${arg.replace('python ', '')}`
   else if (name === 'write_file' && arg.endsWith('.py')) desc = `保存为 ${arg}`
@@ -282,7 +282,7 @@ function ToolRow({ msg }: { msg: ToolMessage }) {
           borderRadius: 6,
           border: `1px solid ${isFailed ? '#FECACA' : 'var(--border-light)'}`,
         }}>
-          <span style={{ fontSize: 14, flexShrink: 0 }}>{icon}</span>
+          <span style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>{icon}</span>
           <span style={{ fontSize: 13, color: isFailed ? '#DC2626' : 'var(--text-secondary)', flex: 1 }}>{label}</span>
           <span style={{ fontSize: 12, color: isFailed ? '#DC2626' : 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: 200 }}>{desc}</span>
           {msg.time && <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0, fontFamily: "'JetBrains Mono', monospace" }}>{msg.time}</span>}
@@ -429,7 +429,7 @@ function HitlCard({ msg }: { msg: HitlMessage }) {
         <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginBottom: 6, fontFamily: "'JetBrains Mono', monospace" }}>FinAgent · 需要您确认</div>
         <div style={{ borderLeft: '4px solid var(--status-warn)', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '0 8px 8px 8px', padding: '16px 20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <span style={{ fontSize: 16 }}>{toolInfo.icon}</span>
+            <span style={{ display: 'flex', alignItems: 'center' }}>{toolInfo.icon}</span>
             <span style={{ fontSize: 14, fontWeight: 600, color: '#92400E' }}>智能体即将执行：{toolInfo.label}</span>
           </div>
           <div style={{ fontSize: 13, color: '#92400E', background: 'rgba(146,64,14,0.06)', borderRadius: 5, padding: '8px 12px', marginBottom: 16, fontFamily: "'JetBrains Mono', monospace" }}>
