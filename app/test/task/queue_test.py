@@ -175,3 +175,61 @@ async def test_reclaimed_tasks_are_handed_out_before_new_ones(live_cache: Redis)
 
     assert first is not None
     assert first.task.run_id == stale.run_id
+
+
+# ------------------------------------------------------------------ 队列里还有谁
+# 收割孤儿 run 的唯一判据。**误判的代价是不对称的**：漏掉一个孤儿只是它多躺一会儿，
+# 而错杀一个正在跑的 run 会把教师烧了几十万 token 的分析判成失败。
+# 因此这一组的重点全在「什么不该被算成孤儿」
+async def test_a_task_a_worker_is_holding_counts_as_in_flight(queue: TaskQueue) -> None:
+    """领了还没 ack 的，正被某个 worker 跑着。"""
+    task = a_task()
+    await queue.publish(task)
+    await queue.reserve()
+
+    assert await queue.in_flight() == {task.run_id}
+
+
+async def test_a_task_nobody_has_picked_up_yet_counts_as_in_flight(queue: TaskQueue) -> None:
+    """**这一条是本组的重点。**
+
+    worker 并发满了的时候，`queued` 的 run 会合法地在流里等很久 —— 它既不在 pending
+    列表里（还没人领），也不该被当成孤儿。只看 pending 的话，一次积压就会把
+    整批还没轮到的 run 判成失败。
+    """
+    task = a_task()
+    await queue.publish(task)
+
+    assert await queue.in_flight() == {task.run_id}
+
+
+async def test_an_acked_task_is_no_longer_in_flight(queue: TaskQueue) -> None:
+    """跑完 ack 掉的不在队列里了 —— 库里若还是 queued/running，那就是个孤儿。"""
+    task = a_task()
+    await queue.publish(task)
+    delivery = await queue.reserve()
+    assert delivery is not None
+
+    await queue.ack(delivery.id)
+
+    assert await queue.in_flight() == set()
+
+
+async def test_both_the_held_and_the_waiting_are_reported_together(queue: TaskQueue) -> None:
+    """两个来源要合起来答，少哪一半都会错杀一批。"""
+    held = a_task("有人拿着")
+    waiting = a_task("还没轮到")
+    await queue.publish(held)
+    await queue.reserve()
+    await queue.publish(waiting)
+
+    assert await queue.in_flight() == {held.run_id, waiting.run_id}
+
+
+async def test_a_queue_that_never_started_reports_nothing_in_flight(live_cache: Redis) -> None:
+    """Group 还没建出来时答空集，而不是抛。
+
+    **答空集是安全的**：那时库里也不可能有 queued/running 的 run。
+    抛的话收割器会崩在启动那一刻，而它是个 cron —— 没人会看见。
+    """
+    assert await make_queue(live_cache, "worker-never-started").in_flight() == set()

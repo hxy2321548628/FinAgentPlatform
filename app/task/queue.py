@@ -53,6 +53,19 @@ GROUP_EXISTS = "BUSYGROUP"
 # 反过来：读一个还不存在的 Stream 或 group 时回这个前缀
 GROUP_MISSING = "NOGROUP"
 
+# 「还没有东西可读」的两种说法。**XPENDING 与 XINFO GROUPS 的回话不一样**：
+# 前者对缺流与缺 group 都答 NOGROUP，后者对缺流答 no such key。
+# 只认一种的话，全新部署上那一半会漏成异常
+ABSENT_ERROR = ("NOGROUP", "no such key")
+
+# XINFO GROUPS 一条记录里要读的两个字段
+GROUP_NAME_FIELD = "name"
+LAST_DELIVERED_FIELD = "last-delivered-id"
+
+# XPENDING 的范围两端，取全量
+PENDING_MIN = "-"
+PENDING_MAX = "+"
+
 
 class RunTask(BaseModel):
     """一次待执行的分析。
@@ -224,6 +237,65 @@ class TaskQueue:
             return 0
         count: int = summary["pending"]
         return count
+
+    async def in_flight(self) -> set[str]:
+        """队列里还没跑完的那些 run。
+
+        **两个来源缺一不可**：
+
+        - **pending 列表** —— 有人领走了还没 ack，正跑着（或者刚崩，等人认领）；
+        - **还没投递的** —— worker 并发满了的时候，`queued` 的 run 会合法地在流里
+          等很久。只看 pending 的话，一次积压就会把整批还没轮到的 run 判成孤儿。
+
+        已经 ack 的消息**仍留在流里**（`XACK` 只把它移出 pending），因此不能整条流
+        扫一遍就算数 —— 那样每个跑完的 run 都会被算成「还在队列里」，孤儿一个也发现不了。
+        分界是 group 的 `last-delivered-id`：它之后的是还没投递的，它之前的要么在
+        pending 里，要么已经 ack。
+
+        **group 还没建出来时答空集，而不是抛**（同 `pending_count`）。那时库里也不
+        可能有 `queued` / `running` 的 run，空集就是实情。
+
+        Returns:
+            还在队列里的 run 标识。
+        """
+        try:
+            group = await self._group_info()
+        except ResponseError as exc:
+            if not str(exc).startswith(ABSENT_ERROR):
+                raise
+            return set()
+        if group is None:
+            return set()
+        return await self._holding_run_id() | await self._waiting_run_id(group[LAST_DELIVERED_FIELD])
+
+    async def _group_info(self) -> dict[str, str] | None:
+        """本 group 在流上的信息。流存在但 group 不在时为 None。"""
+        for one in cast(list[dict[str, str]], await self._client.xinfo_groups(TASK_STREAM)):
+            if one[GROUP_NAME_FIELD] == CONSUMER_GROUP:
+                return one
+        return None
+
+    async def _holding_run_id(self) -> set[str]:
+        """还没 ack 的那些消息装的是哪些 run。"""
+        pending = cast(
+            list[dict[str, str]],
+            await self._client.xpending_range(
+                TASK_STREAM, CONSUMER_GROUP, min=PENDING_MIN, max=PENDING_MAX, count=self._max_length
+            ),
+        )
+        found: set[str] = set()
+        for one in pending:
+            entry = cast(list[StreamEntry], await self._client.xrange(TASK_STREAM, min=one["message_id"], count=1))
+            found |= {_decode(message_id, field).task.run_id for message_id, field in entry}
+        return found
+
+    async def _waiting_run_id(self, last_delivered: str) -> set[str]:
+        """还没投递给任何人的那些消息装的是哪些 run。"""
+        entry = cast(
+            list[StreamEntry],
+            await self._client.xrange(TASK_STREAM, min=f"({last_delivered}", count=self._max_length),
+        )
+        return {_decode(message_id, field).task.run_id for message_id, field in entry}
 
     async def _claim(self) -> Delivery | None:
         """认领一条闲置超时、且不在自己手上的消息。"""
