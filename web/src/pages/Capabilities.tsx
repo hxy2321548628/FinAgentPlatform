@@ -87,59 +87,8 @@ export function Capabilities() {
         </div>
       </section>
 
-      {/* 技术栈全景 */}
-      <section style={{ background: 'var(--bg)', borderTop: '1px solid var(--border)', padding: '60px 80px', position: 'relative', overflow: 'hidden' }}>
-        <div style={{ maxWidth: 1300, margin: '0 auto', position: 'relative' }}>
-          <div className="section-tag">// TECH STACK · 完全开源，自主可控</div>
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 2px 8px rgba(11,46,92,0.06)', maxWidth: 760 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', background: '#F7F9FC', borderBottom: '1px solid var(--border-light)' }}>
-              {[0,1,2].map(i => <div key={i} style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--border)' }} />)}
-              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6, fontFamily: "'JetBrains Mono', monospace" }}>$ cat platform-stack.yml</span>
-            </div>
-            <div style={{ padding: '20px 24px' }}>
-              <pre style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, lineHeight: 1.9, color: 'var(--text-secondary)', whiteSpace: 'pre', margin: 0 }}>{[
-                ['comment', '# 智能体层'],
-                ['key', 'agent_framework', 'DeepAgents / LangGraph  ', '# MIT License'],
-                ['key', 'reasoning_model ', 'deepseek-v4-pro         ', '# 国产前沿模型'],
-                ['blank'],
-                ['comment', '# 执行层'],
-                ['key', 'sandbox_runtime ', 'Docker + gVisor (runsc) ', '# Google 开源'],
-                ['key', 'event_transport ', 'SSE (Server-Sent Events)', '# W3C 标准'],
-                ['key', 'task_queue      ', 'Redis Streams           ', '# 持久化事件流'],
-                ['blank'],
-                ['comment', '# 数据层'],
-                ['key', 'checkpoint_store', 'PostgreSQL              ', '# 状态持久化'],
-                ['key', 'artifact_store  ', 'MinIO (S3-compatible)   ', '# 院内对象存储'],
-                ['blank'],
-                ['comment', '# 接入层'],
-                ['key', 'api_layer       ', 'FastAPI (Python)'],
-                ['key', 'frontend        ', 'React + Vite + TypeScript'],
-                ['key', 'deployment      ', 'Docker Compose · 单机内网部署'],
-              ].map((row, i) => {
-                if (row[0] === 'blank') return <span key={i}>{'\n'}</span>
-                if (row[0] === 'comment') return (
-                  <span key={i} style={{ color: 'var(--text-muted)' }}>{row[1]}{'\n'}</span>
-                )
-                return (
-                  <span key={i}>
-                    <span style={{ color: 'var(--action)' }}>{row[1]}</span>
-                    <span>{':   '}</span>
-                    <span style={{ color: 'var(--text-primary)' }}>{row[2]}</span>
-                    {row[3] && <span style={{ color: 'var(--text-muted)' }}>{row[3]}</span>}
-                    {'\n'}
-                  </span>
-                )
-              })}</pre>
-            </div>
-            <div style={{ padding: '10px 24px 14px', borderTop: '1px solid var(--border-light)', fontSize: 11, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em' }}>
-              全部组件均可在学院服务器独立运行，无需连接任何外部商业服务
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 安全隔离专区 */}
-      <section style={{ background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
+      {/* 安全隔离专区 — 灰底，与四大能力白底区隔 */}
+      <section className="grid-bg" style={{ borderTop: '1px solid var(--border)' }}>
         <div style={{ maxWidth: 1300, margin: '0 auto', padding: 80, display: 'flex', gap: 60, alignItems: 'flex-start' }}>
           <div style={{ flex: 1 }}>
             <div className="section-tag">// SECURITY ARCHITECTURE</div>
@@ -176,8 +125,8 @@ export function Capabilities() {
         </div>
       </section>
 
-      {/* CTA */}
-      <section style={{ textAlign: 'center', padding: 80, background: 'var(--bg)', borderTop: '1px solid var(--border)' }}>
+      {/* CTA — 白底，与安全区灰底区隔 */}
+      <section style={{ textAlign: 'center', padding: 80, background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
         <div className="section-tag" style={{ justifyContent: 'center', display: 'flex' }}>// GET STARTED</div>
         <h2 style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>了解更多，立即体验</h2>
         <p style={{ fontSize: 15, color: 'var(--text-secondary)', marginBottom: 32 }}>查看数据接入方式，或直接进入工作台开始第一次分析</p>
