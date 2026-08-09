@@ -7,6 +7,7 @@
 """
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -232,3 +233,28 @@ async def test_a_cancelled_run_is_no_longer_unfinished(repository: RunRepository
     await repository.cancel(submitted)
 
     assert submitted not in {run.id for run in await repository.unfinished()}
+
+
+async def test_a_run_submitted_just_now_is_held_back_by_the_grace_period(
+    repository: RunRepository, submitted: str
+) -> None:
+    """**宽限期挡的是两次读之间的时间差，不是慢 worker。**
+
+    收割器先读库再读队列。一个 run 若在这两次读之间才被投进队列，库里已经有行、
+    队列里还没有它 —— 不设宽限期就会把一次刚提交的分析当场判成孤儿。
+    """
+    cutoff = datetime.now(UTC) - timedelta(minutes=10)
+
+    assert submitted not in {run.id for run in await repository.unfinished(started_before=cutoff)}
+
+
+async def test_an_old_run_is_past_the_grace_period(repository: RunRepository, submitted: str) -> None:
+    """反面：够老的照样报出来，否则宽限期就成了「永远收割不到」。"""
+    long_ago = datetime.now(UTC) + timedelta(hours=1)
+
+    assert submitted in {run.id for run in await repository.unfinished(started_before=long_ago)}
+
+
+async def test_without_a_cutoff_every_unfinished_run_is_reported(repository: RunRepository, submitted: str) -> None:
+    """不给时点就是全量 —— 崩溃恢复那条老路不该被这个新参数改掉行为。"""
+    assert submitted in {run.id for run in await repository.unfinished()}

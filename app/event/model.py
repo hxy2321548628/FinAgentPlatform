@@ -65,6 +65,10 @@ class RunErrorCode(StrEnum):
 
     SANDBOX_QUEUE_TIMEOUT = "SANDBOX_QUEUE_TIMEOUT"
     INTERNAL = "INTERNAL"
+    # 库里还活着、队列里却没有它了：没有任何东西会再碰这个 run。
+    # **与 INTERNAL 分开是因为教师要做的事不一样** —— INTERNAL 是这次分析炸了，
+    # 而这个是它根本没跑起来（或者跑完了没人记账），重新提交是有意义的
+    ORPHANED = "ORPHANED"
 
 
 class EventEnvelope(BaseModel):

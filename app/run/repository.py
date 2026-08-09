@@ -317,23 +317,27 @@ class RunRepository:
         """
         return await self._transit_from(run_id, CANCELLABLE_STATUS, **change)
 
-    async def unfinished(self) -> list[Run]:
+    async def unfinished(self, *, started_before: datetime | None = None) -> list[Run]:
         """列出还没走到终态的 run。
 
         **这是本类里唯一不带 user 上下文的查询**，因为它不服务任何用户请求：
-        崩溃恢复扫的是「此刻还没跑完的 run」，调用方是 worker 的启动路径，
+        扫的是「此刻还没跑完的 run」，调用方是收割孤儿的 cron，
         那里根本没有登录用户。走 `ix_runs_unfinished` 那条部分索引。
+
+        Args:
+            started_before: 只要早于这个时刻提交的。收割器用它留一段宽限期 ——
+                那一段挡的是「先读库、再读队列」这两步之间的时间差：一个 run 若
+                恰好在这中间才被投进队列，库里已经有行而队列里还没有它，
+                不留宽限期就会把一次刚提交的分析当场判成孤儿。不给就是全量。
 
         Returns:
             状态为 `queued` 或 `running` 的 run，按提交顺序。
         """
+        statement = select(RunRecord).where(col(RunRecord.status).in_(UNFINISHED_STATUS))
+        if started_before is not None:
+            statement = statement.where(col(RunRecord.started_at) < started_before)
         async with AsyncSession(self._engine) as session:
-            statement = (
-                select(RunRecord)
-                .where(col(RunRecord.status).in_(UNFINISHED_STATUS))
-                .order_by(col(RunRecord.started_at))
-            )
-            found = await session.exec(statement)
+            found = await session.exec(statement.order_by(col(RunRecord.started_at)))
             return [record.to_run() for record in found.all()]
 
     async def live_count(self) -> dict[RunStatus, int]:
