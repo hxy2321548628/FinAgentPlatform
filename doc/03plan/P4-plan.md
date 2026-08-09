@@ -515,7 +515,7 @@ resumed = task.decisions is not None or start is RunStart.RESUMED
 
 | 查什么 | 结果 | 决定了什么 |
 |---|---|---|
-| Redis 里还压着多少 | `zuel:run` 流**根本不存在**（XLEN 0、无消费组） | 积压纯粹是库里的账，队列本身干净 |
+| Redis 里还压着多少 | `zuel:task:run` 共 171 条 entry，consumer group `zuel:worker` 下 20 个消费者，**pending 0、lag 0** | 积压纯粹是库里的账，队列本身干净 |
 | 谁的 run | **142 个里 141 个 `user_id` 为空** | 空归属正是「P2 之前建的行」的标记，这批全是测试残留，没有真实教师的活 |
 | 带了多少下游数据 | 0 个产物、共 4 条归档事件 | 删除撞不上外键 |
 
@@ -523,10 +523,42 @@ resumed = task.decisions is not None or start is RunStart.RESUMED
 
 顺带照出来的两件事，都**只记不动**（本期无关）：
 
-- `RunRepository.unfinished()` **没有任何生产调用方**，只剩定义与迁移里的索引注释。也就是说崩溃恢复的重投路径并不存在 —— 这批僵尸不会被重新执行，只是永远躺着。
+- `RunRepository.unfinished()` **没有任何生产调用方**，只剩定义与迁移里的索引注释。它的 docstring 明写「调用方是 worker 的启动路径」，而 `worker/runtime.py` 与 `worker/main.py` 里没有任何回扫动作。**崩溃恢复完全靠 Redis 的 pending 列表**（`XAUTOCLAIM`），库回扫这一层从来没接上 —— 后果见 §8.6.3。
 - `run_events` 里有 **1241 条孤儿事件**（对应的 run 不在 `runs` 表里）。已用删除前的备份逐一核对过：**它们一条也不涉及本次删掉的 142 个 run**，是更早的历史遗留。`run_events` 对 `runs` 没有外键，所以这种孤儿不会被数据库拦住。
 
 **平台仍然没有僵尸 run 的自动清理**（唯一的清扫器 `run/approval.py` 只管 `waiting_approval`）。这次是手工清的，下一次验收 kill 掉 worker 还会再攒出来。真要修，形态是现成的：照 `run/approval.py` 那个 cron 的样子，把「活着但超时未动」的 run 转 `cancelled`。
+
+#### 8.6.3 顺着僵尸问出来的：一个 worker 挂了，另一个接得住吗
+
+**接得住，但只覆盖了两种挂法里的一种。**
+
+接管靠的是 Redis Stream 的 pending 列表，全过程没有任何「主节点」参与：
+
+| 步 | 发生什么 | 在哪 |
+|---|---|---|
+| 1 | worker A 领走消息，消息进 pending 列表；**跑完才 `XACK`** | `task/queue.py` `reserve()` |
+| 2 | A 每 15 秒 `XCLAIM ... min_idle_time=0` 把自己那条消息的 idle 归零 | `worker/loop.py` `_keep_alive()` |
+| 3 | A 被 `kill -9`，心跳随之停止，idle 开始涨 | —— |
+| 4 | B 每次领任务**先** `XAUTOCLAIM` 认领 idle > 60 秒的消息，**再**取新消息 | `task/queue.py` `_claim()` |
+| 5 | B 调 `start()`，撞上 `RESUMABLE_STATUS`（`running` / `waiting_approval`）→ 返回 `RESUMED` | `run/repository.py` |
+| 6 | 带着 `resumed=true` 从 LangGraph checkpoint **续跑而不是重跑**，前端不重置已显示的对话 | `run/executor.py` `_drive()` |
+| 7 | 沙箱按 `holder=run.id` 记名，同一个 run 再申请同一个容器不算第二个租约 | `run/executor.py` `_acquire()` |
+
+**15 秒心跳与 60 秒认领阈值是一对**：没有心跳的话阈值就必须大于最长的一次 run（几十分钟），崩溃恢复要等那么久；有了心跳，一个健康的 worker 跑四十分钟也一直是「刚被碰过」，于是阈值可以压到 60 秒。这两条各有测试钉着：`test_another_worker_claims_what_a_dead_one_left_behind` 与反面的 `test_a_touched_task_is_not_stolen_from_a_healthy_worker`。
+
+**盖不住的那一半：消息已经 `XACK` 但 run 没有终态。**
+
+`ack` 在 `worker/loop.py` `_handle()` 的 `finally` 里，**无条件执行**。而 `run/executor.py` `_drive()` 里有三处调用落在保护范围之外 —— 它们在那个 `try/except → _fail` 之前：
+
+| 抛在哪 | run 停在 | 消息 |
+|---|---|---|
+| `_cancel.is_raised()`（读 Redis） | `queued` | 已 ack |
+| `_repository.start()`（写 Postgres） | `queued` | 已 ack |
+| `_emit(RunStartedEvent)`（写 Redis） | **`running`** | 已 ack |
+
+这三处任何一处抛，异常冒到 `_handle`，那里 `logger.exception` 记一笔然后照样 ack。**此后没有任何东西会再碰这个 run** —— 它不在 pending 列表里，而库回扫那一层（`unfinished()`）没有调用方。教师看到的是一个永远停在「排队中」或「执行中」的分析。
+
+要补的话形态很清楚：worker 启动时调一次 `unfinished()`，把查出来的 run 重新投进队列。`start()` 的条件更新与 `_cancel.is_raised()` 的开跑前检查已经保证了重投是安全的 —— 缺的只是触发它的那一下。**本期不做**（P4 是可观测性，不是恢复语义），登记在此。
 
 ### 8.7 步骤六：OTel Collector + Tempo，一个 run 的完整 trace
 
