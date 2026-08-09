@@ -20,7 +20,11 @@ interface ScenarioProps {
 
 function Scenario({ contextLabel, contextText, title, quote, steps, outputs, tags, terminalTitle, terminalTask, terminalLogs, terminalIndents, terminalSummary, reverse, bgSurface }: ScenarioProps) {
   const iconColors = { done: '#10B981', run: '#1749C4', pending: '#8E9BB0' }
-  const icons = { done: '✓', run: '◉', pending: '○' }
+  const icons = {
+    done: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>,
+    run: <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="5"/></svg>,
+    pending: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/></svg>,
+  }
 
   const leftContent = (
     <div style={{ flex: 1, minWidth: 0 }}>
@@ -63,7 +67,7 @@ function Scenario({ contextLabel, contextText, title, quote, steps, outputs, tag
           <hr style={{ border: 'none', borderTop: '1px solid var(--border-light)', margin: '8px 0' }} />
           {terminalLogs.map((log, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-              <span style={{ color: iconColors[log.status], minWidth: 12 }}>{icons[log.status]}</span>
+              <span style={{ color: iconColors[log.status], minWidth: 12, display: 'flex', alignItems: 'center' }}>{icons[log.status]}</span>
               <span style={{ minWidth: 76, color: log.status === 'pending' ? 'var(--text-muted)' : 'var(--text-secondary)' }}>{log.name}</span>
               <span style={{ color: 'var(--text-muted)', flex: 1, fontSize: 11 }}>{log.arg}</span>
               {log.time && <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{log.time}</span>}
@@ -180,7 +184,7 @@ export function Scenarios() {
         <h2 style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>已有数据，立即开始</h2>
         <p style={{ fontSize: 15, color: 'var(--text-secondary)', marginBottom: 32 }}>选择一个场景，上传您的数据文件，直接开始分析</p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-          <a href="#workspace" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 44, padding: '0 24px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}>进入工作台，开始分析 →</a>
+          <a href="/workspace" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 44, padding: '0 24px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}>进入工作台，开始分析 →</a>
           <Link to="/capabilities" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 44, padding: '0 20px', background: 'var(--surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14, fontWeight: 500, cursor: 'pointer', textDecoration: 'none' }}>了解技术底座 →</Link>
         </div>
       </section>

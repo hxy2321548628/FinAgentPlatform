@@ -2,11 +2,11 @@ import { Link } from 'react-router-dom'
 import { DecoStamp } from '../components/DecoStamp'
 
 const MARKET_ITEMS = [
-  { icon: '📈', label: 'A 股日 K / 分钟线行情' },
-  { icon: '📊', label: '上市公司财务报表（三张表）' },
-  { icon: '🏦', label: '宏观经济指标（GDP / CPI / M2）' },
-  { icon: '💹', label: '基金净值与持仓历史' },
-  { icon: '🌍', label: '汇率与大宗商品价格' },
+  { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>, label: 'A 股日 K / 分钟线行情' },
+  { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="2" y1="9" x2="22" y2="9"/><line x1="8" y1="21" x2="8" y2="9"/></svg>, label: '上市公司财务报表（三张表）' },
+  { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>, label: '宏观经济指标（GDP / CPI / M2）' },
+  { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 0 0 4H8"/><line x1="12" y1="6" x2="12" y2="8"/><line x1="12" y1="16" x2="12" y2="18"/></svg>, label: '基金净值与持仓历史' },
+  { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>, label: '汇率与大宗商品价格' },
 ]
 
 const SECURITY_COLS = [
@@ -135,7 +135,7 @@ export function DataAssets() {
               <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
                 {MARKET_ITEMS.map((item, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-secondary)' }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 6, background: 'var(--action-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0 }}>{item.icon}</div>
+                    <div style={{ width: 28, height: 28, borderRadius: 6, background: 'var(--action-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'var(--action)' }}>{item.icon}</div>
                     {item.label}
                   </div>
                 ))}
@@ -180,7 +180,7 @@ export function DataAssets() {
         <h2 style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>数据已就绪，开始分析</h2>
         <p style={{ fontSize: 15, color: 'var(--text-secondary)', marginBottom: 32 }}>上传您的第一份数据文件，或直接提问让 agent 从公开市场接口拉取数据</p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-          <a href="#workspace" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 44, padding: '0 24px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}>进入工作台，开始分析 →</a>
+          <a href="/workspace" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 44, padding: '0 24px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}>进入工作台，开始分析 →</a>
           <Link to="/capabilities" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 44, padding: '0 20px', background: 'var(--surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14, fontWeight: 500, cursor: 'pointer', textDecoration: 'none' }}>了解平台能力 →</Link>
         </div>
       </section>

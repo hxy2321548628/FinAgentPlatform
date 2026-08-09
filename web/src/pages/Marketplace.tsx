@@ -203,8 +203,14 @@ function AgentMiniCard({ agent }: { agent: AgentCard }) {
       style={{ background: 'var(--surface)', border: `1px solid ${hovered ? 'var(--action-border)' : 'var(--border)'}`, borderRadius: 10, padding: '18px 20px', transition: 'border-color 0.2s, box-shadow 0.2s', boxShadow: hovered ? '0 4px 16px rgba(23,73,196,0.08)' : 'none', display: 'flex', flexDirection: 'column' as const, gap: 10 }}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>📊 {agent.name}</div>
-        <span style={{ fontSize: 12, color: '#F59E0B', fontWeight: 600, flexShrink: 0, marginLeft: 8 }}>⭐ {agent.rating}</span>
+        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: 'var(--action)', flexShrink: 0 }}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+          {agent.name}
+        </div>
+        <span style={{ fontSize: 12, color: '#F59E0B', fontWeight: 600, flexShrink: 0, marginLeft: 8, display: 'flex', alignItems: 'center', gap: 3 }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="#F59E0B" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          {agent.rating}
+        </span>
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{agent.author} · {agent.subject}</div>
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.65, flex: 1 }}>{agent.desc}</p>

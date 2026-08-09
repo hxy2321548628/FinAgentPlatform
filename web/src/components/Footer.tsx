@@ -18,7 +18,7 @@ export function Footer() {
       </Link>
       <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>© 2026 金融学院智能体平台</span>
       <div style={{ display: 'flex', gap: 24 }}>
-        {[['研究范式', '/scenarios'], ['技术底座', '/capabilities'], ['数据要素', '/data']].map(([label, to]) => (
+        {[['智能体市场', '/marketplace'], ['研究范式', '/scenarios'], ['技术底座', '/capabilities'], ['数据要素', '/data']].map(([label, to]) => (
           <Link key={to} to={to} style={{ fontSize: 13, color: 'var(--text-secondary)', textDecoration: 'none' }}>
             {label}
           </Link>

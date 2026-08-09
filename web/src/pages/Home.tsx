@@ -30,7 +30,7 @@ const VALUE_CARDS = [
 
 const ENTRY_CARDS = [
   {
-    to: '#workspace',
+    to: '/workspace',
     icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
     title: '开始分析对话',
     desc: '直接用自然语言描述分析需求，智能体立即编写代码、执行并返回结果。无需任何编程基础。',
@@ -82,7 +82,7 @@ export function Home() {
               金融学院 AI 原生科研环境，下一代研究者的工作方式。
             </p>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <a href="#workspace" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 48, padding: '0 28px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: 'pointer', textDecoration: 'none', transition: 'background 0.2s' }}>
+              <a href="/workspace" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 48, padding: '0 28px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: 'pointer', textDecoration: 'none', transition: 'background 0.2s' }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 进入平台
               </a>

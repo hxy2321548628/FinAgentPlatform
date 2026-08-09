@@ -131,7 +131,7 @@ export function Capabilities() {
         <h2 style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>了解更多，立即体验</h2>
         <p style={{ fontSize: 15, color: 'var(--text-secondary)', marginBottom: 32 }}>查看数据接入方式，或直接进入工作台开始第一次分析</p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-          <a href="#workspace" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 44, padding: '0 24px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}>进入工作台 →</a>
+          <a href="/workspace" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 44, padding: '0 24px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}>进入工作台 →</a>
           <Link to="/data" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 44, padding: '0 20px', background: 'var(--surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14, fontWeight: 500, cursor: 'pointer', textDecoration: 'none' }}>数据要素 →</Link>
         </div>
       </section>
