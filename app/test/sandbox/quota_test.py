@@ -89,13 +89,19 @@ def test_the_command_prefix_is_configurable(tmp_path: Path) -> None:
     assert quota.ran[0][:2] == ["sudo", "xfs_quota"]
 
 
-def test_a_workspace_path_with_spaces_is_quoted(tmp_path: Path) -> None:
-    """部署方给定的根目录可能带空格，不该把命令拆成两半。"""
+def test_the_workspace_path_goes_in_without_shell_quoting(tmp_path: Path) -> None:
+    """**`-c` 后面那串不经 shell**，xfs_quota 自己分词且不去引号。
+
+    实测过一次：路径含非 ASCII（仓库在 `~/文档/` 下）时 `shlex.quote` 会加引号，
+    xfs_quota 把引号当成路径的一部分，报 ENOENT 却退出 0 —— 于是这台机器上
+    每个会话的目录都没被认领，配额从来没生效过，而没有任何地方报错。
+    """
     quota = RecordingQuota(mount_point=tmp_path)
+    workspace = Path("/data/文档/thread-1")
 
-    quota.assign("thread-1", Path("/data/my sandbox/thread-1"))
+    quota.assign("thread-1", workspace)
 
-    assert "'/data/my sandbox/thread-1'" in quota.ran[0][3]
+    assert f"project -s -p {workspace} " in quota.ran[0][3]
 
 
 # ------------------------------------------------------------------ 失败不吞
@@ -116,14 +122,34 @@ def test_a_missing_quota_binary_raises(tmp_path: Path) -> None:
 
 # ------------------------------------------------------------------ 回读
 class ReportingQuota(XfsQuota):
-    """按给定的 report 输出回答回读，别的子命令一概静默成功。"""
+    """按给定的输出回答两步回读，别的子命令一概静默成功。"""
 
-    def __init__(self, report: str, **argument: object) -> None:
+    def __init__(self, report: str, claim: str = "", **argument: object) -> None:
         super().__init__(**argument)  # type: ignore[arg-type]
         self._report = report
+        self._claim = claim
 
     def _run(self, subcommand: str) -> str:
-        return self._report if subcommand.startswith("report") else ""
+        if subcommand.startswith("report"):
+            return self._report
+        return self._claim if subcommand.startswith("project -c") else ""
+
+
+def test_a_workspace_that_never_got_claimed_raises(tmp_path: Path) -> None:
+    """**`limit` 是设在 projid 上的，目录没认领它照样成功。**
+
+    只回读限额会得到「有上限但没人受它约束」的假绿 —— 带空格的路径正是这样：
+    xfs_quota 在空格处把路径截断，认领的是一个不存在的目录，而它退出 0。
+    """
+    identifier = project_id("thread-1")
+    quota = ReportingQuota(
+        f"#{identifier} 0 0 5242880 00 [--------]",
+        claim=f"{tmp_path} - project identifier is not set (inode=0, tree={identifier})",
+        mount_point=tmp_path,
+    )
+
+    with pytest.raises(QuotaError, match="没有被认领"):
+        quota.assign("thread-1", Path("/data/my sandbox/thread-1"))
 
 
 def test_a_quota_command_that_exits_zero_without_setting_anything_raises(tmp_path: Path) -> None:
@@ -169,7 +195,7 @@ def test_the_read_back_asks_only_about_this_project(tmp_path: Path) -> None:
 
     quota.assign("thread-1", tmp_path / "thread-1")
 
-    assert quota.ran[2][3] == f"report -p -N -b -n -L {identifier} -U {identifier}"
+    assert quota.ran[3][3] == f"report -p -N -b -n -L {identifier} -U {identifier}"
 
 
 # ------------------------------------------------------------------ 不设配额
@@ -178,25 +204,49 @@ def test_no_quota_does_nothing(tmp_path: Path) -> None:
 
 
 # ------------------------------------------------------------------ 真 XFS
-def _xfs_ready(path: Path) -> bool:
-    if os.geteuid() != 0 or shutil.which("xfs_quota") is None or not path.is_dir():
-        return False
-    kind = subprocess.run(["findmnt", "-no", "FSTYPE", str(path)], capture_output=True, text=True, check=False)
-    return kind.stdout.strip() == "xfs"
-
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 XFS_MOUNT = REPO_ROOT / "data" / "sandbox"
 
+# 以 root 跑就直接调，普通用户走 setup-xfs.sh 放行的免密 sudo。
+# `-n` 是必须的：口令提示会让整个套件挂在那儿等输入
+QUOTA_COMMAND = ("xfs_quota",) if os.geteuid() == 0 else ("sudo", "-n", "xfs_quota")
 
-@pytest.mark.skipif(not _xfs_ready(XFS_MOUNT), reason="需要 root 且 data/sandbox 是 XFS（deploy/setup-xfs.sh）")
+
+def _quota_ready(mount: Path) -> bool:
+    """挂载是 XFS + prjquota、挂载点可写、且 xfs_quota 免密调得起来。
+
+    **刻意不要求 root**：root 那一程验不到东西 —— 原来的版本要求 root，于是它从来
+    没在 `make all` 里跑过，而配额没生效整整两天没人发现。
+    """
+    if shutil.which("xfs_quota") is None or not mount.is_dir() or not os.access(mount, os.W_OK):
+        return False
+    mounted = subprocess.run(
+        ["findmnt", "-no", "FSTYPE,OPTIONS", str(mount)], capture_output=True, text=True, check=False
+    )
+    if not mounted.stdout.startswith("xfs") or "prjquota" not in mounted.stdout:
+        return False
+    state = subprocess.run(
+        [*QUOTA_COMMAND, "-x", "-c", "state -p", str(mount)], capture_output=True, text=True, check=False
+    )
+    return state.returncode == 0 and "Enforcement: ON" in state.stdout
+
+
+@pytest.mark.skipif(
+    not _quota_ready(XFS_MOUNT),
+    reason="需要 data/sandbox 是 XFS + prjquota、挂载点可写、xfs_quota 免密可调（deploy/setup-xfs.sh）",
+)
 def test_a_real_quota_stops_writes_at_the_limit() -> None:
-    """配额对目录生效，因此宿主侧直接写（文件工具走的正是这条路）同样被挡住。"""
+    """配额对目录生效，因此宿主侧直接写（文件工具走的正是这条路）同样被挡住。
+
+    **必须走产品代码，不能自己拼命令**：`hostile.sh` ③ 自己拼，于是它验的是
+    「XFS 的机制成立」而不是「平台拼出来的命令对不对」—— 实测漏掉了一个把路径
+    加引号、让认领全数失败的 bug，而那条破坏性测试照样是绿的。
+    """
     workspace = XFS_MOUNT / "quota-unit-probe"
     shutil.rmtree(workspace, ignore_errors=True)
     workspace.mkdir()
     try:
-        XfsQuota(mount_point=XFS_MOUNT, limit="4m").assign("quota-unit-probe", workspace)
+        XfsQuota(mount_point=XFS_MOUNT, limit="4m", command=QUOTA_COMMAND).assign("quota-unit-probe", workspace)
 
         with pytest.raises(OSError) as caught:
             (workspace / "fill").write_bytes(b"x" * (16 * 1024 * 1024))

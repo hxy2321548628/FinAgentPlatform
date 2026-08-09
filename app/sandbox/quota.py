@@ -8,7 +8,6 @@ LLM 生成的代码可以往里写满宿主机磁盘。这是威胁表「写满�
 """
 
 import logging
-import shlex
 import subprocess
 import zlib
 from collections.abc import Sequence
@@ -31,6 +30,10 @@ PROJECT_ID_SPACE = 0x7FFFFFFF
 
 # `report -p -N -b` 每行的字段依次是 projid、已用、软限、硬限，块以 1KB 计
 HARD_LIMIT_FIELD = 3
+
+# `project -c` 对没认领的目录会打「project identifier is not set」
+# 与「project inheritance flag is not set」，认领成功时这两句都不出现
+UNCLAIMED_MARKER = "not set"
 
 
 def _hard_limit(line: str, identifier: int) -> int:
@@ -124,23 +127,34 @@ class XfsQuota:
         """
         identifier = project_id(thread_id)
         # 先认领目录再设限额。反过来的话，限额会先落在一个还没有任何目录的
-        # project 上，中间那一小段时间里新建的文件不受任何约束
-        self._run(f"project -s -p {shlex.quote(str(workspace))} {identifier}")
+        # project 上，中间那一小段时间里新建的文件不受任何约束。
+        #
+        # **路径原样拼进去，不加 shell 引号**：`-c` 后面那串不经 shell，xfs_quota
+        # 自己按空白分词且不做去引号 —— 加了引号它会把引号当成路径的一部分，报
+        # ENOENT 却退出 0。带空格的路径这个接口因此根本表达不了，由 _confirm 抓住
+        self._run(f"project -s -p {workspace} {identifier}")
         self._run(f"limit -p bhard={self._limit} {identifier}")
-        self._confirm(identifier)
+        self._confirm(identifier, workspace)
 
-    def _confirm(self, identifier: int) -> None:
-        """回读一次，确认这个 project 身上真的有硬上限。
+    def _confirm(self, identifier: int, workspace: Path) -> None:
+        """回读一次，确认这个目录真的归这个 project，且它身上真的有硬上限。
 
-        **退出码在这里骗过一次**：xfs_quota 探不到挂载点（loop 挂载重启后没挂回来）
-        时把错误打到 stderr 却退出 0，于是 check=True 一次都不触发 —— 每个会话的
-        上限一个都没设上，而日志里连一条记录都没有。判据因此取回读值，不取退出码。
+        **退出码在这里骗过两次**：探不到挂载点（loop 挂载重启后没挂回来）、
+        认领的路径不存在（含被引号毁掉的路径），xfs_quota 都是把错误打到 stderr
+        却退出 0 —— 于是 check=True 一次都不触发，配额一个都没设上而日志里
+        连一条记录都没有。判据因此取回读值，不取退出码。
+
+        **两样都要查**：`limit` 是设在 projid 上的，目录没认领它照样成功，
+        单看限额会得到一个「有上限但没人受它约束」的假绿。
         """
+        claim = self._run(f"project -c -p {workspace} {identifier}")
+        if UNCLAIMED_MARKER in claim:
+            message = f"配额没有生效（projid {identifier}）：{workspace} 没有被认领，xfs_quota 认不认得这个路径"
+            raise QuotaError(message)
         report = self._run(f"report -p -N -b -n -L {identifier} -U {identifier}")
-        if any(_hard_limit(line, identifier) > 0 for line in report.splitlines()):
-            return
-        message = f"配额没有生效（projid {identifier}）：回读不到硬上限，确认 {self._mount_point} 以 prjquota 挂载"
-        raise QuotaError(message)
+        if not any(_hard_limit(line, identifier) > 0 for line in report.splitlines()):
+            message = f"配额没有生效（projid {identifier}）：回读不到硬上限，确认 {self._mount_point} 以 prjquota 挂载"
+            raise QuotaError(message)
 
     def _run(self, subcommand: str) -> str:
         argument = [*self._command, "-x", "-c", subcommand, str(self._mount_point)]
