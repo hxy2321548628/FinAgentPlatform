@@ -29,6 +29,20 @@ QUOTA_CLI_TIMEOUT = 30
 # 高位 id 的特殊处理，也给运维手工分配的 id 留出整个高半区。
 PROJECT_ID_SPACE = 0x7FFFFFFF
 
+# `report -p -N -b` 每行的字段依次是 projid、已用、软限、硬限，块以 1KB 计
+HARD_LIMIT_FIELD = 3
+
+
+def _hard_limit(line: str, identifier: int) -> int:
+    """从一行 project 报表里取硬上限，不是这个 project 或取不出就答 0。"""
+    field = line.split()
+    if len(field) <= HARD_LIMIT_FIELD or field[0].lstrip("#") != str(identifier):
+        return 0
+    try:
+        return int(field[HARD_LIMIT_FIELD])
+    except ValueError:
+        return 0
+
 
 class QuotaError(RuntimeError):
     """配额没能设上。
@@ -113,11 +127,25 @@ class XfsQuota:
         # project 上，中间那一小段时间里新建的文件不受任何约束
         self._run(f"project -s -p {shlex.quote(str(workspace))} {identifier}")
         self._run(f"limit -p bhard={self._limit} {identifier}")
+        self._confirm(identifier)
 
-    def _run(self, subcommand: str) -> None:
+    def _confirm(self, identifier: int) -> None:
+        """回读一次，确认这个 project 身上真的有硬上限。
+
+        **退出码在这里骗过一次**：xfs_quota 探不到挂载点（loop 挂载重启后没挂回来）
+        时把错误打到 stderr 却退出 0，于是 check=True 一次都不触发 —— 每个会话的
+        上限一个都没设上，而日志里连一条记录都没有。判据因此取回读值，不取退出码。
+        """
+        report = self._run(f"report -p -N -b -n -L {identifier} -U {identifier}")
+        if any(_hard_limit(line, identifier) > 0 for line in report.splitlines()):
+            return
+        message = f"配额没有生效（projid {identifier}）：回读不到硬上限，确认 {self._mount_point} 以 prjquota 挂载"
+        raise QuotaError(message)
+
+    def _run(self, subcommand: str) -> str:
         argument = [*self._command, "-x", "-c", subcommand, str(self._mount_point)]
         try:
-            subprocess.run(argument, capture_output=True, text=True, timeout=QUOTA_CLI_TIMEOUT, check=True)
+            done = subprocess.run(argument, capture_output=True, text=True, timeout=QUOTA_CLI_TIMEOUT, check=True)
         except subprocess.CalledProcessError as exc:
             message = f"设置配额失败（{subcommand}）：{exc.stderr.strip()}"
             raise QuotaError(message) from exc
@@ -127,6 +155,7 @@ class XfsQuota:
         except OSError as exc:
             message = f"调不起 xfs_quota：{exc}"
             raise QuotaError(message) from exc
+        return done.stdout
 
 
 class NoQuota:

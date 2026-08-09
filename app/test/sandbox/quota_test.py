@@ -46,14 +46,20 @@ def test_a_uuid_hex_thread_id_derives_cleanly() -> None:
 
 # ------------------------------------------------------------------ 命令拼装
 class RecordingQuota(XfsQuota):
-    """把要跑的命令记下来而不真的执行。"""
+    """把要跑的命令记下来而不真的执行。
+
+    回读那一步要答一行「配额已生效」的报表，否则 assign 会正确地判成没设上。
+    """
 
     def __init__(self, **argument: object) -> None:
         super().__init__(**argument)  # type: ignore[arg-type]
         self.ran: list[list[str]] = []
 
-    def _run(self, subcommand: str) -> None:
+    def _run(self, subcommand: str) -> str:
         self.ran.append([*self._command, "-x", "-c", subcommand, str(self._mount_point)])
+        if not subcommand.startswith("report"):
+            return ""
+        return f"#{subcommand.split()[-1]} 0 0 5242880 00 [--------]"
 
 
 def test_assign_claims_the_directory_then_sets_the_limit(tmp_path: Path) -> None:
@@ -106,6 +112,64 @@ def test_a_missing_quota_binary_raises(tmp_path: Path) -> None:
 
     with pytest.raises(QuotaError, match="调不起 xfs_quota"):
         quota.assign("thread-1", tmp_path / "thread-1")
+
+
+# ------------------------------------------------------------------ 回读
+class ReportingQuota(XfsQuota):
+    """按给定的 report 输出回答回读，别的子命令一概静默成功。"""
+
+    def __init__(self, report: str, **argument: object) -> None:
+        super().__init__(**argument)  # type: ignore[arg-type]
+        self._report = report
+
+    def _run(self, subcommand: str) -> str:
+        return self._report if subcommand.startswith("report") else ""
+
+
+def test_a_quota_command_that_exits_zero_without_setting_anything_raises(tmp_path: Path) -> None:
+    """**退出码会骗人**：xfs_quota 探不到挂载点时把错误打到 stderr 却退出 0。
+
+    实测过一次：workspace 所在的 loop 挂载重启后没挂回来，此后每个会话的 5GB
+    上限一个都没设上，而 check=True 一次都没触发、日志里一条记录都没有。
+    """
+    quota = XfsQuota(mount_point=tmp_path, command=("true",))
+
+    with pytest.raises(QuotaError, match="配额没有生效"):
+        quota.assign("thread-1", tmp_path / "thread-1")
+
+
+def test_a_project_reported_with_a_zero_hard_limit_raises(tmp_path: Path) -> None:
+    """硬上限 0 就是「没有上限」，这个 project 照样能写满宿主机磁盘。"""
+    identifier = project_id("thread-1")
+    quota = ReportingQuota(f"#{identifier} 0 0 0 00 [--------]", mount_point=tmp_path)
+
+    with pytest.raises(QuotaError, match="配额没有生效"):
+        quota.assign("thread-1", tmp_path / "thread-1")
+
+
+def test_a_report_about_some_other_project_raises(tmp_path: Path) -> None:
+    """认的必须是本会话那个 projid —— 别人身上有配额不等于这一个有。"""
+    quota = ReportingQuota("#999999 0 0 5242880 00 [--------]", mount_point=tmp_path)
+
+    with pytest.raises(QuotaError, match="配额没有生效"):
+        quota.assign("thread-1", tmp_path / "thread-1")
+
+
+def test_a_project_reported_with_a_real_hard_limit_passes(tmp_path: Path) -> None:
+    identifier = project_id("thread-1")
+    quota = ReportingQuota(f"#{identifier} 0 0 5242880 00 [--------]", mount_point=tmp_path)
+
+    quota.assign("thread-1", tmp_path / "thread-1")
+
+
+def test_the_read_back_asks_only_about_this_project(tmp_path: Path) -> None:
+    """按 projid 上下界问，回来就只有一行，不必在整份报表里找。"""
+    identifier = project_id("thread-1")
+    quota = RecordingQuota(mount_point=tmp_path)
+
+    quota.assign("thread-1", tmp_path / "thread-1")
+
+    assert quota.ran[2][3] == f"report -p -N -b -n -L {identifier} -U {identifier}"
 
 
 # ------------------------------------------------------------------ 不设配额
