@@ -1,4 +1,5 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 
 const LOGO_PATH_1 = 'M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z'
 const LOGO_PATH_2 = 'M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z'
@@ -10,6 +11,13 @@ interface NavItem {
   adminOnly?: boolean
   end?: boolean
 }
+
+const ADMIN_SUB_ITEMS = [
+  { to: '/workspace/admin/users',  label: '用户管理' },
+  { to: '/workspace/admin/agents', label: '智能体审核' },
+  { to: '/workspace/admin/usage',  label: '用量看板' },
+  { to: '/workspace/admin/system', label: '系统状态' },
+]
 
 const NAV_GROUPS: { items: NavItem[] }[] = [
   {
@@ -32,11 +40,6 @@ const NAV_GROUPS: { items: NavItem[] }[] = [
     items: [
       { to: '/workspace/data', label: '我的数据', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg> },
       { to: '/workspace/my-agents', label: '我的智能体', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> },
-    ],
-  },
-  {
-    items: [
-      { to: '/workspace/admin', label: '管理后台', adminOnly: true, icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> },
     ],
   },
 ]
@@ -68,7 +71,11 @@ function NavItemRow({ item }: { item: NavItem }) {
 
 export function WorkspaceSidebar() {
   const navigate = useNavigate()
+  const location = useLocation()
   const user = MOCK_USER
+
+  const isOnAdminRoute = location.pathname.startsWith('/workspace/admin')
+  const [adminExpanded, setAdminExpanded] = useState(isOnAdminRoute)
 
   return (
     <aside style={{
@@ -101,6 +108,65 @@ export function WorkspaceSidebar() {
             }
           </div>
         ))}
+
+        {/* 管理后台：手风琴 */}
+        {user.isAdmin && (
+          <>
+            <div style={{ height: 1, background: 'var(--ws-sidebar-border)', margin: '6px 0' }} />
+            {/* 管理后台父项 */}
+            <button
+              onClick={() => setAdminExpanded(e => !e)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                width: '100%', padding: '9px 16px',
+                fontSize: 13, fontWeight: isOnAdminRoute ? 600 : 400,
+                color: isOnAdminRoute ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)',
+                background: isOnAdminRoute ? 'var(--ws-sidebar-accent)' : 'transparent',
+                borderLeft: isOnAdminRoute ? '3px solid var(--action)' : '3px solid transparent',
+                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                transition: 'background 0.15s, color 0.15s',
+                textAlign: 'left',
+              }}
+            >
+              <span style={{ flexShrink: 0 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+              </span>
+              <span style={{ flex: 1 }}>管理后台</span>
+              <span style={{ fontSize: 10, color: 'var(--ws-sidebar-text)', opacity: 0.6 }}>
+                {adminExpanded ? '▲' : '▼'}
+              </span>
+            </button>
+
+            {/* 二级菜单 */}
+            {adminExpanded && (
+              <div style={{ paddingBottom: 4 }}>
+                {ADMIN_SUB_ITEMS.map(sub => (
+                  <NavLink
+                    key={sub.to}
+                    to={sub.to}
+                    style={({ isActive }) => ({
+                      display: 'flex', alignItems: 'center',
+                      padding: '7px 16px 7px 40px',
+                      fontSize: 12,
+                      color: isActive ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)',
+                      background: isActive ? 'rgba(23,73,196,0.15)' : 'transparent',
+                      textDecoration: 'none', cursor: 'pointer',
+                      transition: 'background 0.15s, color 0.15s',
+                      fontWeight: isActive ? 600 : 400,
+                      borderLeft: isActive ? '3px solid var(--action)' : '3px solid transparent',
+                      opacity: isActive ? 1 : 0.8,
+                    })}
+                  >
+                    {sub.label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </nav>
 
       {/* 返回首页 */}
