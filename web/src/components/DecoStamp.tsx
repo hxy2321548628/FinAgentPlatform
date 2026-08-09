@@ -2,21 +2,23 @@ import { useEffect, useState } from 'react'
 
 interface DecoStampProps {
   style?: React.CSSProperties
+  text?: string
 }
 
-export function DecoStamp({ style }: DecoStampProps) {
-  const [text, setText] = useState('')
+export function DecoStamp({ style, text: textProp }: DecoStampProps) {
+  const [autoText, setAutoText] = useState('')
   useEffect(() => {
+    if (textProp !== undefined) return
     const update = () => {
       const now = new Date()
       const hh = String(now.getHours()).padStart(2, '0')
       const mm = String(now.getMinutes()).padStart(2, '0')
-      setText(`ANALYSIS · ${hh}:${mm}`)
+      setAutoText(`ANALYSIS · ${hh}:${mm}`)
     }
     update()
     const id = setInterval(update, 60000)
     return () => clearInterval(id)
-  }, [])
+  }, [textProp])
 
   return (
     <span
@@ -34,7 +36,7 @@ export function DecoStamp({ style }: DecoStampProps) {
         ...style,
       }}
     >
-      {text}
+      {textProp ?? autoText}
     </span>
   )
 }
