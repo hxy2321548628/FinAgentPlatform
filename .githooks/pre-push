@@ -1,0 +1,9 @@
+#!/bin/sh
+# push 前跑一遍本地门禁（.claude/python-constitution.md 第四条）。
+#
+# main 是直推的、不开分支，没有 PR 拦一道，所以事前拦截只剩这个 hook。
+# CI 在 push 之后复跑同一套 make，是第二层网 —— 它发现问题时坏代码已经在 main 上了。
+#
+# 应急绕过：git push --no-verify
+
+exec make all
