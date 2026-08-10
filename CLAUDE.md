@@ -74,7 +74,11 @@ cd app && uv run python -m worker.main                # 再开一个。不起它
 整套跑起来（nginx + api + worker + broker + 存储 + 可观测性）用 Compose：
 
 ```bash
-export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
+# **新克隆的仓库要建一次这个链接**：compose 的 ${...} 插值只读 compose.yml 同目录的
+# .env，而这个项目的 .env 在仓库根 —— 两边从来不是同一份文件。不建的话
+# SANDBOX_USER 缺值，**任何一条 compose 子命令都在解析阶段就失败**（连 stop 与 ps
+# 都算，那时容器还没被碰到一下）。链接本身被 .gitignore 忽略，不随 clone 走
+ln -sf ../.env deploy/.env
 
 # **要磁盘配额就必须给这个**：broker 在容器里调 xfs_quota，而它要打开承载 workspace
 # 的块设备。缺了设备节点，它的每条命令都只往 stderr 打一句然后**退出 0** ——
