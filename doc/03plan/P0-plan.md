@@ -15,7 +15,7 @@
 | v0.1 | 2026-08-03 | hxy | 初稿。四个验证探针已于 2026-08-02 完成，本文只覆盖剩余的构造工作 |
 | v0.2 | 2026-08-03 | hxy | 关闭两个待决项：测试 fixture 已入库、幂等键去重键已定案（探针⑤）。仅余「P0 是否连前端」待定 |
 | v0.3 | 2026-08-03 | hxy | **P0 不做前端，用 curl 验收**。待决事项全部关闭，可以开工 |
-| v0.4 | 2026-08-03 | hxy | 改正步骤一验证标准③：事件 `id` 由步骤三的事件日志分配（[架构 §5.2](../01design/01architecture.md) 定的是 Redis Stream ID），映射层不发号，步骤一验的是顺序 |
+| v0.4 | 2026-08-03 | hxy | 改正步骤一验证标准③：事件 `id` 由步骤三的事件日志分配（[运行时设计 §5.2](../01design/05runtime-design.md) 定的是 Redis Stream ID），映射层不发号，步骤一验的是顺序 |
 | v0.5 | 2026-08-03 | hxy | **沙箱池并入步骤三**（原先无人认领的范围空白），补验证标准④；步骤三改名并补上智能体装配这项产出 |
 | v0.6 | 2026-08-03 | hxy | 步骤四完成，**验收四条全过**，回填实测数据；改正启动命令（cwd 必须在 `app/`）；补记会话无独立存储、SSE 无心跳两条 |
 
@@ -29,20 +29,20 @@
 
 **目标**（[架构 §1.1](../01design/01architecture.md)）：端到端跑通，不设量化业务指标。教师提问 → agent 写 Python → 沙箱执行 → 返回结果与图表。
 
-**当前进度**：[架构 §11](../01design/01architecture.md) 列的四个探针已全部完成（2026-08-02），另补做探针⑤定案幂等键（08-03）。结论已全部回填[架构 v0.11](../01design/01architecture.md)，原始探针结论存于 git 历史（`git show 30b0fa6:app/spike/FINDINGS.md`）。契约、工具名、事件结构、幂等键均已定案，**P0 剩下的是构造工作，没有未知**。
+**当前进度**：[计划基线](./CLAUDE.md) 列的四个探针已全部完成（2026-08-02），另补做探针⑤定案幂等键（08-03）。结论已全部回填[架构 v0.11](../01design/01architecture.md)，原始探针结论存于 git 历史（`git show 30b0fa6:app/spike/FINDINGS.md`）。契约、工具名、事件结构、幂等键均已定案，**P0 剩下的是构造工作，没有未知**。
 
 ### 1.1 做什么
 
 | 范围 | 依据 |
 |---|---|
-| 事件防腐层：DeepAgents `StreamPart` → 平台事件 | [架构 §5.2](../01design/01architecture.md)、[ADR-0013](../01design/adr/0013-event-anticorruption-layer-v2-stream.md) |
+| 事件防腐层：DeepAgents `StreamPart` → 平台事件 | [运行时设计 §5.2](../01design/05runtime-design.md)、[ADR-0013](../01design/adr/0013-event-anticorruption-layer-v2-stream.md) |
 | `SandboxBackend`：接 DeepAgents 的 8 个内置工具到 Docker 沙箱 | [ADR-0016](../01design/adr/0016-sandbox-filesystem-backend.md)、[智能体设计 §3 §4](../01design/03agent-design.md) |
-| Run 执行器与事件日志 | [架构 §5.1 §5.4](../01design/01architecture.md) |
-| FastAPI 网关 + SSE 流式推送 | [架构 §5.7](../01design/01architecture.md)、[ADR-0007](../01design/adr/0007-sse-over-websocket.md) |
+| Run 执行器与事件日志 | [运行时设计 §5.1 §5.4](../01design/05runtime-design.md) |
+| FastAPI 网关 + SSE 流式推送 | [运行时设计 §5.7](../01design/05runtime-design.md)、[ADR-0007](../01design/adr/0007-sse-over-websocket.md) |
 
 ### 1.2 明确不做
 
-**不是遗漏，是分期。**每条都写明由哪一期偿还 —— [架构 §10.3](../01design/01architecture.md) 要求 P0 欠的债不可带入上线。
+**不是遗漏，是分期。**每条都写明由哪一期偿还 —— [风险登记 §10.3](../01design/09risk-register.md) 要求 P0 欠的债不可带入上线。
 
 | 不做 | 后果 | 由哪期偿还 |
 |---|---|---|
@@ -50,7 +50,7 @@
 | 拆分 `sandbox-broker` | 执行进程直接持有 Docker 访问权，违反 [ADR-0004](../01design/adr/0004-sandbox-broker-docker-sock.md) | P1 |
 | Redis Streams 任务队列与事件通道 | 事件日志在内存，进程重启即丢 | P2 |
 | Postgres checkpointer | 用 `InMemorySaver`，进程重启无法恢复 | P2 |
-| MinIO 产物存储 | 产物直接从 workspace 目录读，[§5.7](../01design/01architecture.md) 的 `302 → 预签名 URL` 改为直接返回字节 | P2 |
+| MinIO 产物存储 | 产物直接从 workspace 目录读，[§5.7](../01design/05runtime-design.md) 的 `302 → 预签名 URL` 改为直接返回字节 | P2 |
 | 认证、RBAC、配额、限流 | 全程用固定假 `user_id`，无越权隔离 | P3 |
 | HITL 审批、主动取消 | run 只有 `queued → running → succeeded/failed` 四态 | P3 |
 | 工具幂等键 | 崩溃在工具执行途中会重复执行。方案已定案（去重键 `thread_id` + `checkpoint_ns`，见 [ADR-0014](../01design/adr/0014-tool-idempotency-key.md)），只是不在 P0 实现 | P3 |
@@ -160,7 +160,7 @@ app/
 | 项 | 内容 |
 |---|---|
 | 产出 | 平台事件的 pydantic 模型 + `StreamPart` → 事件的映射函数 |
-| 依据 | [架构 §5.2](../01design/01architecture.md) 的信封、类型枚举、映射表（均已按实测定案） |
+| 依据 | [运行时设计 §5.2](../01design/05runtime-design.md) 的信封、类型枚举、映射表（均已按实测定案） |
 | 前置 | ~~把 chunk 收窄成 fixture 入库~~ **已完成** → [`app/event/fixture/`](../../app/test/event/fixture/)，359 条完整未裁剪的真实 chunk，覆盖映射器要区分的全部结构分支（含 `status="error"` 的 `tool_result`）。来源与空缺见该目录的 README |
 | 验证 | ① 真实 chunk 全量回放，无未知类型漏网、无异常；② 每种事件类型有独立单测；③ 事件顺序严格跟随 chunk 顺序 |
 
@@ -183,21 +183,21 @@ app/
 
 - **直接实现 `SandboxBackendProtocol`，不要继承 `BaseSandbox`。** 后者把文件操作转成 shell 命令进容器，验证标准③直接不成立。协议位于 `deepagents.backends.protocol`，未从 `deepagents.backends` 导出，须写全路径 import。
 - **错误返回不抛出**（[智能体设计 §3.4](../01design/03agent-design.md)）。抛异常会让整个 run 失败；返回 `error` 字段才能让 LLM 自己改代码重试。
-- **容器须以 `--user` 对齐宿主 uid/gid，并设 `HOME` 与 `MPLCONFIGDIR`**（[架构 §7.3.5 §8.5](../01design/01architecture.md)）。不设会让 matplotlib 告警混进 `execute` 的返回值，agent 会把告警当执行出错。
+- **容器须以 `--user` 对齐宿主 uid/gid，并设 `HOME` 与 `MPLCONFIGDIR`**（[安全设计 §7.3.5](../01design/07security-design.md)、[运维设计 §8.5](../01design/08operation-design.md)）。不设会让 matplotlib 告警混进 `execute` 的返回值，agent 会把告警当执行出错。
 
-镜像预装清单见[架构 §7.3.5](../01design/01architecture.md) —— **中文字体是必须项**，探针实测 agent 会为找字体白跑几轮。
+镜像预装清单见[安全设计 §7.3.5](../01design/07security-design.md) —— **中文字体是必须项**，探针实测 agent 会为找字体白跑几轮。
 
 ### 步骤三：Run 执行器、事件日志与沙箱池
 
 | 项 | 内容 |
 |---|---|
 | 产出 | 事件日志（内存实现）+ 沙箱池 + 智能体装配 + 驱动 agent 消费流、写事件、维护 run 状态 |
-| 依据 | [架构 §5.1](../01design/01architecture.md) 时序、[§5.4](../01design/01architecture.md) 状态机（P0 只用四态）、[§8.1](../01design/01architecture.md) 并发与排队、[ADR-0003](../01design/adr/0003-sandbox-per-thread-lifecycle.md) |
+| 依据 | [运行时设计 §5.1](../01design/05runtime-design.md) 时序、[§5.4](../01design/05runtime-design.md) 状态机（P0 只用四态）、[§8.1](../01design/08operation-design.md) 并发与排队、[ADR-0003](../01design/adr/0003-sandbox-per-thread-lifecycle.md) |
 | 验证 | ① 跑通验收 case；② 事件序列完整、`id` 单调递增；③ **能从任意 `id` 之后重放**，这是步骤四断线重连的前提；④ 沙箱按 thread 复用、达上限时 LRU 淘汰空闲者、无可淘汰则 FIFO 排队并推排位、idle 超时回收、交出容器前探一次存活 |
 
 **事件日志的接口要照 Redis Stream 的形状设计**（追加、按 id 之后范围读、有上限），P2 换实现时只改一个类，不动调用方。这是 P0 唯一值得提前投入的抽象 —— 其余一律按[技术章程](../../.claude/python-constitution.md)「不做推测性设计」。
 
-**沙箱池并入本步骤**（2026-08-03 决定）。它原先谁都没认领：步骤二的五条验证标准一条都没涉及，§1.2 的「明确不做」也没列 —— 是范围空白而非已登记的欠债。放在这里是因为它的两个消费者都在本步骤：执行器要申请沙箱，排队事件要写进事件日志。[架构 §8.1](../01design/01architecture.md) 点名的四项（容器数上限、LRU 回收、超限排队、健康检查）本期全做，但**健康检查只在交出容器前探一次，不做定期主动轮询** —— 轮询发现问题后的动作与被动路径完全一样（销毁重建），只提前几秒，不值 20 个容器的周期性子进程开销。
+**沙箱池并入本步骤**（2026-08-03 决定）。它原先谁都没认领：步骤二的五条验证标准一条都没涉及，§1.2 的「明确不做」也没列 —— 是范围空白而非已登记的欠债。放在这里是因为它的两个消费者都在本步骤：执行器要申请沙箱，排队事件要写进事件日志。[运维设计 §8.1](../01design/08operation-design.md) 点名的四项（容器数上限、LRU 回收、超限排队、健康检查）本期全做，但**健康检查只在交出容器前探一次，不做定期主动轮询** —— 轮询发现问题后的动作与被动路径完全一样（销毁重建），只提前几秒，不值 20 个容器的周期性子进程开销。
 
 **沙箱在 run 开始时申请、run 结束时归还**，不是每次 `execute` 借还一次；排队事件由执行器直接产生，不走 `get_stream_writer()`。理由与代价见[智能体设计 §3.5](../01design/03agent-design.md)，那里是这条契约的主文档。
 
@@ -206,10 +206,10 @@ app/
 | 项 | 内容 |
 |---|---|
 | 产出 | 网关与 SSE 端点 |
-| 依据 | [架构 §5.7](../01design/01architecture.md)；错误结构与 `code` 枚举照该节 |
+| 依据 | [运行时设计 §5.7](../01design/05runtime-design.md)；错误结构与 `code` 枚举照该节 |
 | 验证 | ① 验收标准四条全过；② SSE 断线重连带 `Last-Event-ID` 补齐、不重不漏 |
 
-**P0 只实现 [§5.7](../01design/01architecture.md) 的六个端点**，其余（`/auth/*`、`/admin/*`、`cancel`、`approve`）不做：
+**P0 只实现 [§5.7](../01design/05runtime-design.md) 的六个端点**，其余（`/auth/*`、`/admin/*`、`cancel`、`approve`）不做：
 
 | Method | Path | P0 的简化 |
 |---|---|---|
@@ -234,6 +234,6 @@ app/
 
 | 项 | 状态 |
 |---|---|
-| ~~P0 是否连最小前端一起做~~ | **已定案（2026-08-03）：不做，用 curl 验收。** 理由：P0 存在的唯一目的是拿到「agent 到底好不好用」的结论（[架构 §10.2](../01design/01architecture.md) 风险二），界面对这个结论没有贡献；且事件契约先在真实流量下跑过一轮再动前端，可避免契约微调时前后端一起返工。**遗留问题**：[架构 §11](../01design/01architecture.md) 的 P0–P4 分期只覆盖后端，**从未给前端排过期**。本次只决定「P0 不做」，没有决定「哪一期做」—— 后者要等 P0 跑完、事件契约被真实流量验证过之后，连同[前端选型](../01design/02frontend-selection.md)一并排进架构文档的路线图 |
+| ~~P0 是否连最小前端一起做~~ | **已定案（2026-08-03）：不做，用 curl 验收。** 理由：P0 存在的唯一目的是拿到「agent 到底好不好用」的结论（[风险登记 §10.2](../01design/09risk-register.md) 风险二），界面对这个结论没有贡献；且事件契约先在真实流量下跑过一轮再动前端，可避免契约微调时前后端一起返工。**遗留问题**：[计划基线](./CLAUDE.md) 的 P0–P4 分期只覆盖后端，**从未给前端排过期**。本次只决定「P0 不做」，没有决定「哪一期做」—— 后者要等 P0 跑完、事件契约被真实流量验证过之后，连同[前端选型](../01design/02frontend-selection.md)一并排进架构文档的路线图 |
 | ~~探针 fixture 的入库范围~~ | **已关闭**（2026-08-03）。没有裁剪，直接入库一条完整未删减的短流（359 条，[`app/event/fixture/`](../../app/test/event/fixture/)）。裁剪会破坏时序真实性，而完整流只有 360 KB，不值得为省体积牺牲保真 |
 | ~~`checkpoint_ns` 重放稳定性~~ | **已关闭**（2026-08-03，探针⑤）。重放稳定，且因 LangGraph 把每个工具调用扇出成独立 task 而按调用唯一。[ADR-0014](../01design/adr/0014-tool-idempotency-key.md) 的去重键据此定为 `(thread_id, checkpoint_ns)` |

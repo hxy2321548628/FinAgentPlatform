@@ -25,11 +25,11 @@
 
 ## 1. P2 的边界
 
-**目标**（[架构 §11](../01design/01architecture.md)）：把「进程重启即丢」这条从平台上摘掉。
+**目标**（[计划基线](./CLAUDE.md)）：把「进程重启即丢」这条从平台上摘掉。
 
 一句话概括三期的差别：**P0 回答「agent 好不好用」，P1 回答「不可信代码跑在这台机器上安不安全」，P2 回答「这台机器上的东西挂了会怎样」。**
 
-现在的答案是「全丢」：checkpointer 是 `InMemorySaver`，run 的元数据是执行器里的一个 dict，事件日志是一个 `deque`。三样都在 api 进程的内存里，`docker compose up -d` 一次滚动重启就全没了 —— 而一次分析要跑几十分钟，滚动重启本质上就是一次可控的崩溃（[架构 §8.4](../01design/01architecture.md)）。
+现在的答案是「全丢」：checkpointer 是 `InMemorySaver`，run 的元数据是执行器里的一个 dict，事件日志是一个 `deque`。三样都在 api 进程的内存里，`docker compose up -d` 一次滚动重启就全没了 —— 而一次分析要跑几十分钟，滚动重启本质上就是一次可控的崩溃（[运维设计 §8.4](../01design/08operation-design.md)）。
 
 **与 P1 的相似之处**：这一期同样**没有未知，只有工作量**。三个组件的选型都已在 ADR 里论证完，要做的是把已定的方案落到代码里并验证生效。
 
@@ -39,16 +39,16 @@
 
 | 范围 | 依据 |
 |---|---|
-| Postgres：LangGraph `AsyncPostgresSaver` checkpointer | [架构 §5.3 §6.1](../01design/01architecture.md)、[ADR-0008](../01design/adr/0008-langgraph-checkpointer.md) |
-| Postgres：`runs` 与 `run_events` 两张表 | [架构 §6.2](../01design/01architecture.md)，**§11 的 P2 一行没提，但拆分后元数据无处可放**，见 §2.2 |
-| Redis Streams：事件通道，替换内存事件日志 | [架构 §5.2](../01design/01architecture.md)、[ADR-0006](../01design/adr/0006-event-channel-streams-not-pubsub.md) |
-| Redis Streams：任务队列 + consumer group | [架构 §4.2](../01design/01architecture.md)、[ADR-0005](../01design/adr/0005-task-queue-redis-streams.md) |
-| worker 进程从 api 中拆出 | [架构 §4.1 §4.4](../01design/01architecture.md) |
-| 事件归档与保留策略，关闭 [§6.5](../01design/01architecture.md) 两问 | 见 §2.3 |
+| Postgres：LangGraph `AsyncPostgresSaver` checkpointer | [运行时设计 §5.3](../01design/05runtime-design.md)、[数据设计 §6.1](../01design/06data-design.md)、[ADR-0008](../01design/adr/0008-langgraph-checkpointer.md) |
+| Postgres：`runs` 与 `run_events` 两张表 | [数据设计 §6.2](../01design/06data-design.md)，**§11 的 P2 一行没提，但拆分后元数据无处可放**，见 §2.2 |
+| Redis Streams：事件通道，替换内存事件日志 | [运行时设计 §5.2](../01design/05runtime-design.md)、[ADR-0006](../01design/adr/0006-event-channel-streams-not-pubsub.md) |
+| Redis Streams：任务队列 + consumer group | [总体架构 §4.1](../01design/01architecture.md)、[ADR-0005](../01design/adr/0005-task-queue-redis-streams.md) |
+| worker 进程从 api 中拆出 | [总体架构 §3](../01design/01architecture.md)、[运维设计：部署拓扑与容量输入](../01design/08operation-design.md) |
+| 事件归档与保留策略，关闭 [§6.5](../01design/06data-design.md) 两问 | 见 §2.3 |
 
 ### 1.2 P1 已经就位、本期不重做的部分
 
-**事件 id 的格式在 P0 就是照 Redis Stream 的规则发的**（毫秒时间戳 + 同毫秒内序号，见 [`run/log.py`](../../app/run/log.py) 的 `_next_id`）。因此换成真的 Redis Stream 时，**对外契约一个字都不用改** —— 变的只是发号的人。`Last-Event-ID` 的语义、前端的解析、[架构 §5.2](../01design/01architecture.md) 的信封定义全部原样成立。这是 P0 刻意留的接口。
+**事件 id 的格式在 P0 就是照 Redis Stream 的规则发的**（毫秒时间戳 + 同毫秒内序号，见 [`run/log.py`](../../app/run/log.py) 的 `_next_id`）。因此换成真的 Redis Stream 时，**对外契约一个字都不用改** —— 变的只是发号的人。`Last-Event-ID` 的语义、前端的解析、[运行时设计 §5.2](../01design/05runtime-design.md) 的信封定义全部原样成立。这是 P0 刻意留的接口。
 
 **`EventLog` 已经是一层可替换的抽象**：`append` / `read` / `follow` 三个方法，执行器与路由都只认这三个。Redis 实现要做的是把 `deque` 换成 `XADD` / `XRANGE` / `XREAD BLOCK`，调用方不动。
 
@@ -66,7 +66,7 @@
 | HITL 审批、主动取消 | run 仍只有四态，`waiting_approval` 与 `cancelled` 不实现 | P3 |
 | 工具幂等键去重 | 至少一次投递会带来重复执行的窗口 | **先量后定**（§7 已关闭）：步骤四量出重复次数再决定当期做还是留 P3 |
 | `users` / `groups` / `threads` / `artifacts` / `sandboxes` 五张表 | 会话仍等同于 workspace 目录，产物仍靠扫目录 | P3（前四张依赖用户模型或 MinIO）／`sandboxes` 可能永远不需要，见 §2.2 |
-| Postgres 主从 | 仍是单点，挂了全局不可用且中断任务无法恢复 | [架构 §8.2](../01design/01architecture.md) 待定，本期只做备份 |
+| Postgres 主从 | 仍是单点，挂了全局不可用且中断任务无法恢复 | [运维设计 §8.2](../01design/08operation-design.md) 待定，本期只做备份 |
 | 可观测性指标、链路追踪、成本看板 | 只有结构化日志与 token 数 | P4 |
 | 前端 | 仍只能 curl / Postman 验收 | **仍未排期** —— [P0 §4](./P0-plan.md) 的遗留问题至今未关闭，且它设的前置条件（事件契约经真实流量验证）已于 2026-08-07 满足。本期主动不做，但这条不该继续无主地挂着 |
 
@@ -78,19 +78,19 @@
 
 ### 2.1 MinIO 移出 P2（当时定在 P3，2026-08-08 落定 P4）
 
-**冲突**：[P1 §1.3](./P1-plan.md) 把「MinIO 产物存储」登记为 P2 偿还；而[架构 §11](../01design/01architecture.md) 的 P4 一行写的是「产物存储完善」。同一件事被排进了两期。
+**冲突**：[P1 §1.3](./P1-plan.md) 把「MinIO 产物存储」登记为 P2 偿还；而[计划基线](./CLAUDE.md) 的 P4 一行写的是「产物存储完善」。同一件事被排进了两期。
 
 **定案：P2 不做 MinIO，移到 P3。**
 
 理由：
 
 - **它不是 worker 拆分的前置**。拆分后产物的读取路径完全不变 —— api → broker → workspace 文件。broker 仍持有宿主目录（[ADR-0004](../01design/adr/0004-sandbox-broker-docker-sock.md)），这条路不经过 worker，拆不拆都一样。
-- **它的隔离设计依赖 P3 的用户模型**。[架构 §6.1](../01design/01architecture.md) 写明 MinIO「路径按租户前缀隔离」，而租户是什么在 P3 才定。现在建的 key 结构，P3 多半要推翻重来。
+- **它的隔离设计依赖 P3 的用户模型**。[数据设计 §6.1](../01design/06data-design.md) 写明 MinIO「路径按租户前缀隔离」，而租户是什么在 P3 才定。现在建的 key 结构，P3 多半要推翻重来。
 - **P2 已经是最大的一期**：三处状态迁移 + 一次进程拆分。往里再塞一个存储组件，只会让「哪一层出的问题」更难分辨 —— 这正是 [P1 §6](./P1-plan.md) 坚持分三次回归要避免的事。
 
-**代价**：[§6.5](../01design/01architecture.md) 的 workspace 归档回收随之推到 P3。按 2026-08-07 的实测（典型会话 ~350KB，约 2.5GB/年），这段等待是安全的，且已有[体检脚本](../../deploy/workspace-report.sh)盯着水位。
+**代价**：[§6.5](../01design/06data-design.md) 的 workspace 归档回收随之推到 P3。按 2026-08-07 的实测（典型会话 ~350KB，约 2.5GB/年），这段等待是安全的，且已有[体检脚本](../../deploy/workspace-report.sh)盯着水位。
 
-**已回填**（2026-08-07）：[P1 §1.3](./P1-plan.md) 的 MinIO 一行已改期次；[架构 §6.5](../01design/01architecture.md) 与 [§4.4](../01design/01architecture.md) 已改成 P3。
+**已回填**（2026-08-07）：[P1 §1.3](./P1-plan.md) 的 MinIO 一行已改期次；[数据设计 §6.5](../01design/06data-design.md) 与 [运维设计：部署拓扑与容量输入](../01design/08operation-design.md) 已改成 P3。
 
 > **后续（2026-08-08）：期次又从 P3 退回 P4**，见 [P3 计划 §7.1](./P3-plan.md)。
 >
@@ -100,34 +100,34 @@
 
 ### 2.2 P2 要落两张表，不只是 checkpointer
 
-**冲突**：[架构 §11](../01design/01architecture.md) 的 P2 一行只写了「Redis Streams + Postgres checkpointer」。照字面做，run 的元数据无处可放。
+**冲突**：[计划基线](./CLAUDE.md) 的 P2 一行只写了「Redis Streams + Postgres checkpointer」。照字面做，run 的元数据无处可放。
 
 现在 `GET /api/runs/{id}` 读的是执行器内存里的一个 dict（[`run/executor.py`](../../app/run/executor.py) 的 `get`）。**worker 拆出去之后，那个 dict 在 worker 进程里，而查询请求打在 api 进程上** —— 这条端点会直接失效。
 
-**定案：P2 落 `runs` 与 `run_events` 两张表**，字段照 [架构 §6.2](../01design/01architecture.md) 的草案，其中 `user_id` 先留空（P3 才有用户）。
+**定案：P2 落 `runs` 与 `run_events` 两张表**，字段照 [数据设计 §6.2](../01design/06data-design.md) 的草案，其中 `user_id` 先留空（P3 才有用户）。
 
 `users` / `groups` / `user_groups` / `threads` / `artifacts` 五张表不建：前三张是用户模型（P3），`threads` 现在等同于 workspace 目录且存在性判断已有现成端点，`artifacts` 的 `s3_key` 依赖 MinIO（按 §2.1 也是 P3）。
 
-**`sandboxes` 表可能永远不需要**：[架构 §6.2](../01design/01architecture.md) 设计它是为了存容器映射，而 P1 已改用容器 label 认领（[P1 §7](./P1-plan.md)），`projid` 也改成从 `thread_id` 派生而不查表。这张表的两个用途都已被更简单的方案取代。**本期不建，并建议在架构里标注其现状**，而不是留着让人以为还要建。
+**`sandboxes` 表可能永远不需要**：[数据设计 §6.2](../01design/06data-design.md) 设计它是为了存容器映射，而 P1 已改用容器 label 认领（[P1 §7](./P1-plan.md)），`projid` 也改成从 `thread_id` 派生而不查表。这张表的两个用途都已被更简单的方案取代。**本期不建，并建议在架构里标注其现状**，而不是留着让人以为还要建。
 
-**已回填**（2026-08-07）：[架构 §11](../01design/01architecture.md) 的 P2 一行已补上元数据表；[§6.2](../01design/01architecture.md) 已给 `sandboxes` 标注现状。
+**已回填**（2026-08-07）：[计划基线](./CLAUDE.md) 的 P2 一行已补上元数据表；[§6.2](../01design/06data-design.md) 已给 `sandboxes` 标注现状。
 
 ### 2.3 §6.5 四问只能关两问，不是四问
 
-**冲突**：[架构 §6.5](../01design/01architecture.md) 在 2026-08-06 写下「**P2 规划时必须把这四项一并关闭**，不要再往后滚」。写这句时没核对四项各自的依赖。
+**冲突**：[数据设计 §6.5](../01design/06data-design.md) 在 2026-08-06 写下「**P2 规划时必须把这四项一并关闭**，不要再往后滚」。写这句时没核对四项各自的依赖。
 
 **定案：P2 关两问，另两问随 P3。**
 
 | §6.5 的问题 | 本期能不能答 |
 |---|---|
 | `run_events` 与 checkpoint 的保留期 | ✅ **P2 关闭**。两者都在本期落到 Postgres，保留期是它们自己的属性 |
-| Postgres 备份频率与保留份数 | ✅ **P2 关闭**。[架构 §8.5](../01design/01architecture.md) 已把它列为上线前必须落实的运维项，且 checkpoint 一丢中断任务就无法恢复 —— 备份在这里不只是数据保护 |
+| Postgres 备份频率与保留份数 | ✅ **P2 关闭**。[运维设计 §8.5](../01design/08operation-design.md) 已把它列为上线前必须落实的运维项，且 checkpoint 一丢中断任务就无法恢复 —— 备份在这里不只是数据保护 |
 | 归档降冷 / 导出 | ❌ 依赖 MinIO，按 §2.1 在 P3 |
 | 教师离职 / 毕业后的数据处置 | ❌ 依赖 P3 的用户模型 —— 现在连「谁的数据」都表达不了 |
 
 **这是对 2026-08-06 那句话的修正，不是推翻它的用意**：不许无限往后滚仍然成立，只是「一并关闭」的期次分成了两半。
 
-**已回填**（2026-08-07）：[架构 §6.5](../01design/01architecture.md) 已改成上表的分工。
+**已回填**（2026-08-07）：[数据设计 §6.5](../01design/06data-design.md) 已改成上表的分工。
 
 ---
 
@@ -135,7 +135,7 @@
 
 与 P1 不同，**P2 的环境依赖全部是容器，没有宿主机改造**（P1 要装 gVisor、要重挂文件系统，那些是一次性的机器改造）。Postgres / Redis 直接进 [`deploy/compose.yml`](../../deploy/compose.yml)，`docker compose up` 即得。
 
-**但开发机的内存要重算。**[架构 §4.4](../01design/01architecture.md) 的容量公式是按目标服务器 64GB 推的；开发机 31GB，本期又要多起两个常驻服务：
+**但开发机的内存要重算。**[运维设计：部署拓扑与容量输入](../01design/08operation-design.md) 的容量公式是按目标服务器 64GB 推的；开发机 31GB，本期又要多起两个常驻服务：
 
 ```
 31 GB 总内存
@@ -146,7 +146,7 @@
 
 `SANDBOX_MAX_CONTAINER` 在开发机上仍按 P1 的做法调低即可，**不影响本期任何一条验收** —— P2 验的是「挂了能不能恢复」，不是「能同时跑多少个」。
 
-> **本期新增一条运维前提**（已写进 [架构 §8.5](../01design/01architecture.md)）：Postgres 的数据卷必须落在**宿主机的持久化卷**上，不能用匿名卷。否则 `docker compose down -v` 一次就把 checkpoint 全清了 —— 而那正是本期要保住的东西。
+> **本期新增一条运维前提**（已写进 [运维设计 §8.5](../01design/08operation-design.md)）：Postgres 的数据卷必须落在**宿主机的持久化卷**上，不能用匿名卷。否则 `docker compose down -v` 一次就把 checkpoint 全清了 —— 而那正是本期要保住的东西。
 
 ---
 
@@ -163,7 +163,7 @@ bash deploy/test/p2.sh                       # 本期六条，转调 p1.sh 做�
 
 **通过条件**（六条全中才算完）：
 
-1. **`kill -9` worker 后任务从 checkpoint 续跑** —— 这是[架构 §11](../01design/01architecture.md) 给 P2 定的原文标准。**要验的是「续跑」而不是「重跑」**：比对崩溃前后的工具调用次数与 token 消耗，已完成的步骤不应再花一次 token。只看「run 最终成功了」不算通过 —— 从头重来一遍也会成功。
+1. **`kill -9` worker 后任务从 checkpoint 续跑** —— 这是[计划基线](./CLAUDE.md) 给 P2 定的原文标准。**要验的是「续跑」而不是「重跑」**：比对崩溃前后的工具调用次数与 token 消耗，已完成的步骤不应再花一次 token。只看「run 最终成功了」不算通过 —— 从头重来一遍也会成功。
 2. **三个进程全部重启后，三样东西都还在** —— 会话历史（追问能接上上下文）、run 的终态（`GET /runs/{id}` 仍答得出）、事件流（`Last-Event-ID` 仍能补齐）。这三样正是本期要从内存里搬走的三样。
 3. **两个 worker 副本并行时，任务不重复消费也不丢** —— consumer group 的 ack 与 pending 重投是自写的 200 行（[ADR-0005](../01design/adr/0005-task-queue-redis-streams.md) 明确了这笔债），必须实测。
 4. **[P0 的验收四条](./P0-plan.md)经新架构全过** —— 事件流完整、agent 自写代码并执行、断线重连不重不漏、产物可取回。
@@ -194,7 +194,7 @@ flowchart LR
 | 项 | 内容 |
 |---|---|
 | 产出 | [`deploy/compose.yml`](../../deploy/compose.yml) 加两个服务（数据卷落宿主机持久化目录）；依赖用 `uv add` 记进 [`pyproject.toml`](../../app/pyproject.toml)；连接配置进 [`Settings`](../../app/config.py) |
-| 依据 | 本文 §3、[架构 §4.4](../01design/01architecture.md) |
+| 依据 | 本文 §3、[运维设计：部署拓扑与容量输入](../01design/08operation-design.md) |
 | 验证 | ① 两个服务起得来且数据卷在宿主机上看得到；② **连不上时进程启动即失败**，不是等到第一次查询才炸；③ `docker compose down && up` 后数据仍在 |
 
 验证标准②不是形式主义：[`Settings`](../../app/config.py) 现在就是这个规矩（缺 `DEEPSEEK_API_KEY` 构造即抛），连接也该照办。一个「能启动但一查就 500」的进程，会让后面每一步的失败都多一个候选原因。
@@ -204,31 +204,31 @@ flowchart LR
 | 项 | 内容 |
 |---|---|
 | 产出 | `InMemorySaver` 换成 `AsyncPostgresSaver`，见 [`api/platform.py`](../../app/api/platform.py) 里那行标了「这笔债登记在 P2」的注释 |
-| 依据 | [ADR-0008](../01design/adr/0008-langgraph-checkpointer.md)、[架构 §5.3](../01design/01architecture.md) |
+| 依据 | [ADR-0008](../01design/adr/0008-langgraph-checkpointer.md)、[运行时设计 §5.3](../01design/05runtime-design.md) |
 | 验证 | ① 进程重启后，同一 thread 追问能接上上文（问「刚才那张图用的是哪几个行业」应答得出）；② `checkpoints` / `checkpoint_writes` 两张表由框架自动建出；③ P0 验收四条不回归 |
 
 **这一步会暴露一个 P0 从未验过的东西**：会话历史到底存了什么、够不够支撑追问。P0 用 `InMemorySaver` 时同进程内也能追问，但没人验过跨重启。
 
-**不要手工改 checkpointer 的表**（[架构 §6.2](../01design/01architecture.md) 明确写了）。表结构随 LangGraph 版本走，改了就等着下次升级时冲突。
+**不要手工改 checkpointer 的表**（[数据设计 §6.2](../01design/06data-design.md) 明确写了）。表结构随 LangGraph 版本走，改了就等着下次升级时冲突。
 
 ### 步骤二：run 元数据落库
 
 | 项 | 内容 |
 |---|---|
 | 产出 | `runs` 表 + Alembic 迁移（§7 定案）+ 一层仓储；`RunExecutor` 内存里的 dict 退役 |
-| 依据 | [架构 §6.2 §5.4](../01design/01architecture.md)、本文 §2.2 |
-| 验证 | ① 进程重启后 `GET /api/runs/{id}` 仍返回正确终态；② 四态流转与 [§5.4 状态机](../01design/01architecture.md)一致，没有多余状态；③ 崩溃时处于 `queued` / `running` 的 run 能被扫出来（[§6.2](../01design/01architecture.md) 的部分索引就是为这个建的） |
+| 依据 | [数据设计 §6.2](../01design/06data-design.md)、[运行时设计 §5.4](../01design/05runtime-design.md)、本文 §2.2 |
+| 验证 | ① 进程重启后 `GET /api/runs/{id}` 仍返回正确终态；② 四态流转与 [§5.4 状态机](../01design/05runtime-design.md)一致，没有多余状态；③ 崩溃时处于 `queued` / `running` 的 run 能被扫出来（[§6.2](../01design/06data-design.md) 的部分索引就是为这个建的） |
 
 **建表走 Alembic**（§7 已定案）。本期只有两张表，用得着迁移工具的地方不多；选它是因为 P3 要加五张表并给 `runs` 补 `user_id`，那时再引入就得给已有数据补写第一版迁移，比现在做贵。
 
-`tokens_cache_read` / `tokens_uncached` / `tokens_output` 三列照 [§6.2](../01design/01architecture.md) 建。P1 已经把这三个数算对了（[P1 §4.1](./P1-plan.md) 记了实测的波动），本期只是给它们一个落脚点。
+`tokens_cache_read` / `tokens_uncached` / `tokens_output` 三列照 [§6.2](../01design/06data-design.md) 建。P1 已经把这三个数算对了（[P1 §4.1](./P1-plan.md) 记了实测的波动），本期只是给它们一个落脚点。
 
 ### 步骤三：事件通道换 Redis Streams
 
 | 项 | 内容 |
 |---|---|
 | 产出 | `EventLog` 的 Redis 实现：`XADD` 写、`XRANGE` 补历史、`XREAD BLOCK` 跟新的；`MAXLEN` 控内存 |
-| 依据 | [ADR-0006](../01design/adr/0006-event-channel-streams-not-pubsub.md)、[架构 §5.2](../01design/01architecture.md) |
+| 依据 | [ADR-0006](../01design/adr/0006-event-channel-streams-not-pubsub.md)、[运行时设计 §5.2](../01design/05runtime-design.md) |
 | 验证 | ① 事件 id 仍是 `{毫秒}-{序号}`，前端契约不变；② 断线重连不重不漏（P0 验收③）经 Redis 仍成立；③ 进程重启后，已产生的事件仍读得到；④ 超过 `MAXLEN` 后老事件被裁掉，而 `XRANGE` 的行为符合预期 |
 
 **`follow` 的语义要一字不差地搬过去**：先补齐历史、再跟新的，直到终态事件结束流（见 [`run/log.py`](../../app/run/log.py) 的 `follow`）。这段逻辑 P0 已经用 SSE 断线重连验过，Redis 版要接受同一套测试 —— **测试不该因为换了实现而重写**，那正是 `EventLog` 这层抽象存在的意义。
@@ -242,7 +242,7 @@ flowchart LR
 | 项 | 内容 |
 |---|---|
 | 产出 | 独立的 worker 入口；Redis Streams consumer group（`XADD` 投递 / `XREADGROUP` 消费 / `XACK` / `XAUTOCLAIM` 认领超时消息）；api 只投递不执行 |
-| 依据 | [ADR-0005](../01design/adr/0005-task-queue-redis-streams.md)、[架构 §4.1 §4.2 §8.2](../01design/01architecture.md) |
+| 依据 | [ADR-0005](../01design/adr/0005-task-queue-redis-streams.md)、[总体架构 §3–§4](../01design/01architecture.md)、[运维设计 §8.2](../01design/08operation-design.md) |
 | 验证 | ① `kill -9` worker 后任务从 checkpoint 续跑，且已完成的步骤不重花 token；② 两个 worker 副本不重复消费也不丢；③ api 重启不影响在跑的 run；④ P0 验收四条全过；⑤ 崩溃恢复时工具重复执行的次数被量出来（不设门槛，见 §4） |
 
 **四个必须想清楚的点**：
@@ -257,8 +257,8 @@ flowchart LR
 | 项 | 内容 |
 |---|---|
 | 产出 | Redis Stream 异步归档到 `run_events`；Stream 的 `MAXLEN` / TTL；checkpoint 的清理策略 |
-| 依据 | [ADR-0006](../01design/adr/0006-event-channel-streams-not-pubsub.md)、[架构 §6.5](../01design/01architecture.md)、本文 §2.3 |
-| 验证 | ① Stream 已被 `MAXLEN` 裁掉的历史，仍能从 Postgres 完整重放；② 保留期到点后旧数据真的被清，且清理任务本身可重跑；③ [§6.5](../01design/01architecture.md) 的两问在架构文档里被关掉，不是留个「已实现」了事 |
+| 依据 | [ADR-0006](../01design/adr/0006-event-channel-streams-not-pubsub.md)、[数据设计 §6.5](../01design/06data-design.md)、本文 §2.3 |
+| 验证 | ① Stream 已被 `MAXLEN` 裁掉的历史，仍能从 Postgres 完整重放；② 保留期到点后旧数据真的被清，且清理任务本身可重跑；③ [§6.5](../01design/06data-design.md) 的两问在架构文档里被关掉，不是留个「已实现」了事 |
 
 验证标准①是这一步的全部意义所在：Stream 裁剪与 Postgres 归档之间**只要有一点缝，教师翻历史就会看到一段空白**，而那段空白不会报错。归档滞后于裁剪的时间窗要算清楚，不能靠「一般来得及」。
 
@@ -310,7 +310,7 @@ P2 全程**不新增业务功能**，因此 P0 的验收四条与 P1 的六条�
 - **两次观测，且崩溃点都是随机的。** `kill -9` 挑在 run 进入 `running` 之后约 20 秒落下，两刀都砍在了两次工具之间。砍进 `execute` 执行途中的那一刀会是什么样，两轮都没有覆盖到。
 - **这个指标只看得见「有调用无返回」。** 若节点重跑时把整对 `tool_call`/`tool_result` 都重发一遍，差值仍是 0 —— 那种重复要靠比对工具入参才认得出来，本轮没有做。
 
-**因此 P3 动手时不要拿这条当「不需要幂等键」的证据**，它只支持「本期不必为它停下来」。真要定论，需要在 `execute` 执行途中定点注入崩溃，那是一条要专门造的用例 —— [架构 §11](../01design/01architecture.md) 给 P3 定的验收原文正是「`kill -9` 在工具执行途中，恢复后写操作不重复执行」，那条用例欠在 P3 头上。
+**因此 P3 动手时不要拿这条当「不需要幂等键」的证据**，它只支持「本期不必为它停下来」。真要定论，需要在 `execute` 执行途中定点注入崩溃，那是一条要专门造的用例 —— [计划基线](./CLAUDE.md) 给 P3 定的验收原文正是「`kill -9` 在工具执行途中，恢复后写操作不重复执行」，那条用例欠在 P3 头上。
 
 ---
 
@@ -325,7 +325,7 @@ P2 全程**不新增业务功能**，因此 P0 的验收四条与 P1 的六条�
 | 计划原文 | 实际做法 | 为什么 |
 |---|---|---|
 | 步骤五「Redis Stream **异步**归档到 `run_events`」 | **同步双写** | 计划自己写了「归档滞后于裁剪的时间窗要算清楚，不能靠『一般来得及』」。把窗口做成零，比论证它够小便宜 —— 代价是每条事件多一次 INSERT（一次分析约 300 条，实测每条零点几毫秒） |
-| §2.2「字段照 [架构 §6.2](../01design/01architecture.md) 的草案」 | `checkpoint_id` 一列建了，**但本期没有写它的人** | 恢复靠 `thread_id` 找最新 checkpoint，不指定具体某一个。按「先问再写」的约定照文档建出来了，但它眼下是一列空值 |
+| §2.2「字段照 [数据设计 §6.2](../01design/06data-design.md) 的草案」 | `checkpoint_id` 一列建了，**但本期没有写它的人** | 恢复靠 `thread_id` 找最新 checkpoint，不指定具体某一个。按「先问再写」的约定照文档建出来了，但它眼下是一列空值 |
 | 步骤三「测试不该因为换了实现而重写」 | 断言一条没改，但 `append` 加了 `await`、`max_run` 那条上限删了 | 两处都是**约束本身消失了**，不是实现细节泄漏：追加成了 IO；一个 run 一条 Stream 之后，不再有「同时保留几个 run」这回事 |
 
 ### 8.2 一项没做：租约记名
@@ -345,7 +345,7 @@ P2 全程**不新增业务功能**，因此 P0 的验收四条与 P1 的六条�
 | 问题 | 症状 | 单测为什么抓不到 |
 |---|---|---|
 | redis-py 8 的默认 socket 读超时是 5 秒，与两处 `BLOCK 5000` 撞上 | worker 一空闲就刷 `TimeoutError` | 用例里的阻塞都在几十毫秒被唤醒，**从没真的等满过一轮** |
-| nginx 的 `upstream { server api:8000; }` 只在启动时解析一次域名 | api 一重启就持续 502，直到有人重启 nginx | 单测不经过 nginx。而[架构 §8.4](../01design/01architecture.md) 说滚动重启即可发布，这条挡在验收②的路上 |
+| nginx 的 `upstream { server api:8000; }` 只在启动时解析一次域名 | api 一重启就持续 502，直到有人重启 nginx | 单测不经过 nginx。而[运维设计 §8.4](../01design/08operation-design.md) 说滚动重启即可发布，这条挡在验收②的路上 |
 | `p1.sh` / `p2.sh` 的 `fail()` 把 `failed` 置 1 而不是累加 | 前面红过一次之后，后面每一段都被记成通过 | **这是验收脚本自己的缺陷**，靠「先证明它能报红」逼出来的 |
 | 拆出 worker 之后，api 进程里带 `run_id` 的日志归零 | P1 验收⑥ 报红，连带 P2 验收⑤ 未过 | 没有任何用例断言过「日志里带 run 身份」—— `run_context` 唯一的使用点跟着执行器搬去了 worker，**而搬走本身不产生失败** |
 | `Redis.from_url(url, db=15)` 里 URL 的 `/0` 会静默盖掉 `db=` | 测试全程连的是业务库 | **单测自己就是受害者**，而症状随机：每 8 轮红一次，红在哪条不定 |

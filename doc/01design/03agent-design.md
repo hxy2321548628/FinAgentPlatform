@@ -158,7 +158,7 @@ execute() → 无空闲沙箱 → async 等待，不阻塞事件循环
 >
 > **代价是明确的**：一个从头到尾不执行代码的 run（纯问答）也会占一个沙箱名额。若 P0 观测到这类 run 占比可观，再改回懒申请。
 >
-> 超时时长取 **600 秒**（[架构 §8.1](./01architecture.md) 的「建议 10 分钟」），超时后 run 转 `failed` 且 `retryable=true`。这仍是拍的数，等 P0 攒够周转率数据再调。
+> 超时时长取 **600 秒**（[运维设计 §8.1](./08operation-design.md) 的「建议 10 分钟」），超时后 run 转 `failed` 且 `retryable=true`。这仍是拍的数，等 P0 攒够周转率数据再调。
 
 ---
 
@@ -280,7 +280,7 @@ execute 执行完 → broker 列出 outputs/ 下本次调用后 mtime 变化的�
 > 来找中文字体。**这在零出网的沙箱里必然全部失败**，纯浪费轮次与 token。
 >
 > 两条应对，缺一不可：
-> 1. **镜像预装中文字体**并配好 matplotlib 默认字体（记入[主文档 §7.3.5](./01architecture.md) 的预装清单）；
+> 1. **镜像预装中文字体**并配好 matplotlib 默认字体（记入[安全设计 §7.3.5](./07security-design.md) 的预装清单）；
 > 2. **提示词显式禁止 agent 自己找字体**（已加入上表硬约束）。
 >
 > 只做 1 不做 2 仍会浪费轮次 —— agent 不知道字体已装好，还是会先去查。
@@ -311,17 +311,17 @@ execute 执行完 → broker 列出 outputs/ 下本次调用后 mtime 变化的�
 
 | 观察项 | 结果 | 回填到 |
 |---|---|---|
-| 完成一次分析的轮次与 token 分布 | 17 次模型调用、16 次工具调用；共 313,341 token（input 304,640 / output 8,701）。**input 中 62.1% 是 prompt cache 命中** | §5.2 的 N（已回填为 20）、[§6.4 配额](./01architecture.md) |
-| agent 实际调用了哪些工具、频率如何 | `ls` / `read_file` / `write_file` / `execute`，未调 `write_todos`、`edit_file`、`delete`、`glob`、`grep` | [§5.3 HITL 触发范围](./01architecture.md) |
+| 完成一次分析的轮次与 token 分布 | 17 次模型调用、16 次工具调用；共 313,341 token（input 304,640 / output 8,701）。**input 中 62.1% 是 prompt cache 命中** | §5.2 的 N（已回填为 20）、[§6.4 配额](./06data-design.md) |
+| agent 实际调用了哪些工具、频率如何 | `ls` / `read_file` / `write_file` / `execute`，未调 `write_todos`、`edit_file`、`delete`、`glob`、`grep` | [§5.3 HITL 触发范围](./05runtime-design.md) |
 | 是否把产物存进了 `outputs/` | ✅ 遵守，无散落产物 | §4.3 的退路是否要启用 → 暂不启用 |
-| 是否触发 `pip install`、装了什么 | ⚠️ 1 次。**不是为了装分析库，是为了找中文字体**（见 §6） | [§7.3.5 的镜像预装清单](./01architecture.md) → 须含中文字体 |
+| 是否触发 `pip install`、装了什么 | ⚠️ 1 次。**不是为了装分析库，是为了找中文字体**（见 §6） | [§7.3.5 的镜像预装清单](./07security-design.md) → 须含中文字体 |
 | `tool_call_id` 在 `interrupt` 恢复前后是否一致 | ✅ 完全一致 | [ADR-0014](./adr/0014-tool-idempotency-key.md) 的支点 → 已关闭 |
 
 三条需要留意的：
 
 - **本期不做 HITL（§2.2），但顺带发现审批恢复并不会让工具重复执行** —— 这削弱了 [ADR-0014](./adr/0014-tool-idempotency-key.md) 的紧迫性，详见 §3.3 的修订说明。
-- **agent 一次都没调 `write_todos`**。§2.2 把它标为「开」且 [§5.2 已定义 `todo.updated` 事件](./01architecture.md)，但线性任务下框架不会触发它。该事件的 payload 仍无实测样本，前端渲染分支暂时无从对照。
-- **prompt cache 命中率高达 62%**，直接影响 §6.4 的配额口径，详见主文档。
+- **agent 一次都没调 `write_todos`**。§2.2 把它标为「开」且 [§5.2 已定义 `todo.updated` 事件](./05runtime-design.md)，但线性任务下框架不会触发它。该事件的 payload 仍无实测样本，前端渲染分支暂时无从对照。
+- **prompt cache 命中率高达 62%**，直接影响 §6.4 的配额口径，详见[数据设计](./06data-design.md)。
 
 > **第三次观测最值得记的一条（2026-08-03，P0 步骤四验收）**：**同一份数据、同一个问题，
 > 三次跑出的行业年化波动率相差一个量级**（第二次 9.63% / 19.41% / 33.54%，第三次
