@@ -51,10 +51,18 @@ sudo bash deploy/setup-gvisor.sh && sudo bash deploy/setup-xfs.sh && sudo bash d
 
 # **每次重启之后都要再跑一次 setup-xfs.sh，否则平台起不来**：loop 挂载不持久，
 # 而配额设不上时 broker 直接拒绝建会话（fail-closed，见 P4 计划 §8.13）——
-# 症状是 POST /api/threads 一律 500，日志里是 QuotaError。挂完还要重新
-# export SANDBOX_QUOTA_DEVICE 并 `docker compose up -d`：loop 号会变，
-# 而 broker 的设备节点是容器创建那一刻定下的。要免掉挂载这一步就往 /etc/fstab
-# 加一行（setup-xfs.sh 结尾会打出来），但 export 与 up -d 仍然免不掉
+# 症状是 POST /api/threads 一律 500，日志里是 QuotaError。
+#
+# **挂完必须让 broker 重启一次**：容器的 bind mount 是在它启动那一刻解析的，
+# 重启后自动起来的 broker 绑的是「挂载还没回来」时那个被遮住的 ext4 目录 ——
+# 症状与没挂一模一样，而 `docker compose up -d` **不会重建它**（服务定义没变，
+# compose 认为无事可做）。实测踩过一次：宿主机看是 xfs / 419 个会话目录，
+# 容器里看是 ext4 / 4 个。
+sudo bash deploy/setup-xfs.sh
+export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
+docker compose -f deploy/compose.yml restart broker
+# 之前起来的沙箱容器同样绑着旧目录，一并清掉让 broker 按需重建（它们本来就是 --rm）
+docker ps -q --filter 'name=zuel-sandbox' | xargs -r docker rm -f
 
 # 起服务。**三个进程**：broker 持有 docker.sock；worker 驱动智能体；api 只投递任务与转 SSE。
 # cwd 必须在 app/ —— 模块路径是 api.app，从仓库根起会 ModuleNotFoundError

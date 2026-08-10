@@ -898,7 +898,16 @@ rc=0   stdout=''
 
 于是这条判据一直在测的其实是「agent 会不会对着一个不存在的文件调 delete」。**审批是在执行之前拦的**，所以它多数时候照样绿 —— 同一轮里 approve / reject / respond 三种都过了，只有 `edit` 那次 agent 决定先 `ls` 一下。已改成现造一个临时文件、用 `;filename=README.md` 定名（这个语法用回显服务器验过真的覆盖文件名），且上传失败当场 fail 而不是继续。
 
-**顺带被一次真实重启验证了 fail-closed 的代价。** 隔天机器重启，loop 挂载没挂回来，broker 于是抛 `QuotaError` 并拒绝建会话 —— `POST /api/threads` 一律 500，平台整体不可用。**这是设计的正确行为**（此前是静默无配额），但它把「挂载在不在」从加固项变成了**硬启动依赖**：重启之后必须重跑 `setup-xfs.sh`、重新 `export SANDBOX_QUOTA_DEVICE` 并 `docker compose up -d`（loop 号会变，而设备节点是容器创建那一刻定下的）。已写进 CLAUDE.md。
+**顺带被一次真实重启验证了 fail-closed 的代价。** 隔天机器重启，loop 挂载没挂回来，broker 于是抛 `QuotaError` 并拒绝建会话 —— `POST /api/threads` 一律 500，平台整体不可用。**这是设计的正确行为**（此前是静默无配额），但它把「挂载在不在」从加固项变成了**硬启动依赖**。
+
+**而「挂回来」不止一步，第二步比第一步更隐蔽**：挂完之后 broker 仍然 500。容器的 bind mount 是在它**启动那一刻**解析的，而 broker 是重启后自动起来的 —— 它绑的是「挂载还没回来」时那个被遮住的 ext4 目录。实测对照：
+
+| | 看到的文件系统 | 目录里几个条目 |
+|---|---|---|
+| 宿主机 | xfs `/dev/loop28` | 419 |
+| broker 容器里 | **ext4** `/dev/nvme1n1p3[…/data/sandbox]` | **4** |
+
+**`docker compose up -d` 不会重建它** —— loop 号恰好还是 28，服务定义没变，compose 认为无事可做。要 `restart broker`（实测 restart 就够，bind mount 每次启动都重新建立），并把之前起来的沙箱容器一并清掉。完整仪式已写进 CLAUDE.md。
 
 **§4 观察项**：这一轮两个真实分析的未命中 token 是 **2,902** 与 **2,514**，都是「三两下就出图」的短分析，不动 §8.13.3 记下的上界。
 
