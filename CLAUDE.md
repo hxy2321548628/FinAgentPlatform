@@ -49,6 +49,13 @@ cd app && uv run alembic upgrade head    # 建 runs 等业务表。测试会自�
 # 环境（gVisor + XFS prjquota）。新机器要跑一次，脚本可重跑
 sudo bash deploy/setup-gvisor.sh && sudo bash deploy/setup-xfs.sh && sudo bash deploy/verify-env.sh
 
+# **每次重启之后都要再跑一次 setup-xfs.sh，否则平台起不来**：loop 挂载不持久，
+# 而配额设不上时 broker 直接拒绝建会话（fail-closed，见 P4 计划 §8.13）——
+# 症状是 POST /api/threads 一律 500，日志里是 QuotaError。挂完还要重新
+# export SANDBOX_QUOTA_DEVICE 并 `docker compose up -d`：loop 号会变，
+# 而 broker 的设备节点是容器创建那一刻定下的。要免掉挂载这一步就往 /etc/fstab
+# 加一行（setup-xfs.sh 结尾会打出来），但 export 与 up -d 仍然免不掉
+
 # 起服务。**三个进程**：broker 持有 docker.sock；worker 驱动智能体；api 只投递任务与转 SSE。
 # cwd 必须在 app/ —— 模块路径是 api.app，从仓库根起会 ModuleNotFoundError
 cd app && uv run uvicorn broker.app:app --port 8100   # 先起它，另两个依赖它
