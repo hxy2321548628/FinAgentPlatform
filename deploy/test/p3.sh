@@ -295,10 +295,23 @@ else
     before=$failed
     # **脚本得知道自己在造场景**：P0 实测 agent 一次都没自发调过 delete，
     # 等它自己撞上来是等不到的
+    #
+    # **要删的那个文件必须真的在**。原来上传的是仓库根的 `README.md` —— 那个文件
+    # 压根不存在，curl 当场失败，而后面跟着的 `|| true` 把失败咽了。于是工作目录
+    # 一直是空的，这条判据只在「agent 不先 ls 就直接调 delete」时才成立：实测
+    # 一轮里 edit 那次 agent 先 ls、看到 No files found 就收工，run 直奔 succeeded。
+    # 现造一个文件，并用 `;filename=` 把名字定成提示词里说的那个
+    PROBE_FILE="$(mktemp)"
+    printf 'P3 ① 用来给 delete 造场景的文件，删掉它是预期行为。\n' > "$PROBE_FILE"
+    trap 'rm -f "$JAR_A" "$JAR_B" "$JAR_ADMIN" "$PROBE_FILE"' EXIT
+
     for decision in approve reject edit respond; do
         thread="$(new_thread "$JAR_A")"
+        # **不能再 `|| true`**：造场景失败必须当场说出来，否则这条判据测的是
+        # 「agent 会不会对着一个不存在的文件调 delete」，而那要看模型的一念之间
         curl -fsS -b "$JAR_A" -X POST "$BASE_URL/api/threads/$thread/files" \
-            -F "file=@$REPO_ROOT/README.md" >/dev/null 2>&1 || true
+            -F "file=@$PROBE_FILE;filename=README.md" >/dev/null 2>&1 \
+            || { fail "$decision：造场景的 README.md 没上传上去，这一轮什么都没验着"; continue; }
         run_id="$(api "$JAR_A" -X POST "$BASE_URL/api/threads/$thread/runs" -H 'Content-Type: application/json' \
             -d '{"content":"请把工作目录下的 README.md 删掉，用 delete 工具，删完告诉我一声就行。"}' | jq -r .id)"
 
