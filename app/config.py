@@ -65,6 +65,10 @@ from worker.loop import DEFAULT_CONCURRENCY, DEFAULT_HEARTBEAT_SECOND
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = REPO_ROOT / ".env"
 
+# 上传的字节上限，与 deploy/nginx.conf 的 `client_max_body_size 64m` 对齐。
+# **没有别的模块该拥有这个数**：它是 HTTP 边界上的一道闸，不是文件空间的性质
+DEFAULT_UPLOAD_MAX_BYTE = 64 * 1024 * 1024
+
 
 SETTINGS_CONFIG = SettingsConfigDict(
     env_file=ENV_FILE,
@@ -209,6 +213,12 @@ class Settings(StoreSettings):
         default=DEFAULT_SESSION_TTL_SECOND,
         gt=0,
         description="登录态多久不用就失效，秒。每次请求都会把它推回去，因此是滑动过期",
+    )
+    upload_max_byte: int = Field(
+        default=DEFAULT_UPLOAD_MAX_BYTE,
+        gt=0,
+        description="一次上传（含多个文件）的字节上限。**要与 nginx 的 client_max_body_size 一致**，"
+        "两边不一致时大的那一侧形同虚设；直接跑 uvicorn 时没有 nginx，挡它的只有这一项",
     )
 
     # 三道闸的档位。**默认值全部是从一个样本外推出来的初值**，外推方式写在

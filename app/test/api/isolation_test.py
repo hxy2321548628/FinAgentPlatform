@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from api.platform import Platform
 from auth.password import PasswordHasher
+from sandbox.workspace import Workspace
 from test.api.conftest import login, signup
 from user.model import UserRole
 
@@ -23,6 +24,9 @@ from user.model import UserRole
 # 漏掉一条就是一个越权入口，而那种缺口不报错
 BORROWED_PATH = (
     "/api/threads/{thread_id}/runs",
+    "/api/threads/{thread_id}/files",
+    "/api/threads/{thread_id}/files/content?path=holdings.csv",
+    "/api/threads/{thread_id}/files/raw?path=holdings.csv",
     "/api/runs/{run_id}",
     "/api/runs/{run_id}/events",
     "/api/artifacts/{thread_id}/chart.png",
@@ -78,6 +82,19 @@ def test_another_user_cannot_upload_into_someone_elses_thread(
     )
 
     assert response.status_code == 404
+
+
+def test_another_user_cannot_delete_from_someone_elses_thread(
+    client: TestClient, space: Workspace, platform: Platform, hasher: PasswordHasher, victim: dict[str, str]
+) -> None:
+    """**这一条要验文件还在**：404 之后仍然把文件删掉了的话，回答对了事情却做了。"""
+    (space.path(victim["thread_id"]) / "holdings.csv").write_bytes(b"a,b\n")
+    _become(client, platform, hasher, UserRole.TEACHER)
+
+    response = client.delete(f"/api/threads/{victim['thread_id']}/files", params={"path": "holdings.csv"})
+
+    assert response.status_code == 404
+    assert (space.path(victim["thread_id"]) / "holdings.csv").exists()
 
 
 def test_the_owner_still_reaches_everything(client: TestClient, victim: dict[str, str]) -> None:

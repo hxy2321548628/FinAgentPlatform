@@ -82,6 +82,16 @@ def invalid(message: str) -> ApiError:
     return ApiError(status.HTTP_422_UNPROCESSABLE_CONTENT, ErrorCode.VALIDATION_ERROR, message)
 
 
+def too_large(message: str) -> ApiError:
+    """请求体超过了上限。
+
+    **状态码是 413 而错误码仍是 `VALIDATION_ERROR`**：前端要做的事与别的参数错误
+    没有区别（把消息显示出来），多一个错误码只会让那张分支表长一行却没有分支。
+    状态码则必须是 413 —— 那是浏览器与反代都认得的语义。
+    """
+    return ApiError(status.HTTP_413_CONTENT_TOO_LARGE, ErrorCode.VALIDATION_ERROR, message)
+
+
 def unauthenticated(message: str) -> ApiError:
     """未登录、session 过期，或用户名口令对不上。
 

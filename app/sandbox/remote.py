@@ -19,6 +19,8 @@ import base64
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from datetime import datetime
 from types import TracebackType
 from typing import cast
 
@@ -42,7 +44,9 @@ from deepagents.backends.protocol import (
 from langgraph.config import get_config
 
 from artifact.model import CollectedArtifact
+from artifact.store import DEFAULT_MIME
 from event.model import RunErrorCode
+from sandbox.browse import Entry, Preview, Tree
 from sandbox.path import PathEscapeError
 from sandbox.pool import SandboxQueueTimeoutError
 
@@ -72,12 +76,38 @@ IDEMPOTENCY_FIELD = "checkpoint_ns"
 
 BAD_REQUEST = 400
 
+# 「这个文件有问题」而不是「链路有问题」的那几个状态码，各自翻成一个本地异常
+FILE_ERROR_STATUS = frozenset({httpx.codes.NOT_FOUND, httpx.codes.CONFLICT})
+
 
 class BrokerError(RuntimeError):
     """broker 不可达，或返回了预期之外的东西。
 
     与工具自身的失败是两回事：工具失败是 `error` 字段里的一句话，这个是链路断了。
     """
+
+
+class FileMissingError(FileNotFoundError):
+    """工作目录里没有这个文件。
+
+    **越界也是这一个**：路径越出会话目录与文件不存在，对调用方是同一个回答 ——
+    分开说等于把这几个端点变成探测宿主机文件的工具。
+    """
+
+
+@dataclass(frozen=True)
+class RemoteFile:
+    """工作目录里一个文件的字节流。
+
+    **`chunk` 还没读**，且必须被读完或关掉，否则到 broker 的连接会一直挂着。
+    交给 `StreamingResponse` 就正好。
+    """
+
+    mime: str
+    # broker 给的 Content-Length。取不到时为 None —— 那时不该往下游填这个头，
+    # 填一个错的比不填更糟
+    size: int | None
+    chunk: AsyncIterator[bytes]
 
 
 def _fail(exc: httpx.HTTPError) -> BrokerError:
@@ -341,33 +371,159 @@ class RemoteWorkspace:
         result = await self._connection.call("POST", "/threads", json={"thread_id": thread_id})
         return str(result["thread_id"])
 
-    async def save(self, thread_id: str, filename: str, content: bytes) -> str:
+    async def save(self, thread_id: str, filename: str, content: bytes, directory: str = "") -> str:
         """把上传的文件落进会话目录。
 
         Args:
             thread_id: 会话标识。
             filename: 上传时带的文件名，不可信。
             content: 文件内容。
+            directory: 落到哪个子目录，相对会话根。留空即根下；必须已存在。
 
         Returns:
-            落盘后的文件名，可能与上传时不同。
+            落盘后相对会话根的路径，可能与上传时给的不同。
 
         Raises:
-            PathEscapeError: 文件名不能作为会话目录下的一个文件。
+            PathEscapeError: 文件名不能作为一个文件，或目标目录越界、不存在。
             BrokerError: broker 不可达。
         """
         try:
             result = await self._connection.call(
                 "POST",
                 f"/threads/{thread_id}/save",
-                json={"filename": filename, "content": _encode(content)},
+                json={"filename": filename, "content": _encode(content), "directory": directory},
             )
         except BrokerError as exc:
             # 越界判定留在 broker 侧 —— 路径规则跟着目录走，不该在两个进程里各写一份
             if str(BAD_REQUEST) in str(exc):
                 raise PathEscapeError(str(exc)) from exc
             raise
-        return str(result["filename"])
+        return str(result["path"])
+
+    async def tree(self, thread_id: str) -> Tree:
+        """列出会话工作目录下的全部条目。
+
+        Args:
+            thread_id: 会话标识。
+
+        Returns:
+            按路径排序的条目，以及有没有被截断。
+
+        Raises:
+            BrokerError: broker 不可达，或会话标识不能作为目录名。
+        """
+        result = await self._connection.call("GET", f"/threads/{thread_id}/workspace/tree")
+        found = result.get("entries", [])
+        entries = [_to_entry(one) for one in found] if isinstance(found, list) else []
+        return Tree(entries=entries, truncated=bool(result.get("truncated")))
+
+    async def preview(self, thread_id: str, relative_path: str, *, offset: int, limit: int) -> Preview:
+        """把工作目录里一个文件的开头一截当文本读出来。
+
+        Args:
+            thread_id: 会话标识。
+            relative_path: 相对会话根的路径。
+            offset: 从第几行开始，0-indexed。
+            limit: 最多给多少行。
+
+        Returns:
+            窗口内的文本，以及它在文件里的位置。
+
+        Raises:
+            FileMissingError: 文件不存在，或路径越界。
+            IsADirectoryError: 路径指向的是目录。
+            BrokerError: broker 不可达。
+        """
+        result = await self._file_call(
+            "GET",
+            f"/threads/{thread_id}/workspace/preview",
+            relative_path,
+            params={"path": relative_path, "offset": offset, "limit": limit},
+        )
+        return Preview(
+            text=str(result.get("text", "")),
+            total_line=_number(result.get("total_line")) or 0,
+            start_line=_number(result.get("start_line")) or 0,
+            end_line=_number(result.get("end_line")) or 0,
+            is_binary=bool(result.get("is_binary")),
+            truncated=bool(result.get("truncated")),
+        )
+
+    async def remove(self, thread_id: str, relative_path: str) -> None:
+        """删掉工作目录里的一个文件。
+
+        Args:
+            thread_id: 会话标识。
+            relative_path: 相对会话根的路径。
+
+        Raises:
+            FileMissingError: 文件不存在，或路径越界。
+            IsADirectoryError: 路径指向的是目录。
+            BrokerError: broker 不可达。
+        """
+        await self._file_call(
+            "DELETE", f"/threads/{thread_id}/workspace/file", relative_path, params={"path": relative_path}
+        )
+
+    async def open(self, thread_id: str, relative_path: str) -> RemoteFile:
+        """打开工作目录里一个文件的字节流。
+
+        **不把整个文件读进内存**：这一侧只是把 broker 的响应体一段段转出去，
+        api 进程的内存占用与文件大小无关。
+
+        Args:
+            thread_id: 会话标识。
+            relative_path: 相对会话根的路径。
+
+        Returns:
+            一个还没读的字节流，连同它的类型与长度。**必须读完或关掉**，
+            否则连接会一直挂着 —— 交给 `StreamingResponse` 即可。
+
+        Raises:
+            FileMissingError: 文件不存在，或路径越界。
+            IsADirectoryError: 路径指向的是目录。
+            BrokerError: broker 不可达。
+        """
+        request = self._connection.raw.build_request(
+            "GET", f"/threads/{thread_id}/workspace/file", params={"path": relative_path}
+        )
+        try:
+            response = await self._connection.raw.send(request, stream=True)
+        except httpx.HTTPError as exc:
+            raise _fail(exc) from exc
+        if response.status_code != httpx.codes.OK:
+            await response.aclose()
+            raise _file_error(response.status_code, relative_path)
+        return RemoteFile(
+            mime=response.headers.get("content-type", DEFAULT_MIME),
+            size=_length(response.headers.get("content-length")),
+            chunk=_drain(response),
+        )
+
+    async def _file_call(
+        self, method: str, path: str, relative_path: str, *, params: Mapping[str, str | int]
+    ) -> dict[str, object]:
+        """发一次「针对某个文件」的调用，把 broker 的状态码翻回本地异常。
+
+        **不走 `BrokerConnection.call`**：那一条把所有非 2xx 收成同一个 `BrokerError`，
+        而这里要分得开「文件不在」与「链路断了」—— 前者是 404，后者是 500。
+
+        Raises:
+            FileMissingError: 文件不存在，或路径越界。
+            IsADirectoryError: 路径指向的是目录。
+            BrokerError: broker 不可达，或返回了别的失败。
+        """
+        try:
+            response = await self._connection.raw.request(method, path, params=params)
+        except httpx.HTTPError as exc:
+            raise _fail(exc) from exc
+        if response.status_code in FILE_ERROR_STATUS:
+            raise _file_error(response.status_code, relative_path)
+        if response.is_error:
+            message = f"broker 返回 {response.status_code}：{response.text[:200]}"
+            raise BrokerError(message)
+        parsed: dict[str, object] = response.json() if response.content else {}
+        return parsed
 
     async def mark(self, thread_id: str) -> int:
         """取一次 run 的产物判定基准。
@@ -572,3 +728,37 @@ def _to_collected(item: dict[str, object]) -> CollectedArtifact:
         size=_number(item.get("size")) or 0,
         s3_key=_text(item.get("s3_key")),
     )
+
+
+def _to_entry(item: object) -> Entry:
+    """把 broker 回的一个目录条目解回本地形状。形状由那一侧的同一份契约保证。"""
+    found = item if isinstance(item, dict) else {}
+    return Entry(
+        path=str(found.get("path", "")),
+        is_dir=bool(found.get("is_dir")),
+        size=_number(found.get("size")) or 0,
+        modified_at=datetime.fromisoformat(str(found.get("modified_at"))),
+    )
+
+
+def _file_error(status_code: int, relative_path: str) -> Exception:
+    """把 broker 的状态码翻成本地异常。"""
+    if status_code == httpx.codes.CONFLICT:
+        message = f"这是一个目录：{relative_path}"
+        return IsADirectoryError(message)
+    message = f"文件不存在：{relative_path}"
+    return FileMissingError(message)
+
+
+def _length(header: str | None) -> int | None:
+    """解析 Content-Length。给不出来时返回 None，不猜一个数。"""
+    return int(header) if header is not None and header.isdigit() else None
+
+
+async def _drain(response: httpx.Response) -> AsyncIterator[bytes]:
+    """把响应体一段段转出去，读完就把连接还回池子。"""
+    try:
+        async for chunk in response.aiter_bytes():
+            yield chunk
+    finally:
+        await response.aclose()

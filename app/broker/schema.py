@@ -7,6 +7,8 @@
 JSON 里带一个字段比拼多段报文简单，而这条链路是本机回环，编码开销无所谓。
 """
 
+from datetime import datetime
+
 from pydantic import Base64Bytes, BaseModel, Field
 
 from event.model import RunErrorCode
@@ -166,6 +168,10 @@ class SaveRequest(BaseModel):
 
     filename: str = Field(description="上传时带的文件名，不可信")
     content: Base64Bytes = Field(description="文件内容")
+    directory: str = Field(
+        default="",
+        description="落到会话目录下的哪个子目录，相对会话根。留空即根下；**必须已存在**",
+    )
 
 
 class SaveResponse(BaseModel):
@@ -173,6 +179,34 @@ class SaveResponse(BaseModel):
 
     filename: str = Field(min_length=1, description="落盘后的文件名，可能与上传时不同")
     size: int = Field(ge=0, description="字节数")
+    path: str = Field(min_length=1, description="落盘后相对会话根的路径，前端拿它去预览或下载")
+
+
+class TreeEntryItem(BaseModel):
+    """会话工作目录里的一个条目。"""
+
+    path: str = Field(min_length=1, description="相对会话根的路径，posix 分隔")
+    is_dir: bool = Field(description="是不是目录")
+    size: int = Field(ge=0, description="字节数，目录的值没有意义")
+    modified_at: datetime = Field(description="最后修改时间，UTC")
+
+
+class TreeResponse(BaseModel):
+    """一个会话工作目录的全部条目。"""
+
+    entries: list[TreeEntryItem] = Field(description="按路径排序，父目录排在它的子项之前")
+    truncated: bool = Field(description="条目太多被砍过，给的只是其中一批")
+
+
+class PreviewResponse(BaseModel):
+    """一个文件的一段文本内容。"""
+
+    text: str = Field(description="窗口内的文本。二进制文件为空")
+    total_line: int = Field(ge=0, description="读到的总行数。truncated 为真时只是开头那一截的行数")
+    start_line: int = Field(ge=0, description="窗口首行，1-indexed。窗口为空时是 0")
+    end_line: int = Field(ge=0, description="窗口末行，1-indexed。窗口为空时是 0")
+    is_binary: bool = Field(description="不是文本，调用方该改走原始字节那条路")
+    truncated: bool = Field(description="文件比字节上限长，后面还有没读的")
 
 
 class ArtifactMarkResponse(BaseModel):

@@ -435,7 +435,11 @@ worker ──POST /sandbox/{op} { tool_call_id, ... } ──▶ broker
 | GET | `/threads/{id}` | 会话详情 | 200 |
 | PATCH | `/threads/{id}` | 改标题 / `agent_config` | 200 |
 | DELETE | `/threads/{id}` | 删除会话（连带沙箱销毁） | 204 |
-| POST | `/threads/{id}/files` | 上传数据文件（multipart）到 workspace | 201 |
+| GET | `/threads/{id}/files` | 工作目录的结构（扁平条目表，含目录） | 200 |
+| POST | `/threads/{id}/files` | 上传数据文件（multipart，字段名 `file`，可多个）到 workspace | 201 |
+| GET | `/threads/{id}/files/content?path=` | 按行分页读一个文件，给代码查看器用 | 200 |
+| GET | `/threads/{id}/files/raw?path=` | 取原始字节；`download=1` 时另存为 | 200 |
+| DELETE | `/threads/{id}/files?path=` | 删一个文件（目录删不了） | 204 |
 | **POST** | **`/threads/{id}/runs`** | **提交一次分析，立即返回** | **202 `{run_id}`** |
 | GET | `/runs/{id}` | run 详情与当前状态 | 200 |
 | **GET** | **`/runs/{id}/events`** | **SSE 事件流，见 §5.2** | **200 `text/event-stream`** |
@@ -446,7 +450,17 @@ worker ──POST /sandbox/{op} { tool_call_id, ... } ──▶ broker
 | PATCH | `/admin/users/{id}` | 改角色 / 配额 / 启禁用 | 200 |
 | GET | `/admin/usage` | 用量与成本聚合（§8.3） | 200 |
 
-产物走 **302 跳预签名 URL**，不由网关代理二进制流 —— 否则大文件下载会长时间占住网关的 worker，而网关还要同时扛所有 SSE 长连接。
+产物走 **302 跳预签名 URL**，不由网关代理二进制流 —— 否则大文件下载会长时间占住网关的 worker，而网关还要同时扛所有 SSE 长连接。（P4 实现时改成了 `X-Accel-Redirect` 由 nginx 直发，原意不变，理由见 `app/api/route/artifact.py`。）
+
+**工作目录里的文件与产物是两条路，不是重复。** 产物是「某次 run 认领过的东西」，身份长在 `artifacts` 表上、字节在对象存储里；`/threads/{id}/files/*` 说的是「工作目录此刻长什么样」，含教师上传的数据与 agent 写的 `.py`，字节只在宿主机的 workspace 里。后者因此**只能经 api 一段段转出去**（边收边发，内存占用与文件大小无关），没有对象存储可签、也没有 nginx 能直读的路径。同一张图两条路都取得到，那是它确实既是文件也是产物。
+
+`path` 一律走**查询参数**而不是路径段：文件名里带 `/`、`#`、`?` 与中文都是常事，塞进路径段要在两侧各写一遍转义，错一次就是一个打不开的文件。
+
+上传**允许部分成功**（逐个文件带 `error`），但**一个都没落上盘时是 422 而不是 201** —— 整批失败还答 2xx 的话，`curl -fsS` 那类「非 2xx 才算失败」的调用方会以为传上去了，验收脚本正是这么判的。
+
+请求体上限由 `UPLOAD_MAX_BYTE` 与 nginx 的 `client_max_body_size` 两侧对齐（都是 64 MiB），两边不一致时大的那一侧形同虚设。**超限时答话的是 nginx，而它的 413 正文是一段 HTML，不是平台的 `{"error":{code,message}}`** —— 2026-08-11 实测确认。前端处理这一条只能认状态码，不能去解正文；api 那道闸只在没有 nginx 时（开发机直跑 uvicorn）才会答话。
+
+**上传这条路上字节是整块进内存的**（`UploadFile.read()` 之后还要 base64 一次交给 broker），实测 60 MiB 的一次上传让 api 进程涨了约 78 MiB。上限就是这块内存的上限，因此它不能随手调大。**下载那条路相反** —— 边收边发，实测 300 MiB 的文件下载全程只涨了 1.6 MiB。
 
 ### 审批接口的 payload
 

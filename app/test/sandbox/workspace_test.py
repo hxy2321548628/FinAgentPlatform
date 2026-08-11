@@ -108,6 +108,103 @@ def test_uploading_the_same_name_twice_overwrites(space: Workspace) -> None:
     assert saved.read_bytes() == b"new"
 
 
+def test_a_file_can_be_uploaded_into_an_existing_subdirectory(space: Workspace) -> None:
+    thread_id = space.create(uuid4().hex)
+    (space.path(thread_id) / "data").mkdir()
+
+    saved = space.save(thread_id, "holdings.csv", b"x", directory="data")
+
+    assert saved == space.path(thread_id) / "data" / "holdings.csv"
+
+
+def test_uploading_into_a_directory_that_is_not_there_is_rejected(space: Workspace) -> None:
+    """目录来自侧边栏上的一次点击，点得到就说明它在 —— 不在就是请求本身不对。
+
+    顺带躲开一个坑：broker 在容器里是 root，它建出来的目录沙箱一个字节都写不进去。
+    """
+    thread_id = space.create(uuid4().hex)
+
+    with pytest.raises(PathEscapeError):
+        space.save(thread_id, "holdings.csv", b"x", directory="never-made")
+
+
+def test_uploading_into_a_file_instead_of_a_directory_is_rejected(space: Workspace) -> None:
+    thread_id = space.create(uuid4().hex)
+    space.save(thread_id, "data.csv", b"x")
+
+    with pytest.raises(PathEscapeError):
+        space.save(thread_id, "holdings.csv", b"x", directory="data.csv")
+
+
+@pytest.mark.parametrize("directory", ["..", "../elsewhere", "/etc"])
+def test_an_upload_directory_that_escapes_the_workspace_is_rejected(space: Workspace, directory: str) -> None:
+    thread_id = space.create(uuid4().hex)
+
+    with pytest.raises(PathEscapeError):
+        space.save(thread_id, "holdings.csv", b"x", directory=directory)
+
+
+# ------------------------------------------------------------------ 定位与删除
+def test_resolve_finds_a_file_anywhere_under_the_workspace(space: Workspace) -> None:
+    thread_id = space.create(uuid4().hex)
+    (space.path(thread_id) / OUTPUT_DIR).mkdir()
+    (space.path(thread_id) / OUTPUT_DIR / "chart.png").write_bytes(b"png")
+
+    assert space.resolve(thread_id, f"{OUTPUT_DIR}/chart.png").read_bytes() == b"png"
+
+
+@pytest.mark.parametrize("relative", ["../holdings.csv", "../../etc/passwd", "/etc/passwd"])
+def test_resolving_a_path_that_escapes_the_workspace_is_rejected(space: Workspace, relative: str) -> None:
+    """不挡住的话，文件浏览就成了任意文件读取。"""
+    thread_id = space.create(uuid4().hex)
+
+    with pytest.raises(PathEscapeError):
+        space.resolve(thread_id, relative)
+
+
+def test_resolving_a_symlink_pointing_outside_is_rejected(space: Workspace, tmp_path: Path) -> None:
+    thread_id = space.create(uuid4().hex)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("凭据", encoding="utf-8")
+    (space.path(thread_id) / "link.txt").symlink_to(secret)
+
+    with pytest.raises(PathEscapeError):
+        space.resolve(thread_id, "link.txt")
+
+
+def test_removing_a_file_takes_it_off_disk(space: Workspace) -> None:
+    thread_id = space.create(uuid4().hex)
+    space.save(thread_id, "data.csv", b"x")
+
+    space.remove(thread_id, "data.csv")
+
+    assert not (space.path(thread_id) / "data.csv").exists()
+
+
+def test_removing_a_file_that_is_not_there_is_rejected(space: Workspace) -> None:
+    thread_id = space.create(uuid4().hex)
+
+    with pytest.raises(FileNotFoundError):
+        space.remove(thread_id, "never-made.csv")
+
+
+def test_removing_a_directory_is_rejected(space: Workspace) -> None:
+    """删目录会连着里面的东西一起没，而侧边栏上那一下点击看不出这个后果。"""
+    thread_id = space.create(uuid4().hex)
+    (space.path(thread_id) / OUTPUT_DIR).mkdir()
+
+    with pytest.raises(IsADirectoryError):
+        space.remove(thread_id, OUTPUT_DIR)
+
+
+@pytest.mark.parametrize("relative", ["../holdings.csv", "/etc/passwd"])
+def test_removing_a_path_that_escapes_the_workspace_is_rejected(space: Workspace, relative: str) -> None:
+    thread_id = space.create(uuid4().hex)
+
+    with pytest.raises(PathEscapeError):
+        space.remove(thread_id, relative)
+
+
 # ------------------------------------------------------------------ 产物
 def test_an_artifact_resolves_under_the_output_directory(space: Workspace) -> None:
     thread_id = space.create(uuid4().hex)

@@ -19,6 +19,30 @@ from sandbox.quota import NoQuota, QuotaProtocol
 logger = logging.getLogger(__name__)
 
 
+def _within(base: Path, relative_path: str, *, scope: str) -> Path:
+    """把一个相对路径解析成 `base` 下的路径，越界即抛。
+
+    **跟随符号链接就等于把任意宿主文件送出去**，纯字符串校验拦不住这一条 ——
+    resolve 之后再比前缀才挡得住。
+
+    Args:
+        base: 允许的根，须已 resolve。
+        relative_path: 相对它的路径，不可信。
+        scope: 出错时说给调用方听的范围名。
+
+    Returns:
+        宿主机上的路径，可能不存在。
+
+    Raises:
+        PathEscapeError: 解析结果落在 `base` 之外。
+    """
+    target = (base / relative_path).resolve()
+    if target != base and base not in target.parents:
+        message = f"路径越出了{scope}：{relative_path!r}"
+        raise PathEscapeError(message)
+    return target
+
+
 class Workspace:
     """所有会话的文件空间。
 
@@ -113,19 +137,24 @@ class Workspace:
         except OSError:
             logger.warning("workspace 属主没能改成 %d:%d，沙箱可能写不进去：%s", uid, gid, workspace, exc_info=True)
 
-    def save(self, thread_id: str, filename: str, content: bytes) -> Path:
+    def save(self, thread_id: str, filename: str, content: bytes, directory: str = "") -> Path:
         """把上传的文件落进会话目录。
+
+        **目标目录必须已经存在。** 它来自侧边栏上的一次点击，点得到就说明它在；
+        顺手建出来则会踩一个没有症状的坑 —— broker 在容器里是 root，它建的目录
+        沙箱（以宿主用户跑）一个字节都写不进去，而 `execute` 照常成功。
 
         Args:
             thread_id: 会话标识。
             filename: 上传时带的文件名，不可信。
             content: 文件内容。
+            directory: 落到会话目录下的哪个子目录，相对会话根。留空即根下。
 
         Returns:
             落盘后的路径。
 
         Raises:
-            PathEscapeError: 文件名不能作为会话目录下的一个文件。
+            PathEscapeError: 文件名不能作为一个文件，或目标目录越界、不存在。
         """
         # 只取末段：`../../etc/passwd` 与 `/etc/passwd` 都会被收成 `passwd`
         name = Path(filename).name
@@ -133,9 +162,54 @@ class Workspace:
             message = f"文件名不可用：{filename!r}"
             raise PathEscapeError(message)
 
-        target = self.path(thread_id) / name
+        parent = self.resolve(thread_id, directory) if directory else self.path(thread_id)
+        if not parent.is_dir():
+            message = f"目标目录不存在：{directory!r}"
+            raise PathEscapeError(message)
+
+        target = parent / name
         target.write_bytes(content)
         return target
+
+    def remove(self, thread_id: str, relative_path: str) -> None:
+        """删掉会话目录下的一个文件。
+
+        **只删文件，不删目录**：删目录会连着里面的东西一起没，而侧边栏上那一下点击
+        看不出这个后果。
+
+        **不看这个会话有没有 run 在跑。** 加一道「跑着就不许删」的闸要么挡住正常操作
+        （几十分钟的分析期间什么都动不了），要么挡不严（判断与删除之间总有空隙）；
+        会话是单人使用的，教师删掉自己正在分析的输入文件，得到的是 agent 的一条报错。
+
+        Args:
+            thread_id: 会话标识。
+            relative_path: 相对会话根的路径。
+
+        Raises:
+            PathEscapeError: 路径指向会话目录之外。
+            FileNotFoundError: 文件不在。
+            IsADirectoryError: 指向的是目录。
+        """
+        target = self.resolve(thread_id, relative_path)
+        if target.is_dir():
+            message = f"这是一个目录，不能删：{relative_path!r}"
+            raise IsADirectoryError(message)
+        target.unlink()
+
+    def resolve(self, thread_id: str, relative_path: str) -> Path:
+        """定位会话目录下的一个路径。
+
+        Args:
+            thread_id: 会话标识。
+            relative_path: 相对会话根的路径。
+
+        Returns:
+            宿主机上的路径，可能不存在。
+
+        Raises:
+            PathEscapeError: 路径指向会话目录之外。
+        """
+        return _within(self.path(thread_id).resolve(), relative_path, scope="会话目录")
 
     def artifact(self, thread_id: str, relative_path: str) -> Path:
         """定位会话产出的一个产物。
@@ -151,9 +225,4 @@ class Workspace:
             PathEscapeError: 路径指向 `outputs/` 之外。
         """
         output_dir = (self.path(thread_id) / OUTPUT_DIR).resolve()
-        target = (output_dir / relative_path).resolve()
-        # 跟随符号链接就等于把任意宿主文件当成产物送出去，resolve 之后再比前缀才挡得住
-        if target != output_dir and output_dir not in target.parents:
-            message = f"产物路径越出了 {OUTPUT_DIR}/：{relative_path!r}"
-            raise PathEscapeError(message)
-        return target
+        return _within(output_dir, relative_path, scope=f"{OUTPUT_DIR}/")

@@ -1,8 +1,11 @@
-"""broker 的端点：8 个工具、会话目录的物理访问，以及沙箱的申请与归还。
+"""broker 的端点：8 个工具、会话目录的物理访问与浏览，以及沙箱的申请与归还。
 
 **8 个工具全部走这里**，包括 7 个不进容器的文件工具。只挡容器不挡数据的话，
 api 仍能读写任意会话的文件，边界就只剩一半 —— 而 P3 的写操作去重也要落在这一层，
 文件工具留在 api 侧的话那时还得再搬一次。
+
+工作目录的浏览（列树、预览、取字节、删文件）是另一套端点，服务的是教师的侧边栏
+而不是 agent，理由写在那一节上方。
 """
 
 import asyncio
@@ -49,17 +52,21 @@ from broker.schema import (
     GlobRequest,
     GrepRequest,
     LsRequest,
+    PreviewResponse,
     QueuedData,
     ReadRequest,
     SaveRequest,
     SaveResponse,
     ThreadResponse,
     ToolRequest,
+    TreeEntryItem,
+    TreeResponse,
     UploadRequest,
     UploadResponse,
     WriteRequest,
 )
 from event.model import RunErrorCode
+from sandbox.browse import DEFAULT_PREVIEW_LINE, MAX_ENTRY, preview, tree
 from sandbox.path import OUTPUT_DIR, PathEscapeError, artifact_id
 from sandbox.pool import SandboxQueueTimeoutError
 from store.object import CONNECT_ERROR
@@ -98,13 +105,108 @@ async def thread_exists(thread_id: str, broker: BrokerDep) -> ExistsResponse:
 async def save_file(thread_id: str, request: SaveRequest, broker: BrokerDep) -> SaveResponse:
     """把上传的文件落进会话目录。
 
-    文件名来自 HTTP 请求，属于不可信输入，越界防护在 `Workspace` 里。
+    文件名与目标目录都来自 HTTP 请求，属于不可信输入，越界防护在 `Workspace` 里。
     """
     try:
-        saved = broker.workspace.save(thread_id, request.filename, request.content)
+        saved = broker.workspace.save(thread_id, request.filename, request.content, directory=request.directory)
     except PathEscapeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return SaveResponse(filename=saved.name, size=len(request.content))
+    return SaveResponse(
+        filename=saved.name,
+        size=len(request.content),
+        path=saved.relative_to(broker.workspace.path(thread_id)).as_posix(),
+    )
+
+
+# ------------------------------------------------------------------ 工作目录的浏览
+#
+# **与上面八个工具是两套东西。** 那八个服务 agent，路径带 `/workspace` 前缀、
+# 结果按 LLM 的口味排布；这三个服务侧边栏，路径相对会话根。硬凑成一套的话，
+# 「改前端显示」与「改 agent 行为」就成了同一次改动。
+@router.get("/{thread_id}/workspace/tree")
+async def workspace_tree(
+    thread_id: str,
+    broker: BrokerDep,
+    limit: Annotated[int, Query(ge=1, le=MAX_ENTRY, description="最多给多少个条目")] = MAX_ENTRY,
+) -> TreeResponse:
+    """列出会话工作目录下的全部条目。
+
+    遍历是同步的，丢进线程池免得占住事件循环 —— broker 同时还挂着申请沙箱的长连接。
+    """
+    root = _workspace_of(broker, thread_id)
+    found = await asyncio.to_thread(tree, root, limit=limit)
+    return TreeResponse(entries=[TreeEntryItem(**asdict(one)) for one in found.entries], truncated=found.truncated)
+
+
+@router.get("/{thread_id}/workspace/preview")
+async def workspace_preview(
+    thread_id: str,
+    broker: BrokerDep,
+    path: Annotated[str, Query(min_length=1, description="相对会话根的路径")],
+    offset: Annotated[int, Query(ge=0, description="从第几行开始，0-indexed")] = 0,
+    limit: Annotated[int, Query(ge=1, description="最多给多少行")] = DEFAULT_PREVIEW_LINE,
+) -> PreviewResponse:
+    """把一个文件的开头一截当文本读出来。"""
+    target = _file_at(broker, thread_id, path)
+    found = await asyncio.to_thread(preview, target, offset=offset, limit=limit)
+    return PreviewResponse(**asdict(found))
+
+
+@router.get("/{thread_id}/workspace/file")
+async def workspace_file(
+    thread_id: str,
+    broker: BrokerDep,
+    path: Annotated[str, Query(min_length=1, description="相对会话根的路径")],
+) -> FileResponse:
+    """取回工作目录里一个文件的原始字节。"""
+    return FileResponse(_file_at(broker, thread_id, path), media_type=guess_mime(path))
+
+
+@router.delete("/{thread_id}/workspace/file", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_workspace_file(
+    thread_id: str,
+    broker: BrokerDep,
+    path: Annotated[str, Query(min_length=1, description="相对会话根的路径")],
+) -> None:
+    """删掉工作目录里的一个文件。目录删不了。"""
+    try:
+        broker.workspace.remove(thread_id, path)
+    except (PathEscapeError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except IsADirectoryError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+def _workspace_of(broker: Broker, thread_id: str) -> Path:
+    """取会话目录。
+
+    Raises:
+        HTTPException: 标识不能作为目录名。
+    """
+    try:
+        return broker.workspace.path(thread_id)
+    except PathEscapeError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+def _file_at(broker: Broker, thread_id: str, path: str) -> Path:
+    """定位工作目录里的一个文件。
+
+    **越界与不存在给同一个回答**，否则这几个端点就成了探测宿主机文件的工具。
+    指向目录则是另一回事 —— 目录在树里看得见，说出来不泄露任何东西。
+
+    Raises:
+        HTTPException: 路径越界、文件不存在，或指向的是目录。
+    """
+    try:
+        target = broker.workspace.resolve(thread_id, path)
+    except PathEscapeError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if target.is_dir():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"这是一个目录：{path}")
+    if not target.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"文件不存在：{path}")
+    return target
 
 
 @router.post("/{thread_id}/artifacts/mark")

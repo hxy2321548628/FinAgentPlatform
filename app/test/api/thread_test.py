@@ -1,14 +1,10 @@
-import io
-
 from fastapi.testclient import TestClient
 
 from event.model import RunStatus
 from sandbox.workspace import Workspace
 from test.api.conftest import Agent, drain
 
-
-def upload(client: TestClient, thread_id: str, filename: str, content: bytes = b"a,b\n") -> object:
-    return client.post(f"/api/threads/{thread_id}/files", files={"file": (filename, io.BytesIO(content), "text/csv")})
+# 工作目录里的文件（上传、列结构、预览、下载、删除）全部在 file_test.py
 
 
 # ------------------------------------------------------------------ 建会话
@@ -30,43 +26,6 @@ def test_a_created_thread_has_a_workspace(client: TestClient, space: Workspace) 
     thread_id = client.post("/api/threads").json()["id"]
 
     assert space.exists(thread_id)
-
-
-# ------------------------------------------------------------------ 上传
-def test_uploading_a_file_lands_it_in_the_workspace(client: TestClient, thread_id: str, space: Workspace) -> None:
-    response = upload(client, thread_id, "holdings.csv")
-
-    assert response.status_code == 201  # type: ignore[attr-defined]
-    assert (space.path(thread_id) / "holdings.csv").read_bytes() == b"a,b\n"
-
-
-def test_the_upload_response_reports_what_landed(client: TestClient, thread_id: str) -> None:
-    response = upload(client, thread_id, "holdings.csv", b"a,b\nc,d\n")
-
-    assert response.json() == {"filename": "holdings.csv", "size": 8}  # type: ignore[attr-defined]
-
-
-def test_uploading_to_an_unknown_thread_is_not_found(client: TestClient) -> None:
-    response = upload(client, "never-created", "holdings.csv")
-
-    assert response.status_code == 404  # type: ignore[attr-defined]
-    assert response.json()["error"]["code"] == "NOT_FOUND"  # type: ignore[attr-defined]
-
-
-def test_a_traversing_filename_cannot_escape_the_workspace(
-    client: TestClient, thread_id: str, space: Workspace
-) -> None:
-    """文件名来自 HTTP 请求，是不可信输入。"""
-    upload(client, thread_id, "../../escaped.csv")
-
-    assert not (space.path(thread_id).parent.parent / "escaped.csv").exists()
-
-
-def test_uploading_without_a_file_is_a_validation_error(client: TestClient, thread_id: str) -> None:
-    response = client.post(f"/api/threads/{thread_id}/files")
-
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
 # ------------------------------------------------------------------ 提交分析
@@ -110,11 +69,3 @@ def test_a_thread_id_that_escapes_the_root_is_not_found(client: TestClient) -> N
     response = client.post("/api/threads/..%2F..%2Fetc/runs", json={"content": "一"})
 
     assert response.status_code == 404
-
-
-def test_a_filename_with_no_usable_segment_is_rejected(client: TestClient, thread_id: str) -> None:
-    """`..` 收成末段之后什么都不剩，落不了盘。"""
-    response = upload(client, thread_id, "..")
-
-    assert response.status_code == 404  # type: ignore[attr-defined]
-    assert response.json()["error"]["code"] == "NOT_FOUND"  # type: ignore[attr-defined]

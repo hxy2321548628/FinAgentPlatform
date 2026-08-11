@@ -187,11 +187,55 @@ class ThreadResponse(BaseModel):
     id: str = Field(min_length=1, description="会话标识，后续所有操作都带它")
 
 
-class UploadResponse(BaseModel):
-    """上传文件的响应。"""
+class SavedFileResponse(BaseModel):
+    """上传的一个文件的结果。"""
 
-    filename: str = Field(min_length=1, description="落盘后的文件名，可能与上传时不同")
+    filename: str = Field(min_length=1, description="上传时带的文件名")
+    path: str | None = Field(default=None, description="落盘后相对会话根的路径，失败时为空")
     size: int = Field(ge=0, description="字节数")
+    error: str | None = Field(default=None, description="这一个没落上盘的原因，成功时为空")
+
+
+class UploadResponse(BaseModel):
+    """上传的结果。
+
+    **允许部分成功**：一次选十个文件，不该因为其中一个名字不能用就整批退回 ——
+    那样使用者既不知道是哪一个，也得把另外九个重传一遍。
+    """
+
+    files: list[SavedFileResponse] = Field(description="逐个文件的结果，顺序与上传时一致")
+
+
+class WorkspaceEntryResponse(BaseModel):
+    """工作目录里的一个条目。"""
+
+    path: str = Field(min_length=1, description="相对会话根的路径，posix 分隔。预览与下载都用它")
+    is_dir: bool = Field(description="是不是目录")
+    size: int = Field(ge=0, description="字节数，目录的值没有意义")
+    modified_at: datetime = Field(description="最后修改时间，UTC")
+
+
+class WorkspaceTreeResponse(BaseModel):
+    """会话工作目录的结构。
+
+    给的是一份**扁平**的条目表而不是嵌套的树：路径本身已经带着层级，
+    嵌套结构在 JSON 里既难分页也难增量更新，拼树是前端一行 reduce 的事。
+    """
+
+    entries: list[WorkspaceEntryResponse] = Field(description="按路径排序，父目录排在它的子项之前")
+    truncated: bool = Field(description="文件太多被砍过，给的只是其中一批")
+
+
+class FileContentResponse(BaseModel):
+    """一个文件的一段文本内容。"""
+
+    path: str = Field(min_length=1, description="相对会话根的路径")
+    text: str = Field(description="窗口内的文本。二进制文件为空")
+    total_line: int = Field(ge=0, description="读到的总行数。truncated 为真时只是开头那一截的行数")
+    start_line: int = Field(ge=0, description="窗口首行，1-indexed。窗口为空时是 0")
+    end_line: int = Field(ge=0, description="窗口末行，1-indexed。窗口为空时是 0")
+    is_binary: bool = Field(description="不是文本。前端该改用原始字节那个端点，图片直接塞进 <img>")
+    truncated: bool = Field(description="文件太长，只读了开头一截")
 
 
 class RunRequest(BaseModel):

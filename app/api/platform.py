@@ -70,6 +70,9 @@ class Platform:
     # 再转发，那是开发机直接跑 uvicorn 的路 —— X-Accel-Redirect 只在 nginx 后面有效
     artifact_direct_send: bool
     session: SessionStore
+    # 一次上传的字节上限。**与 nginx 的 client_max_body_size 是同一道闸的两侧**：
+    # compose 部署时外面那道先拦，直接跑 uvicorn 时只剩这一道
+    upload_max_byte: int
     policy: QuotaPolicy
     cancel: CancelFlag
     usage: RunUsage
@@ -135,6 +138,7 @@ async def build_platform(settings: Settings) -> Platform:
         usage_report=UsageReport(engine),
         rate=RateLimiter(cache, limit=settings.rate_limit, window_second=settings.rate_limit_window_second),
         session=SessionStore(cache, ttl_second=settings.session_ttl_second),
+        upload_max_byte=settings.upload_max_byte,
         password=PasswordHasher(),
         session_ttl_second=settings.session_ttl_second,
     )

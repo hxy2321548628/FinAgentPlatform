@@ -54,6 +54,8 @@ def test_the_openapi_document_is_served(client: TestClient) -> None:
         "/api/admin/groups",
         "/api/threads",
         "/api/threads/{thread_id}/files",
+        "/api/threads/{thread_id}/files/content",
+        "/api/threads/{thread_id}/files/raw",
         "/api/threads/{thread_id}/runs",
         "/api/runs/{run_id}",
         "/api/runs/{run_id}/events",

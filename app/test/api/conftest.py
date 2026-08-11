@@ -36,6 +36,7 @@ from auth.password import PasswordHasher
 from auth.session import DEFAULT_TTL_SECOND, SessionStore
 from broker.app import create_app as create_broker_app
 from broker.runtime import Broker
+from config import DEFAULT_UPLOAD_MAX_BYTE
 from event.mapper import StreamChunk
 from event.model import InterruptAction
 from group.repository import Group, GroupRepository, JoinRequestRepository
@@ -224,6 +225,12 @@ def hasher() -> PasswordHasher:
 
 
 @pytest.fixture
+def upload_max_byte() -> int:
+    """上传上限默认给到生产的值。要验这道闸的用例自己覆盖它，那比造一个 64MB 的请求便宜。"""
+    return DEFAULT_UPLOAD_MAX_BYTE
+
+
+@pytest.fixture
 def platform(
     connection: BrokerConnection,
     log: EventLog,
@@ -233,6 +240,7 @@ def platform(
     hasher: PasswordHasher,
     artifact_store: ArtifactStore | None,
     artifact_direct_send: bool,
+    upload_max_byte: int,
 ) -> Platform:
     repository = RunRepository(live_engine)
     return Platform(
@@ -258,6 +266,7 @@ def platform(
         usage_report=UsageReport(live_engine),
         rate=RateLimiter(live_cache, limit=TEST_RATE_LIMIT, window_second=TEST_RATE_WINDOW_SECOND),
         session=SessionStore(live_cache, ttl_second=DEFAULT_TTL_SECOND),
+        upload_max_byte=upload_max_byte,
         password=hasher,
         session_ttl_second=DEFAULT_TTL_SECOND,
     )

@@ -24,8 +24,15 @@ from deepagents.backends.protocol import ExecuteResponse, LsResult
 from broker.app import create_app
 from broker.runtime import AbsentContainer, Broker
 from sandbox.container import CommandResult
+from sandbox.path import PathEscapeError
 from sandbox.pool import QueuePositionCallback, SandboxQueueTimeoutError
-from sandbox.remote import BrokerConnection, RemoteSandboxBackend, RemoteSandboxPool, RemoteWorkspace
+from sandbox.remote import (
+    BrokerConnection,
+    FileMissingError,
+    RemoteSandboxBackend,
+    RemoteSandboxPool,
+    RemoteWorkspace,
+)
 from sandbox.workspace import Workspace
 
 THREAD = "thread-1"
@@ -367,6 +374,131 @@ async def test_the_mark_leaves_earlier_artifacts_behind(connection: BrokerConnec
     since = await workspace.mark(thread_id)
 
     assert await workspace.collect(thread_id, since_ns=since, user_id="u-1") == []
+    await connection.aclose()
+
+
+# ------------------------------------------------------------------ 工作目录的浏览
+async def test_the_tree_reaches_across_the_hop(connection: BrokerConnection, space: Workspace) -> None:
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    written(space.path(thread_id) / "outputs" / "chart.png", b"png")
+    (space.path(thread_id) / "analyze.py").write_text("print(1)\n", encoding="utf-8")
+
+    found = await workspace.tree(thread_id)
+
+    assert [one.path for one in found.entries] == ["analyze.py", "outputs", "outputs/chart.png"]
+    assert not found.truncated
+    await connection.aclose()
+
+
+async def test_a_preview_comes_back_as_text(connection: BrokerConnection, space: Workspace) -> None:
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    (space.path(thread_id) / "analyze.py").write_text("一\n二\n三\n", encoding="utf-8")
+
+    found = await workspace.preview(thread_id, "analyze.py", offset=1, limit=1)
+
+    assert found.text == "二"
+    assert (found.total_line, found.start_line, found.end_line) == (3, 2, 2)
+    await connection.aclose()
+
+
+async def test_previewing_a_binary_file_is_flagged_not_garbled(connection: BrokerConnection, space: Workspace) -> None:
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    written(space.path(thread_id) / "outputs" / "chart.png", b"\x89PNG\x00\x01")
+
+    found = await workspace.preview(thread_id, "outputs/chart.png", offset=0, limit=10)
+
+    assert found.is_binary
+    await connection.aclose()
+
+
+async def test_a_workspace_file_streams_back_whole(connection: BrokerConnection, space: Workspace) -> None:
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    (space.path(thread_id) / "holdings.csv").write_bytes(b"a,b\n" * 1000)
+
+    opened = await workspace.open(thread_id, "holdings.csv")
+
+    assert b"".join([chunk async for chunk in opened.chunk]) == b"a,b\n" * 1000
+    assert opened.size == 4000
+    await connection.aclose()
+
+
+async def test_an_opened_file_carries_its_content_type(connection: BrokerConnection, space: Workspace) -> None:
+    """前端拿它决定是塞进 <img> 还是当文本读。"""
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    written(space.path(thread_id) / "outputs" / "chart.png", b"png")
+
+    opened = await workspace.open(thread_id, "outputs/chart.png")
+
+    assert opened.mime == "image/png"
+    await connection.aclose()
+
+
+@pytest.mark.parametrize("relative", ["never-made.csv", "../../etc/passwd"])
+async def test_a_missing_or_escaping_path_reads_as_missing(connection: BrokerConnection, relative: str) -> None:
+    """越界与不存在给同一个回答，否则这个端点就成了探测宿主机文件的工具。"""
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+
+    with pytest.raises(FileMissingError):
+        await workspace.open(thread_id, relative)
+    await connection.aclose()
+
+
+async def test_opening_a_directory_says_so(connection: BrokerConnection, space: Workspace) -> None:
+    """目录在树里看得见，说出来不泄露任何东西。"""
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    (space.path(thread_id) / "outputs").mkdir()
+
+    with pytest.raises(IsADirectoryError):
+        await workspace.preview(thread_id, "outputs", offset=0, limit=10)
+    await connection.aclose()
+
+
+async def test_removing_a_file_takes_it_off_disk(connection: BrokerConnection, space: Workspace) -> None:
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    await workspace.save(thread_id, "holdings.csv", b"a,b\n")
+
+    await workspace.remove(thread_id, "holdings.csv")
+
+    assert not (space.path(thread_id) / "holdings.csv").exists()
+    await connection.aclose()
+
+
+async def test_removing_a_directory_is_refused(connection: BrokerConnection, space: Workspace) -> None:
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    (space.path(thread_id) / "outputs").mkdir()
+
+    with pytest.raises(IsADirectoryError):
+        await workspace.remove(thread_id, "outputs")
+    await connection.aclose()
+
+
+async def test_a_file_can_be_saved_into_a_subdirectory(connection: BrokerConnection, space: Workspace) -> None:
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    (space.path(thread_id) / "data").mkdir()
+
+    saved = await workspace.save(thread_id, "holdings.csv", b"a,b\n", directory="data")
+
+    assert saved == "data/holdings.csv"
+    assert (space.path(thread_id) / "data" / "holdings.csv").read_bytes() == b"a,b\n"
+    await connection.aclose()
+
+
+async def test_saving_into_a_directory_that_is_not_there_is_refused(connection: BrokerConnection) -> None:
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+
+    with pytest.raises(PathEscapeError):
+        await workspace.save(thread_id, "holdings.csv", b"x", directory="never-made")
     await connection.aclose()
 
 

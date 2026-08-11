@@ -1,23 +1,25 @@
-"""会话相关的端点：建会话、上传数据、提交分析。
+"""会话相关的端点：建会话、提交分析。
 
 **每一个都先用当前用户去查这个会话**，查不到就是 404 —— 不存在与不属于你在这里
 是同一个回答。过滤条件长在仓储里，这里没有一句「鉴权判断」，越权返 404 是那层过滤的
 副产品而不是额外工作。
+
+会话工作目录里的文件是另一个模块（`route/file.py`），它复用这里的 `require_thread`：
+「这个会话是不是你的」只该有一份判定。
 """
 
 import logging
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, status
 
 from api.error import concurrency_limit, not_found, quota_exceeded, unauthenticated
 from api.platform import Platform, get_platform
-from api.schema import RunRequest, RunResponse, ThreadResponse, UploadResponse
+from api.schema import RunRequest, RunResponse, ThreadResponse
 from api.security import UNAUTHENTICATED_MESSAGE, CurrentUser
 from quota.usage import next_reset
 from run.approval import DEFAULT_PENDING_LIMIT, pending_count
-from sandbox.path import PathEscapeError
 from thread.repository import Thread
 
 logger = logging.getLogger(__name__)
@@ -45,28 +47,6 @@ async def create_thread(
     return ThreadResponse(id=thread.id)
 
 
-@router.post("/{thread_id}/files", status_code=status.HTTP_201_CREATED)
-async def upload_file(
-    thread_id: str,
-    current: CurrentUser,
-    platform: Annotated[Platform, Depends(get_platform)],
-    file: Annotated[UploadFile, File(description="要分析的数据文件")],
-) -> UploadResponse:
-    """把数据文件放进会话的工作目录。
-
-    文件会落在 agent 视角的 `/workspace` 根下，提示词告诉它的工作目录就是那里。
-    """
-    await _require_thread(platform, thread_id, current.user_id)
-
-    content = await file.read()
-    try:
-        saved = await platform.workspace.save(thread_id, file.filename or "", content)
-    except PathEscapeError as exc:
-        # 文件名不可信，但拒绝的理由不必回给调用方 —— 那等于告诉它哪些名字能穿越
-        raise not_found(f"文件名不可用：{file.filename!r}") from exc
-    return UploadResponse(filename=saved, size=len(content))
-
-
 @router.post("/{thread_id}/runs", status_code=status.HTTP_202_ACCEPTED)
 async def submit_run(
     thread_id: str,
@@ -81,7 +61,7 @@ async def submit_run(
     **两道闸都在这里关**：token 日配额与并发 run 上限都只在「新开一次执行」时有意义，
     挂到路由器上会让查状态、订阅事件也被它们拦住。
     """
-    await _require_thread(platform, thread_id, current.user_id)
+    await require_thread(platform, thread_id, current.user_id)
     await _require_quota(platform, current.user_id)
 
     run = await platform.submitter.submit(thread_id=thread_id, content=request.content, user_id=current.user_id)
@@ -127,7 +107,7 @@ async def _require_quota(platform: Platform, user_id: str) -> None:
         raise concurrency_limit(f"还有 {waiting} 个分析在等你确认，先处理掉再提交新的")
 
 
-async def _require_thread(platform: Platform, thread_id: str, user_id: str) -> Thread:
+async def require_thread(platform: Platform, thread_id: str, user_id: str) -> Thread:
     """确认这个会话存在**且属于当前用户**，否则 404。
 
     **查的是表不是目录**：目录没有归属信息，让它当权威等于把越权检查建在一个
