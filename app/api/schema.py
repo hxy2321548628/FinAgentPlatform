@@ -9,8 +9,16 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field
 
 from event.model import RunStatus
+from group.model import JoinRequestStatus
 from run.decision import Decision
 from user.model import UserRole
+
+# 自助注册的口令下限。**登录不设这个下限**：那会把已有的短口令账号一次性锁在门外，
+# 而它们的强度不会因为登录端点多一条校验而变好
+MIN_PASSWORD_LENGTH = 8
+
+# 用户名与组名的长度上限。库里这两列是不限长的 varchar，挡住超长输入的只有这里
+MAX_NAME_LENGTH = 32
 
 
 class LoginRequest(BaseModel):
@@ -20,16 +28,147 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, description="口令。只用于校验，不落库也不进日志")
 
 
+class RegisterRequest(BaseModel):
+    """自助注册。
+
+    **没有角色字段**：注册出来的一律是学生。能自选角色等于能自选配额档，
+    而配额是 `teacher` 与 `student` 唯一的实质差别。
+    """
+
+    name: str = Field(min_length=1, max_length=MAX_NAME_LENGTH, description="用户名，全库唯一")
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH, description="口令。只用于算哈希，不落库也不进日志")
+    invite_code: str | None = Field(
+        default=None,
+        description="教师给的邀请码。填对了直接进组并可以登录；不填则账号先停用，等管理员激活",
+    )
+
+
+class RegisterResponse(BaseModel):
+    """注册的结果。
+
+    **`is_active` 必须回传**：它决定使用者接下来该去登录还是该去等管理员，
+    而这两句话说错一句就会变成一通电话。
+    """
+
+    id: str = Field(min_length=1, description="用户标识")
+    name: str = Field(min_length=1, description="用户名")
+    role: UserRole = Field(description="角色，注册出来的一律是学生")
+    is_active: bool = Field(description="能不能直接登录。凭邀请码注册即为 true")
+    group_name: str | None = Field(default=None, description="凭邀请码进的组；没填码时为空")
+
+
 class MeResponse(BaseModel):
     """当前登录用户。
 
-    **不含「所属组」**：`groups` 两张表本期不建，组内共享资源也一样没有 ——
-    返回一个恒为空的字段只会让前端以为它将来会有东西。
+    **不含「所属组」**：那要多查一张表，而认身份这条路径每个请求都要走一次；
+    所属组走 `/groups/mine`，页面上需要时才取。
     """
 
     id: str = Field(min_length=1, description="用户标识")
     name: str = Field(min_length=1, description="用户名")
     role: UserRole = Field(description="角色，前端据此决定是否显示管理入口")
+
+
+class CreateUserRequest(BaseModel):
+    """管理员建一个账号。**教师账号唯一的来源** —— 自助注册出来的一律是学生。"""
+
+    name: str = Field(min_length=1, max_length=MAX_NAME_LENGTH, description="用户名，全库唯一")
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH, description="初始口令。只用于算哈希，不落库也不进日志")
+    role: UserRole = Field(description="角色")
+
+
+class SetActiveRequest(BaseModel):
+    """启用或停用一个账号。"""
+
+    is_active: bool = Field(description="停用之后只是登不上，数据全部留在原处")
+
+
+class UserResponse(BaseModel):
+    """一个账号。**不含口令哈希** —— 它只在登录那一条路径上用得着。"""
+
+    id: str = Field(min_length=1, description="用户标识")
+    name: str = Field(min_length=1, description="用户名")
+    role: UserRole = Field(description="角色")
+    is_active: bool = Field(description="能不能登录。注册后等激活与被管理员停用都是 false")
+
+
+class CreateGroupRequest(BaseModel):
+    """管理员建一个课题组。"""
+
+    name: str = Field(min_length=1, max_length=MAX_NAME_LENGTH, description="组名，全库唯一 —— 重名学生没法分辨")
+    owner_id: str = Field(min_length=1, description="组主，必须是已存在的账号；它当场进这个组的名册")
+
+
+class GroupResponse(BaseModel):
+    """一个组，**带邀请码**。
+
+    因此只回给组主与管理员：邀请码是准入凭证，跟着谁都看得到的列表发出去就等于没有。
+    """
+
+    id: str = Field(min_length=1, description="组标识")
+    name: str = Field(min_length=1, description="组名")
+    owner_id: str = Field(min_length=1, description="组主")
+    invite_code: str = Field(min_length=1, description="邀请码，教师发给学生用来注册或申请入组")
+
+
+class GroupSummaryResponse(BaseModel):
+    """浏览列表里的一个组。**没有邀请码** —— 这一页对所有登录用户开放。"""
+
+    id: str = Field(min_length=1, description="组标识")
+    name: str = Field(min_length=1, description="组名")
+    owner_name: str = Field(min_length=1, description="组主姓名")
+    member_count: int = Field(ge=0, description="人数")
+
+
+class MyGroupResponse(BaseModel):
+    """我所属的一个组。"""
+
+    id: str = Field(min_length=1, description="组标识")
+    name: str = Field(min_length=1, description="组名")
+    is_owner: bool = Field(description="我是不是这个组的组主，前端据此决定显不显示管理入口")
+    invite_code: str | None = Field(
+        default=None, description="邀请码。**只发给组主** —— 组员手上有码的话，招人这件事就绕开教师了"
+    )
+
+
+class GroupMemberResponse(BaseModel):
+    """名册上的一个人。"""
+
+    user_id: str = Field(min_length=1, description="用户标识，移出成员时用它")
+    name: str = Field(min_length=1, description="用户名")
+    role: UserRole = Field(description="角色")
+
+
+class AddMemberRequest(BaseModel):
+    """把一个已有账号加进组。
+
+    **按用户名而不是 id**：教师手上有的是学生报上来的名字，让他先去查一个 uuid
+    不现实。移出成员则相反 —— 那是从名册上点，名册里带着 id。
+    """
+
+    name: str = Field(min_length=1, max_length=MAX_NAME_LENGTH, description="要加进来的账号用户名")
+
+
+class JoinRequestResponse(BaseModel):
+    """一条入组申请。
+
+    两头的名字都带着：教师的待办列表要显示「谁申请的」，学生的申请列表要显示
+    「申请的是哪个组」。
+    """
+
+    id: str = Field(min_length=1, description="申请标识")
+    group_id: str = Field(min_length=1, description="目标组")
+    group_name: str = Field(min_length=1, description="组名")
+    user_id: str = Field(min_length=1, description="申请人")
+    user_name: str = Field(min_length=1, description="申请人姓名")
+    status: JoinRequestStatus = Field(description="待审批 / 已批准 / 已否决")
+    created_at: datetime = Field(description="申请时间")
+
+
+class DecideJoinRequest(BaseModel):
+    """组主对一条申请的处理。"""
+
+    approved: bool = Field(description="批准还是否决")
 
 
 class ApproveRequest(BaseModel):

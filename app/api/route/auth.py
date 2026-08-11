@@ -1,23 +1,26 @@
-"""认证端点：登录、登出、我是谁。
+"""认证端点：注册、登录、登出、我是谁。
 
-`/auth/login` 是整个平台唯一一个未登录也能打的端口，其余端点全部挂着 `require_user`
-（见 `api/app.py`）。
+`/auth/register` 与 `/auth/login` 是整个平台仅有的两个未登录也能打的端口，
+其余端点全部挂着 `require_user`（见 `api/app.py`）。
 
-**只有登录这一个挂限流，而且按来源地址挂。** 另外两个要求先有一个有效 session，
+**只有这两个挂限流，而且按来源地址挂。** 另外两个要求先有一个有效 session，
 而那个 session 正是从被限过流的登录里发出来的；它们各自只有一次 Redis 操作，
-再限一道换不来什么。登录不限则是另一回事 —— 那等于把口令爆破的门开着。
+再限一道换不来什么。这两个不限则是另一回事 —— 那等于把口令爆破与邀请码爆破的门开着。
 """
 
 import logging
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Cookie, Depends, Response, status
+from sqlalchemy.exc import IntegrityError
 
-from api.error import unauthenticated
+from api.error import invalid, unauthenticated
 from api.platform import Platform, get_platform
-from api.schema import LoginRequest, MeResponse
+from api.schema import LoginRequest, MeResponse, RegisterRequest, RegisterResponse
 from api.security import CurrentUser, limit_by_address
 from auth.session import COOKIE_NAME, Session
+from group.repository import Group
+from user.model import UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +29,14 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # 用户名不存在与口令不对给同一句话，不给试探的人区分两者的机会
 LOGIN_FAILED_MESSAGE = "用户名或口令不正确"
 
-DISABLED_MESSAGE = "账号已被禁用"
+# 停用与「注册了还没被激活」在库里是同一个状态（`users.is_active`），因此提示语要
+# 同时说得通 —— 分成两种状态换不来任何决策差异：管理员对这两种人做的是同一个动作
+DISABLED_MESSAGE = "账号尚未启用，请联系管理员"
+
+# 码不对与码根本不存在给同一句话。分开说等于给试探的人一个「这个组存在」的信号
+INVALID_INVITE_CODE_MESSAGE = "邀请码不正确"
+
+NAME_TAKEN_MESSAGE = "这个用户名已经被占用了"
 
 # Cookie 的三项属性。
 # - HttpOnly：JS 读不到它，XSS 偷不走登录态；
@@ -36,6 +46,59 @@ DISABLED_MESSAGE = "账号已被禁用"
 COOKIE_HTTP_ONLY = True
 COOKIE_SAME_SITE: Literal["lax"] = "lax"
 COOKIE_PATH = "/"
+
+
+@router.post("/register", dependencies=[Depends(limit_by_address)])
+async def register(
+    request: RegisterRequest,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> RegisterResponse:
+    """自助建一个学生账号，填了邀请码就顺带进组。
+
+    **先验邀请码再建号**：反过来的话，码打错一个字就留下一个自己登不上、
+    管理员也不认识的账号。
+
+    **不发 Cookie**：注册完自己去登录。少一条「未登录也能拿到登录态」的路径，
+    就少一片要防的面。
+
+    建号与入组不在同一个事务里 —— 中间失败的话人已经建出来了，只是没进组，
+    他可以自己再申请一次。为这个窗口把两个仓储绑成一个事务，换来的正确性
+    抵不上那份耦合。
+    """
+    group = await _resolve_invite(platform, request.invite_code, name=request.name)
+    try:
+        user = await platform.user.create(
+            name=request.name,
+            password_hash=platform.password.hash(request.password),
+            role=UserRole.STUDENT,
+            is_active=group is not None,
+        )
+    except IntegrityError as error:
+        logger.info("注册撞了已有的用户名：name=%s", request.name)
+        raise invalid(NAME_TAKEN_MESSAGE) from error
+
+    if group is not None:
+        await platform.group.add_member(group_id=group.id, user_id=user.id)
+
+    logger.info("注册成功：user_id=%s group_id=%s", user.id, group.id if group is not None else None)
+    return RegisterResponse(
+        id=user.id,
+        name=user.name,
+        role=user.role,
+        is_active=user.is_active,
+        group_name=group.name if group is not None else None,
+    )
+
+
+async def _resolve_invite(platform: Platform, code: str | None, *, name: str) -> Group | None:
+    """把邀请码换成组。没填码是合法的，填错了不是。"""
+    if not code:
+        return None
+    group = await platform.group.find_by_invite_code(code)
+    if group is None:
+        logger.info("注册用了不存在的邀请码：name=%s", name)
+        raise invalid(INVALID_INVITE_CODE_MESSAGE)
+    return group
 
 
 @router.post("/login", dependencies=[Depends(limit_by_address)])

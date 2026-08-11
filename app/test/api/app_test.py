@@ -38,9 +38,20 @@ def test_the_openapi_document_is_served(client: TestClient) -> None:
     paths = client.get("/openapi.json").json()["paths"]
 
     assert set(paths) == {
+        "/api/auth/register",
         "/api/auth/login",
         "/api/auth/logout",
         "/api/auth/me",
+        "/api/groups",
+        "/api/groups/mine",
+        "/api/groups/mine/requests",
+        "/api/groups/{group_id}/members",
+        "/api/groups/{group_id}/members/{user_id}",
+        "/api/groups/{group_id}/requests",
+        "/api/groups/{group_id}/requests/{request_id}",
+        "/api/admin/users",
+        "/api/admin/users/{user_id}",
+        "/api/admin/groups",
         "/api/threads",
         "/api/threads/{thread_id}/files",
         "/api/threads/{thread_id}/runs",

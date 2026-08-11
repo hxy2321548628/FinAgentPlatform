@@ -5,26 +5,13 @@
 就很难再收回去。因此这里有一条用例专门去数「响应里有没有出现过会话内容」。
 """
 
-from uuid import uuid4
-
-import pytest
 from fastapi.testclient import TestClient
 
-from api.platform import Platform
-from auth.password import PasswordHasher
-from test.api.conftest import Agent, drain, login, signup
-from user.model import UserRole
+from test.api.conftest import Agent, as_admin, drain
 
 # 教师提的问题与 agent 的答复。两者都不该出现在看板的响应里
 QUESTION = "帮我算一下白酒板块的月度收益率"
 ANSWER = "白酒板块上月收益率 3.7%"
-
-
-@pytest.fixture
-def admin(client: TestClient, platform: Platform, hasher: PasswordHasher) -> str:
-    """一个管理员，并且已经登录。返回它的名字。"""
-    account = signup(client, platform, hasher, name=f"admin-{uuid4().hex[:8]}", role=UserRole.ADMIN)
-    return account.name
 
 
 def run_once(client: TestClient, thread_id: str, agent: Agent) -> None:
@@ -32,11 +19,6 @@ def run_once(client: TestClient, thread_id: str, agent: Agent) -> None:
     agent.chunk = []
     run_id = client.post(f"/api/threads/{thread_id}/runs", json={"content": QUESTION}).json()["id"]
     drain(client, run_id)
-
-
-def as_admin(client: TestClient, admin: str) -> None:
-    client.cookies.clear()
-    login(client, admin)
 
 
 def test_a_teacher_cannot_open_the_dashboard(client: TestClient) -> None:

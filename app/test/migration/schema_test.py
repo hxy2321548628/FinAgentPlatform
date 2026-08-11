@@ -22,8 +22,17 @@ from test.conftest import (
     store_dsn,
 )
 
-# 本期新建的两张表加上 P2 那两张。downgrade 之后一张都不该剩
-PLATFORM_TABLE = ("users", "threads", "runs", "run_events")
+# 至今建起来的全部业务表。downgrade 之后一张都不该剩
+PLATFORM_TABLE = (
+    "users",
+    "threads",
+    "runs",
+    "run_events",
+    "artifacts",
+    "groups",
+    "user_groups",
+    "group_join_requests",
+)
 
 # 建用户模型之前的那一版。已有的 runs 行就是在这一版上写下的
 BEFORE_USER_MODEL = "0002_run_events"
@@ -84,6 +93,28 @@ def _insert_user(connection: psycopg.Connection[tuple[object, ...]], user_id: st
         "INSERT INTO users (id, name, password_hash, role, is_active, created_at)"
         " VALUES (%s, %s, 'x', 'teacher', true, %s)",
         (user_id, f"u-{user_id[:8]}", datetime.now(UTC)),
+    )
+
+
+def _insert_group(
+    connection: psycopg.Connection[tuple[object, ...]], group_id: str, owner_id: str, *, code: str | None = None
+) -> None:
+    connection.execute(
+        "INSERT INTO groups (id, name, owner_id, invite_code, created_at) VALUES (%s, %s, %s, %s, %s)",
+        (group_id, f"g-{group_id[:8]}", owner_id, code or group_id[:8].upper(), datetime.now(UTC)),
+    )
+
+
+def _insert_request(
+    connection: psycopg.Connection[tuple[object, ...]],
+    group_id: str,
+    user_id: str,
+    *,
+    status: str = "pending",
+) -> None:
+    connection.execute(
+        "INSERT INTO group_join_requests (id, group_id, user_id, status, created_at) VALUES (%s, %s, %s, %s, %s)",
+        (uuid4().hex, group_id, user_id, status, datetime.now(UTC)),
     )
 
 
@@ -183,6 +214,71 @@ def test_a_thread_must_point_at_an_existing_user(scratch: str) -> None:
 
     with _connect(scratch) as connection, pytest.raises(psycopg.errors.ForeignKeyViolation):
         _insert_thread(connection, uuid4().hex, uuid4().hex)
+
+
+def test_a_group_must_point_at_an_existing_owner(scratch: str) -> None:
+    """组主是外键。没有它的话，禁用一个教师账号之后它的组会变成谁也管不了的孤儿。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection, pytest.raises(psycopg.errors.ForeignKeyViolation):
+        _insert_group(connection, uuid4().hex, uuid4().hex)
+
+
+def test_the_same_invite_code_cannot_be_taken_twice(scratch: str) -> None:
+    """邀请码是注册时唯一的入组依据 —— 撞码等于把学生发进别人的组。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner = uuid4().hex
+        _insert_user(connection, owner)
+        _insert_group(connection, uuid4().hex, owner, code="SAME")
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _insert_group(connection, uuid4().hex, owner, code="SAME")
+
+
+def test_a_user_cannot_join_the_same_group_twice(scratch: str) -> None:
+    """成员关系是复合主键。重复的行会让名册出现两个同一个人。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, group = uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_group(connection, group, owner)
+        connection.execute("INSERT INTO user_groups (user_id, group_id) VALUES (%s, %s)", (owner, group))
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            connection.execute("INSERT INTO user_groups (user_id, group_id) VALUES (%s, %s)", (owner, group))
+
+
+def test_a_user_cannot_have_two_pending_requests_for_one_group(scratch: str) -> None:
+    """连点两次申请只该留下一条待办，否则组主的审批列表里全是同一个人。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, group = uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_group(connection, group, owner)
+        _insert_request(connection, group, owner)
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _insert_request(connection, group, owner)
+
+
+def test_a_rejected_applicant_can_apply_again(scratch: str) -> None:
+    """唯一约束只盖 pending 那一段。被否决之后再也申请不了，那是把人永久挡在门外。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, group = uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_group(connection, group, owner)
+        _insert_request(connection, group, owner, status="rejected")
+
+        _insert_request(connection, group, owner)
+
+        found = connection.execute(
+            "SELECT count(*) FROM group_join_requests WHERE group_id = %s AND user_id = %s", (group, owner)
+        ).fetchone()
+    assert found is not None
+    assert found[0] == 2
 
 
 def test_a_run_can_be_written_with_its_owner(scratch: str) -> None:

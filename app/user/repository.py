@@ -49,13 +49,17 @@ class UserRepository:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
-    async def create(self, *, name: str, password_hash: str, role: UserRole) -> User:
+    async def create(self, *, name: str, password_hash: str, role: UserRole, is_active: bool = True) -> User:
         """建一个账号。
 
         Args:
             name: 用户名，全库唯一。
             password_hash: 已经算好的口令哈希，**明文不进这一层**。
             role: 角色。
+            is_active: 建出来就能不能登。**没填邀请码的自助注册给 False** ——
+                那样的账号在库里与「被管理员停用」的账号形状相同，两者都靠这一列挡在
+                登录之外。分开成两种状态换不来任何决策差异：管理员对它们要做的
+                都是同一个动作。
 
         Returns:
             建出来的用户。
@@ -68,6 +72,7 @@ class UserRepository:
             name=name,
             password_hash=password_hash,
             role=role,
+            is_active=is_active,
             created_at=datetime.now(UTC),
         )
         # **commit 之后不能再读这一行的字段** —— 默认的 `expire_on_commit` 会让每个属性
@@ -109,6 +114,45 @@ class UserRepository:
         async with AsyncSession(self._engine) as session:
             record = await session.get(UserRecord, identifier)
         return None if record is None else _to_user(record)
+
+    async def list_all(self) -> list[User]:
+        """全部账号，**最近建的排在前面**。
+
+        排序本身是答案：管理员打开这一页多半是为了处理刚注册、还在等激活的那几个人。
+
+        Returns:
+            每个账号一行。没有分页 —— 本期用户规模是一两百人。
+        """
+        async with AsyncSession(self._engine) as session:
+            found = await session.exec(select(UserRecord).order_by(col(UserRecord.created_at).desc()))
+            return [_to_user(one) for one in found.all()]
+
+    async def set_active(self, user_id: str, *, is_active: bool) -> bool:
+        """启用或停用一个账号。
+
+        停用之后**只是登不上，数据全部留在原处** —— 学生毕业、教师离职都是常态，
+        而他们的分析很可能仍属于课题组。
+
+        Args:
+            user_id: 用户标识。
+            is_active: 启用还是停用。
+
+        Returns:
+            是否找到了这个账号。
+
+        """
+        identifier = _parse(user_id)
+        if identifier is None:
+            return False
+        async with AsyncSession(self._engine) as session:
+            record = await session.get(UserRecord, identifier)
+            if record is None:
+                return False
+            record.is_active = is_active
+            session.add(record)
+            await session.commit()
+        logger.info("账号启停：user_id=%s is_active=%s", user_id, is_active)
+        return True
 
     async def count(self) -> int:
         """库里一共有几个账号。

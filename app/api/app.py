@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI
 
 from api.error import install_handler
 from api.platform import Platform, build_platform
-from api.route import admin, artifact, auth, metric, run, thread
+from api.route import admin, artifact, auth, group, metric, run, thread
 from api.security import limit_by_user, require_user
 from auth.bootstrap import ensure_first_admin
 from config import get_settings
@@ -77,7 +77,7 @@ def create_app(platform: Platform | None = None) -> FastAPI:
     app.include_router(auth.router, prefix=API_PREFIX)
     # 抓取端点不挂登录，也不带 /api 前缀 —— 挡它的是 nginx，理由写在 route/metric.py
     app.include_router(metric.router)
-    for router in (thread.router, run.router, artifact.router, admin.router):
+    for router in (thread.router, run.router, artifact.router, group.router, admin.router):
         app.include_router(
             router,
             prefix=API_PREFIX,

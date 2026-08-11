@@ -21,6 +21,7 @@ from artifact.store import ArtifactStore
 from auth.password import PasswordHasher
 from auth.session import SessionStore
 from config import Settings
+from group.repository import GroupRepository, JoinRequestRepository
 from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
 from quota.usage import RunUsage
@@ -58,6 +59,8 @@ class Platform:
     engine: AsyncEngine
     cache: Redis
     user: UserRepository
+    group: GroupRepository
+    join_request: JoinRequestRepository
     thread: ThreadRepository
     artifacts: ArtifactRepository
     # 产物的对象存储。**只用来签 URL 与（没有 nginx 时）取字节**，从不写入 ——
@@ -120,6 +123,8 @@ async def build_platform(settings: Settings) -> Platform:
         engine=engine,
         cache=cache,
         user=UserRepository(engine),
+        group=GroupRepository(engine),
+        join_request=JoinRequestRepository(engine),
         thread=ThreadRepository(engine),
         artifacts=ArtifactRepository(engine),
         artifact=ArtifactStore(client=settings.minio_client(), bucket=settings.minio_bucket),

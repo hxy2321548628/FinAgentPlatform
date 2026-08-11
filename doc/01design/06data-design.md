@@ -23,6 +23,8 @@
 erDiagram
     users ||--o{ user_groups : "属于"
     groups ||--o{ user_groups : "包含"
+    groups ||--o{ group_join_requests : "被申请"
+    users ||--o{ group_join_requests : "发起"
     users ||--o{ threads : "拥有"
     threads ||--o{ runs : "包含"
     runs ||--o{ run_events : "产生"
@@ -41,12 +43,22 @@ erDiagram
     }
     groups {
         uuid id PK
-        text name
+        text name UK
+        uuid owner_id FK "组主，见下"
+        text invite_code UK
         timestamptz created_at
     }
     user_groups {
         uuid user_id PK,FK
         uuid group_id PK,FK
+    }
+    group_join_requests {
+        uuid id PK
+        uuid group_id FK
+        uuid user_id FK
+        text status "pending|approved|rejected"
+        timestamptz created_at
+        timestamptz decided_at
     }
     threads {
         uuid id PK
@@ -124,6 +136,7 @@ LangGraph 的 `checkpoints` / `checkpoint_writes` 表由 `AsyncPostgresSaver` �
 | `runs(status) WHERE status IN ('queued','running')` | 部分索引。崩溃后扫描待恢复的 run |
 | `run_events(run_id, seq)` | 主键。事件重放与 `Last-Event-ID` 续读 |
 | `user_groups(group_id)` | 反查组成员（`user_id` 方向已由主键前缀覆盖） |
+| `group_join_requests(group_id, user_id) WHERE status = 'pending'` | 条件唯一索引。同一个人在同一个组里只能挂着一条待审批，同时支撑组主的待办列表 |
 | `artifacts(run_id)` | 列出一次执行的产物 |
 | `sandboxes(last_active_at)` | LRU 回收扫描（§5.5） |
 
@@ -132,7 +145,16 @@ LangGraph 的 `checkpoints` / `checkpoint_writes` 表由 `AsyncPostgresSaver` �
 >
 > 原文倾向不预留 skill 表，理由是「现在猜它的字段，和将来照实际需求建表，成本差不多，但猜错要迁移」。P3 定案把**同一条理由推到了 `groups` 上** —— 两处不该用两套标准，何况那两张表只有三列与两列，将来照实际需求建也谈不上「推倒重来」。
 >
-> **角色模型照建**：`users.role` 与 §7.2.1 那张权限表 P3 全部落地。不建的只是「组」这个组织层级。**因此 P3 的 `/auth/me` 不返回「所属组」**，与 §5.7 的写法有出入，已在那里标注。
+> **skill 表至今仍未预留**，这一条不变。
+>
+> **组表已于 2026-08-11 建出（迁移 `0007_group`）**，触发它的正是 ADR-0010 自己列的重估条件「出现需要按组区分权限的实际需求」：教师要凭邀请码招学生、管人、批申请。当初「等照实际需求再建」的判断因此得到兑现而不是被推翻 —— 现在建出来的三张表比当时猜的多了三样东西，而这三样恰恰是当时猜不出来的：
+>
+> - `groups.owner_id`：组主。没有它就没人能批申请
+> - `groups.invite_code`：注册时的准入凭证，全库唯一
+> - `group_join_requests`：申请与审批这条流程本身
+>
+> **组仍然不改变任何数据可见性**（§6.3 那张表照旧）：它是名册与准入，不是权限边界。
+> **因此 `/auth/me` 依然不返回「所属组」** —— 所属组走 `/groups/mine`，认身份这条路径不必每次多查一张表。
 
 ## 6.3 多租户隔离
 
@@ -142,6 +164,10 @@ LangGraph 的 `checkpoints` / `checkpoint_writes` 表由 `AsyncPostgresSaver` �
 |---|---|---|
 | 会话 thread、run、事件、产物、上传的数据文件 | **严格私有**，仅所属 `user_id` 可见 | `thread_id` 强绑 `user_id` |
 | 课题组共享的 skill、智能体提示词配置 | **组内可见**。用户可属多个组，可见范围是所有所属组的**并集** | 按 `user_groups` 关联表过滤（本期不实现，见 §1.2） |
+
+> **`user_groups` 建表之后这张表仍然一行未改（2026-08-11）。** 组做的是名册与准入，
+> 不是可见性 —— 教师看不到组内学生的会话，也看不到他们的用量。上面那条「组内可见」
+> 至今没有任何资源挂在上面，它描述的仍是将来。
 
 所有查询在 repository 层统一注入过滤条件（或直接启用 Postgres RLS）。
 

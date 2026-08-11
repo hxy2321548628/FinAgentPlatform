@@ -38,6 +38,7 @@ from broker.app import create_app as create_broker_app
 from broker.runtime import Broker
 from event.mapper import StreamChunk
 from event.model import InterruptAction
+from group.repository import Group, GroupRepository, JoinRequestRepository
 from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
 from quota.usage import RunUsage
@@ -245,6 +246,8 @@ def platform(
         engine=live_engine,
         cache=live_cache,
         user=UserRepository(live_engine),
+        group=GroupRepository(live_engine),
+        join_request=JoinRequestRepository(live_engine),
         thread=ThreadRepository(live_engine),
         artifacts=ArtifactRepository(live_engine),
         artifact=artifact_store,
@@ -316,10 +319,36 @@ def signup(
     )
 
 
+def make_group(client: TestClient, platform: Platform, *, owner_id: str) -> Group:
+    """建一个组，组主是给定的账号。
+
+    与 `signup` 同一个理由要在客户端自己那条循环里建 —— 连接绑在创建它的循环上。
+    """
+    assert client.portal is not None
+    return client.portal.call(partial(platform.group.create, name=f"课题组-{uuid4().hex[:8]}", owner_id=owner_id))
+
+
 def login(client: TestClient, name: str) -> None:
     """登录，Cookie 由客户端自己收下。"""
     response = client.post("/api/auth/login", json={"name": name, "password": TEST_PASSWORD})
     assert response.status_code == httpx.codes.OK, response.text
+
+
+@pytest.fixture
+def admin(client: TestClient, platform: Platform, hasher: PasswordHasher) -> str:
+    """一个管理员账号，**还没登录** —— `client` 那一侧登着的仍是教师。
+
+    Returns:
+        它的用户名，交给 `as_admin` 换身份。
+    """
+    account = signup(client, platform, hasher, name=f"admin-{uuid4().hex[:8]}", role=UserRole.ADMIN)
+    return account.name
+
+
+def as_admin(client: TestClient, admin: str) -> None:
+    """把客户端换成管理员的身份。"""
+    client.cookies.clear()
+    login(client, admin)
 
 
 @pytest.fixture

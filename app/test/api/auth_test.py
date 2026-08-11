@@ -10,7 +10,6 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from redis.asyncio import Redis
-from sqlalchemy import text
 
 from api.platform import Platform
 from api.route.auth import COOKIE_PATH, COOKIE_SAME_SITE
@@ -50,7 +49,8 @@ def test_logging_in_answers_who_i_am(client: TestClient) -> None:
     body = response.json()
     assert body["role"] == UserRole.TEACHER.value
     assert body["name"]
-    # 「所属组」本期不返回：groups 两张表不建，恒空的字段只会让前端以为将来会有东西
+    # 「所属组」不在这里返回：认身份这条路径每个请求都要走一次，不该多查一张表。
+    # 组走 /groups/mine
     assert "groups" not in body
 
 
@@ -188,6 +188,10 @@ def test_a_disabled_account_cannot_log_in(client: TestClient, platform: Platform
 
 
 async def _disable(platform: Platform, user_id: str) -> None:
-    """把一个账号停用。本期没有管理接口，测试直接改库。"""
-    async with platform.engine.begin() as connection:
-        await connection.execute(text("UPDATE users SET is_active = false WHERE id = :id"), {"id": user_id})
+    """把一个账号停用。
+
+    **不走管理端点**：这里要验的是登录那一侧认不认这个标志位，从仓储直接改省掉
+    一个管理员身份，也让这条用例不会因为管理端点的改动而红。管理端点自己那条路
+    由 `account_test.py` 验。
+    """
+    await platform.user.set_active(user_id, is_active=False)

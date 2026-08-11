@@ -64,6 +64,42 @@ async def test_a_malformed_id_finds_nothing_instead_of_raising(repository: UserR
     assert await repository.get("这不是一个 uuid") is None
 
 
+async def test_a_user_can_be_created_inactive(repository: UserRepository) -> None:
+    """没填邀请码的注册建出来就是停用的，登不上，等管理员点一下。"""
+    created = await repository.create(name=_name(), password_hash=HASH, role=UserRole.STUDENT, is_active=False)
+
+    assert created.is_active is False
+
+
+async def test_listing_sees_a_freshly_created_account(repository: UserRepository) -> None:
+    created = await repository.create(name=_name(), password_hash=HASH, role=UserRole.TEACHER)
+
+    assert created.id in {one.id for one in await repository.list_all()}
+
+
+async def test_the_newest_account_is_listed_first(repository: UserRepository) -> None:
+    """管理员这一页的头等大事是「谁在等激活」，而那永远是最近注册的那几个。"""
+    created = await repository.create(name=_name(), password_hash=HASH, role=UserRole.STUDENT, is_active=False)
+
+    listed = await repository.list_all()
+
+    assert listed[0].id == created.id
+
+
+async def test_activating_a_user_flips_the_flag(repository: UserRepository) -> None:
+    created = await repository.create(name=_name(), password_hash=HASH, role=UserRole.STUDENT, is_active=False)
+
+    assert await repository.set_active(created.id, is_active=True) is True
+
+    found = await repository.get(created.id)
+    assert found is not None
+    assert found.is_active is True
+
+
+async def test_activating_an_unknown_user_changes_nothing(repository: UserRepository) -> None:
+    assert await repository.set_active(uuid4().hex, is_active=True) is False
+
+
 async def test_counting_sees_the_rows_that_were_written(repository: UserRepository) -> None:
     """首个管理员的初始化只看它是不是 0，因此它必须真的数得对。"""
     before = await repository.count()
