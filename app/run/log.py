@@ -179,12 +179,17 @@ class EventLog:
         archived = await self._archive.replay(run_id, after=cursor, before=live[0].id if live else None)
         return archived + live
 
-    async def follow(self, run_id: str, *, after: str | None = None) -> AsyncIterator[LoggedEvent]:
+    async def follow(
+        self, run_id: str, *, after: str | None = None, terminal: bool = False
+    ) -> AsyncIterator[LoggedEvent]:
         """先补齐历史，再持续产出新事件，直到 run 进入终态。
 
         Args:
             run_id: 目标 run。
             after: 从该 id 之后接着读；不传则从头。
+            terminal: 调用方是否已经从 `runs` 表确认这个 run 走到了终态。**只在
+                「一条事件都没有」时用得上** —— 那时事件层面分不出「还没开始写」与
+                「已过保留期被清光」，见 `_ended`。默认 False 即保持只看事件的老行为。
 
         Yields:
             按发生顺序排列的事件。
@@ -205,7 +210,7 @@ class EventLog:
         while True:
             # 先判「已经结束且游标在末尾」再阻塞：跑完之后才来订阅的连接不该白等一轮，
             # 而这个 run 再也不会有新事件了
-            if await self._ended(run_id, cursor):
+            if await self._ended(run_id, cursor, terminal=terminal):
                 return
             # XREAD 取的是游标之后的 entry，因此「读完到开始等待之间新来的事件」
             # 不会漏 —— 内存实现里要靠一个 asyncio.Event 才能避免的那个竞态，这里不存在
@@ -221,12 +226,21 @@ class EventLog:
                     if logged.event.type in TERMINAL_EVENT_TYPE:
                         return
 
-    async def _ended(self, run_id: str, cursor: str) -> bool:
+    async def _ended(self, run_id: str, cursor: str, *, terminal: bool) -> bool:
         """这个 run 是否已经结束，且游标已经走过了终态事件。
 
         只看最后一条：终态事件是一个 run 最后发的东西，它之后不该再有别的。
-        Stream 整条过期之后，「结束了没有」只能问归档 —— 不问的话，
-        订阅一个几个月前的 run 会永远挂着。
+        Stream 整条过期之后，「结束了没有」只能问归档。
+
+        **两边都一条都没有时，答案只能由调用方给。** 那时有两种可能，而事件层面
+        分不出来：run 刚提交、worker 还没写第一条（该接着等）；或者事件已过 180 天
+        保留期被清光（该收尾）。一律当成前者的话，订阅一个半年前的 run 会永远挂着，
+        而且没有任何报错 —— 前端只是一直转圈。判据因此取 `runs` 表里的状态：
+        那一行不随保留期清理，是事件没了之后唯一还答得出「它结束了没有」的东西。
+
+        **只在这一种情形下用 `terminal`**，不拿它去短路「有事件但最后一条不是终态」
+        那一支：执行器是先落库终态、再推终态事件的，中间那一瞬状态已经变了而事件还没到，
+        这时收尾会把 `run.finished` 漏掉 —— 教师看到的是一次卡在最后一步的分析。
         """
         entry = cast(
             list[StreamEntry],
@@ -236,7 +250,7 @@ class EventLog:
         if logged is None and self._archive is not None:
             logged = await self._archive.last(run_id)
         if logged is None:
-            return False
+            return terminal
         if parse_event_id(logged.id) > parse_event_id(cursor):
             return False
         return logged.event.type in TERMINAL_EVENT_TYPE

@@ -307,3 +307,47 @@ async def test_events_survive_a_new_log_instance(live_cache: Redis) -> None:
     received = [one.event.model_dump()["type"] async for one in EventLog(live_cache).follow("run-1")]
 
     assert received == ["token", "run.finished"]
+
+
+# ------------------------------------------------------------------ 事件过了保留期之后
+# `run_events` 留 180 天，`runs` 那一行不清。过期之后事件层面看到的是「一条都没有」——
+# 与「刚提交、还没开始写」一模一样，而两者该做的事正好相反。
+async def test_following_a_run_whose_events_are_gone_ends_instead_of_hanging(log: EventLog) -> None:
+    """**否则订阅一个半年前的 run 会永远挂着，而且不报错** —— 前端只是一直转圈。"""
+    received = [one async for one in log.follow("run-whose-events-expired", terminal=True)]
+
+    assert received == []
+
+
+async def test_following_a_run_that_has_not_started_writing_keeps_waiting(log: EventLog) -> None:
+    """反面：刚提交、worker 还没写第一条的 run 必须接着等，不能当成「已经没了」。"""
+
+    async def produce() -> None:
+        await asyncio.sleep(0)
+        await log.append(token("第一条"))
+        await log.append(finished())
+
+    task = asyncio.create_task(produce())
+    received = [one.event.model_dump()["type"] async for one in log.follow("run-1", terminal=False)]
+    await task
+
+    assert received == ["token", "run.finished"]
+
+
+async def test_a_terminal_run_still_waits_for_its_terminal_event(log: EventLog) -> None:
+    """**`terminal` 不能短路「有事件但最后一条不是终态」那一支。**
+
+    执行器是先落库终态、再推终态事件的：中间那一瞬库里已经变了而事件还没到。
+    这时收尾会把 `run.finished` 漏掉 —— 教师看到的是一次卡在最后一步的分析。
+    """
+    await log.append(token("跑到一半"))
+
+    async def produce() -> None:
+        await asyncio.sleep(0)
+        await log.append(finished())
+
+    task = asyncio.create_task(produce())
+    received = [one.event.model_dump()["type"] async for one in log.follow("run-1", terminal=True)]
+    await task
+
+    assert received == ["token", "run.finished"]

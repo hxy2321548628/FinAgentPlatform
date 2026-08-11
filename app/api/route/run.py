@@ -11,7 +11,14 @@ from api.platform import Platform, get_platform
 from api.schema import ApproveRequest, RunResponse
 from api.security import CurrentUser
 from api.sse import heartbeat_stream
-from event.model import InterruptData, RunCancelledData, RunCancelledEvent, RunStatus, now_ms
+from event.model import (
+    TERMINAL_STATUS,
+    InterruptData,
+    RunCancelledData,
+    RunCancelledEvent,
+    RunStatus,
+    now_ms,
+)
 from log import run_context
 from run.decision import DecisionError, check
 from run.log import InvalidEventIdError, parse_event_id
@@ -53,11 +60,17 @@ async def stream_events(
     """订阅一次 run 的事件流。
 
     带上 `Last-Event-ID` 就从那个 id 之后接着推，中间产生的事件全部补齐。
-    流在 run 进入终态时自然结束。
+    流在 run 进入终态时自然结束，因此这条端点**既服务「正在跑」也服务「翻旧账」** ——
+    已经结束的 run 会先把历史一次吐完再关闭，前端不必为两者写两套。
 
     **越权检查在这一层，不在事件那一层**：`run_events` 是全库最大的表，
     唯一的查询模式是「按 run_id 顺序重放」，冗余一列 user_id 只为鉴权不划算。
     先确认这个 run 属于当前用户，再读它的事件。
+
+    **顺手把「它是不是已经终态」也告诉事件日志。** 事件有 180 天保留期而 `runs`
+    那一行没有，过期之后事件层面看到的是「一条都没有」—— 与「刚提交、还没开始写」
+    一模一样。不给这个事实的话，订阅一个半年前的 run 会永远挂着且不报错。
+    这一步不额外查库：上面那次越权检查已经把状态拿回来了。
     """
     run = await _require_run(platform, run_id, current.user_id)
 
@@ -67,7 +80,7 @@ async def stream_events(
     with run_context(run_id=run_id, thread_id=run.thread_id, user_id=current.user_id):
         logger.info("事件流已订阅：游标=%s", cursor or "从头")
 
-    body = heartbeat_stream(platform.log.follow(run_id, after=cursor))
+    body = heartbeat_stream(platform.log.follow(run_id, after=cursor, terminal=run.status in TERMINAL_STATUS))
     return StreamingResponse(body, media_type=SSE_MEDIA_TYPE, headers=SSE_HEADER)
 
 

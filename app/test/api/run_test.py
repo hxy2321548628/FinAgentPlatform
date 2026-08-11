@@ -1,8 +1,10 @@
 import asyncio
 import json
+from functools import partial
 
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessageChunk
+from redis.asyncio import Redis
 
 from api.platform import Platform
 from api.sse import HEARTBEAT_FRAME, heartbeat_stream
@@ -15,6 +17,7 @@ from event.model import (
     TokenData,
     TokenEvent,
 )
+from run.log import stream_key
 from test.api.conftest import Agent, drain
 from test.conftest import json_log
 
@@ -291,3 +294,27 @@ def test_subscribing_is_logged_with_the_run_identity(client: TestClient, thread_
         drain(client, run_id)
 
     assert [(one.get("run_id"), one.get("thread_id")) for one in line] == [(run_id, thread_id)]
+
+
+# ------------------------------------------------------------------ 事件过了保留期之后
+def test_replaying_a_run_whose_events_expired_ends_instead_of_hanging(
+    client: TestClient, thread_id: str, agent: Agent, live_cache: Redis
+) -> None:
+    """**翻半年前的会话不能让页面永远转圈。**
+
+    `run_events` 留 180 天而 `runs` 那一行不清，过期之后事件层面看到的是「一条都没有」——
+    与「刚提交、还没开始写」一模一样。判据因此要取库里的状态，那是事件没了之后
+    唯一还答得出「它结束了没有」的东西。
+
+    这里用「清掉这个 run 的事件流」来造那个场景：保留期清理最终留下的正是这个状态。
+    """
+    run_id = client.post(f"/api/threads/{thread_id}/runs", json={"content": "一"}).json()["id"]
+    drain(client, run_id)
+    assert client.portal is not None
+    client.portal.call(partial(live_cache.delete, stream_key(run_id)))
+
+    with client.stream("GET", f"/api/runs/{run_id}/events") as response:
+        received = [line for line in response.iter_lines() if line]
+
+    assert response.status_code == 200
+    assert received == []
