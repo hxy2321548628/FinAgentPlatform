@@ -217,7 +217,7 @@ class Settings(StoreSettings):
     upload_max_byte: int = Field(
         default=DEFAULT_UPLOAD_MAX_BYTE,
         gt=0,
-        description="一次上传（含多个文件）的字节上限。**要与 nginx 的 client_max_body_size 一致**，"
+        description="单个上传文件的字节上限。**要与 nginx 的 client_max_body_size 一致**，"
         "两边不一致时大的那一侧形同虚设；直接跑 uvicorn 时没有 nginx，挡它的只有这一项",
     )
 
