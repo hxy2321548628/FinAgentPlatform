@@ -6,8 +6,9 @@
 **这个进程不碰 Docker，也不碰宿主机上的 workspace 目录** —— 沙箱与文件都在
 broker 那边，这里只有到它的一条 HTTP 连接。
 
-**它也不再驱动智能体**：模型、checkpointer、沙箱申请全在 worker 那边。网关剩下的
-只有三件事 —— 收提问并投进队列、查 run 的状态、把事件流转成 SSE。
+**它也不驱动智能体**：checkpointer、沙箱申请、那十几轮模型调用全在 worker 那边。
+网关这里**只有一种模型调用** —— 给会话起个标题，走辅助模型、一次往返、挂在响应之后。
+它与分析无关，起不出来也只是标题留空。
 """
 
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from fastapi import Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from agent.factory import create_model
 from artifact.repository import ArtifactRepository
 from artifact.store import ArtifactStore
 from auth.password import PasswordHasher
@@ -35,6 +37,7 @@ from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteWorkspa
 from store import postgres, redis
 from task.queue import TaskQueue
 from thread.repository import ThreadRepository
+from thread.title import TitleWriter
 from user.repository import UserRepository
 
 # 网关只投递不消费，consumer 名字用不上。给一个显式的常量而不是空串，
@@ -62,6 +65,9 @@ class Platform:
     group: GroupRepository
     join_request: JoinRequestRepository
     thread: ThreadRepository
+    # 会话标题的生成。**放在网关而不是 worker**：教师要的是提交完就看见侧边栏有了名字，
+    # 而 worker 可能几分钟后才领到这条任务
+    title: TitleWriter
     artifacts: ArtifactRepository
     # 产物的对象存储。**只用来签 URL 与（没有 nginx 时）取字节**，从不写入 ——
     # 写在 broker 那一侧，那是唯一碰得到 workspace 的进程
@@ -108,6 +114,7 @@ async def build_platform(settings: Settings) -> Platform:
 
     connection = BrokerConnection(base_url=settings.broker_url)
     repository = RunRepository(engine)
+    thread = ThreadRepository(engine)
     queue = TaskQueue(cache, consumer=PRODUCER_NAME)
     policy = QuotaPolicy(
         token_daily=settings.quota_token_daily,
@@ -128,7 +135,9 @@ async def build_platform(settings: Settings) -> Platform:
         user=UserRepository(engine),
         group=GroupRepository(engine),
         join_request=JoinRequestRepository(engine),
-        thread=ThreadRepository(engine),
+        thread=thread,
+        # 走辅助模型：概括一句话不需要主模型那份多步推理能力，而主模型贵一个数量级
+        title=TitleWriter(model=create_model(settings, model_name=settings.model_aux), repository=thread),
         artifacts=ArtifactRepository(engine),
         artifact=ArtifactStore(client=settings.minio_client(), bucket=settings.minio_bucket),
         artifact_direct_send=settings.artifact_direct_send,

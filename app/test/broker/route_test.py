@@ -59,6 +59,7 @@ class FakePool:
     def __init__(self) -> None:
         self.held: dict[str, FakeContainer] = {}
         self.released: list[str] = []
+        self.discarded: list[str] = []
         self.queue_position: list[int] = []
         self.fail_with: Exception | None = None
         self.container_gone = False
@@ -76,6 +77,10 @@ class FakePool:
 
     async def release(self, thread_id: str, *, holder: str) -> None:
         self.released.append(thread_id)
+
+    async def discard(self, thread_id: str) -> None:
+        self.discarded.append(thread_id)
+        self.held.pop(thread_id, None)
 
     def current(self, thread_id: str) -> FakeContainer | None:
         return None if self.container_gone else self.held.get(thread_id)
@@ -528,3 +533,27 @@ def test_the_idempotency_key_is_accepted_even_though_p1_ignores_it(broker_url: s
     )
 
     assert response.status_code == httpx.codes.OK
+
+
+async def test_destroying_a_thread_removes_its_directory_and_container(
+    connection: BrokerConnection, space: Workspace, pool: FakePool
+) -> None:
+    """删会话把两样东西一起收走：容器与整个工作目录。"""
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    await workspace.save(thread_id, "holdings.csv", b"a,b\n")
+
+    await workspace.destroy(thread_id)
+
+    assert space.exists(thread_id) is False
+    assert pool.discarded == [thread_id]
+    await connection.aclose()
+
+
+async def test_destroying_a_thread_that_was_never_created_is_not_an_error(
+    connection: BrokerConnection,
+) -> None:
+    """Api 那边的行已经没了，这里再报 404 只会让一次正常的删除看起来失败了。"""
+    await RemoteWorkspace(connection).destroy(uuid4().hex)
+
+    await connection.aclose()

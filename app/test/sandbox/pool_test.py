@@ -709,3 +709,38 @@ async def test_a_recovered_run_does_not_eat_a_second_slot(tmp_path: Path, factor
     assert again is factory.made[0]
     assert pool.size == 1
     await pool.aclose()
+
+
+# ------------------------------------------------------------------ 删会话
+async def test_discard_stops_the_container_even_while_it_is_held(tmp_path: Path, factory: Factory) -> None:
+    """删会话不看持有者：容器留着就是挂在一个马上要被删掉的目录上。"""
+    pool = make_pool(tmp_path, factory)
+    await pool.acquire("thread-1", holder=HOLDER)
+
+    await pool.discard("thread-1")
+
+    assert factory.made[0].stopped is True
+    assert pool.current("thread-1") is None
+    await pool.aclose()
+
+
+async def test_discarding_an_unknown_thread_is_harmless(tmp_path: Path, factory: Factory) -> None:
+    """会话可能从来没跑过分析 —— 那时它没有容器，删除照样该成功。"""
+    pool = make_pool(tmp_path, factory)
+
+    await pool.discard("never-acquired")
+    await pool.aclose()
+
+
+async def test_discard_hands_the_slot_to_whoever_is_queuing(tmp_path: Path, factory: Factory) -> None:
+    """腾出来的名额当场分给排队的申请，与 idle 回收走同一条路。"""
+    pool = make_pool(tmp_path, factory, max_container=1)
+    await pool.acquire("thread-1", holder=HOLDER)
+    waiting = asyncio.create_task(pool.acquire("thread-2", holder=HOLDER))
+    await asyncio.sleep(0)
+
+    await pool.discard("thread-1")
+
+    await asyncio.wait_for(waiting, timeout=1)
+    assert pool.current("thread-2") is not None
+    await pool.aclose()

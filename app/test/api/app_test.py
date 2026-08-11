@@ -13,6 +13,7 @@ from config import Settings
 from sandbox.remote import RemoteWorkspace
 from store.postgres import PostgresUnavailableError
 from store.redis import RedisUnavailableError
+from thread.title import TitleWriter
 
 # 不会有人监听的端口，连不上是立刻的 ECONNREFUSED
 DEAD_PORT = 1
@@ -53,6 +54,7 @@ def test_the_openapi_document_is_served(client: TestClient) -> None:
         "/api/admin/users/{user_id}",
         "/api/admin/groups",
         "/api/threads",
+        "/api/threads/{thread_id}",
         "/api/threads/{thread_id}/files",
         "/api/threads/{thread_id}/files/content",
         "/api/threads/{thread_id}/files/raw",
@@ -76,9 +78,11 @@ async def test_a_platform_built_from_settings_wires_everything_together(tmp_path
 
     try:
         # 装配阶段不该碰 broker、不该碰盘：workspace 只是拿到了一条到 broker 的连接。
-        # **网关这一侧没有沙箱池、没有模型、没有 checkpointer** —— 那些都随 worker 走了
+        # **网关这一侧没有沙箱池、没有 checkpointer、也不驱动智能体** —— 那些都随 worker 走了。
+        # 它确实有一个模型，但只用来给会话起标题：一次往返，与分析无关
         assert isinstance(platform.workspace, RemoteWorkspace)
         assert not hasattr(platform, "executor")
+        assert isinstance(platform.title, TitleWriter)
         assert await platform.repository.get("never-existed", user_id=uuid4().hex) is None
     finally:
         await platform.engine.dispose()

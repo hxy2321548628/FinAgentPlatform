@@ -327,3 +327,39 @@ def test_without_an_owner_the_directory_is_left_alone(tmp_path: Path, monkeypatc
     space.create(uuid4().hex)
 
     assert handed == []
+
+
+# ------------------------------------------------------------------ 删会话
+def test_destroy_removes_the_whole_thread_directory(space: Workspace) -> None:
+    """删会话是唯一递归删除的操作 —— 教师点的那一下就是「整个会话都不要了」。"""
+    thread_id = uuid4().hex
+    space.save(thread_id, "data.csv", b"a,b")
+    (space.path(thread_id) / OUTPUT_DIR).mkdir(exist_ok=True)
+
+    space.destroy(thread_id)
+
+    assert space.exists(thread_id) is False
+
+
+def test_destroying_a_thread_twice_is_not_an_error(space: Workspace) -> None:
+    """Api 那边的行已经没了，这里再报错只会让一次正常的删除看起来失败了。"""
+    thread_id = space.create(uuid4().hex)
+    space.destroy(thread_id)
+
+    space.destroy(thread_id)
+
+
+def test_destroying_a_thread_leaves_the_others_alone(space: Workspace) -> None:
+    mine, theirs = uuid4().hex, uuid4().hex
+    space.save(mine, "mine.csv", b"a")
+    space.save(theirs, "theirs.csv", b"b")
+
+    space.destroy(mine)
+
+    assert space.exists(theirs) is True
+
+
+def test_destroying_an_escaping_identifier_is_refused(space: Workspace) -> None:
+    """标识参与拼路径。这一条要是漏了，`../..` 就是一条递归删宿主机目录的路。"""
+    with pytest.raises(PathEscapeError):
+        space.destroy("../../etc")

@@ -12,6 +12,7 @@ api 侧判断会话存不存在一律查表，不再调它。
 import logging
 import os
 from pathlib import Path
+from shutil import rmtree
 
 from sandbox.path import OUTPUT_DIR, PathEscapeError, thread_workspace
 from sandbox.quota import NoQuota, QuotaProtocol
@@ -195,6 +196,34 @@ class Workspace:
             message = f"这是一个目录，不能删：{relative_path!r}"
             raise IsADirectoryError(message)
         target.unlink()
+
+    def destroy(self, thread_id: str) -> None:
+        """删掉一个会话的整个目录。
+
+        **这是唯一递归删除的操作**，与 `remove` 的「只删文件」是两回事：那一个来自
+        侧边栏上的一次点击，看不出「会连着子项一起没」这个后果；这一个来自「删除会话」，
+        教师已经知道整个会话都要没了。
+
+        **调用方必须先销毁容器。** 容器把这个目录 bind mount 了进去，反过来的话，
+        删目录的那一刻里面还有一个正在写它的进程。
+
+        目录不在就什么都不做 —— 删一个已经删过的会话不是错误。
+
+        Args:
+            thread_id: 会话标识。
+
+        Raises:
+            PathEscapeError: 标识会让目录落到根目录之外。
+        """
+        # 走 thread_workspace 而不是 self.path：后者不存在时会把目录建出来，
+        # 而这里正要删掉它
+        target = thread_workspace(self._root, thread_id)
+        if not target.is_dir():
+            return
+        # XFS 的 project 配额记录留着不清：projid 由 thread_id 确定性派生，
+        # 而 uuid 不会重来一次，因此那条记录既不会被复用也不会挡住谁。清它要多跑一次
+        # xfs_quota，而那条路上的每一次失败都只往 stderr 打一句然后退出 0
+        rmtree(target)
 
     def resolve(self, thread_id: str, relative_path: str) -> Path:
         """定位会话目录下的一个路径。

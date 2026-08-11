@@ -78,11 +78,18 @@ class SupportsAgent(Protocol):
         ...
 
 
-def create_model(settings: Settings, *, callback: list[BaseCallbackHandler] | None = None) -> BaseChatModel:
-    """按配置构造主模型。
+def create_model(
+    settings: Settings,
+    *,
+    model_name: str | None = None,
+    callback: list[BaseCallbackHandler] | None = None,
+) -> BaseChatModel:
+    """按配置构造一个聊天模型，默认是主模型。
 
     Args:
         settings: 平台配置。
+        model_name: 换成别的模型。网关起会话标题时给的是辅助模型 —— 概括一句话
+            不需要主模型那份多步推理能力，而主模型贵一个数量级。
         callback: 挂在模型上的回调，指标与追踪的埋点都走它。**挂在模型上而不是逐次
             调用挂** —— 一次分析内部要调十几轮模型，逐次挂等于把「别忘了挂」重复十几遍，
             而漏一次不会报错，只会让那一段在图上消失。
@@ -91,7 +98,7 @@ def create_model(settings: Settings, *, callback: list[BaseCallbackHandler] | No
         可供 DeepAgents 使用的聊天模型。
     """
     return ChatDeepSeek(
-        model_name=settings.model_main,
+        model_name=model_name or settings.model_main,
         api_key=settings.deepseek_api_key,
         api_base=settings.deepseek_base_url,
         # 同一份数据同一个问题应该给出同一套算法，分析任务不需要发散

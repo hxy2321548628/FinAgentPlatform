@@ -25,6 +25,8 @@ import pytest
 from deepagents.backends.protocol import BackendProtocol
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -56,6 +58,7 @@ from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandbox
 from sandbox.workspace import Workspace
 from task.queue import TaskQueue
 from thread.repository import ThreadRepository
+from thread.title import TitleWriter
 from user.model import UserRole
 from user.repository import User, UserRepository
 from worker.loop import Worker
@@ -79,6 +82,9 @@ TEST_RATE_WINDOW_SECOND = 60
 # 假 agent 被卡住时多久回头看一次「放行了没」
 POLL_SECOND = 0.01
 
+# 假模型给会话起的名字。真模型在 CI 里既没有凭据也不该花钱
+FAKE_TITLE = "行业波动率分析"
+
 
 class FakeContainer:
     @property
@@ -94,6 +100,7 @@ class FakePool:
 
     def __init__(self) -> None:
         self.released: list[str] = []
+        self.discarded: list[str] = []
         self.held: dict[str, FakeContainer] = {}
 
     async def acquire(
@@ -104,6 +111,10 @@ class FakePool:
 
     async def release(self, thread_id: str, *, holder: str) -> None:
         self.released.append(thread_id)
+
+    async def discard(self, thread_id: str) -> None:
+        self.discarded.append(thread_id)
+        self.held.pop(thread_id, None)
 
     def current(self, thread_id: str) -> FakeContainer | None:
         return self.held.get(thread_id)
@@ -231,6 +242,16 @@ def upload_max_byte() -> int:
 
 
 @pytest.fixture
+def title_model() -> BaseChatModel:
+    """起标题用的假模型。
+
+    **不打真模型**：CI 里没有凭据，也不该花钱。给一个固定答案，让「提交之后标题
+    自己出现了」这条路照样跑得通 —— 换成 None 顶掉的话，那一整段就等于没验。
+    """
+    return FakeListChatModel(responses=[FAKE_TITLE])
+
+
+@pytest.fixture
 def platform(
     connection: BrokerConnection,
     log: EventLog,
@@ -241,8 +262,10 @@ def platform(
     artifact_store: ArtifactStore | None,
     artifact_direct_send: bool,
     upload_max_byte: int,
+    title_model: BaseChatModel,
 ) -> Platform:
     repository = RunRepository(live_engine)
+    thread = ThreadRepository(live_engine)
     return Platform(
         workspace=RemoteWorkspace(connection),
         log=log,
@@ -256,7 +279,8 @@ def platform(
         user=UserRepository(live_engine),
         group=GroupRepository(live_engine),
         join_request=JoinRequestRepository(live_engine),
-        thread=ThreadRepository(live_engine),
+        thread=thread,
+        title=TitleWriter(model=title_model, repository=thread),
         artifacts=ArtifactRepository(live_engine),
         artifact=artifact_store,
         artifact_direct_send=artifact_direct_send,

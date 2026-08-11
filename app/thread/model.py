@@ -34,3 +34,7 @@ class ThreadRecord(SQLModel, table=True):
     agent_config: dict[str, object] = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False))
     created_at: datetime
     updated_at: datetime
+    # **删会话是软删除。** 硬删会撞上 `runs.thread_id` 的外键，而顺着删掉 runs 等于把
+    # 成本账本挖掉一块。教师要的是「从我的列表里消失、别再占磁盘」——
+    # 前者由这一列负责，后者由 broker 真删 workspace 目录负责
+    deleted_at: datetime | None = Field(default=None)

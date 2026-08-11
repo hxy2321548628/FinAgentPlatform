@@ -67,11 +67,13 @@ erDiagram
         jsonb agent_config
         timestamptz created_at
         timestamptz updated_at
+        timestamptz deleted_at "软删除标记，见下"
     }
     runs {
         uuid id PK
         uuid thread_id FK
         uuid user_id FK "反范式，见下"
+        text content "教师的提问，聊天历史的用户那一侧"
         text status "见 §5.4 状态机"
         text checkpoint_id
         text error_code
@@ -112,7 +114,7 @@ LangGraph 的 `checkpoints` / `checkpoint_writes` 表由 `AsyncPostgresSaver` �
 
 > **`artifacts` 于 P4 建表**（2026-08-08）。它的主键同时是产物的对外标识，但**不是唯一的一种** —— P4 之前的历史事件里存的是旧形状 `{thread_id}/{相对路径}`，而 `run_events` 保留 180 天，端点因此在兼容期内同时认两种（§5.2 的 `run.finished`）。**表里的每一行都必须指向一个真的对象**：上传失败的产物不落表，走 workspace 回落那条路。
 
-### 三个需要说明的设计选择
+### 五个需要说明的设计选择
 
 **1. `runs.user_id` 是有意的反范式。**
 
@@ -125,6 +127,18 @@ LangGraph 的 `checkpoints` / `checkpoint_writes` 表由 `AsyncPostgresSaver` �
 **3. `agent_config` 用 JSONB，不拆列。**
 
 它是整体读写的配置块，从不按字段查询；且 §1.2 的后续方向（自定义提示词、skill、MCP）会持续往里加字段。拆列意味着每次加功能都要迁移。
+
+**4. 删会话是软删除（`threads.deleted_at`）。**（2026-08-11 定案，迁移 `0008_thread_history`）
+
+硬删会撞上 `runs.thread_id` 的外键，而顺着删掉 runs 等于把成本账本挖掉一块 —— `runs` 正是下方生命周期表里明确「不清」的那张。**教师删会话要的是「从我的列表里消失、别再占磁盘」**，两件事分别由这一列和「broker 真删 workspace 目录 + 销毁沙箱」负责，都不需要动 `runs`。
+
+代价是每条会话查询都要多带一个 `deleted_at IS NULL`。两个过滤条件（归属 + 未删）集中在仓储的一处，各写各的迟早会漏掉一处，而漏掉的症状是「删了还在」。
+
+放弃的替代方案：**级联删 runs**（账本出洞，成本看板的历史缺一段）、**拒绝删有 run 的会话**（教师删不掉任何用过的会话，等于这个功能不存在）。
+
+**5. `runs.content` 存教师的提问。**（同上）
+
+在这一版之前提问只随任务消息走、跑完就没了，而事件流里没有承载它的事件 —— 于是「翻看以前问过什么」做不到（详见 §5.7 聊天历史）。checkpoint 里的 messages 不能当数据源：那是 LangGraph 自建的表，保留期比 `runs` 短得多，且它不是业务的真相源。
 
 ### 索引
 

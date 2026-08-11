@@ -8,7 +8,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from event.model import RunStatus
+from event.model import RunErrorCode, RunStatus
 from group.model import JoinRequestStatus
 from run.decision import Decision
 from user.model import UserRole
@@ -19,6 +19,10 @@ MIN_PASSWORD_LENGTH = 8
 
 # 用户名与组名的长度上限。库里这两列是不限长的 varchar，挡住超长输入的只有这里
 MAX_NAME_LENGTH = 32
+
+# 教师手填标题的长度上限。**比自动生成的那个上限宽**（那个是 20 字的硬截断）——
+# 模型要写得下侧边栏一行，人手起的名字则是他自己的事，只要不能拿来灌库
+MAX_THREAD_TITLE_LENGTH = 64
 
 
 class LoginRequest(BaseModel):
@@ -182,9 +186,69 @@ class ApproveRequest(BaseModel):
 
 
 class ThreadResponse(BaseModel):
-    """新建会话的响应。"""
+    """一个会话。"""
 
     id: str = Field(min_length=1, description="会话标识，后续所有操作都带它")
+    title: str = Field(
+        description="会话标题。首次提问后由一次轻量模型调用填上，**在那之前是空的** —— 前端此时回落到时间显示"
+    )
+    created_at: datetime = Field(description="建立时间，UTC")
+    # 列表按它倒序。提交分析与改标题都会把它推到此刻
+    updated_at: datetime = Field(description="最后活动时间，UTC")
+
+
+class ThreadDetailResponse(ThreadResponse):
+    """会话详情，比列表里那份多一份 agent 配置。
+
+    配置整块读写，不按字段查询 —— 后续方向（自定义提示词、skill、MCP）会持续往里加东西。
+    """
+
+    agent_config: dict[str, object] = Field(description="这个会话的 agent 配置")
+
+
+class ThreadPageResponse(BaseModel):
+    """一页会话。"""
+
+    items: list[ThreadResponse] = Field(description="按最后活动时间从近到远排")
+    next_cursor: str | None = Field(
+        description="取下一页要原样带回来的游标。**为空表示到底了** —— 前端据此停止「加载更多」"
+    )
+
+
+class UpdateThreadRequest(BaseModel):
+    """改一个会话。
+
+    **两个字段各自可选**：只传标题时配置原样留着 —— 一次改名把 agent 配置清空，
+    是那种改完当时没事、下次跑分析才发现的故障。
+    """
+
+    title: str | None = Field(default=None, max_length=MAX_THREAD_TITLE_LENGTH, description="新标题，不传则不动")
+    agent_config: dict[str, object] | None = Field(
+        default=None, description="新配置，**整块替换**而不是合并，不传则不动"
+    )
+
+
+class RunHistoryResponse(BaseModel):
+    """会话历史里的一轮问答。
+
+    **过程不在这里**：那是 `GET /runs/{id}/events` 逐个重放的事件，一轮几百条，
+    塞进列表会让打开会话变成一次几 MB 的下载。这里给的是「问了什么、结局如何」。
+    """
+
+    id: str = Field(min_length=1, description="run 标识，拿它去订阅或重放事件")
+    status: RunStatus = Field(description="当前状态")
+    content: str | None = Field(description="教师的问题。**本版之前的 run 为空** —— 那批提问没有落过库，不是待补的空缺")
+    error_code: RunErrorCode | None = Field(default=None, description="失败原因，稳定的机器可读枚举")
+    error_message: str | None = Field(default=None, description="失败说明，中文，可直接展示")
+    started_at: datetime = Field(description="提交时间，UTC")
+    ended_at: datetime | None = Field(default=None, description="结束时间，UTC。还在跑的为空")
+
+
+class RunPageResponse(BaseModel):
+    """一页会话历史。"""
+
+    items: list[RunHistoryResponse] = Field(description="按提交时间**从近到远**排，前端倒过来渲染")
+    next_cursor: str | None = Field(description="取下一页（更早那些）要原样带回来的游标；为空表示翻到头了")
 
 
 class UploadResponse(BaseModel):

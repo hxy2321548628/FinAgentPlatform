@@ -29,10 +29,12 @@ class RecordingRepository:
     def __init__(self, queue: TaskQueue) -> None:
         self._queue = queue
         self.created: list[tuple[str, str, str]] = []
+        self.content: list[str | None] = []
         self.queued_when_created: list[int] = []
 
-    async def create(self, *, run_id: str, thread_id: str, user_id: str) -> None:
+    async def create(self, *, run_id: str, thread_id: str, user_id: str, content: str | None = None) -> None:
         self.created.append((run_id, thread_id, user_id))
+        self.content.append(content)
         self.queued_when_created.append(await self._queue.pending_count())
 
 
@@ -75,6 +77,16 @@ async def test_the_task_carries_everything_the_worker_needs(queue: TaskQueue) ->
     assert delivery.task.run_id == run.id
     assert delivery.task.thread_id == thread_id
     assert delivery.task.content == "算个波动率"
+
+
+async def test_the_question_is_written_down_as_well_as_queued(queue: TaskQueue) -> None:
+    """队列那份跑完就没了。库里这份是聊天历史的用户那一侧 —— 少了它就只剩 agent 的独白。"""
+    repository = RecordingRepository(queue)
+    submitter = RunSubmitter(repository=repository, queue=queue)
+
+    await submitter.submit(thread_id=uuid4().hex, content="按行业分组算年化波动率", user_id=USER_ID)
+
+    assert repository.content == ["按行业分组算年化波动率"]
 
 
 async def test_the_row_is_written_before_the_task_is_published(queue: TaskQueue) -> None:

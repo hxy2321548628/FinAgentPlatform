@@ -101,6 +101,27 @@ async def thread_exists(thread_id: str, broker: BrokerDep) -> ExistsResponse:
     return ExistsResponse(exists=broker.workspace.exists(thread_id))
 
 
+@router.delete("/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def destroy_thread(thread_id: str, broker: BrokerDep) -> None:
+    """销毁会话的沙箱并删掉它的整个工作目录。
+
+    **先容器后目录，顺序不能反**：容器把这个目录 bind mount 了进去，先删目录的话，
+    那一刻里面还有一个正在写它的进程。
+
+    **不管此刻有没有 run 在跑**。加一道「跑着就不许删」的闸要么挡住正常操作
+    （几十分钟的分析期间删不掉），要么挡不严（判断与删除之间总有空隙）；会话是单人
+    使用的，教师删掉自己正在分析的会话，得到的是那次分析的一条报错。
+
+    删一个已经删过的、或者根本没建过目录的会话不是错误 —— api 那边的行已经没了，
+    这里再报 404 只会让一次正常的删除看起来失败了。
+    """
+    await broker.pool.discard(thread_id)
+    try:
+        broker.workspace.destroy(thread_id)
+    except PathEscapeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
 @router.post("/{thread_id}/save", status_code=status.HTTP_201_CREATED)
 async def save_file(thread_id: str, request: SaveRequest, broker: BrokerDep) -> SaveResponse:
     """把上传的文件落进会话目录。

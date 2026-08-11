@@ -371,6 +371,20 @@ class RemoteWorkspace:
         result = await self._connection.call("POST", "/threads", json={"thread_id": thread_id})
         return str(result["thread_id"])
 
+    async def destroy(self, thread_id: str) -> None:
+        """销毁会话的沙箱并删掉它的整个工作目录。
+
+        **只在会话已经从表里删掉之后调**：表是「会话存不存在」的权威，
+        反过来的话有一瞬间目录已经没了而会话还查得到 —— 那是个打得开却读不了的会话。
+
+        Args:
+            thread_id: 会话标识。
+
+        Raises:
+            BrokerError: broker 不可达。
+        """
+        await self._connection.call("DELETE", f"/threads/{thread_id}")
+
     async def save(self, thread_id: str, filename: str, content: bytes, directory: str = "") -> str:
         """把上传的文件落进会话目录。
 

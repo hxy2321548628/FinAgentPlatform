@@ -25,7 +25,7 @@ class RunCreatorProtocol(Protocol):
     查状态是端点的事，改状态是 worker 的事，都不经过这里。
     """
 
-    async def create(self, *, run_id: str, thread_id: str, user_id: str) -> None:
+    async def create(self, *, run_id: str, thread_id: str, user_id: str, content: str | None = None) -> None:
         """记下一个刚提交的 run。"""
         ...
 
@@ -60,7 +60,9 @@ class RunSubmitter:
         # 执行搬到 worker 之后，api 进程里关于一个 run 就只剩这一段。不绑身份的话，
         # 「按 run_id 把一次 run 的日志过滤出来」在 api 侧恒为空
         with run_context(run_id=run.id, thread_id=run.thread_id, user_id=user_id):
-            await self._repository.create(run_id=run.id, thread_id=run.thread_id, user_id=user_id)
+            # 提问同时落库与入队。**两份不是冗余**：队列那份跑完就没了，
+            # 而库里那份是聊天历史的用户那一侧 —— 没有它，翻看以前问过什么就无从谈起
+            await self._repository.create(run_id=run.id, thread_id=run.thread_id, user_id=user_id, content=content)
             await self._queue.publish(
                 RunTask(
                     run_id=run.id,

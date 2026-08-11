@@ -4,6 +4,7 @@
 「通过」，而它本该验的东西一个字都没验到。
 """
 
+from http import HTTPStatus
 from pathlib import Path
 
 import httpx
@@ -60,6 +61,14 @@ async def test_the_scrape_endpoint_reports_sandbox_occupancy(client: httpx.Async
 
 
 async def test_the_scrape_endpoint_is_not_under_the_threads_prefix(client: httpx.AsyncClient) -> None:
-    """它不是 api 够得着的那组能力里的一个，调用方是 Prometheus。"""
+    """它不是 api 够得着的那组能力里的一个，调用方是 Prometheus。
+
+    **判据是「那里取不到指标」，不是某个具体状态码。** `/threads/{thread_id}` 这类
+    单段路由一旦存在，这条路径就会因为方法不匹配而答 405 而不是 404 —— 而 405 与 404
+    在这里说的是同一件事：指标不在这儿。钉死状态码只会让加一条会话端点就红一次。
+    """
     async with client:
-        assert (await client.get("/threads/metrics")).status_code == 404
+        response = await client.get("/threads/metrics")
+
+    assert response.status_code != HTTPStatus.OK
+    assert "zuel_sandbox_container" not in response.text

@@ -23,6 +23,7 @@ from user.model import UserRole
 # 一个别人的会话里能被够到的每一条路径。**逐条列出来而不是抽样**：
 # 漏掉一条就是一个越权入口，而那种缺口不报错
 BORROWED_PATH = (
+    "/api/threads/{thread_id}",
     "/api/threads/{thread_id}/runs",
     "/api/threads/{thread_id}/files",
     "/api/threads/{thread_id}/files/content?path=holdings.csv",

@@ -250,6 +250,21 @@ class SandboxPool:
                 slot.last_used = self._now()
             await self._pump()
 
+    async def discard(self, thread_id: str) -> None:
+        """销毁一个会话的容器，不管此刻还有谁持着它。
+
+        **与 `release` 是两回事**：那个是「我这一程用完了」，容器留给同一会话后续的
+        run 复用；这个是「这个会话没了」，容器必须走 —— 否则它继续挂在一个马上就要
+        被删掉的目录上。因此这里不看持有者。
+
+        Args:
+            thread_id: 会话标识。没有容器时什么都不做。
+        """
+        async with self._lock:
+            await self._discard(thread_id)
+            # 腾出来的名额当场分给排队的申请，与 idle 回收走同一条路
+            await self._pump()
+
     async def sweep(self) -> None:
         """强制归还失效的租约，回收 idle 超时的容器，并把腾出的名额分给排队者。"""
         async with self._lock:

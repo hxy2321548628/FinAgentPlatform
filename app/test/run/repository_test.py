@@ -258,3 +258,92 @@ async def test_an_old_run_is_past_the_grace_period(repository: RunRepository, su
 async def test_without_a_cutoff_every_unfinished_run_is_reported(repository: RunRepository, submitted: str) -> None:
     """不给时点就是全量 —— 崩溃恢复那条老路不该被这个新参数改掉行为。"""
     assert submitted in {run.id for run in await repository.unfinished()}
+
+
+# ------------------------------------------------------------ 会话历史
+# 聊天历史的用户那一侧全靠 `content`：事件流里没有承载提问的事件，
+# 不落库的话，把一个 run 的事件全部重放一遍也只重建得出 agent 那一半。
+async def test_a_run_remembers_the_question(repository: RunRepository, owner: User, owned_thread: Thread) -> None:
+    run_id = uuid4().hex
+    await repository.create(
+        run_id=run_id, thread_id=owned_thread.id, user_id=owner.id, content="按行业分组算年化波动率"
+    )
+
+    page = await repository.list_by_thread(owned_thread.id, user_id=owner.id)
+
+    assert [one.content for one in page.items] == ["按行业分组算年化波动率"]
+
+
+async def test_a_run_without_a_recorded_question_reads_back_empty(
+    repository: RunRepository, submitted: str, owner: User, owned_thread: Thread
+) -> None:
+    """本版之前的 run 在这一列上是空的，那是遗留而不是待回填的空缺。"""
+    page = await repository.list_by_thread(owned_thread.id, user_id=owner.id)
+
+    assert [one.content for one in page.items] == [None]
+
+
+async def test_the_history_gives_the_newest_first(repository: RunRepository, owner: User, owned_thread: Thread) -> None:
+    """前端先要最近那几轮，往上滚才翻更早的 —— 与 ix_runs_thread_started 同向。"""
+    first, second = uuid4().hex, uuid4().hex
+    await repository.create(run_id=first, thread_id=owned_thread.id, user_id=owner.id, content="一")
+    await repository.create(run_id=second, thread_id=owned_thread.id, user_id=owner.id, content="二")
+
+    page = await repository.list_by_thread(owned_thread.id, user_id=owner.id)
+
+    assert [one.id for one in page.items] == [second, first]
+
+
+async def test_the_history_carries_the_outcome_of_each_run(
+    repository: RunRepository, submitted: str, owner: User, owned_thread: Thread
+) -> None:
+    """状态与失败原因要一起给：前端据此决定这一轮显示结果、报错还是重试按钮。"""
+    await repository.fail(submitted, code=RunErrorCode.INTERNAL, message="模型断连")
+
+    page = await repository.list_by_thread(owned_thread.id, user_id=owner.id)
+
+    assert page.items[0].status is RunStatus.FAILED
+    assert page.items[0].error_code is RunErrorCode.INTERNAL
+    assert page.items[0].error_message == "模型断连"
+
+
+async def test_the_history_carries_the_token_cost(
+    repository: RunRepository, submitted: str, owner: User, owned_thread: Thread
+) -> None:
+    await repository.succeed(submitted, tokens=TokenUsage(input_cache_read=7, input_uncached=11, output=13))
+
+    page = await repository.list_by_thread(owned_thread.id, user_id=owner.id)
+
+    assert page.items[0].tokens == TokenUsage(input_cache_read=7, input_uncached=11, output=13)
+
+
+async def test_another_users_thread_has_no_history(
+    repository: RunRepository, submitted: str, owned_thread: Thread, live_engine: AsyncEngine
+) -> None:
+    """越权与空会话是同一个结果。过滤在这一层，端点那里没有鉴权判断。"""
+    stranger = await UserRepository(live_engine).create(
+        name=f"stranger-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.TEACHER
+    )
+
+    page = await repository.list_by_thread(owned_thread.id, user_id=stranger.id)
+
+    assert page.items == []
+
+
+async def test_the_history_cursor_walks_every_run_once(
+    repository: RunRepository, owner: User, owned_thread: Thread
+) -> None:
+    created = [uuid4().hex for _ in range(5)]
+    for one in created:
+        await repository.create(run_id=one, thread_id=owned_thread.id, user_id=owner.id, content=one)
+
+    seen: list[str] = []
+    cursor: str | None = None
+    while True:
+        page = await repository.list_by_thread(owned_thread.id, user_id=owner.id, cursor=cursor, limit=2)
+        seen.extend(one.id for one in page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+
+    assert seen == list(reversed(created))
