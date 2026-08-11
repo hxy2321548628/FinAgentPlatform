@@ -436,7 +436,7 @@ worker ──POST /sandbox/{op} { tool_call_id, ... } ──▶ broker
 | PATCH | `/threads/{id}` | 改标题 / `agent_config` | 200 |
 | DELETE | `/threads/{id}` | 删除会话（连带沙箱销毁） | 204 |
 | GET | `/threads/{id}/files` | 工作目录的结构（扁平条目表，含目录） | 200 |
-| POST | `/threads/{id}/files` | 上传数据文件（multipart，字段名 `file`，可多个）到 workspace | 201 |
+| POST | `/threads/{id}/files` | 上传一个数据文件（multipart，字段名 `file`）到 workspace | 201 |
 | GET | `/threads/{id}/files/content?path=` | 按行分页读一个文件，给代码查看器用 | 200 |
 | GET | `/threads/{id}/files/raw?path=` | 取原始字节；`download=1` 时另存为 | 200 |
 | DELETE | `/threads/{id}/files?path=` | 删一个文件（目录删不了） | 204 |
@@ -456,7 +456,7 @@ worker ──POST /sandbox/{op} { tool_call_id, ... } ──▶ broker
 
 `path` 一律走**查询参数**而不是路径段：文件名里带 `/`、`#`、`?` 与中文都是常事，塞进路径段要在两侧各写一遍转义，错一次就是一个打不开的文件。
 
-上传**允许部分成功**（逐个文件带 `error`），但**一个都没落上盘时是 422 而不是 201** —— 整批失败还答 2xx 的话，`curl -fsS` 那类「非 2xx 才算失败」的调用方会以为传上去了，验收脚本正是这么判的。
+上传**一次一个**。多文件批量要么整批退回（一个坏名字连累其余），要么允许部分成功——而后者就得额外规定「整批都失败时仍要给 2xx 之外的码」，否则 `curl -fsS` 那类「非 2xx 才算失败」的调用方会以为传上去了（验收脚本正是这么判的）。两条都是为「一次选十个」付的复杂度，而前端一个一个发同样做得到，还天然有逐个的进度与重试。响应里的 `path` **不能靠 `directory + filename` 拼**：文件名会被收成末段，拼出来的可能不是真正落盘的那个。
 
 请求体上限由 `UPLOAD_MAX_BYTE` 与 nginx 的 `client_max_body_size` 两侧对齐（都是 64 MiB），两边不一致时大的那一侧形同虚设。**超限时答话的是 nginx，而它的 413 正文是一段 HTML，不是平台的 `{"error":{code,message}}`** —— 2026-08-11 实测确认。前端处理这一条只能认状态码，不能去解正文；api 那道闸只在没有 nginx 时（开发机直跑 uvicorn）才会答话。
 

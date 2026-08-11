@@ -187,23 +187,14 @@ class ThreadResponse(BaseModel):
     id: str = Field(min_length=1, description="会话标识，后续所有操作都带它")
 
 
-class SavedFileResponse(BaseModel):
-    """上传的一个文件的结果。"""
-
-    filename: str = Field(min_length=1, description="上传时带的文件名")
-    path: str | None = Field(default=None, description="落盘后相对会话根的路径，失败时为空")
-    size: int = Field(ge=0, description="字节数")
-    error: str | None = Field(default=None, description="这一个没落上盘的原因，成功时为空")
-
-
 class UploadResponse(BaseModel):
-    """上传的结果。
+    """上传一个文件的结果。"""
 
-    **允许部分成功**：一次选十个文件，不该因为其中一个名字不能用就整批退回 ——
-    那样使用者既不知道是哪一个，也得把另外九个重传一遍。
-    """
-
-    files: list[SavedFileResponse] = Field(description="逐个文件的结果，顺序与上传时一致")
+    filename: str = Field(min_length=1, description="落盘后的文件名，可能与上传时不同")
+    # **不能靠 `directory + filename` 拼出来**：文件名会被收成末段，拼出来的可能不是
+    # 真正落盘的那个。前端拿它去预览与下载
+    path: str = Field(min_length=1, description="落盘后相对会话根的路径")
+    size: int = Field(ge=0, description="字节数")
 
 
 class WorkspaceEntryResponse(BaseModel):

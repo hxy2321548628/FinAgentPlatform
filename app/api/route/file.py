@@ -26,7 +26,6 @@ from api.platform import Platform, get_platform
 from api.route.thread import require_thread
 from api.schema import (
     FileContentResponse,
-    SavedFileResponse,
     UploadResponse,
     WorkspaceEntryResponse,
     WorkspaceTreeResponse,
@@ -118,26 +117,31 @@ async def upload_file(
     thread_id: str,
     current: CurrentUser,
     platform: Annotated[Platform, Depends(get_platform)],
-    file: Annotated[list[UploadFile], File(description="要分析的数据文件，可以给多个")],
+    file: Annotated[UploadFile, File(description="要分析的数据文件")],
     directory: Annotated[str, Form(description="落到哪个子目录，相对会话根。留空即根下；必须已存在")] = "",
 ) -> UploadResponse:
-    """把数据文件放进会话的工作目录。
+    """把一个数据文件放进会话的工作目录。
 
     不指定目录时文件落在 agent 视角的 `/workspace` 根下，提示词告诉它的工作目录就是那里。
 
-    **字段名仍是 `file`，给多个就是多个** —— 单文件的老调用方一个字都不用改。
-
-    **一个都没落上盘时是 422，不是 201。** 部分成功给 201 是为了不让一个坏名字
-    连累同批的其他文件；但整批都没成还答 201，就等于让 `curl -fsS` 这类
-    「非 2xx 才算失败」的调用方以为上传成功了 —— 验收脚本正是这么判的。
+    **一次一个。** 多文件批量要么整批退回（一个坏名字连累其余）、要么部分成功
+    （那就得让「整批都失败」仍答 2xx 之外的码，否则 `curl -fsS` 这类调用方
+    会以为传上去了）—— 两条都是为「一次选十个」付的复杂度，而前端一个一个发
+    同样做得到，还天然有逐个的进度与重试。
     """
     await require_thread(platform, thread_id, current.user_id)
     _require_size(file, platform.upload_max_byte)
 
-    saved = [await _save_one(platform, thread_id, one, directory) for one in file]
-    if all(one.error for one in saved):
-        raise invalid(f"没有一个文件落上盘：{saved[0].error}")
-    return UploadResponse(files=saved)
+    name = file.filename or ""
+    content = await file.read()
+    try:
+        saved = await platform.workspace.save(thread_id, name, content, directory=directory)
+    except PathEscapeError as exc:
+        # 文件名与目录都不可信，但拒绝的**理由**不必回给调用方 ——
+        # 那等于告诉它哪些名字能穿越
+        logger.info("上传被拒：thread_id=%s filename=%r directory=%r", thread_id, name, directory)
+        raise not_found(f"文件名或目标目录不可用：{name!r}") from exc
+    return UploadResponse(filename=saved.rsplit("/", maxsplit=1)[-1], path=saved, size=len(content))
 
 
 @router.delete("/{thread_id}/files", status_code=status.HTTP_204_NO_CONTENT)
@@ -156,33 +160,18 @@ async def delete_file(
     await _guard(path, platform.workspace.remove(thread_id, path))
 
 
-async def _save_one(platform: Platform, thread_id: str, file: UploadFile, directory: str) -> SavedFileResponse:
-    """落一个文件。**它失败不牵连同批的其他文件** —— 逐个带 error 回去。"""
-    name = file.filename or ""
-    content = await file.read()
-    try:
-        saved = await platform.workspace.save(thread_id, name, content, directory=directory)
-    except PathEscapeError:
-        # 文件名与目录都不可信，但拒绝的**理由**不必回给调用方 ——
-        # 那等于告诉它哪些名字能穿越
-        logger.info("上传被拒：thread_id=%s filename=%r directory=%r", thread_id, name, directory)
-        return SavedFileResponse(filename=name or "(无名)", size=len(content), error="文件名或目标目录不可用")
-    return SavedFileResponse(filename=name, path=saved, size=len(content))
+def _require_size(file: UploadFile, limit: int) -> None:
+    """确认这个文件没超过上限。
 
-
-def _require_size(file: list[UploadFile], limit: int) -> None:
-    """确认这一批加起来没超过上限。
-
-    **在读字节之前拦**：读出来再判等于已经把内存吃掉了。算的是这一批的总和而不是
-    单个文件 —— nginx 的 `client_max_body_size` 管的也是整个请求体，两道闸口径一致
-    才不会出现「过了外面那道、卡在里面这道」。
+    **在读字节之前拦**：`read()` 是整块进内存的（之后还要 base64 一次交给 broker），
+    读出来再判等于内存已经吃掉了。
 
     Raises:
         ApiError: 超过上限。
     """
-    total = sum(one.size or 0 for one in file)
-    if total > limit:
-        raise too_large(f"上传的文件太大了（{total} 字节），单次上限是 {limit} 字节")
+    size = file.size or 0
+    if size > limit:
+        raise too_large(f"文件太大了（{size} 字节），单次上限是 {limit} 字节")
 
 
 async def _guard[Result](path: str, call: Awaitable[Result]) -> Result:

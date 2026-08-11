@@ -194,38 +194,16 @@ def test_uploading_a_file_lands_it_in_the_workspace(client: TestClient, thread_i
 def test_the_upload_response_reports_what_landed(client: TestClient, thread_id: str) -> None:
     response = upload(client, thread_id, "holdings.csv", b"a,b\nc,d\n")
 
-    assert response.json() == {  # type: ignore[attr-defined]
-        "files": [{"filename": "holdings.csv", "path": "holdings.csv", "size": 8, "error": None}]
-    }
+    assert response.json() == {"filename": "holdings.csv", "path": "holdings.csv", "size": 8}  # type: ignore[attr-defined]
 
 
-def test_several_files_can_go_up_at_once(client: TestClient, thread_id: str, space: Workspace) -> None:
-    response = client.post(
-        f"/api/threads/{thread_id}/files",
-        files=[
-            ("file", ("one.csv", io.BytesIO(b"1"), "text/csv")),
-            ("file", ("two.csv", io.BytesIO(b"2"), "text/csv")),
-        ],
-    )
+def test_a_second_file_needs_a_second_request(client: TestClient, thread_id: str, space: Workspace) -> None:
+    """一次一个 —— 前端一个一个发，逐个有自己的进度与重试。"""
+    upload(client, thread_id, "one.csv", b"1")
+    upload(client, thread_id, "two.csv", b"2")
 
-    assert [one["path"] for one in response.json()["files"]] == ["one.csv", "two.csv"]
+    assert (space.path(thread_id) / "one.csv").read_bytes() == b"1"
     assert (space.path(thread_id) / "two.csv").read_bytes() == b"2"
-
-
-def test_one_bad_name_does_not_sink_the_rest_of_the_batch(client: TestClient, thread_id: str, space: Workspace) -> None:
-    """一次选十个文件，不该因为其中一个名字不能用就让另外九个也重传。"""
-    response = client.post(
-        f"/api/threads/{thread_id}/files",
-        files=[
-            ("file", ("..", io.BytesIO(b"1"), "text/csv")),
-            ("file", ("good.csv", io.BytesIO(b"2"), "text/csv")),
-        ],
-    )
-
-    found = response.json()["files"]
-    assert found[0]["error"] and found[0]["path"] is None
-    assert found[1]["path"] == "good.csv"
-    assert (space.path(thread_id) / "good.csv").exists()
 
 
 def test_a_file_can_go_into_an_existing_subdirectory(client: TestClient, thread_id: str, space: Workspace) -> None:
@@ -233,15 +211,26 @@ def test_a_file_can_go_into_an_existing_subdirectory(client: TestClient, thread_
 
     response = upload(client, thread_id, "holdings.csv", directory="data")
 
-    assert response.json()["files"][0]["path"] == "data/holdings.csv"  # type: ignore[attr-defined]
+    assert response.json()["path"] == "data/holdings.csv"  # type: ignore[attr-defined]
     assert (space.path(thread_id) / "data" / "holdings.csv").exists()
+
+
+def test_the_landed_path_is_not_just_directory_plus_filename(
+    client: TestClient, thread_id: str, space: Workspace
+) -> None:
+    """文件名会被收成末段，靠 `directory + filename` 拼是拼不出真正落盘的那个的。"""
+    (space.path(thread_id) / "data").mkdir()
+
+    response = upload(client, thread_id, "sub/dir/holdings.csv", directory="data")
+
+    assert response.json()["path"] == "data/holdings.csv"  # type: ignore[attr-defined]
 
 
 def test_uploading_into_a_directory_that_is_not_there_is_rejected(client: TestClient, thread_id: str) -> None:
     """目录来自侧边栏上的一次点击，点得到就说明它在 —— 不在就是请求本身不对。"""
     response = upload(client, thread_id, "holdings.csv", directory="never-made")
 
-    assert response.status_code == 422  # type: ignore[attr-defined]
+    assert response.status_code == 404  # type: ignore[attr-defined]
 
 
 def test_uploading_to_an_unknown_thread_is_not_found(client: TestClient) -> None:
@@ -264,7 +253,7 @@ def test_a_traversing_filename_cannot_escape_the_workspace(
 def test_a_traversing_directory_cannot_escape_the_workspace(client: TestClient, thread_id: str, directory: str) -> None:
     response = upload(client, thread_id, "holdings.csv", directory=directory)
 
-    assert response.status_code == 422  # type: ignore[attr-defined]
+    assert response.status_code == 404  # type: ignore[attr-defined]
 
 
 def test_uploading_without_a_file_is_a_validation_error(client: TestClient, thread_id: str) -> None:
@@ -278,21 +267,30 @@ def test_a_filename_with_no_usable_segment_is_rejected(client: TestClient, threa
     """`..` 收成末段之后什么都不剩，落不了盘。"""
     response = upload(client, thread_id, "..")
 
-    assert response.status_code == 422  # type: ignore[attr-defined]
-    assert response.json()["error"]["code"] == "VALIDATION_ERROR"  # type: ignore[attr-defined]
+    assert response.status_code == 404  # type: ignore[attr-defined]
+    assert response.json()["error"]["code"] == "NOT_FOUND"  # type: ignore[attr-defined]
 
 
-def test_a_batch_where_nothing_landed_is_not_a_success(client: TestClient, thread_id: str) -> None:
-    """整批都没成还答 201，`curl -fsS` 那类调用方就以为传上去了 —— 验收脚本正是这么判的。"""
+def test_a_failed_upload_is_not_a_2xx(client: TestClient, thread_id: str) -> None:
+    """`curl -fsS` 那类「非 2xx 才算失败」的调用方靠这一条 —— 验收脚本正是这么判的。"""
+    assert not upload(client, thread_id, "..").is_success  # type: ignore[attr-defined]
+
+
+def test_only_one_file_lands_and_the_response_names_it(client: TestClient, thread_id: str, space: Workspace) -> None:
+    """端点收一个文件，一个请求塞几个时框架只取一个。
+
+    **要守的不是「取哪个」而是「响应与磁盘对得上」**：调用方按响应里的 path 去预览与
+    下载，说的那个必须就是落盘的那个，否则它会对着一个不存在的路径打转。
+    """
     response = client.post(
         f"/api/threads/{thread_id}/files",
         files=[
-            ("file", ("..", io.BytesIO(b"1"), "text/csv")),
-            ("file", ("/", io.BytesIO(b"2"), "text/csv")),
+            ("file", ("one.csv", io.BytesIO(b"1"), "text/csv")),
+            ("file", ("two.csv", io.BytesIO(b"2"), "text/csv")),
         ],
     )
 
-    assert response.status_code == 422
+    assert {one.name for one in space.path(thread_id).iterdir()} == {response.json()["path"]}
 
 
 # ------------------------------------------------------------------ 上传大小上限
@@ -312,18 +310,6 @@ class TestUploadLimit:
 
         assert response.status_code == 413  # type: ignore[attr-defined]
         assert response.json()["error"]["code"] == "VALIDATION_ERROR"  # type: ignore[attr-defined]
-
-    def test_the_limit_counts_the_whole_batch_not_each_file(self, client: TestClient, thread_id: str) -> None:
-        """Nginx 的 client_max_body_size 管的是整个请求体，两道闸口径要一致。"""
-        response = client.post(
-            f"/api/threads/{thread_id}/files",
-            files=[
-                ("file", ("one.csv", io.BytesIO(b"x" * 5), "text/csv")),
-                ("file", ("two.csv", io.BytesIO(b"x" * 5), "text/csv")),
-            ],
-        )
-
-        assert response.status_code == 413
 
     def test_an_oversized_upload_writes_nothing(self, client: TestClient, thread_id: str, space: Workspace) -> None:
         """拦在读字节之前，否则内存已经吃掉了。"""
