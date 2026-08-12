@@ -23,7 +23,6 @@ zuel-platform/
 ├── deploy/         # 部署配置：compose.yml（nginx+api+broker+postgres+redis）、两个 Dockerfile、nginx.conf、环境搭建与验收脚本
 ├── doc/            # 设计文档，见上方文档地图
 ├── .claude/        # 技术章程与风格指南
-├── .github/        # CI（gate workflow：干净环境里复跑 make all）
 ├── .githooks/      # pre-push 门禁 hook，需 `make hooks` 启用
 ├── .env            # 凭据，不入库；模板见 .env.example
 └── Makefile        # 质量门禁入口，见下
@@ -98,7 +97,7 @@ docker compose -f deploy/compose.yml up -d --build
 # 三个都只绑回环 —— 从别的机器看要 SSH 端口转发。
 # api 的 /metrics 不要求登录，挡它的是 nginx 的 `location = /metrics { return 404; }`
 
-# P1 验收六条的总入口，转调下面两个脚本。操作步骤见 doc/04acceptance-guide/P1/
+# P1 验收六条的总入口，转调下面两个脚本
 bash deploy/test/p1.sh                             # 六条全跑（要 sudo，有 LLM 费用）
 SKIP_HOSTILE=1 SKIP_LLM=1 bash deploy/test/p1.sh   # 只跑免费的四条，约 3 分钟
 
@@ -144,6 +143,7 @@ cd app && uv run python -m run.reaper        # 库里还活着、队列里已没
 
 - 消息格式 `Type(scope): 中文描述`，与现有历史一致（`Docs(design):` / `Feat(spike):`）。正文说清改了什么、为什么。
 - 提交前 `make all` 全绿。`make hooks` 装上 pre-push hook 后 push 会自动跑（**新克隆的仓库要手动跑一次**，hook 配置不随 clone 走）。
+- **不配远端 CI**（`.github/` 已于 `b4e507b` 撤掉）。因此 pre-push hook 是唯一的事前拦截点 —— 它跑在开发机上，那台机器装着沙箱镜像、起着 Postgres 与 Redis，而**这几样缺一样时相关用例是 skip 而不是 fail**。换机器或换人接手时，先照上面把环境备齐再信门禁的绿。
 
 ---
 
