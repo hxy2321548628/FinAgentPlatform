@@ -67,9 +67,55 @@ def not_found(message: str) -> ApiError:
     return ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.NOT_FOUND, message)
 
 
+def forbidden(message: str) -> ApiError:
+    """已经认出你是谁了，但你没有这个权限。
+
+    **与 `not_found` 分工明确**：越权访问**他人的资源**一律给 404（403 等于确认了
+    资源存在，可以拿来探测别人有哪些会话）；这里说的是「你的角色不够」，
+    那不泄露任何东西 —— 管理端点存不存在本来就写在 /docs 上。
+    """
+    return ApiError(status.HTTP_403_FORBIDDEN, ErrorCode.FORBIDDEN, message)
+
+
 def invalid(message: str) -> ApiError:
     """参数校验失败。"""
     return ApiError(status.HTTP_422_UNPROCESSABLE_CONTENT, ErrorCode.VALIDATION_ERROR, message)
+
+
+def too_large(message: str) -> ApiError:
+    """请求体超过了上限。
+
+    **状态码是 413 而错误码仍是 `VALIDATION_ERROR`**：前端要做的事与别的参数错误
+    没有区别（把消息显示出来），多一个错误码只会让那张分支表长一行却没有分支。
+    状态码则必须是 413 —— 那是浏览器与反代都认得的语义。
+    """
+    return ApiError(status.HTTP_413_CONTENT_TOO_LARGE, ErrorCode.VALIDATION_ERROR, message)
+
+
+def unauthenticated(message: str) -> ApiError:
+    """未登录、session 过期，或用户名口令对不上。
+
+    **口令错与用户不存在返回同一句话**：分开说等于告诉试探的人「这个用户名是存在的」。
+    """
+    return ApiError(status.HTTP_401_UNAUTHORIZED, ErrorCode.UNAUTHENTICATED, message)
+
+
+# 三道闸都回 429，**必须靠 code 区分**：它们的提示语与前端行为完全不同 ——
+# 频率限制该自动退避重试，配额耗尽该提示明天再来，并发超限该提示先等已有任务跑完。
+# 只给 HTTP 429 的话前端分不出该做哪一件。
+def rate_limited(message: str) -> ApiError:
+    """接口频率超限。三道闸里唯一可能误伤正常用户的那一道。"""
+    return ApiError(status.HTTP_429_TOO_MANY_REQUESTS, ErrorCode.RATE_LIMITED, message)
+
+
+def quota_exceeded(message: str) -> ApiError:
+    """今日 token 配额已用尽。"""
+    return ApiError(status.HTTP_429_TOO_MANY_REQUESTS, ErrorCode.QUOTA_EXCEEDED, message)
+
+
+def concurrency_limit(message: str) -> ApiError:
+    """同时在跑的 run 太多。"""
+    return ApiError(status.HTTP_429_TOO_MANY_REQUESTS, ErrorCode.CONCURRENCY_LIMIT, message)
 
 
 def install_handler(app: FastAPI) -> None:

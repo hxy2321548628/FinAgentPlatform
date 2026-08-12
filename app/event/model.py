@@ -9,9 +9,9 @@
 
 import time
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, TypeAdapter
 
 
 def now_ms() -> int:
@@ -46,16 +46,14 @@ class EventType(StrEnum):
 
 
 class RunStatus(StrEnum):
-    """run 的生命周期状态。
-
-    本期只有四态：没有主动取消，也没有 HITL 审批（`cancelled` 与 `waiting_approval`
-    要等那两项落地才会出现）。
-    """
+    """run 的生命周期状态。"""
 
     QUEUED = "queued"
     RUNNING = "running"
+    WAITING_APPROVAL = "waiting_approval"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class RunErrorCode(StrEnum):
@@ -67,6 +65,10 @@ class RunErrorCode(StrEnum):
 
     SANDBOX_QUEUE_TIMEOUT = "SANDBOX_QUEUE_TIMEOUT"
     INTERNAL = "INTERNAL"
+    # 库里还活着、队列里却没有它了：没有任何东西会再碰这个 run。
+    # **与 INTERNAL 分开是因为教师要做的事不一样** —— INTERNAL 是这次分析炸了，
+    # 而这个是它根本没跑起来（或者跑完了没人记账），重新提交是有意义的
+    ORPHANED = "ORPHANED"
 
 
 class EventEnvelope(BaseModel):
@@ -87,6 +89,31 @@ class RunStartedData(BaseModel):
     """`run.started` 事件的载荷。"""
 
     thread_id: str = Field(min_length=1, description="run 所属的会话")
+    # 一次 run 可能多次入队：每轮审批之后都会作为一条新任务重新投递。
+    # **因此这个事件不再等于「这个 run 第一次开跑」** —— 分不清两者的话，
+    # 「已完成的步骤没有重跑」那条保证就没法验
+    resumed: bool = Field(default=False, description="是审批之后的续跑，还是第一次开跑")
+
+
+class TokenUsage(BaseModel):
+    """一次 run 的 token 消耗，按计费单价不同的三部分分开记。
+
+    **刻意不给总数**：命中 prompt cache 的 input 单价远低于未命中部分，加总之后的数字
+    既不对应成本、也不能拿来算配额 —— P0 实测 62% 的 input 是命中，按总量记会高估约
+    1.6 倍，且会话越长高估越多，方向性地惩罚长会话。
+    """
+
+    input_cache_read: int = Field(default=0, ge=0, description="命中 prompt cache 的 input token")
+    input_uncached: int = Field(default=0, ge=0, description="未命中 cache 的 input token，配额按这部分加权计算")
+    output: int = Field(default=0, ge=0, description="output token，含 reasoning 部分")
+
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        """把两次模型调用的用量相加。一次 run 有十几次调用，总量是逐次累加出来的。"""
+        return TokenUsage(
+            input_cache_read=self.input_cache_read + other.input_cache_read,
+            input_uncached=self.input_uncached + other.input_uncached,
+            output=self.output + other.output,
+        )
 
 
 class RunFinishedData(BaseModel):
@@ -96,11 +123,16 @@ class RunFinishedData(BaseModel):
         default=RunStatus.SUCCEEDED,
         description="正常完成才发这个事件，失败走 run.failed",
     )
-    tokens_used: int = Field(ge=0, description="本次 run 消耗的 token 总量")
-    artifacts: list[str] = Field(
-        default_factory=list,
-        description="本次 run 产出的产物标识，拼上产物端点即可下载",
+    tokens: TokenUsage = Field(
+        default_factory=TokenUsage,
+        description="本次 run 的 token 消耗，按 cache 命中拆分",
     )
+    # **这里曾经有一个 `artifacts`**，报的是本次 run 产出了哪些文件。产物存储撤掉之后
+    # 它没了去处：字节只在会话工作目录里，而那已经有一套完整的浏览与下载端点
+    # （`/api/threads/{id}/files`），教师从侧边栏就能看到 agent 写了什么。
+    #
+    # **保留期内的历史事件仍带着这个字段**，那是不可变日志的应有之义 ——
+    # 多出来的字段这里按忽略处理，读回来不会失败。
 
 
 class RunFailedData(BaseModel):
@@ -109,6 +141,19 @@ class RunFailedData(BaseModel):
     code: RunErrorCode = Field(description="失败原因，稳定的机器可读枚举")
     message: str = Field(min_length=1, description="中文说明，前端可直接展示")
     retryable: bool = Field(description="重试是否有意义，前端据此决定要不要显示重试按钮")
+
+
+class RunCancelledData(BaseModel):
+    """`run.cancelled` 事件的载荷。
+
+    **带上取消那一刻的用量**：教师点「停止」多半是因为觉得跑偏了，
+    而「这次白花了多少」是他下一个要问的问题。
+    """
+
+    tokens: TokenUsage = Field(
+        default_factory=TokenUsage,
+        description="取消之前已经消耗的 token，按 cache 命中拆分",
+    )
 
 
 class SandboxQueuedData(BaseModel):
@@ -156,6 +201,28 @@ class ToolResultData(BaseModel):
     status: Literal["success", "error"] = Field(description="工具自身的成败，与 run 的成败无关")
 
 
+class InterruptAction(BaseModel):
+    """一次等着教师确认的工具调用。
+
+    DeepAgents 给的是 `action_requests` 与 `review_configs` **两个平行数组**，
+    worker 侧合并成一个并加上 `index` —— 前端不该被迫自己对齐两个数组的下标。
+    """
+
+    index: int = Field(ge=0, description="在本次中断里的下标，审批回传时按它对齐")
+    tool_name: str = Field(min_length=1, description="待确认的工具名")
+    args: dict[str, object] = Field(default_factory=dict, description="调用参数，形状由工具自己定义")
+    allowed_decisions: list[str] = Field(
+        default_factory=list,
+        description="这次调用允许哪几种决策，前端据此决定显示哪些按钮",
+    )
+
+
+class InterruptData(BaseModel):
+    """`interrupt` 事件的载荷。"""
+
+    actions: list[InterruptAction] = Field(description="待确认的调用，按 index 排列")
+
+
 class SandboxReadyData(BaseModel):
     """`sandbox.ready` 事件的载荷。
 
@@ -183,6 +250,16 @@ class RunFailedEvent(EventEnvelope):
 
     type: Literal[EventType.RUN_FAILED] = EventType.RUN_FAILED
     data: RunFailedData
+
+
+class RunCancelledEvent(EventEnvelope):
+    """教师主动取消，终态。
+
+    与 `run.failed` 分开是因为它不是故障：前端不该显示「重试」按钮，也不该报错。
+    """
+
+    type: Literal[EventType.RUN_CANCELLED] = EventType.RUN_CANCELLED
+    data: RunCancelledData
 
 
 class SandboxQueuedEvent(EventEnvelope):
@@ -238,10 +315,22 @@ class ToolResultEvent(EventEnvelope):
     data: ToolResultData
 
 
+class InterruptEvent(EventEnvelope):
+    """agent 停在一次敏感调用之前，等教师确认。
+
+    **不是终态**：run 转 `waiting_approval`，事件流保持打开 —— 教师确认之后
+    同一条流上会接着出现续跑的事件。
+    """
+
+    type: Literal[EventType.INTERRUPT] = EventType.INTERRUPT
+    data: InterruptData
+
+
 type Event = (
     RunStartedEvent
     | RunFinishedEvent
     | RunFailedEvent
+    | RunCancelledEvent
     | SandboxQueuedEvent
     | SandboxReadyEvent
     | ErrorEvent
@@ -249,7 +338,18 @@ type Event = (
     | ReasoningEvent
     | ToolCallEvent
     | ToolResultEvent
+    | InterruptEvent
 )
 
 # 出现即代表 run 已经结束，事件流可以收尾。SSE 端点靠它决定何时关闭连接。
 TERMINAL_EVENT_TYPE = frozenset({EventType.RUN_FINISHED, EventType.RUN_FAILED, EventType.RUN_CANCELLED})
+
+# 走到头、不会再动的那几个状态。**与 `TERMINAL_EVENT_TYPE` 说的是同一件事的两面**：
+# 那边是「事件流里出现了它就该收尾」，这边是「库里是这个状态就说明它早已收尾」。
+# 两者都要有，因为事件会过保留期被清掉，而 `runs` 那一行不会 —— 事件全没了之后，
+# 「这个 run 结束了没有」就只剩库这一个答案
+TERMINAL_STATUS = frozenset({RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED})
+
+# 事件从 Redis Stream 读回来时要还原成具体的事件类型。按 `type` 判别而不是逐个试 ——
+# 逐个试会让载荷形状相近的两种事件互相冒认，而那种错不报错，只是渲染成了别的东西。
+EVENT_ADAPTER: TypeAdapter[Event] = TypeAdapter(Annotated[Event, Discriminator("type")])

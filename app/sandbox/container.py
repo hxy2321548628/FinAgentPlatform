@@ -20,7 +20,8 @@ DEFAULT_IMAGE = "zuel-sandbox:latest"
 
 # 非 root 运行时容器内没有可写的家目录，matplotlib 与 pip 会把告警刷进 stdout，
 # 混进 execute 的返回值里 —— agent 会把告警当成执行出错。指到 tmpfs 上消掉。
-CONTAINER_HOME = "/tmp"
+CONTAINER_TMP = "/tmp"
+CONTAINER_HOME = CONTAINER_TMP
 MPL_CONFIG_DIR = "/tmp/mpl"
 
 # 容器要长驻等后续调用，而不是跑完一条命令就退出
@@ -28,6 +29,69 @@ KEEP_ALIVE_COMMAND = ("sleep", "infinity")
 
 # docker CLI 自身的超时。管的是 docker 客户端卡住，与容器内命令的超时无关
 DOCKER_CLI_TIMEOUT = 30
+
+# 容器上的标记。broker 重启后靠它把还在跑的沙箱认回来 —— 容器带 --rm 但**不是
+# broker 的子进程**，broker 崩溃不会带走它们，不认领就是既占着内存又不在账上的孤儿。
+MANAGED_LABEL = "zuel.sandbox"
+THREAD_LABEL = "zuel.thread"
+
+DEFAULT_RUNTIME = "runsc"
+DEFAULT_NETWORK = "none"
+DEFAULT_MEMORY = "2g"
+DEFAULT_CPUS = "1"
+DEFAULT_PIDS_LIMIT = 128
+DEFAULT_TMP_SIZE = "512m"
+
+# 这三条**刻意不做成配置项**：它们没有「调小一点」的中间档，只有开和关，
+# 而关掉就是直接开一个缺口。做成开关等于给一个配错了也不会有任何症状的失守留了入口。
+ALWAYS_ON_ARGUMENT = (
+    "--read-only",
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+)
+
+# docker stats 打印内存读数时用的单位。二进制与十进制两套都列上，理由见 `parse_memory`
+BYTE_UNIT = {
+    "B": 1,
+    "KiB": 1 << 10,
+    "MiB": 1 << 20,
+    "GiB": 1 << 30,
+    "TiB": 1 << 40,
+    "kB": 1_000,
+    "MB": 1_000_000,
+    "GB": 1_000_000_000,
+    "TB": 1_000_000_000_000,
+}
+
+# 单位里出现过的所有字母，用来把 `123.4MiB` 从右边剥到只剩数字
+UNIT_LETTER = "".join(BYTE_UNIT)
+
+# 单次执行的输出上限。一句 `while True: print(x)` 在 120 秒超时内能刷出几个 GB，
+# 原样收进网关就是一次 OOM。
+OUTPUT_LIMIT_BYTE = 1 << 20
+TRUNCATION_MARKER = "…[输出超过 1 MiB，已截断]"
+
+
+@dataclass(frozen=True)
+class Hardening:
+    """沙箱的资源限额与隔离档位。
+
+    整组一起传是刻意的：这些参数要么全生效、要么等于没设，而漏掉一条没有任何症状 ——
+    散成六个参数摆在 `start()` 的签名里，写错一个要等到有人真的越出来才会发现。
+
+    只收**有中间档的量**。`--read-only` 这类没有中间态的见 `ALWAYS_ON_ARGUMENT`。
+    """
+
+    runtime: str = DEFAULT_RUNTIME
+    network: str = DEFAULT_NETWORK
+    memory: str = DEFAULT_MEMORY
+    cpus: str = DEFAULT_CPUS
+    pids_limit: int = DEFAULT_PIDS_LIMIT
+    tmp_size: str = DEFAULT_TMP_SIZE
+    # 沙箱以谁的身份跑，形如 "1000:1000"。留空则取当前进程的 uid:gid。
+    # **broker 进容器之后当前进程是 root**，那时这个值必须显式给成宿主用户 ——
+    # 否则 agent 写出的文件是 root 属主，宿主侧读不了，且症状不指向权限。
+    user: str | None = None
 
 
 @dataclass(frozen=True)
@@ -97,21 +161,36 @@ class ManagedContainerProtocol(ContainerProtocol, Protocol):
         """容器是否仍在运行。"""
         ...
 
+    def adopt(self, container_id: str) -> None:
+        """接管一个已经在跑的容器，不新起。
+
+        Args:
+            container_id: 已存在的容器标识。
+        """
+        ...
+
 
 class DockerContainer:
-    """跑在 Docker 上的沙箱容器，一个 thread 一个。
-
-    **不含 P1 的加固措施**（gVisor、只读 rootfs、网络隔离、资源限制）——
-    P0 已把它们登记为不可跳过的欠债，这里只有一层容器边界。
+    """跑在 gVisor 上的沙箱容器，一个 thread 一个。
 
     Args:
+        thread_id: 会话标识，作为容器 label 打上去，broker 重启后靠它认领。
         workspace: 该 thread 在宿主机上的 workspace 目录，会挂进容器的 `/workspace`。
         image: 沙箱镜像。
+        hardening: 资源限额与隔离档位，不传则用默认值。
     """
 
-    def __init__(self, workspace: Path, image: str = DEFAULT_IMAGE) -> None:
+    def __init__(
+        self,
+        thread_id: str,
+        workspace: Path,
+        image: str = DEFAULT_IMAGE,
+        hardening: Hardening | None = None,
+    ) -> None:
+        self._thread_id = thread_id
         self._workspace = workspace.resolve()
         self._image = image
+        self._hardening = hardening or Hardening()
         self._container_id: str | None = None
 
     @property
@@ -143,6 +222,7 @@ class DockerContainer:
         # bind-mount 的目标必须先存在：留给 Docker 创建会是 root 属主，
         # 而容器以宿主 uid 运行，写不进去
         self._workspace.mkdir(parents=True, exist_ok=True)
+        limit = self._hardening
         output = _run_docker(
             [
                 "run",
@@ -151,9 +231,26 @@ class DockerContainer:
                 # 镜像必须是本地预先构建或导入的。不加这条，镜像名写错时 Docker 会去
                 # registry 拉取，在内网里卡满整个超时才失败，且错误指向网络而非镜像。
                 "--pull=never",
+                # 认领用的标记，见 MANAGED_LABEL 的说明
+                "--label",
+                f"{MANAGED_LABEL}=1",
+                "--label",
+                f"{THREAD_LABEL}={self._thread_id}",
+                # gVisor。容器逃逸要先过它这一层，是整套隔离的根基
+                f"--runtime={limit.runtime}",
+                # 零出网。装包因此不可能，这是「不部署 devpi」那个决策的另一半
+                f"--network={limit.network}",
+                *ALWAYS_ON_ARGUMENT,
+                # HOME 指到这里，所以必须可写；noexec 挡的是往家目录落可执行文件。
+                # tmpfs 吃的是宿主机内存而非磁盘，不限容一句 dd 就能把宿主机写到 OOM
+                "--tmpfs",
+                f"{CONTAINER_TMP}:rw,noexec,nosuid,size={limit.tmp_size}",
+                f"--memory={limit.memory}",
+                f"--cpus={limit.cpus}",
+                f"--pids-limit={limit.pids_limit}",
                 # uid/gid 对齐宿主，否则容器写出的文件宿主侧读不了（架构 §8.5 的部署前提）
                 "--user",
-                f"{os.getuid()}:{os.getgid()}",
+                limit.user or f"{os.getuid()}:{os.getgid()}",
                 "-v",
                 f"{self._workspace}:{SANDBOX_ROOT}",
                 "-w",
@@ -202,6 +299,14 @@ class DockerContainer:
             return False
         return output.strip() == "true"
 
+    def adopt(self, container_id: str) -> None:
+        """接管一个已经在跑的容器，不新起。
+
+        Args:
+            container_id: 已存在的容器标识。
+        """
+        self._container_id = container_id
+
     def exec(self, command: str, *, timeout: int) -> CommandResult:
         """在容器内执行一条 shell 命令。
 
@@ -217,9 +322,11 @@ class DockerContainer:
         """
         try:
             completed = subprocess.run(
-                ["docker", "exec", "-w", SANDBOX_ROOT, self.id, "sh", "-c", command],
+                ["docker", "exec", "-w", SANDBOX_ROOT, self.id, "bash", "-o", "pipefail", "-c", _capped(command)],
                 capture_output=True,
                 text=True,
+                # head -c 按字节切，可能把一个 UTF-8 汉字劈成两半，严格解码会在这里抛
+                errors="replace",
                 timeout=timeout,
                 check=False,
             )
@@ -230,7 +337,11 @@ class DockerContainer:
             message = f"docker 调用失败：{exc}"
             raise ContainerError(message) from exc
 
-        return CommandResult(output=completed.stdout + completed.stderr, exit_code=completed.returncode)
+        output = completed.stdout
+        if len(output.encode("utf-8", errors="replace")) >= OUTPUT_LIMIT_BYTE:
+            # 不加标记的话，LLM 会把截断处当成程序的全部输出，据此推出错误的结论
+            output += TRUNCATION_MARKER
+        return CommandResult(output=output + completed.stderr, exit_code=completed.returncode)
 
     def __enter__(self) -> "DockerContainer":
         """启动容器并返回自身。"""
@@ -245,6 +356,106 @@ class DockerContainer:
     ) -> None:
         """离开上下文时销毁容器。"""
         self.stop()
+
+
+def running_sandbox() -> dict[str, str]:
+    """列出本机上还在跑的沙箱容器。
+
+    只认自己打的 label，因此不会把机器上别的容器卷进来。
+
+    Returns:
+        `thread_id → 容器 id`。没有则为空。
+
+    Raises:
+        ContainerError: docker 调用失败。
+    """
+    output = _run_docker(
+        [
+            "ps",
+            "--filter",
+            f"label={MANAGED_LABEL}",
+            "--format",
+            f'{{{{.ID}}}}\t{{{{.Label "{THREAD_LABEL}"}}}}',
+        ],
+        timeout=DOCKER_CLI_TIMEOUT,
+    )
+
+    found: dict[str, str] = {}
+    for line in output.splitlines():
+        container_id, separator, thread_id = line.partition("\t")
+        # 没有 thread label 的不认领：那是别人打了同名 label 的容器，动它是越界
+        if separator and thread_id:
+            found[thread_id] = container_id
+    return found
+
+
+def sandbox_memory() -> int:
+    """本机上所有沙箱容器合计占用的常驻内存，字节。
+
+    **沙箱并发上限直接由剩余内存决定**（架构 §4.4），而 `--memory=2g` 是上限不是实际
+    占用 —— 按上限推算容量会系统性地低估这台机器还装得下几个沙箱。
+
+    Returns:
+        合计字节数。一个沙箱都没跑时为 0。
+
+    Raises:
+        ContainerError: docker 调用失败。
+    """
+    running = running_sandbox()
+    if not running:
+        return 0
+    output = _run_docker(
+        ["stats", "--no-stream", "--format", "{{.MemUsage}}", *running.values()],
+        timeout=DOCKER_CLI_TIMEOUT,
+    )
+    return parse_memory(output)
+
+
+def parse_memory(output: str) -> int:
+    """把 `docker stats --format {{.MemUsage}}` 的输出加总成字节数。
+
+    每行形如 `123.4MiB / 2GiB`，斜杠后面是限额，不是占用。
+
+    **单位表两套都收**：docker 按二进制单位（MiB）打印，但同一个字段在别的版本 /
+    别的平台上出现过十进制单位（MB）。认错一套会让数字差 5%，而那个差值不会有任何
+    报错指出来。
+
+    Args:
+        output: docker stats 的多行输出。
+
+    Returns:
+        合计字节数。认不出来的行跳过并记警告。
+    """
+    total = 0
+    for line in output.splitlines():
+        used, _, _ = line.partition("/")
+        total += _parse_byte(used.strip())
+    return total
+
+
+def _parse_byte(text: str) -> int:
+    """把 `123.4MiB` 这样的一个量转成字节。认不出来时记警告并当 0。"""
+    if not text:
+        return 0
+    digit = text.rstrip(UNIT_LETTER)
+    unit = text[len(digit) :]
+    try:
+        return int(float(digit) * BYTE_UNIT[unit])
+    except (ValueError, KeyError):
+        logger.warning("docker stats 的内存读数认不出来，这一行当 0：%r", text)
+        return 0
+
+
+def _capped(command: str) -> str:
+    """把命令的输出在容器内就截到上限。
+
+    截在容器里而不是拿回来再截：等它流过 docker CLI，网关已经把几个 GB 收进内存了。
+    `head -c` 到量就关掉管道，写端下一次 write 拿到 SIGPIPE 自己就死了。
+
+    用 `bash -o pipefail` 而非 `sh`，是因为管道的退出码默认取自 `head`（总是 0）——
+    少了 pipefail，失败的命令会被报成成功，LLM 拿着错误的结论继续往下写。
+    """
+    return f"{{ {command}; }} 2>&1 | head -c {OUTPUT_LIMIT_BYTE}"
 
 
 def _run_docker(argument: list[str], *, timeout: int) -> str:

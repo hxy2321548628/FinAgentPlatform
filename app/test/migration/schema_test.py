@@ -1,0 +1,299 @@
+"""迁移本身的测试：升得上去、退得回来、不碰已有的行。
+
+**up / down 全部跑在一个用完就删的空库上**，不在测试库上跑 —— `downgrade` 会把同一批
+用例正在用的表整个删掉。这条隔离本身就是本次要验的东西之一。
+"""
+
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from uuid import uuid4
+
+import psycopg
+import pytest
+from alembic import command
+
+from store.postgres import DRIVER, NATIVE_DRIVER
+from test.conftest import (
+    PROBE_TIMEOUT_SECOND,
+    SKIP_POSTGRES,
+    alembic_config,
+    drop_database,
+    ensure_database,
+    store_dsn,
+)
+
+# 至今建起来的全部业务表。downgrade 之后一张都不该剩
+PLATFORM_TABLE = (
+    "users",
+    "threads",
+    "runs",
+    "run_events",
+    "groups",
+    "user_groups",
+    "group_join_requests",
+)
+
+# 建用户模型之前的那一版。已有的 runs 行就是在这一版上写下的
+BEFORE_USER_MODEL = "0002_run_events"
+
+# 给 runs.thread_id 补外键之前的那一版
+BEFORE_RUN_THREAD_FOREIGN_KEY = "0003_user_thread"
+
+
+@pytest.fixture
+def scratch() -> Iterator[str]:
+    """一个用完就删的空库，只给这个文件用。
+
+    Yields:
+        库名。
+    """
+    name = f"zuel_migration_{uuid4().hex[:8]}"
+    try:
+        ensure_database(name)
+    except psycopg.Error:
+        pytest.skip(SKIP_POSTGRES)
+    try:
+        yield name
+    finally:
+        drop_database(name)
+
+
+def _connect(database: str) -> psycopg.Connection[tuple[object, ...]]:
+    return psycopg.connect(
+        store_dsn(NATIVE_DRIVER, database=database), connect_timeout=PROBE_TIMEOUT_SECOND, autocommit=True
+    )
+
+
+def _upgrade(database: str, revision: str) -> None:
+    command.upgrade(alembic_config(store_dsn(DRIVER, database=database)), revision)
+
+
+def _downgrade(database: str, revision: str) -> None:
+    command.downgrade(alembic_config(store_dsn(DRIVER, database=database)), revision)
+
+
+def _table(database: str) -> set[str]:
+    with _connect(database) as connection:
+        found = connection.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public'").fetchall()
+    return {str(one[0]) for one in found}
+
+
+def _index(database: str, table: str) -> dict[str, str]:
+    with _connect(database) as connection:
+        found = connection.execute(
+            "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = %s",
+            (table,),
+        ).fetchall()
+    return {str(one[0]): str(one[1]) for one in found}
+
+
+def _insert_user(connection: psycopg.Connection[tuple[object, ...]], user_id: str) -> None:
+    connection.execute(
+        "INSERT INTO users (id, name, password_hash, role, is_active, created_at)"
+        " VALUES (%s, %s, 'x', 'teacher', true, %s)",
+        (user_id, f"u-{user_id[:8]}", datetime.now(UTC)),
+    )
+
+
+def _insert_group(
+    connection: psycopg.Connection[tuple[object, ...]], group_id: str, owner_id: str, *, code: str | None = None
+) -> None:
+    connection.execute(
+        "INSERT INTO groups (id, name, owner_id, invite_code, created_at) VALUES (%s, %s, %s, %s, %s)",
+        (group_id, f"g-{group_id[:8]}", owner_id, code or group_id[:8].upper(), datetime.now(UTC)),
+    )
+
+
+def _insert_request(
+    connection: psycopg.Connection[tuple[object, ...]],
+    group_id: str,
+    user_id: str,
+    *,
+    status: str = "pending",
+) -> None:
+    connection.execute(
+        "INSERT INTO group_join_requests (id, group_id, user_id, status, created_at) VALUES (%s, %s, %s, %s, %s)",
+        (uuid4().hex, group_id, user_id, status, datetime.now(UTC)),
+    )
+
+
+def _insert_thread(connection: psycopg.Connection[tuple[object, ...]], thread_id: str, user_id: str) -> None:
+    now = datetime.now(UTC)
+    connection.execute(
+        "INSERT INTO threads (id, user_id, title, agent_config, created_at, updated_at)"
+        " VALUES (%s, %s, '', '{}', %s, %s)",
+        (thread_id, user_id, now, now),
+    )
+
+
+def _insert_run(connection: psycopg.Connection[tuple[object, ...]], run_id: str, thread_id: str) -> None:
+    connection.execute(
+        "INSERT INTO runs (id, thread_id, status, tokens_cache_read, tokens_uncached, tokens_output, started_at)"
+        " VALUES (%s, %s, 'succeeded', 0, 0, 0, %s)",
+        (run_id, thread_id, datetime.now(UTC)),
+    )
+
+
+def test_upgrade_then_downgrade_leaves_no_platform_table(scratch: str) -> None:
+    _upgrade(scratch, "head")
+    assert set(PLATFORM_TABLE) <= _table(scratch)
+
+    _downgrade(scratch, "base")
+    assert not set(PLATFORM_TABLE) & _table(scratch)
+
+
+def test_upgrade_creates_the_thread_index_of_the_architecture(scratch: str) -> None:
+    """架构 §6.2 索引表里属于 threads 的那一条：`(user_id, updated_at DESC)`。"""
+    _upgrade(scratch, "head")
+
+    definition = _index(scratch, "threads")
+    assert "ix_threads_user_updated" in definition
+    assert "updated_at DESC" in definition["ix_threads_user_updated"]
+
+
+def test_user_name_is_unique(scratch: str) -> None:
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        connection.execute(
+            "INSERT INTO users (id, name, password_hash, role, is_active, created_at)"
+            " VALUES (%s, '重名', 'x', 'teacher', true, %s)",
+            (uuid4().hex, datetime.now(UTC)),
+        )
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            connection.execute(
+                "INSERT INTO users (id, name, password_hash, role, is_active, created_at)"
+                " VALUES (%s, '重名', 'y', 'student', true, %s)",
+                (uuid4().hex, datetime.now(UTC)),
+            )
+
+
+def test_existing_run_rows_survive_the_upgrade(scratch: str) -> None:
+    """P2 留下的 run 行没有归属，迁移只建表不回填 —— 它们必须原样还在，`user_id` 仍为空。"""
+    _upgrade(scratch, BEFORE_USER_MODEL)
+    orphan = uuid4().hex
+    with _connect(scratch) as connection:
+        _insert_run(connection, orphan, uuid4().hex)
+
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        found = connection.execute("SELECT user_id FROM runs WHERE id = %s", (orphan,)).fetchone()
+    assert found is not None
+    assert found[0] is None
+
+
+def test_a_new_run_must_point_at_an_existing_thread(scratch: str) -> None:
+    """0004 之后 `runs.thread_id` 受外键约束：NOT VALID 只放过历史行。
+
+    这条外键推迟到 0004 才加，是因为在 0003 那一刻它约束不住任何东西 ——
+    `threads` 还是空的，而提交 run 的入口仍只建目录不落表。
+    """
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection, pytest.raises(psycopg.errors.ForeignKeyViolation):
+        _insert_run(connection, uuid4().hex, uuid4().hex)
+
+
+def test_a_run_written_before_the_foreign_key_is_left_alone(scratch: str) -> None:
+    """NOT VALID 的另一半：历史行不追究，`alembic upgrade head` 不会栽在它们身上。"""
+    _upgrade(scratch, BEFORE_RUN_THREAD_FOREIGN_KEY)
+    orphan = uuid4().hex
+    with _connect(scratch) as connection:
+        _insert_run(connection, orphan, uuid4().hex)
+
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        assert connection.execute("SELECT 1 FROM runs WHERE id = %s", (orphan,)).fetchone() is not None
+
+
+def test_a_thread_must_point_at_an_existing_user(scratch: str) -> None:
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection, pytest.raises(psycopg.errors.ForeignKeyViolation):
+        _insert_thread(connection, uuid4().hex, uuid4().hex)
+
+
+def test_a_group_must_point_at_an_existing_owner(scratch: str) -> None:
+    """组主是外键。没有它的话，禁用一个教师账号之后它的组会变成谁也管不了的孤儿。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection, pytest.raises(psycopg.errors.ForeignKeyViolation):
+        _insert_group(connection, uuid4().hex, uuid4().hex)
+
+
+def test_the_same_invite_code_cannot_be_taken_twice(scratch: str) -> None:
+    """邀请码是注册时唯一的入组依据 —— 撞码等于把学生发进别人的组。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner = uuid4().hex
+        _insert_user(connection, owner)
+        _insert_group(connection, uuid4().hex, owner, code="SAME")
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _insert_group(connection, uuid4().hex, owner, code="SAME")
+
+
+def test_a_user_cannot_join_the_same_group_twice(scratch: str) -> None:
+    """成员关系是复合主键。重复的行会让名册出现两个同一个人。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, group = uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_group(connection, group, owner)
+        connection.execute("INSERT INTO user_groups (user_id, group_id) VALUES (%s, %s)", (owner, group))
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            connection.execute("INSERT INTO user_groups (user_id, group_id) VALUES (%s, %s)", (owner, group))
+
+
+def test_a_user_cannot_have_two_pending_requests_for_one_group(scratch: str) -> None:
+    """连点两次申请只该留下一条待办，否则组主的审批列表里全是同一个人。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, group = uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_group(connection, group, owner)
+        _insert_request(connection, group, owner)
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _insert_request(connection, group, owner)
+
+
+def test_a_rejected_applicant_can_apply_again(scratch: str) -> None:
+    """唯一约束只盖 pending 那一段。被否决之后再也申请不了，那是把人永久挡在门外。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, group = uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_group(connection, group, owner)
+        _insert_request(connection, group, owner, status="rejected")
+
+        _insert_request(connection, group, owner)
+
+        found = connection.execute(
+            "SELECT count(*) FROM group_join_requests WHERE group_id = %s AND user_id = %s", (group, owner)
+        ).fetchone()
+    assert found is not None
+    assert found[0] == 2
+
+
+def test_a_run_can_be_written_with_its_owner(scratch: str) -> None:
+    """两条外键都满足时照常写得进去 —— 上面三条不能是「外键把表锁死了」。"""
+    _upgrade(scratch, "head")
+
+    user_id, thread_id, run_id = uuid4().hex, uuid4().hex, uuid4().hex
+    with _connect(scratch) as connection:
+        _insert_user(connection, user_id)
+        _insert_thread(connection, thread_id, user_id)
+        connection.execute(
+            "INSERT INTO runs (id, thread_id, user_id, status,"
+            " tokens_cache_read, tokens_uncached, tokens_output, started_at)"
+            " VALUES (%s, %s, %s, 'queued', 0, 0, 0, %s)",
+            (run_id, thread_id, user_id, datetime.now(UTC)),
+        )
+        found = connection.execute("SELECT user_id FROM runs WHERE id = %s", (run_id,)).fetchone()
+    assert found is not None
+    assert str(found[0]).replace("-", "") == user_id

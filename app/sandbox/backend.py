@@ -32,7 +32,7 @@ from deepagents.backends.protocol import (
 )
 
 from sandbox.container import ContainerError, ContainerProtocol
-from sandbox.path import OUTPUT_DIR, to_sandbox_path, to_virtual_path
+from sandbox.path import to_sandbox_path, to_virtual_path
 
 DEFAULT_EXECUTE_TIMEOUT = 120
 
@@ -143,25 +143,6 @@ class SandboxBackend(SandboxBackendProtocol):
         except ContainerError as exc:
             return ExecuteResponse(output=f"沙箱执行失败：{exc}", exit_code=EXECUTION_FAILED_EXIT_CODE)
         return ExecuteResponse(output=result.output, exit_code=result.exit_code)
-
-    def artifact_since(self, since: float) -> list[Path]:
-        """列出 `outputs/` 下在给定时刻之后写入的文件。
-
-        Args:
-            since: Unix 时间戳，通常取自 `execute` 开始前。
-
-        Returns:
-            宿主机上的产物路径，按路径排序。目录不存在时为空。
-        """
-        output_dir = self._workspace / OUTPUT_DIR
-        if not output_dir.is_dir():
-            return []
-        return sorted(
-            path
-            for path in output_dir.rglob("*")
-            # 产物会被下载给教师，跟随符号链接等于把任意宿主文件当成产物送出去
-            if path.is_file() and not path.is_symlink() and path.stat().st_mtime >= since
-        )
 
     def _upload_one(self, path: str, content: bytes) -> FileUploadResponse:
         try:

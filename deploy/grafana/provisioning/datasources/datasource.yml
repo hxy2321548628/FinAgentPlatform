@@ -1,0 +1,55 @@
+# 数据源由配置文件供给，不在界面上手点。
+#
+# **所在目录必须叫 `datasources`（复数），这一条不归项目的命名规矩管** —— 那是
+# Grafana 写死的查找路径，不是我们的文件名。用单数时它一声不响地什么都不加载：
+# 容器起得来、日志无异常、界面能打开，只是数据源一个都没有。实测踩过一次。
+#
+# **手点出来的数据源只存在于 Grafana 自己的库里**：那个库一丢（换机器、清数据目录）
+# 就得有人凭记忆重配一遍，而看板里的每个 panel 都按 uid 引用它 —— 重配时 uid 一变，
+# 整块看板就成了一片「Datasource not found」。
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    # **uid 写死**。看板 JSON 里按它引用，让 Grafana 随机生成就对不上了
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      # 从一条 trace 跳到它同一时段的指标。**不配的话 trace 与指标是两座孤岛** ——
+      # 而排障时的下一个问题永远是「那会儿平台整体什么样」
+      tracesToMetrics:
+        datasourceUid: prometheus
+      # 从一条 trace 直接跳到它那一次 run 的日志。**这是把日志送进 Loki 的主要理由**：
+      # OTel 的 handler 会把 trace_id 写进每条日志，靠它两边才对得上
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        filterByTraceID: true
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      derivedFields:
+        # 反过来：日志里带着 trace_id，点一下就跳到那条 trace
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          url: "$${__value.raw}"
+          datasourceUid: tempo

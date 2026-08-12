@@ -1,0 +1,32 @@
+# 构建上下文是仓库根。这里排掉的东西要么不该进镜像，要么进了就是坏的。
+
+# **虚拟环境必须排掉**：镜像里 uv sync 装好的 .venv 会被 COPY app/ 原样覆盖成
+# 宿主机那份，而它内部记的是宿主机的绝对路径 —— 症状是
+# 「exec /app/.venv/bin/uvicorn: no such file or directory」，不指向这里。
+.venv/
+app/.venv/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+
+# 凭据不进镜像，运行时由 compose 的 env_file 注入
+.env
+.env.*
+!.env.example
+
+# 运行时数据，包括几十 GB 的 XFS 镜像
+data/
+tmp/
+*.log
+
+.git/
+.github/
+.githooks/
+node_modules/
+dist/
+frontend/
+doc/

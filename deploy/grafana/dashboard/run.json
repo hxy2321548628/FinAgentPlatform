@@ -1,0 +1,71 @@
+{
+  "uid": "zuel-run",
+  "title": "按 run 查链路",
+  "description": "验收 ① 落地的那一页：填一个 run_id，拿到它在网关 / worker / LLM / sandbox 各段的耗时，以及这次的 token 三元组。",
+  "tags": ["zuel"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "run_id",
+        "label": "run_id",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" },
+        "description": "从 run.finished 事件、runs 表或成本看板里拿到的那个 id"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "这个 run 的 trace",
+      "description": "点表格里的 Trace ID 展开时间轴：网关那一段、worker 那一段、每一次 llm.call、以及每一次打到 broker 的沙箱调用，各自的耗时都在上面。一个 run 若经历过审批或崩溃重投，这里会有多行 —— 每一程一条。",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ .zuel.run_id = \"$run_id\" }"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "这个 run 花了多少 token",
+      "description": "三元组钉在 run.execute 这个 span 上。cache 命中的那部分几乎不要钱，未命中的才是配额与账单看的数。",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 10 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ .zuel.run_id = \"$run_id\" } | select(.zuel.token.input_uncached, .zuel.token.input_cache_read, .zuel.token.output, .zuel.status, .zuel.resumed)"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "这个人最近的 run",
+      "description": "换个入口：手上只有「某位教师说他那次很慢」时，按 user_id 找，不必先问出 run_id。",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ name = \"run.execute\" } | select(.zuel.run_id, .zuel.user_id, .zuel.status)"
+        }
+      ]
+    }
+  ]
+}

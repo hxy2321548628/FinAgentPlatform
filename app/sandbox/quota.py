@@ -1,0 +1,215 @@
+"""workspace 的磁盘配额：每个 thread 一份硬上限，用 XFS project quota。
+
+加固清单里的 `--read-only` 只保护 rootfs，而 `/workspace` 是可写的 bind mount ——
+LLM 生成的代码可以往里写满宿主机磁盘。这是威胁表「写满磁盘」那一格唯一没堵上的缺口。
+
+**配额对目录生效而非对容器生效**，这正是选它的原因：文件工具是直接写宿主目录、
+不进容器的，绕开了一切容器级限制，而目录配额照样管得住。
+"""
+
+import fcntl
+import logging
+import os
+import struct
+import subprocess
+import zlib
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Protocol
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_DISK_QUOTA = "5g"
+
+# xfs_quota 要 CAP_SYS_ADMIN。broker 容器内以 root 跑时留空即可，
+# 开发机上平台是普通用户，要靠一条只放行 xfs_quota 的 NOPASSWD sudo 规则。
+DEFAULT_QUOTA_COMMAND = ("xfs_quota",)
+
+QUOTA_CLI_TIMEOUT = 30
+
+# projid 0 是「不属于任何 project」，不能用。上界取 2^31-1 避开各种工具对
+# 高位 id 的特殊处理，也给运维手工分配的 id 留出整个高半区。
+PROJECT_ID_SPACE = 0x7FFFFFFF
+
+# `report -p -N -b` 每行的字段依次是 projid、已用、软限、硬限，块以 1KB 计
+HARD_LIMIT_FIELD = 3
+
+# 认领结果直接从 inode 上读，不看 xfs_quota 说什么：它在容器里（没有块设备节点）
+# 每条命令都只往 stderr 打一句然后退出 0，stdout 是空的 —— 而空输出读不出对错。
+# FS_IOC_FSGETXATTR 取 struct fsxattr，前五个 u32 是 xflags/extsize/nextents/projid/cowextsize
+FS_IOC_FSGETXATTR = 0x801C581F
+FS_XFLAG_PROJINHERIT = 0x00000200
+FSXATTR_BYTE = 28
+FSXATTR_HEAD = "=5I"
+
+
+def _hard_limit(line: str, identifier: int) -> int:
+    """从一行 project 报表里取硬上限，不是这个 project 或取不出就答 0。"""
+    field = line.split()
+    if len(field) <= HARD_LIMIT_FIELD or field[0].lstrip("#") != str(identifier):
+        return 0
+    try:
+        return int(field[HARD_LIMIT_FIELD])
+    except ValueError:
+        return 0
+
+
+class QuotaError(RuntimeError):
+    """配额没能设上。
+
+    不吞掉：设不上就等于这个 thread 能写满宿主机磁盘，而这正是 ADR-0015 要堵的洞。
+    """
+
+
+class QuotaProtocol(Protocol):
+    """workspace 目录的配额分配。"""
+
+    def assign(self, thread_id: str, workspace: Path) -> None:
+        """给一个 thread 的 workspace 目录设上硬上限。
+
+        Args:
+            thread_id: 会话标识。
+            workspace: 该会话在宿主机上的目录，需已存在。
+
+        Raises:
+            QuotaError: 配额没能设上。
+        """
+        ...
+
+
+def project_id(thread_id: str) -> int:
+    """由 thread_id 确定性派生出 projid。
+
+    **不引入任何持久化状态**：本期没有 Postgres（P2 才上），ADR-0015 说的
+    「`sandboxes` 表加一列」这个落点还不存在。另外两个方案 —— broker 内存表加
+    启动时从 `xfs_quota report` 反查恢复、或落一个 JSON 文件 —— 都是给一个 P2
+    就要拆掉的东西引入状态。
+
+    碰撞的后果温和：两个 thread 共享一份 5GB 配额，是容量问题不是越权问题。
+    P2 换成表时是纯替换。
+
+    Args:
+        thread_id: 会话标识。
+
+    Returns:
+        1 到 2^31-1 之间的 project id。
+    """
+    return zlib.crc32(thread_id.encode()) % PROJECT_ID_SPACE + 1
+
+
+class XfsQuota:
+    """用 XFS project quota 给 workspace 目录设硬上限。
+
+    要求承载 workspace 的文件系统是 XFS 且以 `prjquota` 挂载 —— 这是一条部署前提，
+    挂载选项改动要重启，事后补代价高。开发机上用 `deploy/setup-xfs.sh` 造。
+
+    Args:
+        mount_point: 承载各会话目录的 XFS 挂载点。
+        limit: 每个 thread 的硬上限，`xfs_quota` 的 `bhard` 值。
+        command: `xfs_quota` 的调用方式，用于在前面补上 `sudo`。
+    """
+
+    def __init__(
+        self,
+        *,
+        mount_point: Path,
+        limit: str = DEFAULT_DISK_QUOTA,
+        command: Sequence[str] = DEFAULT_QUOTA_COMMAND,
+    ) -> None:
+        self._mount_point = mount_point
+        self._limit = limit
+        self._command = tuple(command)
+
+    def assign(self, thread_id: str, workspace: Path) -> None:
+        """给一个 thread 的 workspace 目录设上硬上限。
+
+        重复调用是安全的：两条子命令都是幂等的赋值，容器销毁重建后再调一次也不会出错。
+
+        Args:
+            thread_id: 会话标识。
+            workspace: 该会话在宿主机上的目录，需已存在。
+
+        Raises:
+            QuotaError: 配额没能设上。
+        """
+        identifier = project_id(thread_id)
+        # 先认领目录再设限额。反过来的话，限额会先落在一个还没有任何目录的
+        # project 上，中间那一小段时间里新建的文件不受任何约束。
+        #
+        # **路径原样拼进去，不加 shell 引号**：`-c` 后面那串不经 shell，xfs_quota
+        # 自己按空白分词且不做去引号 —— 加了引号它会把引号当成路径的一部分，报
+        # ENOENT 却退出 0。带空格的路径这个接口因此根本表达不了，由 _confirm 抓住
+        self._run(f"project -s -p {workspace} {identifier}")
+        self._run(f"limit -p bhard={self._limit} {identifier}")
+        self._confirm(identifier, workspace)
+
+    def _confirm(self, identifier: int, workspace: Path) -> None:
+        """回读一次，确认这个目录真的归这个 project，且它身上真的有硬上限。
+
+        **退出码在这里骗过三次**：探不到挂载点（loop 挂载重启后没挂回来）、
+        认领的路径不存在（含被 shell 引号毁掉的路径）、容器里没有块设备节点，
+        xfs_quota 都是把错误打到 stderr 却退出 0 —— 于是 check=True 一次都不触发，
+        配额一个都没设上而日志里连一条记录都没有。判据因此取回读值，不取退出码。
+
+        **两样都要查，且都要拿到正面证据**：`limit` 是设在 projid 上的，目录没认领
+        它照样成功，单看限额会得到「有上限但没人受它约束」的假绿；而「没有报错」
+        同样不是证据 —— 容器里那三条命令的 stdout 全是空的。
+        """
+        claimed, inheriting = self._claimed(workspace)
+        if claimed != identifier or not inheriting:
+            message = (
+                f"配额没有生效（projid {identifier}）：{workspace} 没有被认领 —— "
+                f"inode 上读到的 projid 是 {claimed}，继承标志 {inheriting}"
+            )
+            raise QuotaError(message)
+        report = self._run(f"report -p -N -b -n -L {identifier} -U {identifier}")
+        if not any(_hard_limit(line, identifier) > 0 for line in report.splitlines()):
+            message = f"配额没有生效（projid {identifier}）：回读不到硬上限，确认 {self._mount_point} 以 prjquota 挂载"
+            raise QuotaError(message)
+
+    def _claimed(self, workspace: Path) -> tuple[int, bool]:
+        """读目录 inode 上的 project id 与继承标志。
+
+        Raises:
+            QuotaError: 这个目录的 projid 读不出来。
+        """
+        try:
+            descriptor = os.open(workspace, os.O_RDONLY)
+        except OSError as exc:
+            message = f"配额没有生效：打不开 {workspace}：{exc}"
+            raise QuotaError(message) from exc
+        try:
+            raw = fcntl.ioctl(descriptor, FS_IOC_FSGETXATTR, bytes(FSXATTR_BYTE))
+        except OSError as exc:
+            message = f"配额没有生效：读不到 {workspace} 上的 projid：{exc}"
+            raise QuotaError(message) from exc
+        finally:
+            os.close(descriptor)
+        xflag, _extsize, _nextents, projid, _cowextsize = struct.unpack(FSXATTR_HEAD, raw[:20])
+        return projid, bool(xflag & FS_XFLAG_PROJINHERIT)
+
+    def _run(self, subcommand: str) -> str:
+        argument = [*self._command, "-x", "-c", subcommand, str(self._mount_point)]
+        try:
+            done = subprocess.run(argument, capture_output=True, text=True, timeout=QUOTA_CLI_TIMEOUT, check=True)
+        except subprocess.CalledProcessError as exc:
+            message = f"设置配额失败（{subcommand}）：{exc.stderr.strip()}"
+            raise QuotaError(message) from exc
+        except subprocess.TimeoutExpired as exc:
+            message = f"设置配额超时（{subcommand}）"
+            raise QuotaError(message) from exc
+        except OSError as exc:
+            message = f"调不起 xfs_quota：{exc}"
+            raise QuotaError(message) from exc
+        return done.stdout
+
+
+class NoQuota:
+    """不设配额。
+
+    **不是一个可以带进生产的选项** —— 它把「写满宿主机磁盘」这条路原样敞着。
+    存在的理由只有一个：CI 与没挂 XFS 的开发机上，平台仍然要能跑起来。
+    """
+
+    def assign(self, thread_id: str, workspace: Path) -> None:
+        """什么都不做。"""

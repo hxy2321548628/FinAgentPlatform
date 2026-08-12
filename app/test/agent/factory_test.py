@@ -4,6 +4,7 @@
 """
 
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -12,7 +13,7 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import SecretStr
 
-from agent.factory import RECURSION_LIMIT, STREAM_MODE, create_model, create_runner
+from agent.factory import ALLOWED_DECISION, DELETE_TOOL, INTERRUPT_ON, RECURSION_LIMIT, STREAM_MODE, Agent, create_model
 from agent.prompt import SYSTEM_PROMPT
 from config import Settings
 from event.mapper import StreamChunk
@@ -23,6 +24,10 @@ class RecordingAgent:
 
     def __init__(self) -> None:
         self.call: dict[str, Any] = {}
+        self.interrupts: tuple[Any, ...] = ()
+
+    async def aget_state(self, config: dict[str, object]) -> Any:  # noqa: ANN401 - 替身照单全收
+        return SimpleNamespace(interrupts=self.interrupts)
 
     def astream(
         self,
@@ -81,9 +86,9 @@ class FakeBackend:
 
 async def test_the_agent_is_built_with_the_platform_prompt(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
     _, built = recorded
-    runner = create_runner(model=DummyModel(), checkpointer=InMemorySaver())
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
 
-    await drain(runner(FakeBackend(), "thread-1", "算个波动率"))  # type: ignore[arg-type]
+    await drain(runner.stream(FakeBackend(), "thread-1", "算个波动率"))  # type: ignore[arg-type]
 
     assert built["system_prompt"] == SYSTEM_PROMPT
 
@@ -92,9 +97,9 @@ async def test_the_sandbox_backend_drives_the_builtin_tools(recorded: tuple[Reco
     """本期不自定义工具，只换驱动内置工具的后端 —— 传错这个参数文件就落进 LangGraph state 了。"""
     _, built = recorded
     backend: BackendProtocol = FakeBackend()  # type: ignore[assignment]
-    runner = create_runner(model=DummyModel(), checkpointer=InMemorySaver())
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
 
-    await drain(runner(backend, "thread-1", "一"))
+    await drain(runner.stream(backend, "thread-1", "一"))
 
     assert built["backend"] is backend
 
@@ -103,18 +108,18 @@ async def test_the_thread_id_isolates_conversation_history(
     recorded: tuple[RecordingAgent, dict[str, Any]],
 ) -> None:
     agent, _ = recorded
-    runner = create_runner(model=DummyModel(), checkpointer=InMemorySaver())
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
 
-    await drain(runner(FakeBackend(), "thread-42", "一"))  # type: ignore[arg-type]
+    await drain(runner.stream(FakeBackend(), "thread-42", "一"))  # type: ignore[arg-type]
 
     assert agent.call["config"]["configurable"]["thread_id"] == "thread-42"
 
 
 async def test_the_question_is_sent_as_a_user_message(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
     agent, _ = recorded
-    runner = create_runner(model=DummyModel(), checkpointer=InMemorySaver())
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
 
-    await drain(runner(FakeBackend(), "thread-1", "按行业分组算年化波动率"))  # type: ignore[arg-type]
+    await drain(runner.stream(FakeBackend(), "thread-1", "按行业分组算年化波动率"))  # type: ignore[arg-type]
 
     assert agent.call["input"] == {"messages": [{"role": "user", "content": "按行业分组算年化波动率"}]}
 
@@ -122,9 +127,9 @@ async def test_the_question_is_sent_as_a_user_message(recorded: tuple[RecordingA
 async def test_all_three_stream_modes_are_subscribed(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
     """少订一个模式就少一类事件：token 在 messages，工具调用在 updates。"""
     agent, _ = recorded
-    runner = create_runner(model=DummyModel(), checkpointer=InMemorySaver())
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
 
-    await drain(runner(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
 
     assert agent.call["stream_mode"] == STREAM_MODE
     assert set(STREAM_MODE) == {"updates", "messages", "custom"}
@@ -135,18 +140,18 @@ async def test_subgraphs_are_streamed_so_the_namespace_is_available(
 ) -> None:
     """信封的 path 字段来自 ns，而 ns 只在 subgraphs=True 时才有。"""
     agent, _ = recorded
-    runner = create_runner(model=DummyModel(), checkpointer=InMemorySaver())
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
 
-    await drain(runner(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
 
     assert agent.call["subgraphs"] is True
 
 
 async def test_a_recursion_limit_bounds_a_runaway_agent(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
     agent, _ = recorded
-    runner = create_runner(model=DummyModel(), checkpointer=InMemorySaver())
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
 
-    await drain(runner(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
 
     assert agent.call["config"]["recursion_limit"] == RECURSION_LIMIT
 
@@ -155,11 +160,11 @@ async def test_the_checkpointer_is_shared_across_runs(recorded: tuple[RecordingA
     """会话历史靠它续上，每个 run 换一个的话追问就失忆了。"""
     _, built = recorded
     checkpointer = InMemorySaver()
-    runner = create_runner(model=DummyModel(), checkpointer=checkpointer)
+    runner = Agent(model=DummyModel(), checkpointer=checkpointer)
 
-    await drain(runner(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
     first = built["checkpointer"]
-    await drain(runner(FakeBackend(), "thread-1", "二"))  # type: ignore[arg-type]
+    await drain(runner.stream(FakeBackend(), "thread-1", "二"))  # type: ignore[arg-type]
 
     assert first is checkpointer
     assert built["checkpointer"] is checkpointer
@@ -193,3 +198,90 @@ def test_the_model_is_deterministic() -> None:
     model = create_model(settings)
 
     assert model.temperature == 0  # type: ignore[attr-defined]
+
+
+# ------------------------------------------------------------------ HITL
+async def test_only_delete_is_intercepted(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
+    """**只全量拦 `delete`**。
+
+    P0 实测一次分析里 agent 调了 16 次工具、`delete` 一次都没调 —— 低频高危，
+    全量拦不伤可用性。给 `execute` 全量加审批则要教师点十几次确认，平台会变得没法用。
+    """
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+
+    assert set(built["interrupt_on"]) == {DELETE_TOOL}
+
+
+async def test_all_four_decisions_are_offered(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
+    """四种决策是 DeepAgents 侧四条不同的恢复路径，少给一种前端就少一个按钮。"""
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+
+    assert built["interrupt_on"][DELETE_TOOL]["allowed_decisions"] == list(ALLOWED_DECISION)
+
+
+async def test_no_when_predicate_is_configured() -> None:
+    """本期不写任何 `when`：非确定性谓词会破坏基于索引的匹配，而它坏掉的方式是静默的。"""
+    for config in INTERRUPT_ON.values():
+        assert "when" not in config
+
+
+async def test_resuming_carries_the_decisions(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
+    agent, _ = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    await drain(runner.resume(FakeBackend(), "thread-1", [{"type": "approve"}]))  # type: ignore[arg-type]
+
+    assert agent.call["input"].resume == {"decisions": [{"type": "approve"}]}
+
+
+async def test_a_thread_without_an_interrupt_has_nothing_pending(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    assert await runner.pending(FakeBackend(), "thread-1") == []  # type: ignore[arg-type]
+
+
+async def test_two_parallel_arrays_are_merged_into_one_indexed_list(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    """两个平行数组合并成一个带 index 的列表。
+
+    DeepAgents 给的是 `action_requests` 与 `review_configs` —— 前端不该被迫
+    自己对齐两个数组的下标。
+    """
+    agent, _ = recorded
+    agent.interrupts = (
+        SimpleNamespace(
+            value={
+                "action_requests": [
+                    {"name": "delete", "args": {"file_path": "/workspace/data.csv"}},
+                    {"name": "delete", "args": {"file_path": "/workspace/old.csv"}},
+                ],
+                "review_configs": [{"action_name": "delete", "allowed_decisions": ["approve", "reject"]}],
+            }
+        ),
+    )
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    actions = await runner.pending(FakeBackend(), "thread-1")  # type: ignore[arg-type]
+
+    assert [one.index for one in actions] == [0, 1]
+    assert [one.tool_name for one in actions] == ["delete", "delete"]
+    assert actions[0].args == {"file_path": "/workspace/data.csv"}
+    assert actions[0].allowed_decisions == ["approve", "reject"]
+
+
+async def test_an_unreadable_interrupt_is_treated_as_none(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
+    """读不懂一个中断不该把整次分析掀掉 —— 宁可让它正常跑完。"""
+    agent, _ = recorded
+    agent.interrupts = (SimpleNamespace(value="这不是我认识的形状"),)
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    assert await runner.pending(FakeBackend(), "thread-1") == []  # type: ignore[arg-type]

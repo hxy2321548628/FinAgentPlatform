@@ -5,12 +5,25 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "alembic>=1.19.0",
+    "argon2-cffi>=25.1.0",
     "deepagents>=0.7.1",
     "fastapi>=0.141.1",
+    "httpx>=0.28.1",
     "langchain-deepseek>=1.1.0",
+    "langgraph-checkpoint-postgres>=3.1.1",
+    "minio>=7.2.20",
+    "opentelemetry-exporter-otlp-proto-http>=1.44.0",
+    "opentelemetry-instrumentation-fastapi>=0.65b0",
+    "opentelemetry-instrumentation-httpx>=0.65b0",
+    "opentelemetry-sdk>=1.44.0",
+    "prometheus-client>=0.26.0",
+    "psycopg[binary,pool]>=3.3.4",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
     "python-multipart>=0.0.32",
+    "redis>=8.1.0",
+    "sqlmodel>=0.0.39",
     "uvicorn>=0.52.1",
 ]
 

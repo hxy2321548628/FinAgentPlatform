@@ -1,0 +1,332 @@
+# 内网单机部署：nginx + api + worker×2 + broker + postgres + redis + minio（只给可观测性用）
+# + prometheus + grafana + tempo + loki + otel-collector。
+#
+#   mkdir -p data/{prometheus,grafana,tempo,loki}      # 只需一次，理由见下面 prometheus
+#   docker compose -f deploy/compose.yml up -d --build
+#
+# **沙箱容器不在这里声明** —— 它们由 broker 在运行时动态创建与销毁。
+#
+# P4 起多了可观测性那一套，minio 是 Tempo 与 Loki 的后端。pypi-mirror 定案不做（沙箱零出网）。
+#
+# **两个数据目录都是宿主机 bind mount，不是卷**：命名卷会被 `docker compose down -v`
+# 一并删掉，而那里面正是 P2 要保住的东西 —— checkpoint 一丢，中断的任务就再也接不上。
+
+name: zuel-platform
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 工作目录里的文件由 nginx 直发，因此它要读得到那些字节。**只读**：这个容器
+      # 永远不该改动 agent 的产出。容器内挂到固定路径，nginx.conf 才能写死 alias ——
+      # 宿主那一侧的路径是变量，配置文件里插值不了
+      #
+      # **重挂 XFS 之后这个容器必须跟着重启**，与 broker 同一个道理：bind mount 在
+      # 容器启动那一刻解析，绑着旧目录时 api 照常回 200 与跳转头，而 nginx 打不开
+      # 文件 —— 浏览器收到 404，api 侧却一切正常。实测踩过一次
+      - ${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}:/workspace:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/app.Dockerfile
+    # **迁移只由 api 跑**：worker 有多个副本，让它们各自 upgrade 会撞在同一把
+    # DDL 锁上。checkpoint 那几张表不在这里 —— LangGraph 自己 setup()
+    command: sh -c "alembic upgrade head && uvicorn api.app:app --host 0.0.0.0 --port 8000"
+    env_file:
+      - ../.env
+    environment:
+      BROKER_URL: http://broker:8100
+      # 用户名 / 口令 / 库名跟着 env_file 从 .env 走，这里只覆盖主机与端口 ——
+      # 整条带口令的 DSN 会逼着走 compose 变量插值，而插值只认 shell 里 export 过的值。
+      # 端口也得覆盖：.env 里的 5433 是**宿主机**那一侧的映射端口（躲开系统自带的 5432），
+      # 容器网络里 postgres 听的仍是 5432
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      # **只有 nginx 后面才能开**：X-Accel-Redirect 是 nginx 的协议，直接跑 uvicorn
+      # 时浏览器只会收到一个空响应。**还要求 nginx 挂到了同一个 workspace 根** ——
+      # 只开这个而没挂卷的话，每次下载 nginx 都回 404，而 api 这一侧看起来一切正常
+      FILE_DIRECT_SEND: "true"
+      # 三个进程都只认这一个地址，不认 Tempo —— 换后端时应用侧一行不动。
+      # 留空即不上报，开发机直接跑 uvicorn 时走的正是那条
+      OTEL_ENDPOINT: http://otel-collector:4318
+    # **不挂 docker.sock，也不挂 workspace** —— 这两条就是 ADR-0004 的全部内容。
+    # api 被 agent 生成的内容影响之后，能做的最多是发几个 HTTP 请求给 broker。
+    # 拆出 worker 之后它连模型都不碰了：收提问投队列、查状态、把事件转 SSE，就这三件事。
+    #
+    # 两个存储等 healthcheck 过了再起 api：api 启动时就会体检连接，
+    # 抢在 Postgres 初始化完成之前起来只会白白 restart 几轮
+    depends_on:
+      broker:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/app.Dockerfile
+    # 不是 HTTP 服务，因此没有 uvicorn，也不开端口
+    command: python -m worker.main
+    # 副本数解决的是「这个进程挂了怎么办」，不是吞吐 ——
+    # 吞吐靠 WORKER_CONCURRENCY，一个进程内并发驱动多个 run
+    deploy:
+      replicas: 2
+    env_file:
+      - ../.env
+    environment:
+      BROKER_URL: http://broker:8100
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      OTEL_ENDPOINT: http://otel-collector:4318
+    # **迁移不由 worker 跑**：多副本会撞在同一把 DDL 锁上，那是 api 的活。
+    # 表还没建好时 worker 起来也无妨 —— 它要等到有任务投进来才碰 runs 表
+    depends_on:
+      broker:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # 滚动重启时给优雅停机留出时间：worker 收到 SIGTERM 后不再领新任务，
+    # 但会等在跑的 run 结束 —— 一次分析几十分钟，掐掉等于把烧过的 token 扔了。
+    # 默认的 10 秒远远不够
+    stop_grace_period: 30m
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB 三项由 .env 直接喂给官方镜像，
+    # 与 api 侧读的是同一份，不会出现「建库用 A、连库用 B」
+    env_file:
+      - ../.env
+    environment:
+      # 数据落在挂载点的子目录里。直接用挂载点的话，宿主目录里任何一个已有文件
+      # 都会让 initdb 以「目录非空」失败
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - ${POSTGRES_DATA_DIR:-../data/postgres}:/var/lib/postgresql/data
+    # 只绑回环：门禁与验收脚本在宿主机上跑，够得着即可，不对内网其他机器开放。
+    #
+    # **端口写死不插值**：compose 的插值只认 shell 里 export 过的值，而 .env 在仓库根，
+    # 两边不是同一份 —— 参数化的结果是「忘了 export 就映射到 5432，而 .env 说 5433」，
+    # 于是测试连上了宿主机自带的那个 Postgres，且不会报错。5433 是为了躲开系统自带的 5432
+    ports:
+      - "127.0.0.1:5433:5432"
+    # $$ 是转义，让 compose 把变量原样交给容器里的 shell 去展开
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # 事件流与任务队列都在这里。默认的 RDB 快照会丢掉最后一段，
+    # 而那一段正是崩溃前后的事件 —— 开 AOF，每秒落盘
+    command: redis-server --appendonly yes --appendfsync everysec
+    volumes:
+      - ${REDIS_DATA_DIR:-../data/redis}:/data
+    # 同上，写死不插值
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    # 9000 是 S3 API，9001 是控制台。控制台只给运维排查用
+    command: server /data --console-address ":9001"
+    # MINIO_ROOT_USER / MINIO_ROOT_PASSWORD 由 .env 直接喂给官方镜像，
+    # 与 Tempo / Loki 读的 MINIO_ACCESS_KEY / MINIO_SECRET_KEY 是同一组值
+    env_file:
+      - ../.env
+    volumes:
+      - ${MINIO_DATA_DIR:-../data/minio}:/data
+    # 同 Postgres 与 Redis：只绑回环。**不对内网开放** ——
+    # 只有 Tempo 与 Loki 写它，浏览器与应用进程都不该够得着
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # 建 trace 与日志的桶。**MinIO 不会自动建桶，Tempo 与 Loki 也不会** ——
+  # 缺桶时它们起得来、只在写第一个块时失败，而那要等几分钟才发生。
+  #
+  # 用的是 minio 自己的镜像（里面就带 mc），不额外拉一个。
+  # **MinIO 只剩 Tempo 与 Loki 两个用户了** —— 产物存储撤掉之后，应用侧不再连它
+  minio-init:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing local/trace local/log
+    env_file:
+      - ../.env
+    depends_on:
+      minio:
+        condition: service_healthy
+    # 一次性任务，跑完就退。不设 unless-stopped，否则它会被反复重启
+    restart: "no"
+
+  # ---- 可观测性（P4 计划 §7.1 定案全套）----
+  #
+  # **两个数据目录都要先在宿主机上建好并归当前用户**：Docker 自动创建缺失的
+  # bind mount 目录时属主是 root，而这两个容器都以宿主用户跑，起来就会因为写不进去
+  # 而反复重启。`mkdir -p data/prometheus data/grafana` 一次即可
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 30 天。指标是看趋势与报警用的，留一年只是让磁盘白涨
+      - --storage.tsdb.retention.time=30d
+    # 与 broker 用同一个变量：它们都往宿主机 bind mount 里写，属主必须是宿主用户。
+    # 镜像默认的 nobody(65534) 写不进宿主用户的目录
+    user: ${SANDBOX_USER:?请设成宿主机上数据目录的属主，形如 1000:1000}
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${PROMETHEUS_DATA_DIR:-../data/prometheus}:/prometheus
+    # 只绑回环。看指标走 Grafana，这个端口只在排查「抓到没有」时用
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.9.0
+    command:
+      - -config.file=/etc/tempo.yaml
+      # 配置文件里的 ${MINIO_ACCESS_KEY} 靠它展开。不开的话那两行会被当成字面量，
+      # 而症状是「连得上 MinIO 但一律 403」
+      - -config.expand-env=true
+    # MINIO_ACCESS_KEY / MINIO_SECRET_KEY 从这里来，与 Loki 用的是同一组
+    env_file:
+      - ../.env
+    user: ${SANDBOX_USER:?请设成宿主机上数据目录的属主，形如 1000:1000}
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml:ro
+      # 预写日志是本地盘：trace 的块在 MinIO 上，但还没落块的那一段在这里，
+      # 进程重启时靠它补回去
+      - ${TEMPO_DATA_DIR:-../data/tempo}:/var/tempo
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.6.0
+    command:
+      - -config.file=/etc/loki.yaml
+      # 同 Tempo：配置里的 ${MINIO_ACCESS_KEY} 靠它展开
+      - -config.expand-env=true
+    env_file:
+      - ../.env
+    user: ${SANDBOX_USER:?请设成宿主机上数据目录的属主，形如 1000:1000}
+    volumes:
+      - ./loki.yaml:/etc/loki.yaml:ro
+      # 索引与还没上传的块在本地盘，日志本体在 MinIO 上
+      - ${LOKI_DATA_DIR:-../data/loki}:/loki
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.140.0
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otel-collector.yaml:ro
+    depends_on:
+      - tempo
+      - loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    user: ${SANDBOX_USER:?请设成宿主机上数据目录的属主，形如 1000:1000}
+    # GF_SECURITY_ADMIN_PASSWORD 直接以这个名字放在 .env 里，**不经 compose 插值** ——
+    # 插值只认 shell 里 export 过的值，而 .env 在仓库根，两边不是同一份
+    env_file:
+      - ../.env
+    volumes:
+      # 数据源与看板都由配置文件供给，不在界面上手点：手点出来的东西不进仓库、
+      # 不可 diff，换台机器就得有人凭记忆重配一遍
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboard:/etc/grafana/dashboard:ro
+      - ${GRAFANA_DATA_DIR:-../data/grafana}:/var/lib/grafana
+    # 同上只绑回环。这是运维页，从内网访问走 SSH 端口转发，不经 nginx 对外
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  broker:
+    build:
+      context: ..
+      dockerfile: deploy/app.Dockerfile
+    command: uvicorn broker.app:app --host 0.0.0.0 --port 8100
+    env_file:
+      - ../.env
+    environment:
+      # **容器内外必须是同一个路径**：broker 起沙箱时把 workspace 路径交给宿主机的
+      # Docker 守护进程，那个路径是在**宿主机**上解析的。两边不一致的话，
+      # docker run -v 传过去的是 broker 容器内的路径，宿主机上根本不存在
+      SANDBOX_WORKSPACE_ROOT: ${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}
+      # 容器内是 root，xfs_quota 不必再套 sudo
+      SANDBOX_QUOTA_COMMAND: xfs_quota
+      # broker 容器内当前进程是 root，不显式指定的话沙箱会以 root 跑，
+      # agent 写出的文件宿主侧读不了，且症状不指向权限
+      SANDBOX_USER: ${SANDBOX_USER:?请设成宿主机上 workspace 的属主，形如 1000:1000}
+      # P3 起 broker 也要连 Redis（写操作去重表）。**漏了这一行就会连容器自己的
+      # 127.0.0.1**，而症状出现在第一次 delete/edit 上，不指向配置
+      REDIS_URL: redis://redis:6379/0
+      OTEL_ENDPOINT: http://otel-collector:4318
+    volumes:
+      # 唯一持有它的服务。给的是宿主机 root 权限，因此这个容器里不跑任何
+      # 来自 agent 的东西 —— 它只认「哪个会话、做什么操作」
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}:${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}
+    # 设 project quota 要 CAP_SYS_ADMIN
+    cap_add:
+      - SYS_ADMIN
+    # **光有 CAP_SYS_ADMIN 不够**：xfs_quota 要打开承载 workspace 的那个块设备，
+    # 而容器里默认没有它的设备节点 —— 缺了这一条，它的每条命令都只往 stderr 打
+    # 一句 `cannot setup path for mount … No such device` 然后**退出 0**，
+    # 于是配额一个都设不上而无人知晓（实测过，见 P4 计划 §8.13.2）。
+    # 设备用 `findmnt -no SOURCE --target <workspace 根>` 查，export 给 compose。
+    # 默认落在 /dev/null 上：没挂 XFS 的机器本来就不设配额，映射它是无害的空操作
+    devices:
+      - ${SANDBOX_QUOTA_DEVICE:-/dev/null}:${SANDBOX_QUOTA_DEVICE:-/dev/null}
+    # 不对外暴露端口：只有同一个内部网络里的 api 够得着
+    expose:
+      - "8100"
+    # 桶在启动时建一次。MinIO 还没就绪时 broker 会起不来，那正是想要的 ——
+    # 「能启动但一传就 500」会让之后每一次故障都多一个候选原因
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: unless-stopped

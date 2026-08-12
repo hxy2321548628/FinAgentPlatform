@@ -1,0 +1,44 @@
+# Tempo：trace 的存储与检索。
+#
+# **后端是 MinIO**（P4 计划 §7.2）。本期本来就要为产物起一个 MinIO，让它同时当
+# trace 的对象存储，就不必再为这一样切一块本地磁盘，保留期也统一由一处管。
+#
+# 凭据走环境变量，因此启动参数里带 `-config.expand-env=true`；那几个变量由
+# compose 的 env_file 从仓库根的 .env 喂进来，与 broker 用的是同一组。
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        # Collector 用 gRPC 转过来。**平台三个进程不直连这里** ——
+        # 它们只认 Collector，换掉 Tempo 时应用侧一行都不用改
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+ingester:
+  # 攒多久落一个块。默认 30 分钟，那意味着刚跑完的 run 要等半小时才查得到 ——
+  # 而排障恰恰发生在刚出事的那几分钟
+  max_block_duration: 2m
+
+compactor:
+  compaction:
+    # 30 天，与 Prometheus 的保留期对齐。两边不一致的话，
+    # 看板上有指标却点不进 trace 的那一段会让人以为是坏了
+    block_retention: 720h
+
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: trace
+      endpoint: minio:9000
+      access_key: ${MINIO_ACCESS_KEY}
+      secret_key: ${MINIO_SECRET_KEY}
+      # 内网无域名签不了受信证书，走明文（ADR-0012），与产物那条同一个理由
+      insecure: true
+    # 落块之前的预写日志。**这是本地盘**，进程重启时靠它把没落块的 trace 补回去
+    wal:
+      path: /var/tempo/wal

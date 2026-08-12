@@ -1,0 +1,125 @@
+# 告警规则。**四条，全部对应「教师会直接感受到的故障」** ——
+# 这是选择的唯一标准：一条没人会因此做任何事的告警，只会训练大家忽略这个群。
+#
+# 阈值都写得偏松。P3 刚给过教训（`ANALYSIS_TOKEN` 的初值从一个样本外推，实测差 61 倍），
+# 这里的数同样是初值，**攒够真实运行数据之后再收紧**，不要凭感觉调。
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: platform
+    folder: 平台告警
+    # 多久跑一次这一组规则
+    interval: 1m
+    rules:
+      # ---- 进程没了 ----
+      - uid: zuel-target-down
+        title: 有进程抓不到了
+        condition: fire
+        # 抓不到 2 分钟才报。滚动重启时会短暂抓不到，那不是故障
+        for: 2m
+        annotations:
+          summary: "{{ $labels.job }} 抓不到指标，进程可能已经挂了"
+        labels:
+          severity: critical
+        data:
+          - refId: up
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: up
+              expr: up
+              instant: true
+          - refId: fire
+            datasourceUid: __expr__
+            model:
+              refId: fire
+              type: threshold
+              expression: up
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+
+      # ---- 模型调不通 ----
+      - uid: zuel-llm-failure
+        title: 模型调用失败率偏高
+        condition: fire
+        for: 5m
+        annotations:
+          summary: "近 15 分钟模型调用失败率超过 20%，教师会看到分析失败"
+        labels:
+          severity: critical
+        data:
+          - refId: rate
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: rate
+              # 分子套 `or vector(0)`：一次失败都没发生过时那条序列不存在，
+              # 而 PromQL 里「空 / 数」等于空 —— 规则会变成永远不成立
+              expr: >-
+                (sum(rate(zuel_llm_call_second_count{outcome="error"}[15m])) or vector(0))
+                / sum(rate(zuel_llm_call_second_count[15m]))
+              instant: true
+          - refId: fire
+            datasourceUid: __expr__
+            model:
+              refId: fire
+              type: threshold
+              expression: rate
+              conditions:
+                - evaluator: { type: gt, params: [0.2] }
+
+      # ---- 任务积压 ----
+      - uid: zuel-queue-backlog
+        title: 队列积压不消
+        condition: fire
+        # 15 分钟。一次分析本来就要几分钟到几十分钟，短于这个数只会误报
+        for: 15m
+        annotations:
+          summary: "排队等待执行的 run 持续超过 10 个，worker 可能跟不上或已经卡住"
+        labels:
+          severity: warning
+        data:
+          - refId: queued
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: queued
+              expr: sum(zuel_run{status="queued"})
+              instant: true
+          - refId: fire
+            datasourceUid: __expr__
+            model:
+              refId: fire
+              type: threshold
+              expression: queued
+              conditions:
+                - evaluator: { type: gt, params: [10] }
+
+      # ---- 沙箱名额见底 ----
+      - uid: zuel-sandbox-full
+        title: 沙箱名额快用完了
+        condition: fire
+        for: 10m
+        annotations:
+          summary: "存活沙箱容器数持续在 18 个以上，新的分析会开始排队"
+        labels:
+          severity: warning
+        data:
+          - refId: container
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: container
+              expr: zuel_sandbox_container
+              instant: true
+          - refId: fire
+            datasourceUid: __expr__
+            model:
+              refId: fire
+              type: threshold
+              expression: container
+              conditions:
+                # SANDBOX_MAX_CONTAINER 默认 20，留两个名额的余量报警
+                - evaluator: { type: gt, params: [18] }

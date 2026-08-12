@@ -1,11 +1,12 @@
-import time
 from pathlib import Path
 
 import pytest
 
 from sandbox.backend import SandboxBackend
 from sandbox.container import CommandResult, ContainerError
-from sandbox.path import OUTPUT_DIR
+
+# 判据的最小刻度。写成常量是为了让「差一纳秒」这件事在测试里看得见
+NANOSECOND = 1
 
 WORKSPACE_FILE = "/workspace/data.csv"
 
@@ -226,50 +227,6 @@ def test_execute_failure_returns_error_output_instead_of_raising(workspace: Path
 
 def test_id_is_the_container_id(backend: SandboxBackend) -> None:
     assert backend.id == "fake-container-id"
-
-
-# -------------------------------------------------------------------- 产物判定
-def test_artifact_lists_files_written_under_outputs(backend: SandboxBackend, workspace: Path) -> None:
-    since = time.time()
-    output_dir = workspace / OUTPUT_DIR
-    output_dir.mkdir()
-    (output_dir / "chart.png").write_bytes(b"png")
-
-    assert backend.artifact_since(since) == [output_dir / "chart.png"]
-
-
-def test_artifact_ignores_files_outside_outputs(backend: SandboxBackend, workspace: Path) -> None:
-    """只认 outputs/，否则中间文件与输入 CSV 都会被当成产物。"""
-    since = time.time()
-    (workspace / "scratch.pkl").write_bytes(b"x")
-
-    assert backend.artifact_since(since) == []
-
-
-def test_artifact_ignores_files_untouched_by_this_run(backend: SandboxBackend, workspace: Path) -> None:
-    output_dir = workspace / OUTPUT_DIR
-    output_dir.mkdir()
-    old = output_dir / "previous.png"
-    old.write_bytes(b"png")
-
-    assert backend.artifact_since(time.time() + 1) == []
-
-
-def test_artifact_is_empty_when_outputs_never_created(backend: SandboxBackend) -> None:
-    assert backend.artifact_since(time.time()) == []
-
-
-def test_artifact_ignores_symlinks(backend: SandboxBackend, workspace: Path, tmp_path: Path) -> None:
-    """产物会被下载给教师，跟随符号链接等于把任意宿主文件当产物送出去。"""
-    secret = tmp_path / "secret.txt"
-    secret.write_text("凭据", encoding="utf-8")
-    output_dir = workspace / OUTPUT_DIR
-    output_dir.mkdir()
-
-    since = time.time()
-    (output_dir / "chart.png").symlink_to(secret)
-
-    assert backend.artifact_since(since) == []
 
 
 # ------------------------------------------------------------- 异步入口同源
