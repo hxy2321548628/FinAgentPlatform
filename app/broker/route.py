@@ -30,16 +30,10 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from artifact.model import CollectedArtifact
-from artifact.store import ArtifactStore, guess_mime
 from broker.runtime import Broker, BrokerDep
 from broker.schema import (
     AcquireErrorData,
     AcquireRequest,
-    ArtifactCollectResponse,
-    ArtifactMarkResponse,
-    CollectedArtifactItem,
-    CollectRequest,
     CreateThreadRequest,
     DeleteRequest,
     DownloadItem,
@@ -49,6 +43,7 @@ from broker.schema import (
     ExecuteRequest,
     ExistsResponse,
     FileResult,
+    FileStatResponse,
     GlobRequest,
     GrepRequest,
     LsRequest,
@@ -66,10 +61,9 @@ from broker.schema import (
     WriteRequest,
 )
 from event.model import RunErrorCode
-from sandbox.browse import DEFAULT_PREVIEW_LINE, MAX_ENTRY, preview, tree
-from sandbox.path import OUTPUT_DIR, PathEscapeError, artifact_id
+from sandbox.browse import DEFAULT_PREVIEW_LINE, MAX_ENTRY, guess_mime, preview, tree
+from sandbox.path import PathEscapeError
 from sandbox.pool import SandboxQueueTimeoutError
-from store.object import CONNECT_ERROR
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -173,6 +167,24 @@ async def workspace_preview(
     return PreviewResponse(**asdict(found))
 
 
+@router.get("/{thread_id}/workspace/stat")
+async def workspace_stat(
+    thread_id: str,
+    broker: BrokerDep,
+    path: Annotated[str, Query(min_length=1, description="相对会话根的路径")],
+) -> FileStatResponse:
+    """给出一个文件的元信息，不给字节。
+
+    **为「让 nginx 直接发这个文件」而存在**：api 拿这里回的路径拼一条内部跳转，
+    自己不碰字节。越界判定仍然只在这一侧做 —— 回的是规范化之后的路径，
+    下游不必、也不该再解析一遍那个不可信的原串。
+    """
+    root = broker.workspace.path(thread_id).resolve()
+    target = _file_at(broker, thread_id, path)
+    relative = target.relative_to(root).as_posix()
+    return FileStatResponse(path=relative, size=target.stat().st_size, mime=guess_mime(relative))
+
+
 @router.get("/{thread_id}/workspace/file")
 async def workspace_file(
     thread_id: str,
@@ -228,78 +240,6 @@ def _file_at(broker: Broker, thread_id: str, path: str) -> Path:
     if not target.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"文件不存在：{path}")
     return target
-
-
-@router.post("/{thread_id}/artifacts/mark")
-async def mark_artifacts(thread_id: str, broker: BrokerDep) -> ArtifactMarkResponse:
-    """取一次 run 的产物判定基准。
-
-    **基准必须由这一侧给**：判据读的是宿主机上的 inode 时间戳，而调用方进程的墙钟
-    与它不同源，最多差一个 tick —— 自己取一个 `time.time_ns()` 会偶发把刚写下的产物
-    判成「运行之前就有的」而静默漏掉。
-    """
-    return ArtifactMarkResponse(since_ns=broker.backend(thread_id).artifact_mark())
-
-
-@router.post("/{thread_id}/artifacts/collect")
-async def collect_artifacts(thread_id: str, request: CollectRequest, broker: BrokerDep) -> ArtifactCollectResponse:
-    """认领本次 run 的产物，**顺手传进对象存储**。
-
-    上传放在这里而不是调用方那一侧：字节躺在这个进程独占的 workspace 里，
-    让 api 或 worker 来传就得先把字节经 HTTP 搬过去，凭空多一跳，
-    还得给它们开一条本来不需要的文件通路。
-
-    上传是同步的（minio 客户端没有异步接口），丢进线程池免得占住事件循环。
-    """
-    workspace = broker.workspace.path(thread_id)
-    found = broker.backend(thread_id).artifact_since(request.since_ns)
-    collected = await asyncio.to_thread(
-        _upload_all, broker.artifact, thread_id=thread_id, user_id=request.user_id, workspace=workspace, found=found
-    )
-    return ArtifactCollectResponse(artifacts=[CollectedArtifactItem(**asdict(one)) for one in collected])
-
-
-def _upload_all(
-    store: ArtifactStore | None, *, thread_id: str, user_id: str, workspace: Path, found: list[Path]
-) -> list[CollectedArtifact]:
-    """把认领到的产物逐个传上去。"""
-    return [_upload_one(store, thread_id=thread_id, user_id=user_id, path=path, workspace=workspace) for path in found]
-
-
-def _upload_one(
-    store: ArtifactStore | None, *, thread_id: str, user_id: str, path: Path, workspace: Path
-) -> CollectedArtifact:
-    """传一个产物。传不上去只记一条 error，不让整次 run 失败。
-
-    **不把上传失败升级成 run 失败**：分析已经跑完了，字节也还在 workspace 里，
-    仍按旧形状下得动。为了一次存储抖动扔掉几十分钟的分析与已经烧掉的 token 不划算。
-    记 error 而不是 warning，是因为它该被告警收走 —— 产物没进对象存储是要人管的。
-    """
-    relative = path.relative_to(workspace / OUTPUT_DIR).as_posix()
-    if store is None:
-        logger.error("没有配对象存储，产物只留在 workspace 里：%s", relative)
-        return CollectedArtifact(
-            path=artifact_id(thread_id, workspace, path), mime=guess_mime(relative), size=path.stat().st_size
-        )
-    try:
-        return store.put(path, user_id=user_id, thread_id=thread_id, relative_path=relative)
-    except CONNECT_ERROR:
-        logger.error("产物传不进对象存储，只留在 workspace 里：%s", relative, exc_info=True)
-        return CollectedArtifact(
-            path=artifact_id(thread_id, workspace, path), mime=guess_mime(relative), size=path.stat().st_size
-        )
-
-
-@router.get("/{thread_id}/artifacts/{relative_path:path}")
-async def download_artifact(thread_id: str, relative_path: str, broker: BrokerDep) -> FileResponse:
-    """取回一个产物的字节。"""
-    try:
-        target = broker.workspace.artifact(thread_id, relative_path)
-    except PathEscapeError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    if not target.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"产物不存在：{relative_path}")
-    return FileResponse(target)
 
 
 # ------------------------------------------------------------------ 沙箱生命周期

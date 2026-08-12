@@ -28,7 +28,6 @@ PLATFORM_TABLE = (
     "threads",
     "runs",
     "run_events",
-    "artifacts",
     "groups",
     "user_groups",
     "group_join_requests",

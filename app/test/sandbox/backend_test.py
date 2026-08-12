@@ -1,12 +1,9 @@
-import os
-import time
 from pathlib import Path
 
 import pytest
 
 from sandbox.backend import SandboxBackend
 from sandbox.container import CommandResult, ContainerError
-from sandbox.path import OUTPUT_DIR
 
 # 判据的最小刻度。写成常量是为了让「差一纳秒」这件事在测试里看得见
 NANOSECOND = 1
@@ -230,130 +227,6 @@ def test_execute_failure_returns_error_output_instead_of_raising(workspace: Path
 
 def test_id_is_the_container_id(backend: SandboxBackend) -> None:
     assert backend.id == "fake-container-id"
-
-
-# ---------------------------------------------------------------- 产物判定的基准
-def test_the_mark_comes_from_the_filesystem_clock(backend: SandboxBackend, workspace: Path) -> None:
-    """基准必须与判据同源，取的是会话目录自己的 mtime。
-
-    判据读的是 inode 时间戳，而内核给 inode 打的是**粗粒度时钟** —— NOHZ 下进程一空闲
-    它就停在上一次 tick 上，落后 `time.time_ns()` 读到的细粒度时钟最多一个 tick。
-    基准取墙钟的话，刚写下的产物会被判成「运行之前就有的」而静默漏掉。
-    """
-    mark = backend.artifact_mark()
-
-    assert mark == workspace.stat().st_mtime_ns
-
-
-def test_the_mark_does_not_create_the_output_directory(backend: SandboxBackend, workspace: Path) -> None:
-    """**取基准这一步不能建目录。**
-
-    它跑在 broker 进程里，而那个进程在容器里是 root —— 建出来的 `outputs/` 属主是
-    root，以宿主用户跑的沙箱一个字节都写不进去。而症状完全不指向权限：`execute`
-    全部成功，agent 只是「选择」把图存到别的目录，最后产物一个都没有。
-    `outputs/` 该由沙箱自己建。
-
-    这不是假想：P4 步骤零的第一版就是这么写的，P0 验收在 §8.11 那一轮红在
-    「run.finished 里没有产物」上。
-    """
-    backend.artifact_mark()
-
-    assert not (workspace / OUTPUT_DIR).exists()
-
-
-def test_a_file_written_after_the_mark_is_claimed(backend: SandboxBackend, workspace: Path) -> None:
-    mark = backend.artifact_mark()
-    # 目录由沙箱自己建，取基准那一步不碰它 —— 这里就是在替沙箱做那件事
-    chart = workspace / OUTPUT_DIR / "chart.png"
-    chart.parent.mkdir()
-    chart.write_bytes(b"png")
-
-    assert backend.artifact_since(mark) == [chart]
-
-
-def test_a_file_written_before_the_mark_is_not_claimed(backend: SandboxBackend, workspace: Path) -> None:
-    """上一次 run 的产物不该被这一次认领。"""
-    output_dir = workspace / OUTPUT_DIR
-    output_dir.mkdir()
-    old = output_dir / "previous.png"
-    old.write_bytes(b"png")
-    os.utime(old, ns=(0, 0))
-
-    assert backend.artifact_since(backend.artifact_mark()) == []
-
-
-# -------------------------------------------------------------------- 产物判定
-def test_artifact_lists_files_written_under_outputs(backend: SandboxBackend, workspace: Path) -> None:
-    since = time.time_ns()
-    output_dir = workspace / OUTPUT_DIR
-    output_dir.mkdir()
-    (output_dir / "chart.png").write_bytes(b"png")
-
-    assert backend.artifact_since(since) == [output_dir / "chart.png"]
-
-
-def test_artifact_ignores_files_outside_outputs(backend: SandboxBackend, workspace: Path) -> None:
-    """只认 outputs/，否则中间文件与输入 CSV 都会被当成产物。"""
-    since = time.time_ns()
-    (workspace / "scratch.pkl").write_bytes(b"x")
-
-    assert backend.artifact_since(since) == []
-
-
-def test_artifact_ignores_files_untouched_by_this_run(backend: SandboxBackend, workspace: Path) -> None:
-    output_dir = workspace / OUTPUT_DIR
-    output_dir.mkdir()
-    old = output_dir / "previous.png"
-    old.write_bytes(b"png")
-
-    assert backend.artifact_since(time.time_ns() + NANOSECOND) == []
-
-
-def test_artifact_keeps_a_file_written_at_the_very_instant_the_run_started(
-    backend: SandboxBackend, workspace: Path
-) -> None:
-    """边界取闭区间：正好落在起点上的产物算这次 run 的。
-
-    这条曾经是漂的 —— 判据用的是 float 的 `st_mtime`，而 float 在当前 epoch
-    只有 238ns 分辨率，舍入能把产物的时间戳压到 `since` 之下，产物就被静默漏掉。
-    """
-    output_dir = workspace / OUTPUT_DIR
-    output_dir.mkdir()
-    chart = output_dir / "chart.png"
-    chart.write_bytes(b"png")
-    since = chart.stat().st_mtime_ns
-    os.utime(chart, ns=(since, since))
-
-    assert backend.artifact_since(since) == [chart]
-
-
-def test_artifact_drops_a_file_one_nanosecond_too_old(backend: SandboxBackend, workspace: Path) -> None:
-    """判据的精度就是纳秒，不是「大约」。"""
-    output_dir = workspace / OUTPUT_DIR
-    output_dir.mkdir()
-    chart = output_dir / "chart.png"
-    chart.write_bytes(b"png")
-    stamp = chart.stat().st_mtime_ns
-    os.utime(chart, ns=(stamp, stamp))
-
-    assert backend.artifact_since(stamp + NANOSECOND) == []
-
-
-def test_artifact_is_empty_when_outputs_never_created(backend: SandboxBackend) -> None:
-    assert backend.artifact_since(time.time_ns()) == []
-
-
-def test_artifact_ignores_symlinks(backend: SandboxBackend, workspace: Path, tmp_path: Path) -> None:
-    """产物会被下载给教师，跟随符号链接等于把任意宿主文件当产物送出去。"""
-    secret = tmp_path / "secret.txt"
-    secret.write_text("凭据", encoding="utf-8")
-    output_dir = workspace / OUTPUT_DIR
-    output_dir.mkdir()
-
-    since = time.time_ns()
-    (output_dir / "chart.png").symlink_to(secret)
-
-    assert backend.artifact_since(since) == []
 
 
 # ------------------------------------------------------------- 异步入口同源

@@ -18,8 +18,6 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agent.factory import create_model
-from artifact.repository import ArtifactRepository
-from artifact.store import ArtifactStore
 from auth.password import PasswordHasher
 from auth.session import SessionStore
 from config import Settings
@@ -68,13 +66,10 @@ class Platform:
     # 会话标题的生成。**放在网关而不是 worker**：教师要的是提交完就看见侧边栏有了名字，
     # 而 worker 可能几分钟后才领到这条任务
     title: TitleWriter
-    artifacts: ArtifactRepository
-    # 产物的对象存储。**只用来签 URL 与（没有 nginx 时）取字节**，从不写入 ——
-    # 写在 broker 那一侧，那是唯一碰得到 workspace 的进程
-    artifact: ArtifactStore | None
-    # 走不走 nginx 直发。开着时这个进程一个字节都不经手；关掉时自己从对象存储取回来
-    # 再转发，那是开发机直接跑 uvicorn 的路 —— X-Accel-Redirect 只在 nginx 后面有效
-    artifact_direct_send: bool
+    # 工作目录里的文件下载走不走 nginx 直发。开着时这个进程一个字节都不经手，
+    # 字节由 nginx 从挂进来的 workspace 直接发；关掉时自己一段段转发，
+    # 那是开发机直接跑 uvicorn 的路 —— X-Accel-Redirect 只在 nginx 后面有效
+    file_direct_send: bool
     session: SessionStore
     # 一次上传的字节上限。**与 nginx 的 client_max_body_size 是同一道闸的两侧**：
     # compose 部署时外面那道先拦，直接跑 uvicorn 时只剩这一道
@@ -138,9 +133,7 @@ async def build_platform(settings: Settings) -> Platform:
         thread=thread,
         # 走辅助模型：概括一句话不需要主模型那份多步推理能力，而主模型贵一个数量级
         title=TitleWriter(model=create_model(settings, model_name=settings.model_aux), repository=thread),
-        artifacts=ArtifactRepository(engine),
-        artifact=ArtifactStore(client=settings.minio_client(), bucket=settings.minio_bucket),
-        artifact_direct_send=settings.artifact_direct_send,
+        file_direct_send=settings.file_direct_send,
         policy=policy,
         cancel=CancelFlag(cache),
         usage=RunUsage(engine, output_weight=policy.output_weight),

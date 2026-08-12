@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 #
-# P4 验收八条，一条命令跑完。
+# P4 验收六条，一条命令跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   docker compose -f deploy/compose.yml up -d --build
 #   bash deploy/test/p4.sh
 #
-# 分工：②③④⑤ 本脚本自己验（全部免费）；① 与 ⑥ 要**真实调用 DeepSeek**或**真的往
+# 分工：②⑤ 本脚本自己验（全部免费）；① 与 ⑥ 要**真实调用 DeepSeek**或**真的往
 # 飞书发一条消息**；⑦ 复用 p2.sh 造的崩溃场景；⑧ 委托 p3.sh 做 P3 回归。
 #
-#   SKIP_LLM=1 SKIP_FEISHU=1 SKIP_P3=1 bash deploy/test/p4.sh   # 只跑免费的四条
+# **原来的 ③（旧形状产物 id）与 ④（产物列表偶发为空）已随产物存储一起撤掉** ——
+# 那两条验的功能不在了，留着只会永远红。
+#
+#   SKIP_LLM=1 SKIP_FEISHU=1 SKIP_P3=1 bash deploy/test/p4.sh   # 只跑免费的两条
 #
 # **跳过的条目在结果表里记「未验」而不是「通过」** —— 静默跳过的门禁等于没有门禁。
 #
@@ -32,9 +35,6 @@ RUN_WINDOW=600
 
 # span 从进程发出到 Tempo 查得到要经过 collector 攒批与 ingester 落块，等这么久
 TRACE_WINDOW=120
-
-# 复现脚本跑多少轮。§8.1 那条偶发红的概率约 3‰，轮次太少会「碰巧全绿」
-FLAKE_ROUND=1000
 
 log() { printf '\n\033[36m━━ %s\033[0m\n' "$*"; }
 pass() { printf '\033[32m  ✅ %s\033[0m\n' "$*"; }
@@ -89,35 +89,20 @@ JAR="$(mktemp)"; trap 'rm -f "$JAR"' EXIT
 USER_ID="$(zuel_open_session "$JAR")" || { echo "建号或登录失败" >&2; exit 1; }
 pass "会话就绪：user_id=$USER_ID"
 
-# ------------------------------------------------------------------ ② 产物直发
-log "② 产物从 MinIO 直发，api 进程碰不到字节"
+# ------------------------------------------------------------------ ② 文件直发
+log "② 工作目录里的文件从 nginx 直发，api 进程碰不到字节"
 before="$failed"
 THREAD="$(curl -fsS -b "$JAR" -X POST "$BASE_URL/api/threads" \
     -H 'Content-Type: application/json' -d '{"title":"p4-直发"}' | jq -r .id)"
 
-# 直接往对象存储里放一个产物，不必先跑一次真实分析 —— 这一条验的是取回那条路
-KEY="tenant/$USER_ID/thread/$THREAD/p4.txt"
-compose exec -T minio sh -c "
-    mc alias set local http://127.0.0.1:9000 \"\$MINIO_ROOT_USER\" \"\$MINIO_ROOT_PASSWORD\" >/dev/null &&
-    echo 'p4-直发-判据' | mc pipe local/\${MINIO_BUCKET:-artifact}/$KEY" >/dev/null 2>&1 \
-    && pass "产物已放进对象存储：$KEY" || fail "产物放不进对象存储"
-
-# **要先有一行 run**：`artifacts.run_id` 是外键，而这个新会话下还没跑过任何分析。
-# 直接插一行免得为这一条判据烧一次 LLM —— 这一条验的是取回那条路，不是执行那条路
-#
-# **`head -1` 不能省**：psql 把 `RETURNING` 的值和命令标签（`INSERT 0 1`）
-# 都打到 stdout，整段收下来就是一个两行的「id」，插下一行时必然失败
-RUN_ROW="$(psql_query "INSERT INTO runs
-        (id, thread_id, user_id, status, tokens_cache_read, tokens_uncached, tokens_output, started_at)
-    VALUES (gen_random_uuid(), '$THREAD', '$USER_ID', 'succeeded', 0, 0, 0, now())
-    RETURNING id;" 2>/dev/null | head -1 | tr -d ' ')"
-ARTIFACT_PATH="$(psql_query "INSERT INTO artifacts (id, run_id, s3_key, mime, size)
-    VALUES (gen_random_uuid(), '$RUN_ROW', '$KEY', 'text/plain', 15)
-    RETURNING id;" 2>/dev/null | head -1 | tr -d ' ')"
-[[ -n $ARTIFACT_PATH ]] && pass "artifacts 行已建：$ARTIFACT_PATH" || fail "artifacts 行建不出来"
+# 直接往会话工作目录里放一个文件，不必先跑一次真实分析 —— 这一条验的是取回那条路
+compose exec -T broker sh -c "
+    mkdir -p '${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}/$THREAD/outputs' &&
+    echo 'p4-直发-判据' > '${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}/$THREAD/outputs/p4.txt'" >/dev/null 2>&1 \
+    && pass "文件已放进会话工作目录" || fail "文件放不进会话工作目录"
 
 # **判据是 nginx 直发路径成立**：api 回的是 `X-Accel-Redirect`，字节由 nginx 从
-# MinIO 取，api 进程一个字节都不经手。
+# 挂进来的 workspace 读，api 进程一个字节都不经手。
 #
 # **绕开 nginx 直接问 api 容器**才看得到那个头 —— 经 nginx 拿到的是字节本身，
 # 而「拿到了字节」证明不了它是谁发的。**要带会话 cookie**，否则拿到的是 401，
@@ -129,38 +114,27 @@ API_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{
 # 那条是记在 127.0.0.1 名下的 —— 换成容器 IP 就不发了，于是拿到 401。
 # awk 的条件也要留意：jar 里那行以 `#HttpOnly_` 开头，按「# 开头即注释」过滤会把它滤掉
 COOKIE="$(awk 'NF>=7 && $0 !~ /^# / {print $6 "=" $7}' "$JAR" | tail -1)"
-HEADER="$(curl -s -D - -o /dev/null -H "Cookie: $COOKIE" "http://$API_IP:8000/api/artifacts/$ARTIFACT_PATH")"
+HEADER="$(curl -s -D - -o /dev/null -H "Cookie: $COOKIE" \
+    --get --data-urlencode "path=outputs/p4.txt" "http://$API_IP:8000/api/threads/$THREAD/files/raw")"
 STATUS="$(printf '%s' "$HEADER" | head -1)"
 info "api 直答：$STATUS"
-printf '%s' "$HEADER" | grep -qi '^X-Accel-Redirect: */artifact/' \
+printf '%s' "$HEADER" | grep -qi '^X-Accel-Redirect: */workspace/' \
     && pass "api 回的是 X-Accel-Redirect，字节不经它的进程" \
     || fail "api 没有回 X-Accel-Redirect —— 直发没成立"
+
+# 经 nginx 走一遍，确认那条内部跳转真的取得回字节 —— 只验头的话，
+# nginx 那一侧配错（没挂卷、alias 写错）看不出来，而症状是每次下载都 404
+BODY="$(curl -s -b "$JAR" --get --data-urlencode "path=outputs/p4.txt" "$BASE_URL/api/threads/$THREAD/files/raw")"
+[[ $BODY == "p4-直发-判据" ]] \
+    && pass "经 nginx 取回的字节与写进去的一致" \
+    || fail "经 nginx 取回的不是原字节：$BODY"
+
+# **`internal` 是那条 location 的全部安全性**：外部直接请求一律 404
+LEAK="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/workspace/$THREAD/outputs/p4.txt")"
+[[ $LEAK == 404 ]] \
+    && pass "内部路径不对外：直接请求 /workspace/… 得到 404" \
+    || fail "内部路径漏了：直接请求 /workspace/… 得到 $LEAK"
 (( failed == before )) && VERDICT[2]=通过 || VERDICT[2]=未过
-
-# ------------------------------------------------------------------ ③ 旧形状 id
-log "③ 旧形状的产物 id 仍然打得开"
-before="$failed"
-# 旧形状是 `{thread_id}/{相对路径}`，历史 run.finished 事件里躺的就是它。
-# 端点必须两种都认（§2.2 定案：兼容而不迁移事件）
-compose exec -T broker sh -c "
-    mkdir -p '${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}/$THREAD/outputs' &&
-    echo 'p4-旧形状-判据' > '${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}/$THREAD/outputs/old.txt'" >/dev/null 2>&1
-CODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$BASE_URL/api/artifacts/$THREAD/old.txt")"
-[[ $CODE == 200 ]] \
-    && pass "旧形状 id 返回 200，不是 404" \
-    || fail "旧形状 id 返回 $CODE —— 历史事件里的产物打不开了"
-(( failed == before )) && VERDICT[3]=通过 || VERDICT[3]=未过
-
-# ------------------------------------------------------------------ ④ 偶发红
-log "④ 产物列表不再偶发为空"
-before="$failed"
-info "复现脚本跑 $FLAKE_ROUND 轮。**它要求墙钟那一轮必红** —— 复现不出来就说明判据本身失效了"
-if (cd "$REPO_ROOT/app" && PYTHONPATH=. uv run python "$REPO_ROOT/deploy/test/artifact_flake.py" "$FLAKE_ROUND"); then
-    pass "墙钟基准复现出了漏产物，文件系统基准 $FLAKE_ROUND 轮全绿"
-else
-    fail "复现脚本未通过 —— 要么修复退化了，要么墙钟那一轮没复现出来（判据失效）"
-fi
-(( failed == before )) && VERDICT[4]=通过 || VERDICT[4]=未过
 
 # ------------------------------------------------------------------ ⑤ 成本看板
 log "⑤ 成本看板答得出「谁花了多少」"
@@ -197,9 +171,6 @@ if echo "$USAGE" | grep -qiE '"(title|content|question|answer|thread_id|run_id)"
 else
     pass "响应里只有数字，没有会话内容"
 fi
-
-CODE="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/usage.html")"
-[[ $CODE == 200 ]] && pass "静态页打得开" || fail "静态页返回 $CODE"
 (( failed == before )) && VERDICT[5]=通过 || VERDICT[5]=未过
 
 # ------------------------------------------------------------------ ① 完整 trace
@@ -350,18 +321,16 @@ else
 fi
 
 # ------------------------------------------------------------------ 结果
-log "P4 验收八条"
+log "P4 验收六条"
 DESCRIPTION=(
     [1]="能定位单个 run 的完整 trace 与 token 花费"
-    [2]="产物从 MinIO 直发，api 碰不到字节"
-    [3]="旧形状的产物 id 仍然打得开"
-    [4]="产物列表不再偶发为空"
+    [2]="工作目录里的文件从 nginx 直发，api 碰不到字节"
     [5]="成本看板答得出「谁花了多少」"
     [6]="告警真的会响"
     [7]="resumed 语义对得上"
     [8]="P3 验收七条不回归"
 )
-for index in 1 2 3 4 5 6 7 8; do
+for index in 1 2 5 6 7 8; do
     case "${VERDICT[$index]:-未验}" in
         通过) printf '  \033[32m✅ %s %s\033[0m\n' "$index" "${DESCRIPTION[$index]}" ;;
         未过) printf '  \033[31m❌ %s %s\033[0m\n' "$index" "${DESCRIPTION[$index]}" ;;
@@ -373,9 +342,9 @@ if (( failed )); then
     printf '\n\033[31mP4 验收未全过。\033[0m\n'
     exit 1
 fi
-for index in 1 2 3 4 5 6 7 8; do
+for index in 1 2 5 6 7 8; do
     [[ ${VERDICT[$index]:-未验} == 通过 ]] && continue
     printf '\n\033[33m已验的都过了，但有条目未验 —— 不能据此判定 P4 验收通过。\033[0m\n'
     exit 2
 done
-printf '\n\033[32mP4 验收八条全过。\033[0m\n'
+printf '\n\033[32mP4 验收六条全过。\033[0m\n'

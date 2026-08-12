@@ -16,7 +16,6 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agent.factory import Agent, create_model
-from artifact.repository import ArtifactRepository
 from config import Settings
 from metric.llm import LlmMetric
 from run.archive import EventArchive
@@ -24,7 +23,7 @@ from run.cancel import CancelFlag
 from run.executor import RunExecutor
 from run.log import EventLog
 from run.repository import RunRepository
-from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
+from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool
 from store import postgres, redis
 from store.checkpoint import CheckpointPool, open_checkpoint
 from task.queue import TaskQueue
@@ -98,7 +97,6 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
     llm = LlmMetric()
     executor = RunExecutor(
         pool=RemoteSandboxPool(connection),
-        workspace=RemoteWorkspace(connection),
         log=EventLog(cache, archive=EventArchive(engine)),
         agent=Agent(
             model=create_model(settings, callback=[llm.callback(), trace_callback()]),
@@ -106,7 +104,6 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
         ),
         repository=RunRepository(engine),
         cancel=CancelFlag(cache),
-        artifacts=ArtifactRepository(engine),
         backend_factory=backend_factory,
     )
     queue = TaskQueue(

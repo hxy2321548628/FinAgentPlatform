@@ -11,7 +11,6 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
-from artifact.store import ArtifactStore
 from broker.cache import ToolCache
 from config import Settings
 from metric.sandbox import MemoryReader
@@ -21,7 +20,6 @@ from sandbox.pool import SandboxPool
 from sandbox.quota import NoQuota, QuotaProtocol, XfsQuota
 from sandbox.workspace import Workspace
 from store import redis
-from store.object import ensure_bucket
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +63,6 @@ class Broker:
     cache: ToolCache | None = None
     # 产物的对象存储。同上可以没有，那时产物只留在 workspace 里、按旧形状下载。
     # **生产不会是 None**：`build_broker` 一定装上它，且建桶失败就是启动失败
-    artifact: ArtifactStore | None = None
     # 沙箱合计内存的读法。默认就是去问 docker；做成字段是为了让抓取端点的用例
     # 不必依赖「这台机器上恰好有 docker、且恰好没跑别的沙箱」
     memory: MemoryReader = field(default=sandbox_memory)
@@ -117,22 +114,7 @@ def build_broker(settings: Settings) -> Broker:
         workspace=workspace,
         pool=pool,
         cache=ToolCache(redis.create_client(settings.redis_url)),
-        artifact=_build_artifact_store(settings),
     )
-
-
-def _build_artifact_store(settings: Settings) -> ArtifactStore:
-    """装上产物的对象存储，顺手把桶建出来。
-
-    **建桶失败就是启动失败**：与 Postgres 那条体检同一个理由 —— 一个「能启动但一传就
-    500」的进程，会让之后每一次故障都多一个候选原因。
-
-    Raises:
-        ObjectStoreUnavailableError: 连不上 MinIO，或桶建不出来。
-    """
-    client = settings.minio_client()
-    ensure_bucket(client, settings.minio_bucket)
-    return ArtifactStore(client=client, bucket=settings.minio_bucket)
 
 
 def _build_quota(settings: Settings) -> QuotaProtocol:

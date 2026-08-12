@@ -43,10 +43,8 @@ from deepagents.backends.protocol import (
 )
 from langgraph.config import get_config
 
-from artifact.model import CollectedArtifact
-from artifact.store import DEFAULT_MIME
 from event.model import RunErrorCode
-from sandbox.browse import Entry, Preview, Tree
+from sandbox.browse import DEFAULT_MIME, Entry, Preview, Tree
 from sandbox.path import PathEscapeError
 from sandbox.pool import SandboxQueueTimeoutError
 
@@ -93,6 +91,19 @@ class FileMissingError(FileNotFoundError):
     **越界也是这一个**：路径越出会话目录与文件不存在，对调用方是同一个回答 ——
     分开说等于把这几个端点变成探测宿主机文件的工具。
     """
+
+
+@dataclass(frozen=True)
+class FileStat:
+    """工作目录里一个文件的元信息。
+
+    `path` 已由 broker 规范化并确认落在会话目录内 —— 它是可以直接交给 nginx 的那一个，
+    请求里那个原串不是。
+    """
+
+    path: str
+    size: int
+    mime: str
 
 
 @dataclass(frozen=True)
@@ -463,6 +474,36 @@ class RemoteWorkspace:
             truncated=bool(result.get("truncated")),
         )
 
+    async def stat(self, thread_id: str, relative_path: str) -> FileStat:
+        """量一下工作目录里的一个文件，不取字节。
+
+        **给「让 nginx 直接发这个文件」用**：回的路径已经规范化且确认在会话目录内，
+        调用方可以直接拿去拼内部跳转。
+
+        Args:
+            thread_id: 会话标识。
+            relative_path: 相对会话根的路径。
+
+        Returns:
+            规范化后的路径、字节数与内容类型。
+
+        Raises:
+            FileMissingError: 文件不存在，或路径越界。
+            IsADirectoryError: 路径指向的是目录。
+            BrokerError: broker 不可达。
+        """
+        result = await self._file_call(
+            "GET",
+            f"/threads/{thread_id}/workspace/stat",
+            relative_path,
+            params={"path": relative_path},
+        )
+        return FileStat(
+            path=str(result.get("path", "")),
+            size=_number(result.get("size")) or 0,
+            mime=str(result.get("mime", DEFAULT_MIME)),
+        )
+
     async def remove(self, thread_id: str, relative_path: str) -> None:
         """删掉工作目录里的一个文件。
 
@@ -538,76 +579,6 @@ class RemoteWorkspace:
             raise BrokerError(message)
         parsed: dict[str, object] = response.json() if response.content else {}
         return parsed
-
-    async def mark(self, thread_id: str) -> int:
-        """取一次 run 的产物判定基准。
-
-        **基准向 broker 要而不是读本进程的墙钟**：判据读的是宿主机上的 inode 时间戳，
-        那是内核的粗粒度时钟，与这个进程读到的细粒度时钟最多差一个 tick ——
-        取墙钟会偶发把刚写下的产物判成「运行之前就有的」，静默漏掉且不报错。
-
-        Args:
-            thread_id: 会话标识。
-
-        Returns:
-            Unix 时间戳，纳秒。交给 `artifact_since` 用。
-
-        Raises:
-            BrokerError: broker 不可达，或给回的基准不是整数。
-        """
-        result = await self._connection.call("POST", f"/threads/{thread_id}/artifacts/mark")
-        found = result.get("since_ns")
-        # 拿不到基准就得炸。兜个默认值的话，0 会把历史产物全认领、`now` 会把本轮的
-        # 全漏掉 —— 两个方向都是错的，而且都不报错
-        if not isinstance(found, int):
-            message = f"broker 给回的产物基准不是整数：{found!r}"
-            raise BrokerError(message)
-        return found
-
-    async def collect(self, thread_id: str, *, since_ns: int, user_id: str) -> list[CollectedArtifact]:
-        """认领一次 run 的产物，broker 会顺手把它们传进对象存储。
-
-        **`user_id` 是对象存储的租户前缀**，broker 不连库、查不到归属，只能由这一侧带过去。
-
-        Args:
-            thread_id: 会话标识。
-            since_ns: 产物判定的基准，取自 `mark`。
-            user_id: 产出它们的人。
-
-        Returns:
-            认领到的产物。`s3_key` 为空表示没能传进对象存储，字节仍在 workspace 里。
-
-        Raises:
-            BrokerError: broker 不可达。
-        """
-        result = await self._connection.call(
-            "POST",
-            f"/threads/{thread_id}/artifacts/collect",
-            json={"since_ns": since_ns, "user_id": user_id},
-        )
-        found = result.get("artifacts", [])
-        if not isinstance(found, list):
-            return []
-        return [_to_collected(one) for one in found if isinstance(one, dict)]
-
-    async def artifact(self, artifact: str) -> bytes:
-        """取回一个产物的字节。
-
-        Args:
-            artifact: 产物标识，形如 `{thread_id}/{outputs 下的相对路径}`。
-
-        Returns:
-            产物内容。
-
-        Raises:
-            BrokerError: 产物不存在，或 broker 不可达。
-        """
-        thread_id, _, relative = artifact.partition("/")
-        response = await self._connection.raw.get(f"/threads/{thread_id}/artifacts/{relative}")
-        if response.status_code != httpx.codes.OK:
-            message = f"产物取不到：{artifact}"
-            raise BrokerError(message)
-        return response.content
 
 
 class RemoteSandboxPool:
@@ -732,16 +703,6 @@ def _decode(content: object) -> bytes | None:
 def _files_of(result: dict[str, object]) -> list[dict[str, str]]:
     found = result.get("files", [])
     return found if isinstance(found, list) else []
-
-
-def _to_collected(item: dict[str, object]) -> CollectedArtifact:
-    """把 broker 回的一条产物元数据解回本地形状。形状由那一侧的同一份契约保证。"""
-    return CollectedArtifact(
-        path=str(item.get("path", "")),
-        mime=str(item.get("mime", "")),
-        size=_number(item.get("size")) or 0,
-        s3_key=_text(item.get("s3_key")),
-    )
 
 
 def _to_entry(item: object) -> Entry:

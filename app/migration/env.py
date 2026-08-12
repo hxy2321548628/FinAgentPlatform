@@ -25,7 +25,6 @@ from sqlmodel import SQLModel
 from config import StoreSettings
 
 # 导入是为了让表定义注册进 SQLModel.metadata，autogenerate 才看得见它们
-import artifact.model  # noqa: F401  isort:skip
 import group.model  # noqa: F401  isort:skip
 import run.repository  # noqa: F401  isort:skip
 import thread.model  # noqa: F401  isort:skip

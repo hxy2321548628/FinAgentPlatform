@@ -13,17 +13,14 @@ import json
 import logging
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
-from functools import lru_cache
 from io import StringIO
 from pathlib import Path
 from uuid import uuid4
 
 import psycopg
 import pytest
-import urllib3
 from alembic import command
 from alembic.config import Config
-from minio import Minio
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -34,8 +31,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from config import StoreSettings
 from log import JsonFormatter
-from store.object import CONNECT_ERROR
-from store.object import create_client as create_object_client
 from store.postgres import DRIVER, NATIVE_DRIVER, PostgresUnavailableError, build_dsn, create_engine
 from store.postgres import check as check_postgres
 from store.redis import RedisUnavailableError, create_client
@@ -61,7 +56,6 @@ TEST_POSTGRES_DATABASE = "zuel_test"
 
 SKIP_POSTGRES = "没有可用的 Postgres：docker compose -f deploy/compose.yml up -d postgres"
 SKIP_REDIS = "没有可用的 Redis：docker compose -f deploy/compose.yml up -d redis"
-SKIP_MINIO = "没有可用的 MinIO：docker compose -f deploy/compose.yml up -d minio"
 
 # 建账号的夹具只需要一个形状对的串。真的哈希在 auth 那边的用例里算
 FAKE_HASH = "$argon2id$v=19$m=8,t=1,p=1$假的但形状对"
@@ -142,39 +136,6 @@ def drop_database(name: str) -> None:
     """
     with maintenance() as connection:
         connection.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
-
-
-@lru_cache(maxsize=1)
-def live_minio() -> Minio | None:
-    """连得上就给个客户端，连不上给 None。
-
-    **探活不能只是造客户端**：`Minio(...)` 一个请求都不发，连不上要到第一次调用才知道 ——
-    那时 skip 已经来不及，用例会红在一个不指向「服务没起」的地方。
-
-    **不重试、超时短、整个会话只探一次**：默认的 5 次退避重试要 12 秒，
-    而这一次会被每条用例各等一遍。
-
-    Returns:
-        可用的客户端，或 None（调用方据此 skip）。
-    """
-    client = create_object_client(
-        endpoint=SETTINGS.minio_endpoint,
-        access_key=SETTINGS.minio_access_key,
-        secret_key=SETTINGS.minio_secret_key.get_secret_value(),
-        secure=SETTINGS.minio_secure,
-    )
-    probe = create_object_client(
-        endpoint=SETTINGS.minio_endpoint,
-        access_key=SETTINGS.minio_access_key,
-        secret_key=SETTINGS.minio_secret_key.get_secret_value(),
-        secure=SETTINGS.minio_secure,
-        http_client=urllib3.PoolManager(retries=False, timeout=PROBE_TIMEOUT_SECOND),
-    )
-    try:
-        probe.list_buckets()
-    except CONNECT_ERROR:
-        return None
-    return client
 
 
 @contextmanager

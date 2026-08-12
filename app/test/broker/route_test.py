@@ -8,7 +8,6 @@
 """
 
 import asyncio
-import os
 import socket
 import threading
 import time
@@ -249,11 +248,10 @@ def test_upload_and_download_round_trip_bytes(backend: RemoteSandboxBackend) -> 
 
 
 def written(path: Path, content: bytes) -> Path:
-    """写一个产物，目录不存在就先建。
+    """写一个文件，目录不存在就先建。
 
-    **`mark()` 不再顺手建 `outputs/`** —— 它跑在 broker 进程里，那个进程在容器里是
-    root，建出来的目录以宿主用户跑的沙箱写不进去。真实里这个目录由沙箱自己建，
-    用例就在这里替它做。
+    真实里 `outputs/` 由沙箱自己建 —— broker 进程在容器里是 root，它建出来的目录
+    以宿主用户跑的沙箱写不进去。用例在这里替沙箱做这一步。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
@@ -321,67 +319,6 @@ async def test_a_saved_file_lands_in_the_workspace(connection: BrokerConnection,
     await connection.aclose()
 
 
-async def test_artifacts_written_after_the_mark_are_reported(connection: BrokerConnection, space: Workspace) -> None:
-    """产物判定在 broker 侧，因为只有它看得见宿主机上的文件与 mtime。
-
-    **基准也向 broker 要**：判据读的是 inode 时间戳，而这一侧的墙钟与它不同源，
-    自己取一个 `time.time_ns()` 当基准会偶发漏掉刚写下的产物。
-    """
-    workspace = RemoteWorkspace(connection)
-    thread_id = await workspace.create(uuid4().hex)
-    since = await workspace.mark(thread_id)
-    written(space.path(thread_id) / "outputs" / "chart.png", b"png")
-
-    collected = await workspace.collect(thread_id, since_ns=since, user_id="u-1")
-
-    assert [one.path for one in collected] == [f"{thread_id}/chart.png"]
-    await connection.aclose()
-
-
-async def test_collecting_without_an_object_store_still_reports_the_artifact(
-    connection: BrokerConnection, space: Workspace
-) -> None:
-    """没配对象存储时退回「只认领不上传」，而不是让整次 run 失败。
-
-    这条用例跑在没有 MinIO 的 broker 上（`broker_url` 夹具就是这么组的），
-    因此它同时也验了「上传失败时的降级路径」—— 字节还在 workspace 里，仍然下得动。
-    """
-    workspace = RemoteWorkspace(connection)
-    thread_id = await workspace.create(uuid4().hex)
-    since = await workspace.mark(thread_id)
-    written(space.path(thread_id) / "outputs" / "chart.png", b"png")
-
-    collected = await workspace.collect(thread_id, since_ns=since, user_id="u-1")
-
-    assert [one.path for one in collected] == [f"{thread_id}/chart.png"]
-    assert collected[0].s3_key is None
-    await connection.aclose()
-
-
-async def test_a_run_that_produced_nothing_collects_nothing(connection: BrokerConnection, space: Workspace) -> None:
-    workspace = RemoteWorkspace(connection)
-    thread_id = await workspace.create(uuid4().hex)
-    since = await workspace.mark(thread_id)
-
-    assert await workspace.collect(thread_id, since_ns=since, user_id="u-1") == []
-    await connection.aclose()
-
-
-async def test_the_mark_leaves_earlier_artifacts_behind(connection: BrokerConnection, space: Workspace) -> None:
-    """上一次 run 的产物不该被这一次认领。"""
-    workspace = RemoteWorkspace(connection)
-    thread_id = await workspace.create(uuid4().hex)
-    output_dir = space.path(thread_id) / "outputs"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "previous.png").write_bytes(b"png")
-    os.utime(output_dir / "previous.png", ns=(0, 0))
-
-    since = await workspace.mark(thread_id)
-
-    assert await workspace.collect(thread_id, since_ns=since, user_id="u-1") == []
-    await connection.aclose()
-
-
 # ------------------------------------------------------------------ 工作目录的浏览
 async def test_the_tree_reaches_across_the_hop(connection: BrokerConnection, space: Workspace) -> None:
     workspace = RemoteWorkspace(connection)
@@ -443,6 +380,24 @@ async def test_an_opened_file_carries_its_content_type(connection: BrokerConnect
     await connection.aclose()
 
 
+async def test_stat_gives_back_a_normalized_path(connection: BrokerConnection, space: Workspace) -> None:
+    """这个路径要拿去拼 nginx 的内部跳转，因此它必须已经规范化。
+
+    把 `./` 这类原样交给 nginx，等于把「这个路径指向哪里」的解释权让给它 ——
+    而它的解析规则与这一侧的越界判定不是同一套。
+    """
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    written(space.path(thread_id) / "outputs" / "chart.png", b"png-bytes")
+
+    found = await workspace.stat(thread_id, "outputs/./chart.png")
+
+    assert found.path == "outputs/chart.png"
+    assert found.size == len(b"png-bytes")
+    assert found.mime == "image/png"
+    await connection.aclose()
+
+
 @pytest.mark.parametrize("relative", ["never-made.csv", "../../etc/passwd"])
 async def test_a_missing_or_escaping_path_reads_as_missing(connection: BrokerConnection, relative: str) -> None:
     """越界与不存在给同一个回答，否则这个端点就成了探测宿主机文件的工具。"""
@@ -451,6 +406,27 @@ async def test_a_missing_or_escaping_path_reads_as_missing(connection: BrokerCon
 
     with pytest.raises(FileMissingError):
         await workspace.open(thread_id, relative)
+    await connection.aclose()
+
+
+@pytest.mark.parametrize("relative", ["never-made.csv", "../../etc/passwd"])
+async def test_stat_of_a_missing_or_escaping_path_reads_as_missing(connection: BrokerConnection, relative: str) -> None:
+    """与取字节那条同一个规矩 —— 探测不到「哪些路径存在」。"""
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+
+    with pytest.raises(FileMissingError):
+        await workspace.stat(thread_id, relative)
+    await connection.aclose()
+
+
+async def test_stat_of_a_directory_says_so(connection: BrokerConnection, space: Workspace) -> None:
+    workspace = RemoteWorkspace(connection)
+    thread_id = await workspace.create(uuid4().hex)
+    (space.path(thread_id) / "outputs").mkdir()
+
+    with pytest.raises(IsADirectoryError):
+        await workspace.stat(thread_id, "outputs")
     await connection.aclose()
 
 
@@ -504,17 +480,6 @@ async def test_saving_into_a_directory_that_is_not_there_is_refused(connection: 
 
     with pytest.raises(PathEscapeError):
         await workspace.save(thread_id, "holdings.csv", b"x", directory="never-made")
-    await connection.aclose()
-
-
-async def test_an_artifact_can_be_fetched_back(connection: BrokerConnection, space: Workspace) -> None:
-    workspace = RemoteWorkspace(connection)
-    thread_id = await workspace.create(uuid4().hex)
-    output_dir = space.path(thread_id) / "outputs"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "chart.png").write_bytes(b"\x89PNG binary")
-
-    assert await workspace.artifact(f"{thread_id}/chart.png") == b"\x89PNG binary"
     await connection.aclose()
 
 

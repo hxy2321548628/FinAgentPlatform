@@ -158,7 +158,6 @@ def test_run_finished_splits_the_token_usage_by_cache_hit() -> None:
     assert event.model_dump(mode="json")["data"] == {
         "status": "succeeded",
         "tokens": {"input_cache_read": 189312, "input_uncached": 115328, "output": 8701},
-        "artifacts": [],
     }
 
 
@@ -173,18 +172,6 @@ def test_token_usage_adds_up_across_model_calls() -> None:
 
 def test_token_usage_defaults_to_zero() -> None:
     assert TokenUsage() == TokenUsage(input_cache_read=0, input_uncached=0, output=0)
-
-
-def test_run_finished_carries_the_artifact_ids() -> None:
-    """前端拿这些标识拼产物下载的 URL。"""
-    event = RunFinishedEvent(
-        ts=1,
-        run_id="r",
-        path=(),
-        data=RunFinishedData(artifacts=["8f3a/industry_volatility.png"]),
-    )
-
-    assert event.model_dump(mode="json")["data"]["artifacts"] == ["8f3a/industry_volatility.png"]
 
 
 def test_run_failed_tells_the_frontend_whether_retrying_is_worth_it() -> None:

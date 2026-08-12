@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from shutil import rmtree
 
-from sandbox.path import OUTPUT_DIR, PathEscapeError, thread_workspace
+from sandbox.path import PathEscapeError, thread_workspace
 from sandbox.quota import NoQuota, QuotaProtocol
 
 logger = logging.getLogger(__name__)
@@ -239,19 +239,3 @@ class Workspace:
             PathEscapeError: 路径指向会话目录之外。
         """
         return _within(self.path(thread_id).resolve(), relative_path, scope="会话目录")
-
-    def artifact(self, thread_id: str, relative_path: str) -> Path:
-        """定位会话产出的一个产物。
-
-        Args:
-            thread_id: 会话标识。
-            relative_path: 相对 `outputs/` 的路径。
-
-        Returns:
-            宿主机上的文件路径，可能不存在。
-
-        Raises:
-            PathEscapeError: 路径指向 `outputs/` 之外。
-        """
-        output_dir = (self.path(thread_id) / OUTPUT_DIR).resolve()
-        return _within(output_dir, relative_path, scope=f"{OUTPUT_DIR}/")

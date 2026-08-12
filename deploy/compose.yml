@@ -1,4 +1,4 @@
-# 内网单机部署：nginx + api + worker×2 + broker + postgres + redis + minio
+# 内网单机部署：nginx + api + worker×2 + broker + postgres + redis + minio（只给可观测性用）
 # + prometheus + grafana + tempo + loki + otel-collector。
 #
 #   mkdir -p data/{prometheus,grafana,tempo,loki}      # 只需一次，理由见下面 prometheus
@@ -6,7 +6,7 @@
 #
 # **沙箱容器不在这里声明** —— 它们由 broker 在运行时动态创建与销毁。
 #
-# P4 起多了 minio（产物存储）与可观测性那一套。pypi-mirror 定案不做（沙箱零出网）。
+# P4 起多了可观测性那一套，minio 是 Tempo 与 Loki 的后端。pypi-mirror 定案不做（沙箱零出网）。
 #
 # **两个数据目录都是宿主机 bind mount，不是卷**：命名卷会被 `docker compose down -v`
 # 一并删掉，而那里面正是 P2 要保住的东西 —— checkpoint 一丢，中断的任务就再也接不上。
@@ -20,8 +20,10 @@ services:
       - "${HTTP_PORT:-80}:80"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      # 成本看板那一页。自包含的静态文件，nginx 直接托管，不经 api
-      - ./web:/usr/share/nginx/html:ro
+      # 工作目录里的文件由 nginx 直发，因此它要读得到那些字节。**只读**：这个容器
+      # 永远不该改动 agent 的产出。容器内挂到固定路径，nginx.conf 才能写死 alias ——
+      # 宿主那一侧的路径是变量，配置文件里插值不了
+      - ${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}:/workspace:ro
     depends_on:
       - api
     restart: unless-stopped
@@ -44,11 +46,10 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
-      # api 只用它签 URL，从不写入、也不取字节 —— 字节由 nginx 直发（P4 计划 §2.1）
-      MINIO_ENDPOINT: minio:9000
       # **只有 nginx 后面才能开**：X-Accel-Redirect 是 nginx 的协议，直接跑 uvicorn
-      # 时浏览器只会收到一个空响应
-      ARTIFACT_DIRECT_SEND: "true"
+      # 时浏览器只会收到一个空响应。**还要求 nginx 挂到了同一个 workspace 根** ——
+      # 只开这个而没挂卷的话，每次下载 nginx 都回 404，而 api 这一侧看起来一切正常
+      FILE_DIRECT_SEND: "true"
       # 三个进程都只认这一个地址，不认 Tempo —— 换后端时应用侧一行不动。
       # 留空即不上报，开发机直接跑 uvicorn 时走的正是那条
       OTEL_ENDPOINT: http://otel-collector:4318
@@ -149,13 +150,13 @@ services:
     # 9000 是 S3 API，9001 是控制台。控制台只给运维排查用
     command: server /data --console-address ":9001"
     # MINIO_ROOT_USER / MINIO_ROOT_PASSWORD 由 .env 直接喂给官方镜像，
-    # 与 api 侧读的 MINIO_ACCESS_KEY / MINIO_SECRET_KEY 是同一组值
+    # 与 Tempo / Loki 读的 MINIO_ACCESS_KEY / MINIO_SECRET_KEY 是同一组值
     env_file:
       - ../.env
     volumes:
       - ${MINIO_DATA_DIR:-../data/minio}:/data
-    # 同 Postgres 与 Redis：只绑回环，验收脚本在宿主机上够得着即可。
-    # **不对内网开放** —— 产物下载走 nginx 代理，浏览器不直连 MinIO（P4 计划 §2.1）
+    # 同 Postgres 与 Redis：只绑回环。**不对内网开放** ——
+    # 只有 Tempo 与 Loki 写它，浏览器与应用进程都不该够得着
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
@@ -169,8 +170,8 @@ services:
   # 建 trace 与日志的桶。**MinIO 不会自动建桶，Tempo 与 Loki 也不会** ——
   # 缺桶时它们起得来、只在写第一个块时失败，而那要等几分钟才发生。
   #
-  # 用的是 minio 自己的镜像（里面就带 mc），不额外拉一个：产物那个桶由 broker
-  # 启动时建，这里只补上它管不着的两个
+  # 用的是 minio 自己的镜像（里面就带 mc），不额外拉一个。
+  # **MinIO 只剩 Tempo 与 Loki 两个用户了** —— 产物存储撤掉之后，应用侧不再连它
   minio-init:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     entrypoint:
@@ -217,7 +218,7 @@ services:
       # 配置文件里的 ${MINIO_ACCESS_KEY} 靠它展开。不开的话那两行会被当成字面量，
       # 而症状是「连得上 MinIO 但一律 403」
       - -config.expand-env=true
-    # MINIO_ACCESS_KEY / MINIO_SECRET_KEY 从这里来，与 broker 用的是同一组
+    # MINIO_ACCESS_KEY / MINIO_SECRET_KEY 从这里来，与 Loki 用的是同一组
     env_file:
       - ../.env
     user: ${SANDBOX_USER:?请设成宿主机上数据目录的属主，形如 1000:1000}
@@ -299,9 +300,6 @@ services:
       # P3 起 broker 也要连 Redis（写操作去重表）。**漏了这一行就会连容器自己的
       # 127.0.0.1**，而症状出现在第一次 delete/edit 上，不指向配置
       REDIS_URL: redis://redis:6379/0
-      # P4 起 broker 也要连 MinIO：产物的字节躺在它独占的 workspace 里，
-      # 让 api 或 worker 来传就得先把字节经 HTTP 搬过去，还得给它们开一条文件通路
-      MINIO_ENDPOINT: minio:9000
       OTEL_ENDPOINT: http://otel-collector:4318
     volumes:
       # 唯一持有它的服务。给的是宿主机 root 权限，因此这个容器里不跑任何

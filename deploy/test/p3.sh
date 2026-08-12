@@ -133,7 +133,7 @@ RUN_A="$(cat /proc/sys/kernel/random/uuid | tr -d -)"
 psql_query "INSERT INTO runs (id, thread_id, user_id, status, tokens_cache_read, tokens_uncached, tokens_output, started_at)
     VALUES ('$RUN_A', '$THREAD_A', '$UID_A', 'succeeded', 0,0,0, now());" >/dev/null
 
-for path in "/api/runs/$RUN_A" "/api/runs/$RUN_A/events" "/api/artifacts/$THREAD_A/chart.png"; do
+for path in "/api/runs/$RUN_A" "/api/runs/$RUN_A/events" "/api/threads/$THREAD_A/files/raw?path=outputs/chart.png"; do
     got="$(code "$JAR_B" "$BASE_URL$path")"
     [[ $got == 404 ]] && pass "B 读 A 的 $path → 404" || fail "B 读 A 的 $path → $got（403 也算未过）"
 done
@@ -280,7 +280,7 @@ owner_count="$(psql_query "SELECT count(DISTINCT user_id) FROM threads WHERE id 
 [[ $owner_count == 1 ]] && pass "并发下每个会话都只挂在一个主人身上（没串）" \
     || fail "并发建出的会话分属 $owner_count 个主人 —— 数据串了"
 
-leaked="$(code "$JAR_B" "$BASE_URL/api/artifacts/$(head -1 "$CONCURRENT_OUT/thread-1")/chart.png")"
+leaked="$(code "$JAR_B" "$BASE_URL/api/threads/$(head -1 "$CONCURRENT_OUT/thread-1")/files/raw?path=outputs/chart.png")"
 [[ $leaked == 404 ]] && pass "并发之后 B 仍够不着 A 的会话" || fail "并发之后越权检查失效：$leaked"
 rm -rf "$CONCURRENT_OUT"
 (( failed == before )) && VERDICT[3]=通过 || VERDICT[3]=未过

@@ -17,7 +17,14 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
-SAMPLE_CSV="$REPO_ROOT/doc/04acceptance-guide/P0/holdings.csv"
+# 样例持仓数据。原先在 `doc/04acceptance-guide/P0/` 下，那个目录随旧验收指南
+# 一并撤掉（`b4e507b`），样例改放 `tmp/`。
+#
+# **`tmp/` 被 .gitignore 忽略**，因此新克隆的仓库里没有这个文件，脚本会在前置检查
+# 就退出并说清缺什么 —— 这好过跑到一半才发现上传的是空数据。换个位置放就指过去：
+#
+#   SAMPLE_CSV=/path/to/holdings.csv bash deploy/test/acceptance.sh
+SAMPLE_CSV="${SAMPLE_CSV:-$REPO_ROOT/tmp/holdings.csv}"
 WORK_DIR="$(mktemp -d)"
 
 QUESTION='读取 holdings.csv，按行业分组计算持仓市值占比和各行业月度收益率的年化波动率，画成图表保存到 outputs 目录，并说明缺失值是怎么处理的。'
@@ -39,7 +46,11 @@ done
 
 log "前置检查"
 curl -fsS "$BASE_URL/docs" >/dev/null 2>&1 || { echo "网关未在 $BASE_URL 上响应"; exit 1; }
-[[ -f $SAMPLE_CSV ]] || { echo "样例数据不在：$SAMPLE_CSV"; exit 1; }
+[[ -f $SAMPLE_CSV ]] || {
+    echo "样例数据不在：$SAMPLE_CSV"
+    echo "tmp/ 不入库，新克隆的仓库里没有它。放一份持仓 csv 过去，或用 SAMPLE_CSV=... 指到别处"
+    exit 1
+}
 
 # P3 之后 /api/* 一律要会话 cookie。造号要进容器（平台没有公开注册端点），
 # 因此这个脚本从 P3 起也要 docker —— BASE_URL 必须指向同一套 compose 栈
@@ -108,20 +119,24 @@ else
 fi
 
 # 验收④ 产物可取回且是能显示的图
-ARTIFACT="$(jq -r 'select(.type=="run.finished") | .data.artifacts[0] // empty' < "$WORK_DIR/all.json" | head -1)"
-if [[ -n $ARTIFACT ]]; then
-    curl -fsS -b "$JAR" "$BASE_URL/api/artifacts/$ARTIFACT" -o "$WORK_DIR/artifact.bin"
+#
+# 产物不再有独立的身份与端点：agent 把图写进会话工作目录的 outputs/，
+# 教师从侧边栏那套端点取回。这里照着教师的路径走一遍 —— 列目录，挑一张图，下载。
+CHART="$(curl -fsS -b "$JAR" "$BASE_URL/api/threads/$THREAD_ID/files" \
+    | jq -r '.entries[] | select(.is_dir == false) | select(.path | test("\\.(png|jpg|jpeg|svg)$")) | .path' | head -1)"
+if [[ -n $CHART ]]; then
+    curl -fsS -b "$JAR" --get --data-urlencode "path=$CHART" "$BASE_URL/api/threads/$THREAD_ID/files/raw" -o "$WORK_DIR/artifact.bin"
     KIND="$(file -b --mime-type "$WORK_DIR/artifact.bin")"
     SIZE=$(stat -c %s "$WORK_DIR/artifact.bin")
     if [[ $KIND == image/* ]] && (( SIZE > 1024 )); then
-        pass "④ 产物取回正常：$ARTIFACT（$KIND，$SIZE 字节）"
+        pass "④ 产物取回正常：$CHART（$KIND，$SIZE 字节）"
         # 「能显示」这条最终要靠人眼看一次，给出原图路径
-        echo "     原图：$BASE_URL/api/artifacts/$ARTIFACT"
+        echo "     原图：$BASE_URL/api/threads/$THREAD_ID/files/raw?path=$CHART"
     else
         fail "④ 产物不是一张正常的图：$KIND，$SIZE 字节"
     fi
 else
-    fail "④ run.finished 里没有产物"
+    fail "④ 会话工作目录里没有任何图片"
 fi
 
 # token 口径（P1 步骤五）：两个数都要在，且未命中部分不该等于 input 总量

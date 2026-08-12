@@ -205,54 +205,6 @@ def test_removing_a_path_that_escapes_the_workspace_is_rejected(space: Workspace
         space.remove(thread_id, relative)
 
 
-# ------------------------------------------------------------------ 产物
-def test_an_artifact_resolves_under_the_output_directory(space: Workspace) -> None:
-    thread_id = space.create(uuid4().hex)
-    output_dir = space.path(thread_id) / OUTPUT_DIR
-    output_dir.mkdir()
-    (output_dir / "chart.png").write_bytes(b"png")
-
-    assert space.artifact(thread_id, "chart.png").read_bytes() == b"png"
-
-
-def test_a_nested_artifact_resolves(space: Workspace) -> None:
-    thread_id = space.create(uuid4().hex)
-    nested = space.path(thread_id) / OUTPUT_DIR / "figure"
-    nested.mkdir(parents=True)
-    (nested / "chart.png").write_bytes(b"png")
-
-    assert space.artifact(thread_id, "figure/chart.png").read_bytes() == b"png"
-
-
-def test_a_missing_artifact_resolves_but_does_not_exist(space: Workspace) -> None:
-    """路径合法与文件存在是两回事，前者归本模块，后者归调用方决定回什么状态码。"""
-    thread_id = space.create(uuid4().hex)
-
-    assert not space.artifact(thread_id, "never-made.png").exists()
-
-
-@pytest.mark.parametrize("relative", ["../holdings.csv", "../../etc/passwd", "/etc/passwd"])
-def test_an_artifact_path_that_escapes_the_output_directory_is_rejected(space: Workspace, relative: str) -> None:
-    """不挡住的话，产物下载就成了任意文件读取。"""
-    thread_id = space.create(uuid4().hex)
-
-    with pytest.raises(PathEscapeError):
-        space.artifact(thread_id, relative)
-
-
-def test_an_artifact_symlink_pointing_outside_is_rejected(space: Workspace, tmp_path: Path) -> None:
-    """Agent 能在沙箱里创建符号链接，纯字符串校验拦不住这一条。"""
-    thread_id = space.create(uuid4().hex)
-    output_dir = space.path(thread_id) / OUTPUT_DIR
-    output_dir.mkdir()
-    secret = tmp_path / "secret.txt"
-    secret.write_text("凭据", encoding="utf-8")
-    (output_dir / "link.txt").symlink_to(secret)
-
-    with pytest.raises(PathEscapeError):
-        space.artifact(thread_id, "link.txt")
-
-
 # ------------------------------------------------------------------ 磁盘配额
 class SpyQuota:
     """记下被要求给哪些目录设配额。"""

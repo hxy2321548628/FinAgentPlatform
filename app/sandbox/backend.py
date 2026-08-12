@@ -12,7 +12,6 @@
 3. `execute` 与产物判定。
 """
 
-import os
 from pathlib import Path
 
 from deepagents.backends.filesystem import FilesystemBackend
@@ -33,7 +32,7 @@ from deepagents.backends.protocol import (
 )
 
 from sandbox.container import ContainerError, ContainerProtocol
-from sandbox.path import OUTPUT_DIR, to_sandbox_path, to_virtual_path
+from sandbox.path import to_sandbox_path, to_virtual_path
 
 DEFAULT_EXECUTE_TIMEOUT = 120
 
@@ -144,52 +143,6 @@ class SandboxBackend(SandboxBackendProtocol):
         except ContainerError as exc:
             return ExecuteResponse(output=f"沙箱执行失败：{exc}", exit_code=EXECUTION_FAILED_EXIT_CODE)
         return ExecuteResponse(output=result.output, exit_code=result.exit_code)
-
-    def artifact_mark(self) -> int:
-        """取一个产物判定的基准时刻，**用文件系统自己的时钟**。
-
-        不能用 `time.time_ns()`：那读的是细粒度的 CLOCK_REALTIME，而内核给 inode 打
-        时间戳用的是**粗粒度时钟**（每个 tick 更新一次，NOHZ 下进程一空闲就停在那儿）。
-        两者最多差一个 tick，实测约 0.4 毫秒 —— 基准取墙钟的话，紧接着写下的产物
-        mtime 反而更早，于是被判成「运行之前就有的」而**静默漏掉，没有任何报错**。
-
-        把会话目录 touch 一下再读它的 mtime，基准与判据就出自同一个时钟 ——
-        产物在它的子目录里，同一个文件系统同一份时钟。
-
-        **取的是会话目录而不是 `outputs/`，因为这里不能建目录。** 第一版在这里
-        `mkdir` 出 `outputs/`，而这个方法跑在 broker 进程里、那个进程是 root，
-        于是目录属主成了 root，**以宿主用户跑的沙箱一个字节都写不进去**。
-        症状完全不指向权限：`execute` 全部成功，agent 只是「选择」把图存到
-        `outputs_final/` 之类的地方，最后产物一个都没有。`outputs/` 该由沙箱自己建。
-
-        Returns:
-            Unix 时间戳，纳秒。交给 `artifact_since` 用。
-        """
-        os.utime(self._workspace, None)
-        return self._workspace.stat().st_mtime_ns
-
-    def artifact_since(self, since_ns: int) -> list[Path]:
-        """列出 `outputs/` 下在给定时刻之后写入的文件。
-
-        **判据用整数纳秒，不用 `st_mtime`。** 后者是 float，在当前 epoch 只有
-        238 纳秒的分辨率，舍入能把刚写下的产物压到 `since_ns` 之下 —— 产物被静默漏掉，
-        而且没有任何报错指向原因。
-
-        Args:
-            since_ns: Unix 时间戳，纳秒。通常取自这次 run 开始前。
-
-        Returns:
-            宿主机上的产物路径，按路径排序。目录不存在时为空。
-        """
-        output_dir = self._workspace / OUTPUT_DIR
-        if not output_dir.is_dir():
-            return []
-        return sorted(
-            path
-            for path in output_dir.rglob("*")
-            # 产物会被下载给教师，跟随符号链接等于把任意宿主文件当成产物送出去
-            if path.is_file() and not path.is_symlink() and path.stat().st_mtime_ns >= since_ns
-        )
 
     def _upload_one(self, path: str, content: bytes) -> FileUploadResponse:
         try:

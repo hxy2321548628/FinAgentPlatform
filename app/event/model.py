@@ -127,10 +127,12 @@ class RunFinishedData(BaseModel):
         default_factory=TokenUsage,
         description="本次 run 的 token 消耗，按 cache 命中拆分",
     )
-    artifacts: list[str] = Field(
-        default_factory=list,
-        description="本次 run 产出的产物标识，拼上产物端点即可下载",
-    )
+    # **这里曾经有一个 `artifacts`**，报的是本次 run 产出了哪些文件。产物存储撤掉之后
+    # 它没了去处：字节只在会话工作目录里，而那已经有一套完整的浏览与下载端点
+    # （`/api/threads/{id}/files`），教师从侧边栏就能看到 agent 写了什么。
+    #
+    # **保留期内的历史事件仍带着这个字段**，那是不可变日志的应有之义 ——
+    # 多出来的字段这里按忽略处理，读回来不会失败。
 
 
 class RunFailedData(BaseModel):

@@ -7,7 +7,6 @@ import shlex
 from functools import lru_cache
 from pathlib import Path
 
-from minio import Minio
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -38,13 +37,6 @@ from sandbox.pool import (
 )
 from sandbox.quota import DEFAULT_DISK_QUOTA, DEFAULT_QUOTA_COMMAND
 from sandbox.remote import DEFAULT_BROKER_URL
-from store.object import (
-    DEFAULT_ACCESS_KEY,
-    DEFAULT_BUCKET,
-    DEFAULT_ENDPOINT,
-    DEFAULT_SECRET_KEY,
-)
-from store.object import create_client as create_object_client
 from store.postgres import (
     DEFAULT_DATABASE,
     DEFAULT_HOST,
@@ -108,40 +100,11 @@ class StoreSettings(BaseSettings):
         description="Redis 连接串。事件通道与任务队列都落在这里。无口令，因此不必拆开",
     )
 
-    # 与 Postgres 同一个理由拆成几项：compose 部署只需覆盖 endpoint 一项，
-    # 凭据不必经过 compose 的变量插值
-    minio_endpoint: str = Field(
-        default=DEFAULT_ENDPOINT,
-        description="MinIO 的 S3 端点，形如 host:port，不带协议前缀",
-    )
-    minio_access_key: str = Field(default=DEFAULT_ACCESS_KEY, min_length=1, description="MinIO 访问凭据")
-    minio_secret_key: SecretStr = Field(
-        default=SecretStr(DEFAULT_SECRET_KEY),
-        description="MinIO 访问密钥。默认值只够开发机用，上线前必须改",
-    )
-    minio_bucket: str = Field(default=DEFAULT_BUCKET, min_length=1, description="产物所在的桶")
-    minio_secure: bool = Field(
+    file_direct_send: bool = Field(
         default=False,
-        description="连 MinIO 走不走 TLS。内网无域名签不了受信证书，默认不走（ADR-0012）",
+        description="工作目录里的文件下载走不走 nginx 直发（X-Accel-Redirect）。与上一个同理，"
+        "**只在 nginx 后面有效**，且要求 nginx 挂到了同一个 workspace 根",
     )
-    artifact_direct_send: bool = Field(
-        default=False,
-        description="产物走不走 nginx 直发（X-Accel-Redirect）。**只在 nginx 后面有效**，"
-        "compose 部署置 true；直接跑 uvicorn 时留 false，否则浏览器只收到一个空响应",
-    )
-
-    def minio_client(self) -> Minio:
-        """按配置造一个 MinIO 客户端。
-
-        Returns:
-            可直接用的客户端。这一步不发请求。
-        """
-        return create_object_client(
-            endpoint=self.minio_endpoint,
-            access_key=self.minio_access_key,
-            secret_key=self.minio_secret_key.get_secret_value(),
-            secure=self.minio_secure,
-        )
 
     def postgres_dsn(self) -> str:
         """拼出 SQLAlchemy 用的 Postgres 连接串。

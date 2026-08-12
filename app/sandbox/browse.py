@@ -14,6 +14,7 @@
 """
 
 import logging
+import mimetypes
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,6 +22,9 @@ from itertools import islice
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# 猜不出扩展名时的类型。工作目录里多半是图与 csv，但也可能是 Excel、pickle 或别的什么
+DEFAULT_MIME = "application/octet-stream"
 
 # 一棵树最多给多少个条目。agent 在 5GB 配额之内造得出上万个小文件，
 # 整棵发出去既拖垮浏览器又没人看得完
@@ -137,6 +141,19 @@ def preview(
         is_binary=False,
         truncated=truncated,
     )
+
+
+def guess_mime(relative_path: str) -> str:
+    """按扩展名猜内容类型。
+
+    Args:
+        relative_path: 文件的路径或文件名。
+
+    Returns:
+        猜出来的类型，猜不出则二进制流。
+    """
+    guessed, _ = mimetypes.guess_type(relative_path)
+    return guessed or DEFAULT_MIME
 
 
 def _describe(root: Path, path: Path) -> Entry | None:

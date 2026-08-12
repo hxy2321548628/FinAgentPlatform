@@ -26,7 +26,6 @@ BUSINESS_PATH = (
     ("POST", "/api/threads/whatever/runs"),
     ("GET", "/api/runs/whatever"),
     ("GET", "/api/runs/whatever/events"),
-    ("GET", "/api/artifacts/whatever"),
 )
 
 

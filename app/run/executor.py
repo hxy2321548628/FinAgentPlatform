@@ -17,7 +17,6 @@ from typing import Protocol
 
 from deepagents.backends.protocol import BackendProtocol
 
-from artifact.model import Artifact, CollectedArtifact
 from event.mapper import StreamChunk, map_chunk
 from event.model import (
     Event,
@@ -80,29 +79,6 @@ class AgentProtocol(Protocol):
 type BackendFactory = Callable[[str], BackendProtocol]
 
 UPDATES_MODE = "updates"
-
-
-class WorkspaceProtocol(Protocol):
-    """执行器对会话文件空间的全部要求。"""
-
-    async def mark(self, thread_id: str) -> int:
-        """取一次 run 的产物判定基准。"""
-        ...
-
-    async def collect(self, thread_id: str, *, since_ns: int, user_id: str) -> list[CollectedArtifact]:
-        """认领一次 run 的产物，并把它们传进对象存储。"""
-        ...
-
-
-class ArtifactRepositoryProtocol(Protocol):
-    """执行器对产物仓储的全部要求：只有写。
-
-    查在端点那一侧，不经过执行器。
-    """
-
-    async def add(self, run_id: str, collected: list[CollectedArtifact]) -> list[Artifact]:
-        """记下一次 run 的产物。"""
-        ...
 
 
 class SandboxPoolProtocol(Protocol):
@@ -175,11 +151,9 @@ class RunExecutor:
 
     Args:
         pool: 沙箱池。
-        workspace: 各会话的文件空间，用来认领本次 run 的产物。
         log: 事件日志，执行过程中产生的一切都往这里写。
         agent: 智能体，负责开跑、续跑与「有没有在等人确认」。
         repository: run 元数据的仓储，状态流转往这里落。
-        artifacts: 产物仓储，认领到的产物往这里落。
         backend_factory: 按会话造 backend，不传则发 HTTP 给 broker。
     """
 
@@ -187,22 +161,18 @@ class RunExecutor:
         self,
         *,
         pool: SandboxPoolProtocol,
-        workspace: WorkspaceProtocol,
         log: EventLog,
         agent: AgentProtocol,
         repository: RunRepositoryProtocol,
         cancel: CancelFlagProtocol,
-        artifacts: ArtifactRepositoryProtocol,
         backend_factory: BackendFactory | None = None,
     ) -> None:
         self._pool = pool
-        self._workspace = workspace
         self._backend = backend_factory or RemoteBackendFactory()
         self._log = log
         self._agent = agent
         self._repository = repository
         self._cancel = cancel
-        self._artifacts = artifacts
 
     async def execute(self, task: RunTask) -> None:
         """跑完一条已经领到手的任务，或者把它停在「等人确认」上。
@@ -310,10 +280,6 @@ class RunExecutor:
         """消费智能体的流，逐个 chunk 映射成事件。"""
         backend = self._backend(run.thread_id)
         tokens = TokenUsage()
-        # 产物按 mtime 判定，基准要在 agent 动手之前取，否则本次的产出会被漏掉。
-        # **基准向 workspace 要而不是读本进程的墙钟**：判据读的是宿主机上的 inode
-        # 时间戳，那是内核的粗粒度时钟，与这里的细粒度时钟最多差一个 tick
-        started_at = await self._workspace.mark(run.thread_id)
 
         async for ns, mode, payload in self._start(backend, run, task):
             tokens = tokens + _token_usage(mode, payload)
@@ -341,34 +307,7 @@ class RunExecutor:
         if not await self._repository.succeed(run.id, tokens=tokens):
             logger.info("run 已经有终态了，不再推 run.finished")
             return
-        await self._emit(
-            RunFinishedEvent(
-                ts=now_ms(),
-                run_id=run.id,
-                path=(),
-                data=RunFinishedData(
-                    tokens=tokens,
-                    artifacts=await self._collect(run, started_at, task.user_id),
-                ),
-            )
-        )
-
-    async def _collect(self, run: Run, since_ns: int, user_id: str | None) -> list[str]:
-        """认领产物、传进对象存储、落表，给出事件里要报的标识。
-
-        Returns:
-            产物标识。进了对象存储的报 `artifacts` 表主键；没进去的只能报旧形状
-            `{thread_id}/{相对路径}` —— 字节还在 workspace 里，端点按含不含 `/`
-            分辨这两种形状。无主的 run 为空。
-        """
-        if user_id is None:
-            # 租户前缀取自提交的人，没有它就没有前缀可用。**按某个默认前缀上传是错的** ——
-            # 那正是「越权面」这类问题最典型的来源。只有 P3 之前投进队列的任务会走到这里
-            logger.warning("run 没有归属，产物不进对象存储：租户前缀无从取")
-            return []
-        collected = await self._workspace.collect(run.thread_id, since_ns=since_ns, user_id=user_id)
-        added = {one.s3_key: one.id for one in await self._artifacts.add(run.id, collected)}
-        return [added.get(one.s3_key or "", one.path) for one in collected]
+        await self._emit(RunFinishedEvent(ts=now_ms(), run_id=run.id, path=(), data=RunFinishedData(tokens=tokens)))
 
     def _start(self, backend: BackendProtocol, run: Run, task: RunTask) -> AsyncIterator[StreamChunk]:
         """开跑或续跑。带着决策来的就是续跑，从中断点接着走。"""

@@ -246,7 +246,7 @@ def test_agent_written_script_runs_in_the_container(workspace: Path) -> None:
     assert response.output.strip() == "hello from sandbox"
 
 
-def test_chart_written_by_execute_is_detected_as_an_artifact(workspace: Path) -> None:
+def test_chart_written_by_execute_lands_under_outputs(workspace: Path) -> None:
     with DockerContainer(thread_id="test-thread", workspace=workspace) as container:
         backend = SandboxBackend(workspace=workspace, container=container)
         backend.write(
@@ -256,11 +256,10 @@ def test_chart_written_by_execute_is_detected_as_an_artifact(workspace: Path) ->
             "plt.title('波动率')\n"
             f"plt.savefig('/workspace/{OUTPUT_DIR}/chart.png')\n",
         )
-        since = time.time_ns()
         response = backend.execute(f"mkdir -p {OUTPUT_DIR} && python chart.py", timeout=60)
 
     assert response.exit_code == 0
-    assert [path.name for path in backend.artifact_since(since)] == ["chart.png"]
+    assert (workspace / OUTPUT_DIR / "chart.png").is_file()
 
 
 # ------------------------------------------------ P1 步骤一：加固参数
