@@ -23,6 +23,10 @@ services:
       # 工作目录里的文件由 nginx 直发，因此它要读得到那些字节。**只读**：这个容器
       # 永远不该改动 agent 的产出。容器内挂到固定路径，nginx.conf 才能写死 alias ——
       # 宿主那一侧的路径是变量，配置文件里插值不了
+      #
+      # **重挂 XFS 之后这个容器必须跟着重启**，与 broker 同一个道理：bind mount 在
+      # 容器启动那一刻解析，绑着旧目录时 api 照常回 200 与跳转头，而 nginx 打不开
+      # 文件 —— 浏览器收到 404，api 侧却一切正常。实测踩过一次
       - ${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}:/workspace:ro
     depends_on:
       - api

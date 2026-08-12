@@ -52,14 +52,19 @@ sudo bash deploy/setup-gvisor.sh && sudo bash deploy/setup-xfs.sh && sudo bash d
 # 而配额设不上时 broker 直接拒绝建会话（fail-closed，见 P4 计划 §8.13）——
 # 症状是 POST /api/threads 一律 500，日志里是 QuotaError。
 #
-# **挂完必须让 broker 重启一次**：容器的 bind mount 是在它启动那一刻解析的，
-# 重启后自动起来的 broker 绑的是「挂载还没回来」时那个被遮住的 ext4 目录 ——
-# 症状与没挂一模一样，而 `docker compose up -d` **不会重建它**（服务定义没变，
-# compose 认为无事可做）。实测踩过一次：宿主机看是 xfs / 419 个会话目录，
-# 容器里看是 ext4 / 4 个。
+# **挂完必须让 broker 与 nginx 都重启一次**：容器的 bind mount 是在它启动那一刻
+# 解析的，重启后自动起来的容器绑的是「挂载还没回来」时那个被遮住的 ext4 目录 ——
+# 症状与没挂一模一样，而 `docker compose up -d` **不会重建它们**（服务定义没变，
+# compose 认为无事可做）。实测踩过两次：
+#
+#   - broker：宿主机看是 xfs / 419 个会话目录，容器里看是 ext4 / 4 个，建会话一律 500；
+#   - nginx：**只重启 broker 会漏掉它**。文件下载走 X-Accel-Redirect，字节由 nginx
+#     从这个卷直接读 —— 它绑着旧目录时，api 照常回 200 与跳转头，而 nginx 打不开文件，
+#     浏览器收到的是 404。**api 侧一切正常，日志也不指向挂载**，只有 nginx 的
+#     error log 里那一行 `open() ... failed` 说得出真相。
 sudo bash deploy/setup-xfs.sh
 export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
-docker compose -f deploy/compose.yml restart broker
+docker compose -f deploy/compose.yml restart broker nginx
 # 之前起来的沙箱容器同样绑着旧目录，一并清掉让 broker 按需重建（它们本来就是 --rm）
 docker ps -q --filter 'name=zuel-sandbox' | xargs -r docker rm -f
 
