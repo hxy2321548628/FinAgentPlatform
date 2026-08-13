@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { CatalogCard } from '../workspace/components/Catalog'
 
 // ── 数据定义 ──────────────────────────────────────────────────
 interface SceneAgent { name: string; author: string }
@@ -24,7 +25,6 @@ interface AgentCard {
   subject: string
   desc: string
   calls: number
-  rating: number
   scenes: string[]         // 被哪些场景使用
 }
 
@@ -91,15 +91,15 @@ const FEATURED_SCENES: FeaturedScene[] = [
 ]
 
 const ALL_AGENTS: AgentCard[] = [
-  { id: '1', name: '企业财务异常检测', author: '张老师', subject: '公司金融', desc: '对报表关键科目进行稽核式比率检查，识别异常项并输出带证据的清单。', calls: 96, rating: 4.8, scenes: ['企业财务风险分析'] },
-  { id: '2', name: '计量方法鉴别器', author: '赵老师', subject: '学术科研', desc: '识别论文的识别策略类型，提取稳健性检验方法，标注识别威胁。', calls: 64, rating: 4.7, scenes: ['论文计量方法鉴别'] },
-  { id: '3', name: '公告语义分析', author: '平台 · 公共', subject: '风险管理', desc: '解读上市公司公告，识别经营/治理/前瞻三类风险信号。', calls: 88, rating: 4.6, scenes: [] },
-  { id: '4', name: '申请书结构解析', author: '孙老师', subject: '学术科研', desc: '解析基金申请书章节结构，对比已立项项目，输出改进建议。', calls: 38, rating: 4.5, scenes: ['课题申请书诊断'] },
-  { id: '5', name: '创新点分析', author: '张老师', subject: '学术科研', desc: '对比目标论文与近期文献，分析创新点表述与支撑证据充分性。', calls: 29, rating: 4.4, scenes: ['论文计量方法鉴别', '课题申请书诊断'] },
-  { id: '6', name: '量化因子筛选器', author: '李教授', subject: '量化投资', desc: '基于历史收益率构建多因子模型，筛选显著 alpha 因子组合。', calls: 52, rating: 4.7, scenes: ['量化因子研究'] },
-  { id: '7', name: '持仓波动率分析', author: '王老师', subject: '资产管理', desc: '基于持仓数据计算各行业年化波动率，识别高风险持仓，生成减仓建议。', calls: 43, rating: 4.5, scenes: [] },
-  { id: '8', name: '财务报表核查', author: '陈老师', subject: '会计审计', desc: '按表关键科目勾稽关系做动态检查，识别三表数据不一致项，输出异常清单。', calls: 61, rating: 4.6, scenes: ['企业财务风险分析'] },
-  { id: '9', name: '信用风险评估', author: '刘老师', subject: '风险管理', desc: '基于财务指标构建信用评分模型，输出违约概率估计和风险等级。', calls: 35, rating: 4.3, scenes: [] },
+  { id: '1', name: '企业财务异常检测', author: '张老师', subject: '公司金融', desc: '对报表关键科目进行稽核式比率检查，识别异常项并输出带证据的清单。', calls: 96, scenes: ['企业财务风险分析'] },
+  { id: '2', name: '计量方法鉴别器', author: '赵老师', subject: '学术科研', desc: '识别论文的识别策略类型，提取稳健性检验方法，标注识别威胁。', calls: 64, scenes: ['论文计量方法鉴别'] },
+  { id: '3', name: '公告语义分析', author: '平台 · 公共', subject: '风险管理', desc: '解读上市公司公告，识别经营/治理/前瞻三类风险信号。', calls: 88, scenes: [] },
+  { id: '4', name: '申请书结构解析', author: '孙老师', subject: '学术科研', desc: '解析基金申请书章节结构，对比已立项项目，输出改进建议。', calls: 38, scenes: ['课题申请书诊断'] },
+  { id: '5', name: '创新点分析', author: '张老师', subject: '学术科研', desc: '对比目标论文与近期文献，分析创新点表述与支撑证据充分性。', calls: 29, scenes: ['论文计量方法鉴别', '课题申请书诊断'] },
+  { id: '6', name: '量化因子筛选器', author: '李教授', subject: '量化投资', desc: '基于历史收益率构建多因子模型，筛选显著 alpha 因子组合。', calls: 52, scenes: ['量化因子研究'] },
+  { id: '7', name: '持仓波动率分析', author: '王老师', subject: '资产管理', desc: '基于持仓数据计算各行业年化波动率，识别高风险持仓，生成减仓建议。', calls: 43, scenes: [] },
+  { id: '8', name: '财务报表核查', author: '陈老师', subject: '会计审计', desc: '按表关键科目勾稽关系做动态检查，识别三表数据不一致项，输出异常清单。', calls: 61, scenes: ['企业财务风险分析'] },
+  { id: '9', name: '信用风险评估', author: '刘老师', subject: '风险管理', desc: '基于财务指标构建信用评分模型，输出违约概率估计和风险等级。', calls: 35, scenes: [] },
 ]
 
 const SUBJECT_TABS = ['全部', '公司金融', '量化投资', '资产管理', '风险管理', '学术科研', '会计审计']
@@ -195,34 +195,15 @@ function FeaturedSceneCard({ scene, onUse }: { scene: FeaturedScene; onUse: () =
 }
 
 function AgentMiniCard({ agent }: { agent: AgentCard }) {
-  const [hovered, setHovered] = useState(false)
   return (
-    <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{ background: 'var(--surface)', border: `1px solid ${hovered ? 'var(--action-border)' : 'var(--border)'}`, borderRadius: 10, padding: '18px 20px', transition: 'border-color 0.2s, box-shadow 0.2s', boxShadow: hovered ? '0 4px 16px rgba(23,73,196,0.08)' : 'none', display: 'flex', flexDirection: 'column' as const, gap: 10 }}
-    >
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: 'var(--action)', flexShrink: 0 }}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-          {agent.name}
-        </div>
-        <span style={{ fontSize: 12, color: '#F59E0B', fontWeight: 600, flexShrink: 0, marginLeft: 8, display: 'flex', alignItems: 'center', gap: 3 }}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="#F59E0B" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-          {agent.rating}
-        </span>
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{agent.author} · {agent.subject}</div>
-      <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.65, flex: 1 }}>{agent.desc}</p>
-      {agent.scenes.length > 0 && (
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', borderTop: '1px solid var(--border-light)', paddingTop: 8 }}>
-          用于场景：{agent.scenes.map((s, i) => (
-            <span key={s} style={{ color: 'var(--action)' }}>{s}{i < agent.scenes.length - 1 ? '、' : ''}</span>
-          ))}
-        </div>
-      )}
-      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>▶ {agent.calls} 次调用</div>
-    </div>
+    <CatalogCard
+      title={agent.name}
+      author={agent.author}
+      subject={agent.subject}
+      description={agent.desc}
+      detail={agent.scenes.length > 0 ? `用于场景：${agent.scenes.join('、')}` : '暂未编入分析场景'}
+      metric={`${agent.calls} 次调用`}
+    />
   )
 }
 
