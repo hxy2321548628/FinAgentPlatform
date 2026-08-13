@@ -25,7 +25,6 @@ from group.repository import GroupRepository, JoinRequestRepository
 from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
 from quota.usage import RunUsage
-from report.usage import UsageReport
 from run.archive import EventArchive
 from run.cancel import CancelFlag
 from run.log import EventLog
@@ -77,9 +76,6 @@ class Platform:
     policy: QuotaPolicy
     cancel: CancelFlag
     usage: RunUsage
-    # 成本看板的数据源。**与 `usage` 是两件事**：那个是闸门（永远带 user 过滤），
-    # 这个是账本（跨用户聚合）
-    usage_report: UsageReport
     rate: RateLimiter
     password: PasswordHasher
     # Cookie 的 max-age 要与 session 在 Redis 里的 TTL 一致。两边分别配的话，
@@ -137,7 +133,6 @@ async def build_platform(settings: Settings) -> Platform:
         policy=policy,
         cancel=CancelFlag(cache),
         usage=RunUsage(engine, output_weight=policy.output_weight),
-        usage_report=UsageReport(engine),
         rate=RateLimiter(cache, limit=settings.rate_limit, window_second=settings.rate_limit_window_second),
         session=SessionStore(cache, ttl_second=settings.session_ttl_second),
         upload_max_byte=settings.upload_max_byte,

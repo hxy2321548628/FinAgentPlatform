@@ -15,12 +15,14 @@ from typing import Protocol, cast
 from deepagents import create_deep_agent
 from deepagents.backends.protocol import BackendProtocol
 from langchain.agents.middleware.human_in_the_loop import DecisionType, InterruptOnConfig
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
 from agent.prompt import SYSTEM_PROMPT
+from agent.trace import attribution
 from config import Settings
 from event.mapper import StreamChunk
 from event.model import InterruptAction
@@ -108,22 +110,36 @@ class Agent:
         checkpointer: 会话状态的持久化。
     """
 
-    def __init__(self, *, model: BaseChatModel, checkpointer: BaseCheckpointSaver[str]) -> None:
+    def __init__(
+        self,
+        *,
+        model: BaseChatModel,
+        checkpointer: BaseCheckpointSaver[str],
+        callback: BaseCallbackHandler | None = None,
+    ) -> None:
         self._model = model
         self._checkpointer = checkpointer
+        self._callback = callback
 
-    def stream(self, backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+    def stream(
+        self, backend: BackendProtocol, thread_id: str, content: str, *, user_id: str | None = None
+    ) -> AsyncIterator[StreamChunk]:
         """第一次跑一个提问。"""
-        return self._astream(backend, thread_id, {"messages": [{"role": "user", "content": content}]})
+        return self._astream(backend, thread_id, {"messages": [{"role": "user", "content": content}]}, user_id=user_id)
 
     def resume(
-        self, backend: BackendProtocol, thread_id: str, decisions: list[dict[str, object]]
+        self,
+        backend: BackendProtocol,
+        thread_id: str,
+        decisions: list[dict[str, object]],
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """带着教师的决策从中断点接着跑。
 
         **决策的顺序必须与 `action_requests` 对齐** —— 重排在 `run/approval.py` 里做完了。
         """
-        return self._astream(backend, thread_id, Command(resume={RESUME_KEY: decisions}))
+        return self._astream(backend, thread_id, Command(resume={RESUME_KEY: decisions}), user_id=user_id)
 
     async def pending(self, backend: BackendProtocol, thread_id: str) -> list[InterruptAction]:
         """问一句「有没有在等人确认」。
@@ -142,11 +158,16 @@ class Agent:
         return _actions(getattr(snapshot, "interrupts", ()))
 
     def _astream(
-        self, backend: BackendProtocol, thread_id: str, entry: dict[str, object] | Command[object]
+        self,
+        backend: BackendProtocol,
+        thread_id: str,
+        entry: dict[str, object] | Command[object],
+        *,
+        user_id: str | None,
     ) -> AsyncIterator[StreamChunk]:
         return self._graph(backend).astream(
             entry,
-            self._config(thread_id),
+            self._config(thread_id, user_id=user_id),
             stream_mode=STREAM_MODE,
             subgraphs=True,
         )
@@ -167,8 +188,17 @@ class Agent:
             ),
         )
 
-    def _config(self, thread_id: str) -> dict[str, object]:
-        return {"configurable": {"thread_id": thread_id}, "recursion_limit": RECURSION_LIMIT}
+    def _config(self, thread_id: str, *, user_id: str | None = None) -> dict[str, object]:
+        config: dict[str, object] = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": RECURSION_LIMIT,
+        }
+        # 没配 Langfuse 时连 metadata 都不放：那几个键对 LangGraph 毫无意义，
+        # 而一个总是带着陌生键的 config 会让排障时多一个「这是干嘛的」
+        if self._callback is not None:
+            config["callbacks"] = [self._callback]
+            config["metadata"] = attribution(thread_id=thread_id, user_id=user_id)
+        return config
 
 
 def _actions(interrupts: object) -> list[InterruptAction]:

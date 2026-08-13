@@ -87,6 +87,12 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
+    # **Langfuse 在这套 compose 之外**（它自己一份 compose，见运维设计 §8.3）。
+    # 因此容器里够不着它的服务名，`.env` 的 LANGFUSE_HOST 要填 host.docker.internal
+    # 或者内网地址 —— 这一行只是把宿主机变成一个解析得出来的名字。
+    # **填 127.0.0.1 的话连的是 worker 容器自己**，症状是 trace 一条都不出现而没有报错
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # **迁移不由 worker 跑**：多副本会撞在同一把 DDL 锁上，那是 api 的活。
     # 表还没建好时 worker 起来也无妨 —— 它要等到有任务投进来才碰 runs 表
     depends_on:

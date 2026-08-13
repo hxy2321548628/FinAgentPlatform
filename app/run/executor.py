@@ -58,12 +58,23 @@ class AgentProtocol(Protocol):
     换掉框架时改的是装配层，不是执行器。
     """
 
-    def stream(self, backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
-        """第一次跑一个提问。"""
+    def stream(
+        self, backend: BackendProtocol, thread_id: str, content: str, *, user_id: str | None = None
+    ) -> AsyncIterator[StreamChunk]:
+        """第一次跑一个提问。
+
+        `user_id` 只用于把这次执行归到人头上（追踪那一侧），不参与任何判断 ——
+        授权在提交那一刻就做完了。
+        """
         ...
 
     def resume(
-        self, backend: BackendProtocol, thread_id: str, decisions: list[dict[str, object]]
+        self,
+        backend: BackendProtocol,
+        thread_id: str,
+        decisions: list[dict[str, object]],
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """带着教师的决策从中断点接着跑。"""
         ...
@@ -304,8 +315,8 @@ class RunExecutor:
     def _start(self, backend: BackendProtocol, run: Run, task: RunTask) -> AsyncIterator[StreamChunk]:
         """开跑或续跑。带着决策来的就是续跑，从中断点接着走。"""
         if task.decisions is None:
-            return self._agent.stream(backend, run.thread_id, task.content)
-        return self._agent.resume(backend, run.thread_id, to_resume(task.decisions))
+            return self._agent.stream(backend, run.thread_id, task.content, user_id=task.user_id)
+        return self._agent.resume(backend, run.thread_id, to_resume(task.decisions), user_id=task.user_id)
 
     async def _suspend(self, backend: BackendProtocol, run: Run, tokens: TokenUsage) -> bool:
         """流结束后查一次中断；有就转 `waiting_approval` 并推 `interrupt`。

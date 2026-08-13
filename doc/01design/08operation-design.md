@@ -110,9 +110,9 @@ Agent run 是 **IO 密集**的 —— 绝大部分时间在等 LLM 返回。
   docker compose -f deploy/compose.yml logs worker | jq -c 'select(.run_id == "…")'
   ```
 
-- **token 计量与成本账本**（P1 计量口径，P4 账本）：`GET /api/admin/usage` 按用户与时间聚合，数据来自 `runs` 表（[`app/report/usage.py`](../../app/report/usage.py)），前端在管理后台的用量页。**账本与闸门分开放**：`report/usage.py` 跨用户聚合，`quota/usage.py` 永远带 `user_id` —— 后者刻意不提供「不带 user 也能查」的入口，多租户最常见的越权来源就是某个接口忘了加 where 条件。
+- **token 计量**（2026-08-06，P1）：按 cache 命中拆分，口径见 §6.4，逐条落进 `runs.tokens_*`。**配额闸门读的就是它**（`quota/usage.py`），这条路完全在平台内，不依赖任何外部服务。
 
-  > **这一项与 Prometheus 无关，撤除时一个字都没动。** 它常被误当成可观测性 —— 名字里有「看板」，而 P4 又同时交付了它与 Grafana。判据很简单：**它从 `runs` 表读，是业务数据的一个查询端点**，与那五个服务不共享任何代码。
+  > ~~**成本账本**：`GET /api/admin/usage` 按用户与时间聚合（`app/report/usage.py`）。~~ **同日（2026-08-13）一并撤除**，用量改到 Langfuse 上看，见 §8.3.3。**计量与账本是两件事，撤掉的只是后者** —— 数字仍在逐条落库。
 
 ### 8.3.2 撤掉了什么，以及撤掉之后失去了什么
 
@@ -130,6 +130,24 @@ Agent run 是 **IO 密集**的 —— 绝大部分时间在等 LLM 返回。
 > **P9 的四处「必须实测」不受影响。** 逐条核对过：G6 读的是真跑一次拿到的 `astream` chunk，G7 对的是 `runs` 表与 DeepSeek 后台账单，G8 查的是 `aget_state`，G9 看的是抛出来的是哪一层的 `recursion_limit` —— **四处没有一处依赖 trace 或指标**。撤除不阻塞 P9。
 >
 > **真正被这次撤除改掉的是 F5（MCP 熔断告警）**，它原定「复用 P4 已接的飞书运维通道」，而那条通道没了。修订见 [P6 决策 F5](../03plan/P6-decision.md)。
+
+### 8.3.3 Langfuse：同日接入，外部服务
+
+**用量与 agent 链路改到 Langfuse 上看**（v4，自托管在同一台机器上，**不由本项目的 compose 编排**）。这与上面撤掉的那一套是两个决定：那套是平台自己的指标与 trace，这一套是 LLM 与 agent 专用的追踪。
+
+| 项 | 取值 |
+|---|---|
+| 接入点 | 回调挂在**图**上而不是模型上（[`app/agent/trace.py`](../../app/agent/trace.py)）—— 挂模型只看得到「调了几次 LLM」，挂图才看得到节点、工具调用与中断，而 agent 出问题多半在工具那一段 |
+| 归属 | `langfuse_session_id` = `thread_id`，`langfuse_user_id` = 提交人。**对上这两个键它才答得出「谁花了多少」**，否则只剩一堆孤立 trace |
+| 开关 | `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` **任缺其一即整个关掉**，并打一条日志说明。宁可没有追踪，也不要「配了一半、以为在记其实没记」 |
+| compose | worker 容器要经 `host.docker.internal` 才够得着它（compose 里已配 `host-gateway`）。**填 `127.0.0.1` 连的是容器自己**，症状是 trace 一条不出现且没有报错 |
+
+**两个必须知道的后果：**
+
+1. **会话全文离开了平台的权限体系。** Langfuse 记完整 prompt 与 completion，谁能登录它谁就看得见全部会话内容 —— §6.3 那条「管理员看不到会话内容」在平台接口内仍成立，但**已不再是一条有效的保密边界**。详见 [§6.3.1](./06data-design.md) 与[风险登记 §10.2.3](./09risk-register.md)。
+2. **它的 redis 与平台的 redis 都想绑 `127.0.0.1:6379`。** 两套栈同时起时后起的那个直接起不来（实测踩过）。**要同时跑就得有一方让开** —— 改哪一边都行，但别改成「每次手工挑一个起」，那种约定活不过两周。
+
+**本项目的验收脚本不断言 Langfuse 收没收到 trace。** 它是外部服务，让门禁的绿依赖另一个项目起没起，是把一条本来可靠的判据变成偶发红的最快方式。要验就手工打开它看。
 
 ## 8.4 部署与发布
 

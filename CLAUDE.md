@@ -82,8 +82,16 @@ cd app && uv run python -m worker.main                # 再开一个。不起它
 > 全部删掉，MinIO 作为它们的存储后端一并撤除（产物存储在 `0009` 就搬走了，此后
 > 它没有别的用户）。**排障手段回到 `docker logs` + JSON 日志**：`app/log.py` 那一层
 > 原样保留，`run_id` / `thread_id` / `user_id` 仍逐条带着，`docker compose logs api | jq`
-> 照旧按 run 过滤得出来。**成本仍然查得到**，走的是 `/api/admin/usage` 与 `runs` 表，
-> 那条路与 Prometheus 无关。理由与重新纳入的时机见[运维设计 §8.3](doc/01design/08operation-design.md)。
+> 照旧按 run 过滤得出来。理由与重新纳入的时机见[运维设计 §8.3](doc/01design/08operation-design.md)。
+>
+> **用量与 agent 链路改到 Langfuse 上看**（同日，v4，自托管但**不由本项目 compose 编排** ——
+> 它自己一份 compose，克隆在 `LangchainAcademic/langfuse`）。`GET /api/admin/usage` 与它的账本
+> 已撤除。**配额闸门不受影响**：那条读的是 `runs` 表，`tokens_*` 仍在逐条落库。
+>
+> **Langfuse 记的是完整 prompt 与 completion** —— 谁能登录它谁就看得见全部会话内容。
+> 这是主动接受的边界变更,见[数据设计 §6.3.1](doc/01design/06data-design.md)。
+>
+> **它的 redis 与平台的 redis 都想绑 6379,两套栈同时起会有一个起不来**(实测踩过)。
 
 ```bash
 # **新克隆的仓库要建一次这个链接**：compose 的 ${...} 插值只读 compose.yml 同目录的

@@ -9,12 +9,14 @@ from typing import Any
 
 import pytest
 from deepagents.backends.protocol import BackendProtocol
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import SecretStr
 
 from agent.factory import ALLOWED_DECISION, DELETE_TOOL, INTERRUPT_ON, RECURSION_LIMIT, STREAM_MODE, Agent, create_model
 from agent.prompt import SYSTEM_PROMPT
+from agent.trace import SESSION_KEY, USER_KEY
 from config import Settings
 from event.mapper import StreamChunk
 
@@ -113,6 +115,36 @@ async def test_the_thread_id_isolates_conversation_history(
     await drain(runner.stream(FakeBackend(), "thread-42", "一"))  # type: ignore[arg-type]
 
     assert agent.call["config"]["configurable"]["thread_id"] == "thread-42"
+
+
+async def test_a_configured_callback_reaches_the_graph_with_the_identity(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    """回调与身份要一起进 config。
+
+    **这一环断了不会报错**：图照常跑完、分析照常出结果，只是 Langfuse 那边什么都没有，
+    或者有 trace 但每条都没有主人。
+    """
+    agent, _ = recorded
+    handler = BaseCallbackHandler()
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver(), callback=handler)
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一", user_id="teacher-1"))  # type: ignore[arg-type]
+
+    config = agent.call["config"]
+    assert config["callbacks"] == [handler]
+    assert config["metadata"] == {SESSION_KEY: "thread-1", USER_KEY: "teacher-1"}
+
+
+async def test_without_a_callback_the_config_stays_clean(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
+    """没配 Langfuse 时连 metadata 都不放 —— 那几个键对 LangGraph 毫无意义。"""
+    agent, _ = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一", user_id="teacher-1"))  # type: ignore[arg-type]
+
+    assert "callbacks" not in agent.call["config"]
+    assert "metadata" not in agent.call["config"]
 
 
 async def test_the_question_is_sent_as_a_user_message(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:

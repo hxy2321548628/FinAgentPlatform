@@ -146,17 +146,29 @@ class FakeAgent:
         self._runner = runner
         self.asked: list[str] = []
         self.resumed: list[list[dict[str, object]]] = []
+        # 每次开跑收到的 user_id。**追踪那一侧靠它把花费归到人头上**，
+        # 丢了不会报错，只会让账上多一堆没有主人的调用
+        self.attributed: list[str | None] = []
         # 下一次流结束后要报告的待确认调用。**用完即清** —— 续跑那一次不该再停下来
         self.interrupt: list[InterruptAction] = []
 
-    def stream(self, backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+    def stream(
+        self, backend: BackendProtocol, thread_id: str, content: str, *, user_id: str | None = None
+    ) -> AsyncIterator[StreamChunk]:
         self.asked.append(content)
+        self.attributed.append(user_id)
         return self._runner(backend, thread_id, content)
 
     def resume(
-        self, backend: BackendProtocol, thread_id: str, decisions: list[dict[str, object]]
+        self,
+        backend: BackendProtocol,
+        thread_id: str,
+        decisions: list[dict[str, object]],
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         self.resumed.append(decisions)
+        self.attributed.append(user_id)
         return self._runner(backend, thread_id, "")
 
     async def pending(self, backend: BackendProtocol, thread_id: str) -> list[InterruptAction]:
@@ -256,6 +268,31 @@ async def test_a_finished_run_ends_up_succeeded(pool: FakePool, log: EventLog) -
     await executor.execute(run)
 
     assert repository.status[run.run_id] is RunStatus.SUCCEEDED
+
+
+# ------------------------------------------------------------------ 归属
+def _quiet_runner(backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+    return chunk_stream(token_chunk("好"))
+
+
+async def test_the_submitter_is_handed_to_the_agent(pool: FakePool, log: EventLog) -> None:
+    """**丢了它不会报错**，只会让追踪那一侧多一堆没有主人的调用，而「谁花了多少」答不出来。"""
+    agent = FakeAgent(_quiet_runner)
+    executor, _ = make_executor_with(pool, log, _quiet_runner, agent=agent)
+
+    await executor.execute(a_task(user_id="teacher-1"))
+
+    assert agent.attributed == ["teacher-1"]
+
+
+async def test_an_anonymous_run_is_attributed_to_nobody(pool: FakePool, log: EventLog) -> None:
+    """没有主人的 run 要如实报告成没有，而不是编一个空串 —— 那会在账上多出一个叫「」的人。"""
+    agent = FakeAgent(_quiet_runner)
+    executor, _ = make_executor_with(pool, log, _quiet_runner, agent=agent)
+
+    await executor.execute(a_task(user_id=None))
+
+    assert agent.attributed == [None]
 
 
 # ------------------------------------------------------------------ 事件序列

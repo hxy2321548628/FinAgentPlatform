@@ -40,7 +40,7 @@
 | **P1** | gVisor、资源与磁盘配额、Sandbox Broker、生命周期管理 | 死循环、fork 炸弹、写满 workspace/tmp 均不影响宿主机 |
 | **P2** | Redis Streams、Postgres Checkpointer、Run 与事件元数据 | `kill -9` Worker 后从 checkpoint 续跑，已完成步骤不重做 |
 | **P3** | HITL、取消、多用户隔离、配额限流、工具幂等 | 审批走通；崩溃恢复不重复写；30 并发不崩溃、不串数据 |
-| **P4** | ~~OpenTelemetry、MinIO 产物~~、成本看板 | ~~能定位单个 Run 的完整 Trace 与 Token 花费~~ → **现在只剩「花费」那一半**（`/api/admin/usage`）。「定位」那一半随可观测性于 2026-08-13 撤除，排障回到 `docker logs` + JSON 日志 |
+| **P4** | ~~OpenTelemetry、MinIO 产物、成本看板~~ | ~~能定位单个 Run 的完整 Trace 与 Token 花费~~ → **三项交付物在 2026-08-12/13 全部撤除**。「定位」与「花费」都改到外部的 Langfuse 上看；平台内留下的是 JSON 日志（排障）与 `runs.tokens_*`（配额闸门的判据）|
 
 **P5 不在这张基线表里** —— 它是 P4 之后为支撑前端补的一层接口，目标由[运行时设计 §5.7](../01design/05runtime-design.md) 的接口契约表给出，不另立验证标准。
 

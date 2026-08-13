@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
 #
-# P4 验收四条，一条命令跑完。
+# P4 验收三条，一条命令跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   docker compose -f deploy/compose.yml up -d --build
 #   bash deploy/test/p4.sh
 #
-# 分工：②⑤ 本脚本自己验（全部免费）；⑦ 复用 p2.sh 造的崩溃场景；⑧ 委托 p3.sh
-# 做 P3 回归。**本脚本自己不再需要 LLM**，`SKIP_LLM` 只是原样转给 p3.sh。
+# 分工：②⑦ 本脚本自己验（全部免费）；⑧ 委托 p3.sh 做 P3 回归。
+# **本脚本自己不再需要 LLM**，`SKIP_LLM` 只是原样转给 p3.sh。
 #
-# **原来的 ③（旧形状产物 id）与 ④（产物列表偶发为空）已随产物存储一起撤掉；
-# ①（完整 trace 与 token 花费）与 ⑥（告警真的会响）已于 2026-08-13 随可观测性
-# 整体撤除** —— 这四条验的功能都不在了，留着只会永远红。
+# **P4 当初那八条已经撤掉五条**，因为它们验的功能都不在了，留着只会永远红：
 #
-# **⑤ 成本看板留着，且它才是「花了多少」的唯一判据** —— 那一条走的是 runs 表与
-# `/api/admin/usage`，与 Prometheus 无关，撤可观测性一个字都没动到它。
+#   ③④ 产物存储（`0009`，2026-08-12）
+#   ①⑥ 完整 trace 与告警（随可观测性，2026-08-13）
+#   ⑤  成本看板（账本与 `/api/admin/usage` 撤除，用量改到 Langfuse 上看，同日）
+#
+# **⑤ 撤掉之后，「谁花了多少」在本仓库内不再有判据。** Langfuse 是外部服务，
+# 它有没有收到 trace 不该由本项目的验收脚本来断言 —— 那会让门禁的绿依赖
+# 另一个项目起没起。要验就手工打开 Langfuse 看，见运维设计 §8.3。
 #
 #   SKIP_LLM=1 SKIP_P3=1 bash deploy/test/p4.sh   # 只跑本脚本自己那两条
 #
@@ -40,7 +43,6 @@ failed=0
 declare -A VERDICT=()
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
-psql_query() { compose exec -T postgres psql -U "${POSTGRES_USER:-zuel}" -d "${POSTGRES_DB:-zuel}" -tAc "$1"; }
 
 # ------------------------------------------------------------------ 前置检查
 log "前置检查"
@@ -122,43 +124,6 @@ LEAK="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/workspace/$THREAD/outp
     || fail "内部路径漏了：直接请求 /workspace/… 得到 $LEAK"
 (( failed == before )) && VERDICT[2]=通过 || VERDICT[2]=未过
 
-# ------------------------------------------------------------------ ⑤ 成本看板
-log "⑤ 成本看板答得出「谁花了多少」"
-before="$failed"
-ADMIN_JAR="$(mktemp)"; trap 'rm -f "$JAR" "$ADMIN_JAR"' EXIT
-zuel_open_session "$ADMIN_JAR" admin >/dev/null || fail "建管理员失败"
-
-USAGE="$(curl -fsS -b "$ADMIN_JAR" "$BASE_URL/api/admin/usage")"
-echo "$USAGE" | jq -e '.users | length >= 0' >/dev/null && pass "端点答得出按用户的聚合" || fail "端点没给出 users"
-echo "$USAGE" | jq -e '.daily | length >= 0' >/dev/null && pass "端点答得出按天的聚合" || fail "端点没给出 daily"
-
-# 账要对得上：端点的未命中总和 = 直接查库
-ENDPOINT_SUM="$(echo "$USAGE" | jq '[.users[].uncached] | add // 0')"
-DAYS="$(echo "$USAGE" | jq -r .days)"
-# **必须与端点同一个口径**：那边是 runs 内连 users（`report/usage.py`），
-# 没有主人的 run 不进报表。少了这个 join 会把它们算进来，于是「账对不上」——
-# 而对不上的是判据，不是看板。第一版就是这么红的
-DB_SUM="$(psql_query "SELECT COALESCE(SUM(r.tokens_uncached), 0)
-    FROM runs r JOIN users u ON u.id = r.user_id
-    WHERE r.started_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
-                          - INTERVAL '$((DAYS - 1)) days';" | tr -d ' ')"
-info "端点 $ENDPOINT_SUM / 直接查库 $DB_SUM"
-[[ $ENDPOINT_SUM == "$DB_SUM" ]] && pass "账对得上" || fail "账对不上 —— 看板在误导成本判断"
-
-# 边界：教师打不开，未登录打不开
-CODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$BASE_URL/api/admin/usage")"
-[[ $CODE == 403 ]] && pass "教师打不开（403）" || fail "教师拿到了 $CODE，本该 403"
-CODE="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/api/admin/usage")"
-[[ $CODE == 401 ]] && pass "未登录打不开（401）" || fail "未登录拿到了 $CODE，本该 401"
-
-# **管理员看得到用量，看不到会话内容**（架构 §6.3）
-if echo "$USAGE" | grep -qiE '"(title|content|question|answer|thread_id|run_id)"'; then
-    fail "响应里出现了会话相关字段 —— §6.3 的边界被这个端点绕开了"
-else
-    pass "响应里只有数字，没有会话内容"
-fi
-(( failed == before )) && VERDICT[5]=通过 || VERDICT[5]=未过
-
 # ------------------------------------------------------------------ ⑦ resumed
 log "⑦ resumed 语义对得上"
 before="$failed"
@@ -220,14 +185,13 @@ else
 fi
 
 # ------------------------------------------------------------------ 结果
-log "P4 验收四条"
+log "P4 验收三条"
 DESCRIPTION=(
     [2]="工作目录里的文件从 nginx 直发，api 碰不到字节"
-    [5]="成本看板答得出「谁花了多少」"
     [7]="resumed 语义对得上"
     [8]="P3 验收七条不回归"
 )
-for index in 2 5 7 8; do
+for index in 2 7 8; do
     case "${VERDICT[$index]:-未验}" in
         通过) printf '  \033[32m✅ %s %s\033[0m\n' "$index" "${DESCRIPTION[$index]}" ;;
         未过) printf '  \033[31m❌ %s %s\033[0m\n' "$index" "${DESCRIPTION[$index]}" ;;
@@ -239,9 +203,9 @@ if (( failed )); then
     printf '\n\033[31mP4 验收未全过。\033[0m\n'
     exit 1
 fi
-for index in 2 5 7 8; do
+for index in 2 7 8; do
     [[ ${VERDICT[$index]:-未验} == 通过 ]] && continue
     printf '\n\033[33m已验的都过了，但有条目未验 —— 不能据此判定 P4 验收通过。\033[0m\n'
     exit 2
 done
-printf '\n\033[32mP4 验收四条全过。\033[0m\n'
+printf '\n\033[32mP4 验收三条全过。\033[0m\n'

@@ -43,7 +43,6 @@ from group.repository import Group, GroupRepository, JoinRequestRepository
 from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
 from quota.usage import RunUsage
-from report.usage import UsageReport
 from run.cancel import CancelFlag
 from run.executor import RunExecutor
 from run.log import EventLog
@@ -133,12 +132,19 @@ class Agent:
         # 请求还没发出去 run 已经是终态了，验的就成了「取消一个已完成的 run」
         self.blocked = False
 
-    def stream(self, backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+    def stream(
+        self, backend: BackendProtocol, thread_id: str, content: str, *, user_id: str | None = None
+    ) -> AsyncIterator[StreamChunk]:
         self.asked.append(content)
         return self._stream(backend)
 
     def resume(
-        self, backend: BackendProtocol, thread_id: str, decisions: list[dict[str, object]]
+        self,
+        backend: BackendProtocol,
+        thread_id: str,
+        decisions: list[dict[str, object]],
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         self.resumed.append(decisions)
         return self._stream(backend)
@@ -272,7 +278,6 @@ def platform(
         policy=QuotaPolicy(),
         cancel=CancelFlag(live_cache),
         usage=RunUsage(live_engine),
-        usage_report=UsageReport(live_engine),
         rate=RateLimiter(live_cache, limit=TEST_RATE_LIMIT, window_second=TEST_RATE_WINDOW_SECOND),
         session=SessionStore(live_cache, ttl_second=DEFAULT_TTL_SECOND),
         upload_max_byte=upload_max_byte,

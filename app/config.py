@@ -157,6 +157,21 @@ class Settings(StoreSettings):
         description="辅助模型，承担意图分类等轻量调用",
     )
 
+    # **Langfuse 是外部服务，不由本项目的 compose 编排**（2026-08-13）。
+    # 三项任缺其一即整个关掉：宁可没有追踪，也不要一个「配了一半、以为在记其实没记」的状态。
+    langfuse_host: str = Field(
+        default="",
+        description="Langfuse 的地址，形如 http://127.0.0.1:3000。留空即不上报",
+    )
+    langfuse_public_key: str = Field(
+        default="",
+        description="Langfuse 项目的 public key",
+    )
+    langfuse_secret_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Langfuse 项目的 secret key",
+    )
+
     broker_url: str = Field(
         default=DEFAULT_BROKER_URL,
         description="sandbox-broker 的地址。它是唯一持有 docker.sock 的进程，只在内网监听",
