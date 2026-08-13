@@ -87,10 +87,19 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
-    # **Langfuse 在这套 compose 之外**（它自己一份 compose，见运维设计 §8.3）。
-    # 因此容器里够不着它的服务名，`.env` 的 LANGFUSE_HOST 要填 host.docker.internal
-    # 或者内网地址 —— 这一行只是把宿主机变成一个解析得出来的名字。
-    # **填 127.0.0.1 的话连的是 worker 容器自己**，症状是 trace 一条都不出现而没有报错
+      # **Langfuse 在这套 compose 之外**（它自己一份 compose，见运维设计 §8.3），
+      # 因此容器里既够不着它的服务名，也够不着 `localhost` —— 后者在容器里指的是
+      # **容器自己**，那上面没有任何东西监听 3000。
+      #
+      # 于是与上面三项同一个办法：`.env` 留「直接跑 uvicorn」的值
+      # （`http://localhost:3000`），这里覆盖成容器里够得着的那个。
+      # **不覆盖的话故障是静默的**：SDK 后台批量上报，连不上不抛异常 ——
+      # 分析照常跑完、日志照常写着「追踪已开启」，而 Langfuse 上一条都没有。
+      #
+      # 端口写死 3000，那是 langfuse 自己 compose 里定死的值。
+      # 三项里只覆盖地址：两把密钥在容器内外是同一份，跟着 env_file 走
+      LANGFUSE_BASE_URL: http://host.docker.internal:3000
+    # 让上面那个名字解析得出来。**没有这一行，那个主机名在容器里根本不存在**
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # **迁移不由 worker 跑**：多副本会撞在同一把 DDL 锁上，那是 api 的活。
