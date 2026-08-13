@@ -1,4 +1,16 @@
 import { useState } from 'react'
+import { AdminPageHeader, AdminTableSection } from './AdminUi'
+import {
+  approveButtonStyle,
+  cellStyle,
+  emptyStyle,
+  monoCellStyle,
+  nameCellStyle,
+  pageStyle,
+  tableStyle,
+  tagStyle,
+  thStyle,
+} from './AdminStyles'
 
 type AgentType = 'prompt' | 'deployed'
 
@@ -86,61 +98,37 @@ export function AdminAgents() {
     setRejectError(false)
   }
 
-  const thStyle: React.CSSProperties = {
-    padding: '10px 16px', textAlign: 'left', fontSize: 11,
-    color: 'var(--text-muted)', fontWeight: 600,
-    textTransform: 'uppercase', letterSpacing: '0.08em',
-    borderBottom: '1px solid var(--border)', background: 'var(--bg)',
-  }
+
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px', background: 'var(--bg)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div>
-          <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 4 }}>// AGENT REVIEW</div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>智能体审核</h1>
-        </div>
-        <span style={{ padding: '4px 14px', background: agents.length > 0 ? 'var(--action-light)' : 'var(--bg)', color: agents.length > 0 ? 'var(--action)' : 'var(--text-muted)', border: '1px solid ' + (agents.length > 0 ? 'var(--action-border)' : 'var(--border)'), borderRadius: 20, fontSize: 13, fontWeight: 600 }}>
-          {agents.length} 个待审核
-        </span>
-      </div>
+    <div style={pageStyle}>
+      <AdminPageHeader eyebrow="// AGENT REVIEW" title="智能体审核" pendingCount={agents.length} />
 
-      {agents.length === 0 ? (
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '60px 20px', textAlign: 'center' as const }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>✓</div>
-          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}>暂无待审核的智能体</div>
-        </div>
-      ) : (
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+      <AdminTableSection title="待审核智能体">
+        {agents.length === 0 ? (
+          <div style={emptyStyle}>暂无待审核的智能体</div>
+        ) : (
+          <table style={tableStyle}>
             <thead>
-              <tr>{['智能体名称', '类型', '创建者', '学科', '提交时间', '操作'].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
+              <tr>{['智能体名称', '类型', '创建者', '学科', '提交时间', '操作'].map(label => <th key={label} style={thStyle}>{label}</th>)}</tr>
             </thead>
             <tbody>
-              {agents.map((agent, i) => (
-                <tr key={agent.id} style={{ borderBottom: i < agents.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
-                  <td style={{ padding: '12px 16px', fontWeight: 500, color: 'var(--text-primary)' }}>{agent.name}</td>
-                  <td style={{ padding: '12px 16px' }}>
-                    <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, background: agent.type === 'deployed' ? '#F5F3FF' : '#EFF6FF', color: agent.type === 'deployed' ? '#7C3AED' : '#2563EB', border: `1px solid ${agent.type === 'deployed' ? '#DDD6FE' : '#BFDBFE'}` }}>
-                      {agent.type === 'deployed' ? '独立部署' : 'Prompt'}
-                    </span>
-                  </td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-secondary)' }}>{agent.author}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{agent.subject}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{agent.submittedAt}</td>
-                  <td style={{ padding: '12px 16px' }}>
-                    {/* 只有一个蓝色「审核」按钮 */}
-                    <button
-                      onClick={() => openDetail(agent.id)}
-                      style={{ padding: '5px 14px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                    >审核</button>
+              {agents.map((agent, index) => (
+                <tr key={agent.id} style={{ borderBottom: index < agents.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
+                  <td style={nameCellStyle}>{agent.name}</td>
+                  <td style={cellStyle}><span style={tagStyle}>{agent.type === 'deployed' ? '独立部署' : 'Prompt'}</span></td>
+                  <td style={cellStyle}>{agent.author}</td>
+                  <td style={cellStyle}><span style={tagStyle}>{agent.subject}</span></td>
+                  <td style={monoCellStyle}>{agent.submittedAt}</td>
+                  <td style={cellStyle}>
+                    <button type="button" onClick={() => openDetail(agent.id)} style={approveButtonStyle}>审核</button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-      )}
+        )}
+      </AdminTableSection>
 
       {/* 审核侧抽屉 */}
       {detailAgent && (

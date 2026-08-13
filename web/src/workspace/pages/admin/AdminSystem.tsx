@@ -1,44 +1,49 @@
+import { AdminPageHeader, AdminTableSection } from './AdminUi'
+import { pageStyle } from './AdminStyles'
+
 const SYSTEM_ITEMS = [
-  { label: 'Worker', status: 'online' as const, detail: '2 个实例运行中' },
-  { label: 'Postgres', status: 'online' as const, detail: '主库在线，备份正常' },
-  { label: 'Redis', status: 'online' as const, detail: '内存使用 23%' },
-  { label: 'MinIO', status: 'online' as const, detail: '对象存储在线' },
+  { label: 'Worker', detail: '2 个实例运行中' },
+  { label: 'Postgres', detail: '主库在线，备份正常' },
+  { label: 'Redis', detail: '内存使用 23%' },
+  { label: 'MinIO', detail: '对象存储在线' },
 ]
 
 export function AdminSystem() {
-  const sandboxUsed = 6, sandboxTotal = 20
+  const sandboxUsed = 6
+  const sandboxTotal = 20
   const sandboxPct = Math.round(sandboxUsed / sandboxTotal * 100)
+
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px', background: 'var(--bg)' }}>
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 4 }}>// SYSTEM STATUS</div>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>系统状态</h1>
-      </div>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>沙箱池</div>
-          <span style={{ fontSize: 13, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-secondary)' }}>{sandboxUsed} / {sandboxTotal} 占用</span>
+    <div style={pageStyle}>
+      <AdminPageHeader eyebrow="// SYSTEM STATUS" title="系统状态" />
+
+      <AdminTableSection title="沙箱池">
+        <div style={{ padding: '20px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>当前资源占用</span>
+            <span style={{ color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace", fontSize: 13 }}>{sandboxUsed} / {sandboxTotal}</span>
+          </div>
+          <div style={{ height: 10, marginBottom: 8, overflow: 'hidden', borderRadius: 5, background: 'var(--border-light)' }}>
+            <div style={{ width: `${sandboxPct}%`, height: '100%', borderRadius: 5, background: sandboxPct > 80 ? 'var(--status-warn)' : 'var(--action)' }} />
+          </div>
+          <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>剩余 {sandboxTotal - sandboxUsed} 个沙箱可用 · 单沙箱内存上限 2GB · gVisor 隔离</div>
         </div>
-        <div style={{ height: 10, background: 'var(--border-light)', borderRadius: 5, overflow: 'hidden', marginBottom: 8 }}>
-          <div style={{ height: '100%', width: `${sandboxPct}%`, background: sandboxPct > 80 ? 'var(--status-warn)' : 'var(--action)', borderRadius: 5 }} />
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>剩余 {sandboxTotal - sandboxUsed} 个沙箱可用 · 单沙箱内存上限 2GB · gVisor 隔离</div>
-      </div>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>服务状态</div>
-        {SYSTEM_ITEMS.map((item, i) => (
-          <div key={item.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: i < SYSTEM_ITEMS.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
+      </AdminTableSection>
+
+      <AdminTableSection title="服务状态">
+        {SYSTEM_ITEMS.map((item, index) => (
+          <div key={item.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: index < SYSTEM_ITEMS.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-done)', display: 'inline-block', boxShadow: '0 0 0 2px rgba(16,185,129,0.2)' }} />
-              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{item.label}</span>
+              <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--status-done)', boxShadow: '0 0 0 2px rgba(16,185,129,0.2)' }} />
+              <span style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 600 }}>{item.label}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{item.detail}</span>
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--status-done)' }}>◉ 在线</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{item.detail}</span>
+              <span style={{ color: 'var(--status-done)', fontSize: 12, fontWeight: 600 }}>● 在线</span>
             </div>
           </div>
         ))}
-      </div>
+      </AdminTableSection>
     </div>
   )
 }

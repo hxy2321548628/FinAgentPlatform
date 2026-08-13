@@ -1,21 +1,42 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Navbar } from './components/Navbar'
 import { Footer } from './components/Footer'
+import { NotFound } from './components/NotFound'
 import { Home } from './pages/Home'
 import { Marketplace } from './pages/Marketplace'
 import { Scenarios } from './pages/Scenarios'
 import { Capabilities } from './pages/Capabilities'
 import { DataAssets } from './pages/DataAssets'
 import { Login } from './pages/Login'
-import { Settings } from './pages/Settings'
 import { WorkspaceLayout } from './workspace/WorkspaceLayout'
 import { WorkspaceRouter } from './workspace/WorkspaceRouter'
+import { AdminGuard } from './workspace/pages/admin/AdminGuard'
+import { AdminLayout } from './workspace/pages/admin/AdminLayout'
+import { AdminUsers } from './workspace/pages/admin/AdminUsers'
+import { AdminAgents } from './workspace/pages/admin/AdminAgents'
+import { AdminScenarios } from './workspace/pages/admin/AdminScenarios'
+import { AdminMcp, AdminSkills } from './workspace/pages/admin/AdminCapabilities'
+import { AdminUsage } from './workspace/pages/admin/AdminUsage'
+import { AdminSystem } from './workspace/pages/admin/AdminSystem'
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route element={<AdminGuard />}>
+          <Route path="/admin" element={<AdminLayout />}>
+            <Route index element={<AdminUsers />} />
+            <Route path="users" element={<AdminUsers />} />
+            <Route path="agents" element={<AdminAgents />} />
+            <Route path="scenarios" element={<AdminScenarios />} />
+            <Route path="skills" element={<AdminSkills />} />
+            <Route path="mcp" element={<AdminMcp />} />
+            <Route path="usage" element={<AdminUsage />} />
+            <Route path="system" element={<AdminSystem />} />
+            <Route path="*" element={<NotFound title="后台页面不存在" description="该管理页面不存在，或已经被移除。" primaryTo="/admin/users" primaryLabel="返回用户管理" secondaryTo="/workspace" secondaryLabel="返回工作台" />} />
+          </Route>
+        </Route>
         <Route path="/workspace/*" element={<WorkspaceLayout />}>
           <Route path="*" element={<WorkspaceRouter />} />
         </Route>
@@ -29,7 +50,7 @@ export default function App() {
                 <Route path="/scenarios" element={<Scenarios />} />
                 <Route path="/capabilities" element={<Capabilities />} />
                 <Route path="/data" element={<DataAssets />} />
-                <Route path="/settings" element={<Settings />} />
+                <Route path="*" element={<NotFound primaryTo="/" primaryLabel="返回首页" secondaryTo="/workspace" secondaryLabel="进入工作台" />} />
               </Routes>
             </main>
             <Footer />

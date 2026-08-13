@@ -10,7 +10,7 @@ const MARKET_ITEMS = [
 ]
 
 const SECURITY_COLS = [
-  { title: '数据不出校园', desc: '部署在学院内网，所有数据存储于本地服务器，不经过任何商业云服务' },
+  { title: '研究资产完整留存', desc: '每次分析的数据、代码与结论统一归档，成熟成果可进一步沉淀为智能体与场景模板' },
   { title: '用户数据隔离', desc: '每位用户独立 workspace，管理员无法查看数据内容，严格权限隔离' },
   { title: '操作全程可审计', desc: '分析记录、代码与结论完整留存，学院可查阅完整使用记录与成本' },
 ]
@@ -37,10 +37,10 @@ export function DataAssets() {
           <p style={{ fontSize: 16, color: 'var(--text-secondary)', lineHeight: 1.8, maxWidth: 640 }}>
             过去，师生的分析数据散落在个人电脑，随人员流动而流失，无法沉淀为学院资产。
             <br /><br />
-            平台将每次分析的数据、代码与结论统一存储于学院服务器，形成持续积累、可供后续师生复用的知识资产库。
+            平台将每次分析的数据、代码与结论统一归档，成熟成果还可封装为智能体与场景模板，供后续师生持续复用。
           </p>
           <p style={{ fontSize: 15, color: 'var(--action)', fontWeight: 600, marginTop: 20, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em' }}>
-            数据不出校园，知识持续沉淀。
+            沉淀科研资产，复用智能体与场景。
           </p>
         </div>
       </section>

@@ -1,12 +1,11 @@
 import { useState } from 'react'
 
-type Section = 'model' | 'notify' | 'account'
-type ModelRole = 'fast' | 'deep' | 'embed'
+type Section = 'model' | 'account'
+type ModelRole = 'fast' | 'deep'
 
 const MODEL_STATS = {
   fast:  { sessions: 15, input: '800K', output: '200K', outputUnit: 'tokens', cost: '¥1.2', costUnit: '快速模型', inputBarVal: '800K / 5M',  inputBarPct: 16, costBarVal: '¥1.2 / ¥200', costBarPct: 1 },
   deep:  { sessions: 9,  input: '350K', output: '90K',  outputUnit: 'tokens', cost: '¥2.8', costUnit: '思考模型', inputBarVal: '350K / 5M',  inputBarPct:  7, costBarVal: '¥2.8 / ¥200', costBarPct: 1 },
-  embed: { sessions: 89, input: '1.2M', output: '2.8K', outputUnit: 'vectors', cost: '¥0.8', costUnit: '嵌入模型', inputBarVal: '1.2M / 10M', inputBarPct: 12, costBarVal: '¥0.8 / ¥200', costBarPct: 1 },
 }
 
 export function Settings() {
@@ -15,21 +14,20 @@ export function Settings() {
 
   const NAV = [
     { key: 'model' as Section, label: '模型配置', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg> },
-    { key: 'notify' as Section, label: '通知', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> },
     { key: 'account' as Section, label: '账号', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> },
   ]
 
   const stats = MODEL_STATS[modelRole]
 
   return (
-    <div className="grid-bg" style={{ minHeight: '100vh' }}>
+    <div className="grid-bg" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: 40 }}>
 
         {/* 页头 */}
         <div style={{ marginBottom: 32 }}>
           <div className="section-tag">// USER SETTINGS</div>
           <h1 style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>设置</h1>
-          <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>配置您的模型、API 接入参数与通知方式，设置仅对您本人生效</p>
+          <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>配置您的模型、API 接入参数与账号安全，设置仅对您本人生效</p>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 24, alignItems: 'start' }}>
@@ -68,7 +66,7 @@ export function Settings() {
                       <div style={cardDescStyle}>统计周期：2026-08-01 ~ 2026-08-31</div>
                     </div>
                     <div style={{ display: 'inline-flex', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 3, gap: 2 }}>
-                      {(['fast', 'deep', 'embed'] as ModelRole[]).map(role => (
+                      {(['fast', 'deep'] as ModelRole[]).map(role => (
                         <button key={role} onClick={() => setModelRole(role)} style={{
                           display: 'flex', alignItems: 'center', gap: 7,
                           padding: '7px 14px', border: 'none', borderRadius: 6,
@@ -79,7 +77,7 @@ export function Settings() {
                           transition: 'all 0.15s',
                         }}>
                           <span style={roleTagStyle(role)}>{role.toUpperCase()}</span>
-                          {role === 'fast' ? '快速回复' : role === 'deep' ? '深度思考' : '嵌入模型'}
+                          {role === 'fast' ? '快速回复' : '深度思考'}
                         </button>
                       ))}
                     </div>
@@ -105,16 +103,12 @@ export function Settings() {
                 </SettingsCard>
 
                 {/* 模型配置卡片 */}
-                {modelRole === 'fast' && <ModelCard role="fast" title="快速回复模型" desc="用于常规对话、工具结果汇总，优先速度与低延迟" modelName="deepseek-v4-flash" provider="DeepSeek" apiKey="sk-••••••••••••••••••••••••••••••••Ax1m" baseUrl="https://api.deepseek.com/v1" inputPrice="0.001" outputPrice="0.002" cost="¥1.2" />}
-                {modelRole === 'deep'  && <ModelCard role="deep"  title="深度思考模型" desc="用于复杂推理、量化分析，优先准确性与分析深度" modelName="deepseek-v4-pro" provider="DeepSeek" apiKey="sk-••••••••••••••••••••••••••••••••Bk2p" baseUrl="https://api.deepseek.com/v1" inputPrice="0.004" outputPrice="0.016" cost="¥2.8" />}
-                {modelRole === 'embed' && <EmbedCard />}
+                {modelRole === 'fast' && <ModelCard role="fast" title="快速回复模型" desc="用于常规对话、工具结果汇总，优先速度与低延迟" modelName="deepseek-v4-flash" apiKey="sk-••••••••••••••••••••••••••••••••Ax1m" baseUrl="https://api.deepseek.com/v1" inputPrice="0.001" outputPrice="0.002" cost="¥1.2" />}
+                {modelRole === 'deep'  && <ModelCard role="deep"  title="深度思考模型" desc="用于复杂推理、量化分析，优先准确性与分析深度" modelName="deepseek-v4-pro" apiKey="sk-••••••••••••••••••••••••••••••••Bk2p" baseUrl="https://api.deepseek.com/v1" inputPrice="0.004" outputPrice="0.016" cost="¥2.8" />}
               </>
             )}
 
-            {/* ② 通知 */}
-            {section === 'notify' && <NotifySection />}
-
-            {/* ③ 账号 */}
+            {/* ② 账号与通知 */}
             {section === 'account' && <AccountSection />}
           </div>
         </div>
@@ -195,8 +189,8 @@ function ApiKeyField({ defaultValue }: { defaultValue: string }) {
   )
 }
 
-function ModelCard({ role, title, desc, modelName, provider, apiKey, baseUrl, inputPrice, outputPrice, cost }:
-  { role: ModelRole; title: string; desc: string; modelName: string; provider: string; apiKey: string; baseUrl: string; inputPrice: string; outputPrice: string; cost: string }) {
+function ModelCard({ role, title, desc, modelName, apiKey, baseUrl, inputPrice, outputPrice, cost }:
+  { role: ModelRole; title: string; desc: string; modelName: string; apiKey: string; baseUrl: string; inputPrice: string; outputPrice: string; cost: string }) {
   const [showSave, setShowSave] = useState(false)
   const handleSave = () => {
     setShowSave(true)
@@ -214,15 +208,9 @@ function ModelCard({ role, title, desc, modelName, provider, apiKey, baseUrl, in
         </div>
       </div>
       <div style={{ padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <div>
-            <label style={formLabelStyle}>模型名称</label>
-            <input type="text" defaultValue={modelName} placeholder="模型 ID" style={{ ...formInputStyle, width: '100%' }} />
-          </div>
-          <div>
-            <label style={formLabelStyle}>提供商</label>
-            <input type="text" defaultValue={provider} placeholder="如 DeepSeek、OpenAI" style={{ ...formInputStyle, width: '100%' }} />
-          </div>
+        <div>
+          <label style={formLabelStyle}>模型名称</label>
+          <input type="text" defaultValue={modelName} placeholder="模型 ID" style={{ ...formInputStyle, width: '100%' }} />
         </div>
         <ApiKeyField defaultValue={apiKey} />
         <div>
@@ -253,105 +241,6 @@ function ModelCard({ role, title, desc, modelName, provider, apiKey, baseUrl, in
       </div>
       <CardFooter
         left={<TestBtn onTest={() => {}} />}
-        right={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <SaveFeedback show={showSave} />
-            <button onClick={handleSave} style={primaryBtnStyle}>保存</button>
-          </div>
-        }
-      />
-    </SettingsCard>
-  )
-}
-
-function EmbedCard() {
-  const [showSave, setShowSave] = useState(false)
-  const handleSave = () => { setShowSave(true); setTimeout(() => setShowSave(false), 2500) }
-  return (
-    <SettingsCard>
-      <div style={{ padding: '20px 24px 0' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={roleTagStyle('embed')}>EMBED</span>
-          <div>
-            <div style={cardTitleStyle}>向量嵌入模型</div>
-            <div style={cardDescStyle}>用于知识库文档切片的向量化与语义检索，模型固定为 bge-m3</div>
-          </div>
-        </div>
-      </div>
-      <div style={{ padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <div>
-            <label style={formLabelStyle}>模型名称</label>
-            <input type="text" defaultValue="bge-m3" readOnly style={{ ...formInputStyle, width: '100%', cursor: 'default', color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }} />
-            <span style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, display: 'block' }}>模型固定，不可更改</span>
-          </div>
-          <div>
-            <label style={formLabelStyle}>向量维度</label>
-            <input type="text" defaultValue="1024" readOnly style={{ ...formInputStyle, width: '100%', cursor: 'default', color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }} />
-            <span style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, display: 'block' }}>由 bge-m3 默认输出维度决定</span>
-          </div>
-        </div>
-        <ApiKeyField defaultValue="sk-••••••••••••••••••••••••••••••••Em3k" />
-        <div>
-          <label style={formLabelStyle}>API Base URL</label>
-          <input type="text" defaultValue="https://api.siliconflow.cn/v1" style={{ ...formInputStyle, width: '100%', fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }} />
-          <span style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, display: 'block' }}>支持接入第三方嵌入服务或私有部署</span>
-        </div>
-      </div>
-      <CardFooter
-        left={<TestBtn onTest={() => {}} />}
-        right={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <SaveFeedback show={showSave} />
-            <button onClick={handleSave} style={primaryBtnStyle}>保存</button>
-          </div>
-        }
-      />
-    </SettingsCard>
-  )
-}
-
-function NotifySection() {
-  const [showSave, setShowSave] = useState(false)
-  const [testSent, setTestSent] = useState(false)
-  const handleSave = () => { setShowSave(true); setTimeout(() => setShowSave(false), 2500) }
-  const handleTest = () => { setTestSent(false); setTimeout(() => setTestSent(true), 600) }
-  return (
-    <SettingsCard>
-      <div style={{ padding: '20px 24px 0' }}>
-        <div style={cardTitleStyle}>飞书机器人通知</div>
-        <div style={cardDescStyle}>分析任务完成后，自动向飞书群发送报告摘要与链接</div>
-      </div>
-      <div style={{ padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 7, fontSize: 13, color: '#065F46' }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
-          Webhook 已配置，上次推送成功：2026-08-06 14:32
-        </div>
-        <div>
-          <label style={formLabelStyle}>Webhook URL</label>
-          <input type="text" defaultValue="https://open.feishu.cn/open-apis/bot/v2/hook/••••••••-••••-••••"
-            style={{ ...formInputStyle, width: '100%', fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }} />
-          <span style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, display: 'block' }}>在飞书群设置 → 群机器人 → 添加机器人 → 自定义机器人中获取</span>
-        </div>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 10 }}>推送内容</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {['报告标题与摘要（前 500 字）', '报告访问链接', 'Token 用量与费用'].map((item, i) => (
-              <label key={item} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                <input type="checkbox" defaultChecked={i < 2} style={{ accentColor: 'var(--action)', width: 14, height: 14 }} />
-                {item}
-              </label>
-            ))}
-          </div>
-        </div>
-      </div>
-      <CardFooter
-        left={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button onClick={handleTest} style={{ height: 34, padding: '0 16px', background: 'var(--surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>发送测试消息</button>
-            {testSent && <span style={{ fontSize: 12, color: 'var(--status-done)' }}>✓ 测试消息已发送</span>}
-          </div>
-        }
         right={
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <SaveFeedback show={showSave} />
@@ -402,6 +291,7 @@ function AccountSection() {
           }
         />
       </SettingsCard>
+
 
       {/* 修改密码 */}
       <SettingsCard>
@@ -463,7 +353,6 @@ function roleTagStyle(role: ModelRole): React.CSSProperties {
   const map = {
     fast:  { background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0' },
     deep:  { background: '#EFF6FF', color: '#2563EB', border: '1px solid #BFDBFE' },
-    embed: { background: '#FFFBEB', color: '#D97706', border: '1px solid #FDE68A' },
   }
   return {
     display: 'inline-flex', alignItems: 'center', padding: '2px 8px',

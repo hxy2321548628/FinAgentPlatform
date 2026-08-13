@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
+import { clearDemoAuth } from '../auth/demoAuth'
 
 const LOGO_PATH_1 = 'M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z'
 const LOGO_PATH_2 = 'M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z'
@@ -8,200 +9,93 @@ interface NavItem {
   to: string
   label: string
   icon: () => React.ReactNode
-  adminOnly?: boolean
   end?: boolean
 }
 
-const ADMIN_SUB_ITEMS = [
-  { to: '/workspace/admin/users',     label: '用户管理' },
-  { to: '/workspace/admin/agents',    label: '智能体审核' },
-  { to: '/workspace/admin/scenarios', label: '场景管理' },
-  { to: '/workspace/admin/usage',     label: '用量看板' },
-  { to: '/workspace/admin/system',    label: '系统状态' },
-]
-
 const NAV_GROUPS: { items: NavItem[] }[] = [
-  {
-    items: [
-      { to: '/workspace', label: '总览', end: true, icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> },
-    ],
-  },
-  {
-    items: [
-      { to: '/workspace/chat', label: '分析对话', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
-    ],
-  },
-  {
-    items: [
-      { to: '/workspace/scenarios', label: '场景库', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
-      { to: '/workspace/agents', label: '智能体广场', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/><circle cx="12" cy="8" r="1" fill="currentColor"/></svg> },
-    ],
-  },
-  {
-    items: [
-      { to: '/workspace/data', label: '我的数据', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg> },
-      { to: '/workspace/my-agents', label: '我的智能体', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> },
-    ],
-  },
+  { items: [{ to: '/workspace', label: '总览', end: true, icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> }] },
+  { items: [{ to: '/workspace/chat', label: '分析对话', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> }] },
+  { items: [
+    { to: '/workspace/scenarios', label: '场景库', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
+    { to: '/workspace/agents', label: '智能体广场', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/><circle cx="12" cy="8" r="1" fill="currentColor"/></svg> },
+    { to: '/workspace/skills', label: 'Skills 库', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2l2.4 4.86L20 7.67l-4 3.9.94 5.51L12 14.5l-4.94 2.58L8 11.57l-4-3.9 5.6-.81L12 2z"/><path d="M5 21h14"/></svg> },
+    { to: '/workspace/mcp', label: 'MCP 库', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M10 6.5h4a3.5 3.5 0 0 1 3.5 3.5v4M14 17.5h-4A3.5 3.5 0 0 1 6.5 14v-4"/></svg> },
+  ] },
+  { items: [
+    { to: '/workspace/data', label: '工作空间', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> },
+    { to: '/workspace/my-agents', label: '我的智能体', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> },
+    { to: '/workspace/my-scenarios', label: '我的场景', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h8M8 17h5"/></svg> },
+    { to: '/workspace/my-skills', label: '我的 Skills', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2l2.4 4.86L20 7.67l-4 3.9.94 5.51L12 14.5l-4.94 2.58L8 11.57l-4-3.9 5.6-.81L12 2z"/><path d="M5 21h14"/></svg> },
+  ] },
+  { items: [{ to: '/workspace/settings', label: '设置', icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> }] },
 ]
 
-// 原型阶段用 mock（isAdmin: true 以验证管理后台菜单渲染），联调时替换为真实 auth hook
-const MOCK_USER = { name: '张老师', role: '教师', isAdmin: true }
+const USER = { name: '张老师', role: '教师' }
 
 function NavItemRow({ item }: { item: NavItem }) {
   return (
-    <NavLink
-      to={item.to}
-      end={item.end}
-      style={({ isActive }) => ({
-        display: 'flex', alignItems: 'center', gap: 10,
-        padding: '9px 16px',
-        fontSize: 13, fontWeight: isActive ? 600 : 400,
-        color: isActive ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)',
-        background: isActive ? 'var(--ws-sidebar-accent)' : 'transparent',
-        borderLeft: isActive ? '3px solid var(--action)' : '3px solid transparent',
-        textDecoration: 'none', cursor: 'pointer',
-        transition: 'background 0.15s, color 0.15s',
-      })}
-    >
-      <span style={{ flexShrink: 0 }}>{item.icon()}</span>
-      {item.label}
+    <NavLink to={item.to} end={item.end} style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', fontSize: 13, fontWeight: isActive ? 600 : 400, color: isActive ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)', background: isActive ? 'var(--ws-sidebar-accent)' : 'transparent', borderLeft: isActive ? '3px solid var(--action)' : '3px solid transparent', textDecoration: 'none', cursor: 'pointer', transition: 'background 0.15s, color 0.15s' })}>
+      <span style={{ flexShrink: 0 }}>{item.icon()}</span>{item.label}
     </NavLink>
   )
 }
 
 export function WorkspaceSidebar() {
   const navigate = useNavigate()
-  const location = useLocation()
-  const user = MOCK_USER
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
 
-  const isOnAdminRoute = location.pathname.startsWith('/workspace/admin')
-  const [adminExpanded, setAdminExpanded] = useState(isOnAdminRoute)
+  const handleLogout = async () => {
+    setLoggingOut(true)
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+    } catch {
+      // 注销请求失败不应把用户困在工作台；服务恢复后登录态仍由后端校验。
+    } finally {
+      clearDemoAuth()
+      navigate('/login', { replace: true })
+    }
+  }
 
   return (
-    <aside style={{
-      width: 220, flexShrink: 0,
-      background: 'var(--ws-sidebar-bg)',
-      display: 'flex', flexDirection: 'column',
-      height: '100vh', overflow: 'hidden',
-    }}>
-      {/* Logo 区 */}
-      <div style={{ padding: '18px 16px 14px', borderBottom: '1px solid var(--ws-sidebar-border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <svg viewBox="12 3 24 34" fill="currentColor" style={{ height: 22, width: 'auto', color: 'var(--logo-red)', flexShrink: 0 }}>
-            <path d={LOGO_PATH_1} /><path d={LOGO_PATH_2} />
-          </svg>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', letterSpacing: '0.02em' }}>FinAgentPlatform</div>
-            <div style={{ fontSize: 11, color: 'var(--ws-sidebar-text)', marginTop: 1 }}>工作台</div>
-          </div>
-        </div>
+    <aside style={{ width: 220, flexShrink: 0, background: 'var(--ws-sidebar-bg)', display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      <div style={{ height: 72, display: 'flex', alignItems: 'center', gap: 9, padding: '0 16px', borderBottom: '1px solid var(--ws-sidebar-border)', flexShrink: 0 }}>
+        <svg viewBox="12 3 24 34" fill="currentColor" style={{ height: 22, width: 'auto', color: '#0E8A7B' }} aria-hidden="true"><path d={LOGO_PATH_1}/><path d={LOGO_PATH_2}/></svg>
+        <div><div style={{ fontSize: 14, fontWeight: 700, color: '#fff', lineHeight: 1.2 }}>FinAgentPlatform</div><div style={{ fontSize: 10, color: 'var(--ws-sidebar-text)', marginTop: 2 }}>工作台</div></div>
       </div>
-
-      {/* 导航区 */}
-      <nav style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-        {NAV_GROUPS.map((group, gi) => (
-          <div key={gi}>
-            {gi > 0 && <div style={{ height: 1, background: 'var(--ws-sidebar-border)', margin: '6px 0' }} />}
-            {group.items
-              .filter(item => !item.adminOnly || user.isAdmin)
-              .map(item => <NavItemRow key={item.to} item={item} />)
-            }
-          </div>
-        ))}
-
-        {/* 管理后台：手风琴 */}
-        {user.isAdmin && (
-          <>
-            <div style={{ height: 1, background: 'var(--ws-sidebar-border)', margin: '6px 0' }} />
-            {/* 管理后台父项 */}
-            <button
-              onClick={() => setAdminExpanded(e => !e)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                width: '100%', padding: '9px 16px',
-                fontSize: 13, fontWeight: isOnAdminRoute ? 600 : 400,
-                color: isOnAdminRoute ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)',
-                background: isOnAdminRoute ? 'var(--ws-sidebar-accent)' : 'transparent',
-                borderLeft: isOnAdminRoute ? '3px solid var(--action)' : '3px solid transparent',
-                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                transition: 'background 0.15s, color 0.15s',
-                textAlign: 'left',
-              }}
-            >
-              <span style={{ flexShrink: 0 }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <circle cx="12" cy="12" r="3"/>
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-                </svg>
-              </span>
-              <span style={{ flex: 1 }}>管理后台</span>
-              <span style={{ fontSize: 10, color: 'var(--ws-sidebar-text)', opacity: 0.6 }}>
-                {adminExpanded ? '▲' : '▼'}
-              </span>
-            </button>
-
-            {/* 二级菜单 */}
-            {adminExpanded && (
-              <div style={{ paddingBottom: 4 }}>
-                {ADMIN_SUB_ITEMS.map(sub => (
-                  <NavLink
-                    key={sub.to}
-                    to={sub.to}
-                    style={({ isActive }) => ({
-                      display: 'flex', alignItems: 'center',
-                      padding: '7px 16px 7px 40px',
-                      fontSize: 12,
-                      color: isActive ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)',
-                      background: isActive ? 'rgba(23,73,196,0.15)' : 'transparent',
-                      textDecoration: 'none', cursor: 'pointer',
-                      transition: 'background 0.15s, color 0.15s',
-                      fontWeight: isActive ? 600 : 400,
-                      borderLeft: isActive ? '3px solid var(--action)' : '3px solid transparent',
-                      opacity: isActive ? 1 : 0.8,
-                    })}
-                  >
-                    {sub.label}
-                  </NavLink>
-                ))}
-              </div>
-            )}
-          </>
-        )}
+      <nav style={{ flex: 1, overflowY: 'auto', padding: '10px 0' }}>
+        {NAV_GROUPS.map((group, index) => <div key={index}>{index > 0 && <div style={{ height: 1, background: 'var(--ws-sidebar-border)', margin: '6px 0' }}/>} {group.items.map(item => <NavItemRow key={item.to} item={item}/>)}</div>)}
       </nav>
-
-      {/* 返回首页 */}
-      <div style={{ borderTop: '1px solid var(--ws-sidebar-border)', padding: '8px 0' }}>
+      <div style={{ borderTop: '1px solid var(--ws-sidebar-border)' }}>
+        {userMenuOpen && (
+          <div style={{ padding: '8px 0', borderBottom: '1px solid var(--ws-sidebar-border)' }}>
+            <button onClick={() => { setUserMenuOpen(false); navigate('/') }} style={userMenuItemStyle}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+              返回首页
+            </button>
+            <button onClick={handleLogout} disabled={loggingOut} style={{ ...userMenuItemStyle, color: loggingOut ? 'var(--ws-sidebar-text)' : '#FCA5A5' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+              {loggingOut ? '正在退出…' : '退出登录'}
+            </button>
+          </div>
+        )}
         <button
-          onClick={() => navigate('/')}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            width: '100%', padding: '9px 16px',
-            fontSize: 13, color: 'var(--ws-sidebar-text)',
-            background: 'none', border: 'none', cursor: 'pointer',
-            fontFamily: 'inherit', textAlign: 'left',
-          }}
+          type="button"
+          aria-expanded={userMenuOpen}
+          onClick={() => setUserMenuOpen(open => !open)}
+          style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-          返回首页
+          <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--action)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{USER.name[0]}</div>
+          <div style={{ minWidth: 0, flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{USER.name}</div><div style={{ fontSize: 11, color: 'var(--ws-sidebar-text)', marginTop: 1 }}>{USER.role}</div></div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: 'var(--ws-sidebar-text)', transform: userMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}><polyline points="18 15 12 9 6 15"/></svg>
         </button>
-      </div>
-
-      {/* 用户信息 */}
-      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--ws-sidebar-border)', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{
-          width: 32, height: 32, borderRadius: '50%',
-          background: 'var(--action)', color: '#fff',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 13, fontWeight: 700, flexShrink: 0,
-        }}>
-          {user.name[0]}
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</div>
-          <div style={{ fontSize: 11, color: 'var(--ws-sidebar-text)', marginTop: 1 }}>{user.role}</div>
-        </div>
       </div>
     </aside>
   )
+}
+
+const userMenuItemStyle: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '9px 16px',
+  fontSize: 13, color: 'var(--ws-sidebar-text)', background: 'none', border: 'none',
+  cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
 }

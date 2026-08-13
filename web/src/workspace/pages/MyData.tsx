@@ -1,88 +1,73 @@
-import { useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { WorkspaceFiles } from '../components/WorkspaceFiles'
 
-interface DataFile {
-  id: string; name: string; size: string; uploadTime: string
-  type: 'csv' | 'xlsx' | 'pdf' | 'txt'
+interface ThreadSummary {
+  id: string
+  title: string
+  updated_at: string
 }
 
-const FILE_TYPE_STYLE: Record<DataFile['type'], { bg: string; color: string }> = {
-  csv:  { bg: '#ECFDF5', color: '#059669' },
-  xlsx: { bg: '#EFF6FF', color: '#2563EB' },
-  pdf:  { bg: '#FEF2F2', color: '#DC2626' },
-  txt:  { bg: '#F9FAFB', color: '#6B7280' },
-}
-
-const MOCK_FILES: DataFile[] = [
-  { id: '1', name: 'portfolio_2026Q2.csv', size: '1.2 MB', uploadTime: '2026-08-06', type: 'csv' },
-  { id: '2', name: 'fund_nav_history.xlsx', size: '4.8 MB', uploadTime: '2026-07-28', type: 'xlsx' },
-  { id: '3', name: 'macro_indicators.csv', size: '0.9 MB', uploadTime: '2026-07-20', type: 'csv' },
-  { id: '4', name: 'annual_report_2025.pdf', size: '12.3 MB', uploadTime: '2026-07-15', type: 'pdf' },
+const FALLBACK_THREADS: ThreadSummary[] = [
+  { id: '1', title: '新能源行业波动率分析', updated_at: '2026-08-12T06:14:00Z' },
+  { id: '2', title: 'A 股收益归因分解', updated_at: '2026-08-11T06:32:00Z' },
+  { id: '3', title: 'Fama-French 三因子复现', updated_at: '2026-08-10T09:15:00Z' },
 ]
 
 export function MyData() {
   const navigate = useNavigate()
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [files, setFiles] = useState(MOCK_FILES)
-  const [dragOver, setDragOver] = useState(false)
+  const [threads, setThreads] = useState<ThreadSummary[]>(FALLBACK_THREADS)
+  const [selectedId, setSelectedId] = useState(FALLBACK_THREADS[0].id)
 
-  const handleDelete = (id: string) => setFiles(prev => prev.filter(f => f.id !== id))
-  const handleAnalyze = (file: DataFile) => navigate(`/workspace/chat?file=${encodeURIComponent(file.name)}`)
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const response = await fetch('/api/threads?limit=100', { credentials: 'include' })
+        if (!response.ok) return
+        const body = await response.json() as { items: ThreadSummary[] }
+        if (body.items.length === 0) return
+        setThreads(body.items)
+        setSelectedId(current => body.items.some(thread => thread.id === current) ? current : body.items[0].id)
+      } catch {
+        // API 未启动时保留原型数据，页面仍可完成交互评审。
+      }
+    }
+    void load()
+  }, [])
+
+  const selected = threads.find(thread => thread.id === selectedId) ?? threads[0]
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '32px 36px', background: 'var(--bg)' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28 }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: '28px 32px', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, flexShrink: 0 }}>
         <div>
-          <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }}>// MY DATA</div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>我的数据</h1>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>管理上传的数据文件，点击「分析」直接进入对话</p>
+          <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }}>// THREAD WORKSPACES</div>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>工作空间</h1>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>每个分析对话拥有独立目录；选择 thread 后管理其中的文件。</p>
         </div>
-        <div>
-          <input ref={fileInputRef} type="file" multiple accept=".csv,.xlsx,.xls,.pdf,.txt" style={{ display: 'none' }} />
-          <button onClick={() => fileInputRef.current?.click()} style={{ padding: '9px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>↑ 上传文件</button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          {selected && <button type="button" onClick={() => navigate(`/workspace/chat/${encodeURIComponent(selected.id)}`)} style={{ padding: '9px 18px', border: '1px solid var(--border)', borderRadius: 7, background: 'var(--surface)', color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>进入对话 →</button>}
+          <button type="button" onClick={() => navigate('/workspace/chat')} style={{ padding: '9px 18px', border: 'none', borderRadius: 7, background: 'var(--action)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>＋ 新建分析</button>
         </div>
       </div>
 
-      {/* 拖拽上传区 */}
-      <div
-        onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={e => { e.preventDefault(); setDragOver(false) }}
-        onClick={() => fileInputRef.current?.click()}
-        style={{ border: '1.5px dashed ' + (dragOver ? 'var(--action)' : 'var(--border)'), borderRadius: 10, padding: 28, textAlign: 'center' as const, background: dragOver ? 'var(--action-light)' : 'var(--surface)', marginBottom: 20, cursor: 'pointer', transition: 'border-color 0.2s, background 0.2s' }}
-      >
-        <div style={{ marginBottom: 8, color: 'var(--action-border)' }}>
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        </div>
-        <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>拖拽文件到此处，或点击上传</div>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>支持 CSV · XLSX · PDF · TXT，单文件最大 50 MB</div>
-      </div>
+      <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)', gap: 16 }}>
+        <aside style={{ minHeight: 0, overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+          <div style={{ padding: '11px 16px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.12em' }}>THREAD 列表</div>
+          {threads.map(thread => {
+            const active = thread.id === selected?.id
+            return (
+              <button key={thread.id} type="button" onClick={() => setSelectedId(thread.id)} style={{ width: '100%', padding: '14px 16px', border: 'none', borderBottom: '1px solid var(--border-light)', borderLeft: active ? '3px solid var(--action)' : '3px solid transparent', background: active ? 'var(--action-light)' : 'transparent', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}>
+                <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: active ? 'var(--action)' : 'var(--text-primary)', marginBottom: 5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{thread.title || '新对话'}</span>
+                <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(thread.updated_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+              </button>
+            )
+          })}
+        </aside>
 
-      {/* 文件列表 */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 100px 120px 160px', padding: '10px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
-          {['文件名', '大小', '上传时间', '操作'].map(h => <div key={h} style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: '0.1em' }}>{h}</div>)}
-        </div>
-        {files.length === 0 ? (
-          <div style={{ padding: '40px 20px', textAlign: 'center' as const, color: 'var(--text-muted)', fontSize: 13 }}>暂无文件，请上传数据文件</div>
-        ) : files.map((file, i) => {
-          const ts = FILE_TYPE_STYLE[file.type]
-          return (
-            <div key={file.id} style={{ display: 'grid', gridTemplateColumns: '2fr 100px 120px 160px', padding: '14px 20px', borderBottom: i < files.length - 1 ? '1px solid var(--border-light)' : 'none', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ padding: '2px 7px', borderRadius: 4, fontSize: 11, fontWeight: 700, background: ts.bg, color: ts.color, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const }}>{file.type}</span>
-                <span style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>{file.name}</span>
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{file.size}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{file.uploadTime}</div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button onClick={() => handleAnalyze(file)} style={{ padding: '5px 12px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>分析</button>
-                <button style={{ padding: '5px 12px', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>下载</button>
-                <button onClick={() => handleDelete(file.id)} style={{ padding: '5px 12px', background: 'transparent', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>删除</button>
-              </div>
-            </div>
-          )
-        })}
+        <section style={{ minWidth: 0, minHeight: 0, overflow: 'hidden', border: '1px solid var(--border)', borderRadius: 10 }}>
+          {selected ? <WorkspaceFiles threadId={selected.id} title={selected.title || '新对话'} /> : <div style={{ padding: 40, color: 'var(--text-muted)' }}>暂无工作空间</div>}
+        </section>
       </div>
     </div>
   )

@@ -1,4 +1,16 @@
 import { useState } from 'react'
+import { AdminPageHeader, AdminTableSection } from './AdminUi'
+import {
+  approveButtonStyle,
+  cellStyle,
+  monoCellStyle,
+  nameCellStyle,
+  pageStyle,
+  rejectButtonStyle,
+  tableStyle,
+  tagStyle,
+  thStyle,
+} from './AdminStyles'
 
 type Role = 'teacher' | 'student' | 'admin'
 type UserStatus = 'active' | 'disabled'
@@ -59,45 +71,38 @@ export function AdminUsers() {
   }
   const handleReject = (id: string) => setPending(prev => prev.filter(x => x.id !== id))
 
-  const thStyle: React.CSSProperties = { padding: '10px 16px', textAlign: 'left', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '1px solid var(--border)', background: 'var(--bg)' }
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px', background: 'var(--bg)' }}>
-      {/* 注册审批队列 */}
-      {pending.length > 0 && (
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--action-border)', borderRadius: 10, marginBottom: 20, overflow: 'hidden' }}>
-          <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--action-light)' }}>
-            <div style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.2em', color: 'var(--action)', fontWeight: 700 }}>// PENDING APPROVALS</div>
-            <span style={{ padding: '2px 10px', background: 'var(--action)', color: '#fff', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{pending.length} 个待处理</span>
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+    <div style={pageStyle}>
+      <AdminPageHeader eyebrow="// USER MANAGEMENT" title="用户管理" pendingCount={pending.length} pendingLabel="个待处理" />
+
+      <AdminTableSection title="待审核用户">
+        {pending.length === 0 ? (
+          <div style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>暂无待审核用户</div>
+        ) : (
+          <table style={tableStyle}>
             <thead><tr>{['申请人','邮箱','院系','身份','申请时间','操作'].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
             <tbody>
               {pending.map((p, i) => (
                 <tr key={p.id} style={{ borderBottom: i < pending.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
-                  <td style={{ padding: '12px 16px', fontWeight: 500, color: 'var(--text-primary)' }}>{p.name}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-secondary)', fontSize: 12 }}>{p.email}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-secondary)' }}>{p.dept}</td>
-                  <td style={{ padding: '12px 16px' }}><span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, background: p.identity === '教师' ? '#EFF6FF' : '#F5F3FF', color: p.identity === '教师' ? '#2563EB' : '#7C3AED' }}>{p.identity}</span></td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{p.appliedAt}</td>
-                  <td style={{ padding: '12px 16px' }}>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button onClick={() => handleApprove(p.id, p)} style={{ padding: '5px 12px', background: 'var(--status-done)', color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>激活</button>
-                      <button onClick={() => handleReject(p.id)} style={{ padding: '5px 12px', background: 'transparent', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>拒绝</button>
+                  <td style={nameCellStyle}>{p.name}</td>
+                  <td style={cellStyle}>{p.email}</td>
+                  <td style={cellStyle}>{p.dept}</td>
+                  <td style={cellStyle}><span style={tagStyle}>{p.identity}</span></td>
+                  <td style={monoCellStyle}>{p.appliedAt}</td>
+                  <td style={cellStyle}>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button type="button" onClick={() => handleApprove(p.id, p)} style={approveButtonStyle}>激活</button>
+                      <button type="button" onClick={() => handleReject(p.id)} style={rejectButtonStyle}>拒绝</button>
                     </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-      )}
+        )}
+      </AdminTableSection>
 
-      {/* 用户管理 */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.3em', color: 'var(--text-muted)' }}>// USER MANAGEMENT</div>
-        <button style={{ padding: '7px 16px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>+ 创建账号</button>
-      </div>
       <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' as const }}>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索姓名或邮箱" style={{ padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', outline: 'none', background: 'var(--surface)', color: 'var(--text-primary)', width: 200 }} />
         <select value={roleFilter} onChange={e => setRoleFilter(e.target.value as 'all' | Role)} style={{ padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
@@ -107,8 +112,11 @@ export function AdminUsers() {
           <option value="all">全部状态</option><option value="active">正常</option><option value="disabled">已禁用</option>
         </select>
       </div>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+      <AdminTableSection
+        title="全部用户"
+        action={<button type="button" style={approveButtonStyle}>+ 创建账号</button>}
+      >
+        <table style={tableStyle}>
           <thead><tr>{['姓名','邮箱','角色','配额（月）','状态','注册时间','操作'].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
           <tbody>
             {filtered.map((user, i) => {
@@ -132,7 +140,7 @@ export function AdminUsers() {
             })}
           </tbody>
         </table>
-      </div>
+      </AdminTableSection>
 
       {/* 编辑弹窗 */}
       {editModal && (

@@ -37,11 +37,11 @@ const ENTRY_CARDS = [
     link: '开始对话 →',
   },
   {
-    to: '/data',
+    to: '/workspace/data',
     icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
-    title: '上传数据文件',
-    desc: '将 CSV、Excel、PDF 数据文件上传至您的专属工作区，上传后即可在对话中直接引用分析。',
-    link: '了解数据接入 →',
+    title: '管理工作空间',
+    desc: '每个分析对话拥有独立工作目录，可查看、编辑、上传、下载和删除其中的文件。',
+    link: '进入工作空间 →',
   },
   {
     to: '/scenarios',
@@ -69,7 +69,7 @@ export function Home() {
               智能体系统运行中 · 金融学院 AI 基础设施
             </div>
             <h1 style={{ fontSize: 56, fontWeight: 900, lineHeight: 1.15, marginBottom: 20 }}>
-              <span style={{ color: 'var(--text-primary)', display: 'block' }}>当技术执行归于智能体</span>
+              <span style={{ color: 'var(--text-primary)', display: 'block' }}>让技术执行归于智能体</span>
               <span style={{ color: 'var(--action)', display: 'block' }}>
                 学术思考回归学者
                 <span style={{ display: 'inline-block', width: 3, height: '0.85em', background: 'var(--action)', verticalAlign: 'text-bottom', marginLeft: 4, animation: 'blink 1.1s step-end infinite' }} />
@@ -97,6 +97,22 @@ export function Home() {
           </div>
         </div>
       </section>
+
+      {/* Ticker */}
+      <div style={{ background: 'var(--bg)', borderBottom: '1px solid var(--border)', padding: '20px 0', overflow: 'hidden' }}>
+        <div style={{ textAlign: 'center', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.28em', color: 'var(--text-muted)', marginBottom: 14, fontFamily: "'JetBrains Mono', monospace" }}>
+          // ANALYSIS CAPABILITIES
+        </div>
+        <div style={{ overflow: 'hidden' }}>
+          <div style={{ display: 'flex', animation: 'ticker-scroll 40s linear infinite', width: 'max-content' }}>
+            {doubled.map((item, i) => (
+              <span key={i} style={{ padding: '0 28px', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', borderRight: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
 
       {/* 战略价值区 */}
       <section style={{ background: 'var(--surface)', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
@@ -132,22 +148,6 @@ export function Home() {
           </p>
         </div>
       </section>
-
-      {/* Ticker */}
-      <div style={{ background: 'var(--bg)', borderBottom: '1px solid var(--border)', padding: '20px 0', overflow: 'hidden' }}>
-        <div style={{ textAlign: 'center', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.28em', color: 'var(--text-muted)', marginBottom: 14, fontFamily: "'JetBrains Mono', monospace" }}>
-          // ANALYSIS CAPABILITIES
-        </div>
-        <div style={{ overflow: 'hidden' }}>
-          <div style={{ display: 'flex', animation: 'ticker-scroll 40s linear infinite', width: 'max-content' }}>
-            {doubled.map((item, i) => (
-              <span key={i} style={{ padding: '0 28px', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', borderRight: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
-                {item}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
 
       {/* 快速入口区 */}
       <section className="grid-bg" style={{ position: 'relative' }}>

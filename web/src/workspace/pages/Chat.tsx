@@ -3,7 +3,7 @@ import { useLocation, useParams } from 'react-router-dom'
 import { ThreadSidebar } from '../components/ThreadSidebar'
 import { MessageList } from '../components/MessageList'
 import { ChatInput } from '../components/ChatInput'
-import { ArtifactPanel } from '../components/ArtifactPanel'
+import { WorkspaceFiles } from '../components/WorkspaceFiles'
 
 // 多智能体协作的 mock 消息（公司全面风险评估场景）
 const MULTI_AGENT_MESSAGES = [
@@ -45,6 +45,11 @@ const MULTI_AGENT_MESSAGES = [
 const MIN_PANEL_WIDTH = 200
 const MAX_PANEL_WIDTH = 700
 const DEFAULT_PANEL_WIDTH = 380
+const THREAD_TITLES: Record<string, string> = {
+  '1': '新能源行业波动率分析',
+  '2': 'A 股收益归因分解',
+  '3': '基金最大回撤计算',
+}
 
 interface AgentContext {
   agentId: string
@@ -53,63 +58,19 @@ interface AgentContext {
   agentDataNeeded: string
 }
 
-// 对话结束后的评分组件
-function RatingWidget({ agentName, onRate }: { agentName: string; onRate: (star: number) => void }) {
-  const [hovered, setHovered] = useState(0)
-  const [rated, setRated] = useState(0)
-
-  if (rated > 0) {
-    return (
-      <div style={{ padding: '10px 32px', background: 'var(--surface)', borderTop: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--status-done)' }}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-        感谢评价！已为「{agentName}」记录 {rated} 星
-      </div>
-    )
-  }
-
-  return (
-    <div style={{ padding: '10px 32px', background: 'var(--surface)', borderTop: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: 16 }}>
-      <span style={{ fontSize: 13, color: 'var(--text-secondary)', flexShrink: 0 }}>如何评价这次「{agentName}」的分析效果？</span>
-      <div style={{ display: 'flex', gap: 4 }}>
-        {[1, 2, 3, 4, 5].map(star => (
-          <button
-            key={star}
-            onMouseEnter={() => setHovered(star)}
-            onMouseLeave={() => setHovered(0)}
-            onClick={() => { setRated(star); onRate(star) }}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, lineHeight: 1, color: star <= (hovered || rated) ? '#F59E0B' : 'var(--border)', transition: 'color 0.1s' }}
-          >★</button>
-        ))}
-      </div>
-      <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto' }}>本次评价将计入广场评分</span>
-    </div>
-  )
-}
-
 export function Chat() {
   const location = useLocation()
   const { threadId } = useParams()
+  const activeThreadId = threadId ?? '1'
   const agentCtx = (location.state as AgentContext | null)
   const isMultiAgent = threadId === 'multi'
+  const activeThreadTitle = agentCtx?.agentName ?? (isMultiAgent ? '公司全面风险评估' : THREAD_TITLES[activeThreadId] ?? '新分析')
 
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH)
   const [panelVisible, setPanelVisible] = useState(true)
   const [isRunning] = useState(false)
   const [resizerHovered, setResizerHovered] = useState(false)
-  const [showRating] = useState(!!agentCtx && !isMultiAgent)
 
-  // 申请发布为场景弹窗
-  const [showSceneModal, setShowSceneModal] = useState(false)
-  const [sceneName, setSceneName] = useState('公司全面风险评估')
-  const [sceneDesc, setSceneDesc] = useState('依次调用财务异常检测、公告语义分析、信用风险评估三个智能体，整合输出综合风险报告。')
-  const [sceneSubmitted, setSceneSubmitted] = useState(false)
-
-  const handleSceneSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!sceneName.trim()) return
-    setSceneSubmitted(true)
-    setTimeout(() => { setShowSceneModal(false); setSceneSubmitted(false) }, 1500)
-  }
   const dragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(DEFAULT_PANEL_WIDTH)
@@ -163,26 +124,8 @@ export function Chat() {
           </div>
         )}
 
-        {/* 多 Agent 协作标题横幅 */}
-        {isMultiAgent && (
-          <div style={{ padding: '10px 24px', background: '#F5F3FF', borderBottom: '1px solid #DDD6FE', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-            <span style={{ fontSize: 13, color: '#7C3AED', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/><circle cx="8" cy="6" r="2.5"/><circle cx="16" cy="6" r="2.5"/></svg>
-              多智能体协作 · 公司全面风险评估
-            </span>
-            <span style={{ fontSize: 12, color: '#7C3AED', opacity: 0.7 }}>调用了 3 个智能体 · 分析完成</span>
-            <button
-              onClick={() => setShowSceneModal(true)}
-              style={{ marginLeft: 'auto', padding: '5px 14px', background: '#7C3AED', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-            >申请发布为场景 →</button>
-          </div>
-        )}
 
         <MessageList messages={isMultiAgent ? MULTI_AGENT_MESSAGES as never : undefined} />
-
-        {showRating && agentCtx && (
-          <RatingWidget agentName={agentCtx.agentName} onRate={() => {}} />
-        )}
 
         <ChatInput isRunning={isRunning} />
       </div>
@@ -201,7 +144,7 @@ export function Chat() {
         />
       )}
 
-      {/* 右侧产物面板 + 展开按钮（面板隐藏时显示） */}
+      {/* 右侧工作目录 + 展开按钮（面板隐藏时显示） */}
       {!panelVisible && (
         <button
           onClick={() => setPanelVisible(true)}
@@ -222,7 +165,7 @@ export function Chat() {
         <div style={{ width: panelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column' as const, overflow: 'hidden' }}>
           {/* 面板顶部控制条 */}
           <div style={{ height: 32, flexShrink: 0, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', background: 'var(--surface)' }}>
-            <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.2em', color: 'var(--text-muted)' }}>分析面板</span>
+            <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.2em', color: 'var(--text-muted)' }}>工作目录</span>
             <button
               onClick={() => setPanelVisible(false)}
               title="收起面板"
@@ -233,59 +176,10 @@ export function Chat() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
             </button>
           </div>
-          <ArtifactPanel />
+          <WorkspaceFiles threadId={activeThreadId} title={activeThreadTitle} compact />
         </div>
       )}
 
-      {/* 申请发布为场景弹窗 */}
-      {showSceneModal && (
-        <>
-          <div onClick={() => setShowSceneModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.4)', backdropFilter: 'blur(4px)', zIndex: 300 }} />
-          <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 32, width: 480, zIndex: 301, boxShadow: '0 20px 60px rgba(11,46,92,0.2)' }}>
-            {sceneSubmitted ? (
-              <div style={{ textAlign: 'center' as const, padding: '24px 0' }}>
-                <div style={{ marginBottom: 12, color: '#7C3AED' }}>
-                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>申请已提交</div>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>管理员审核通过后将出现在场景库</div>
-              </div>
-            ) : (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>申请发布为场景</div>
-                  <button onClick={() => setShowSceneModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>×</button>
-                </div>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.6 }}>
-                  将本次多智能体协作的工作流申请发布为场景，供其他师生一键复用。管理员审核通过后进入场景库。
-                </div>
-                <form onSubmit={handleSceneSubmit}>
-                  <div style={{ marginBottom: 16 }}>
-                    <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }}>场景名称 <span style={{ color: '#DC2626' }}>*</span></label>
-                    <input value={sceneName} onChange={e => setSceneName(e.target.value)} placeholder="如：公司全面风险评估" style={{ width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', outline: 'none', boxSizing: 'border-box' as const, color: 'var(--text-primary)' }} />
-                  </div>
-                  <div style={{ marginBottom: 16 }}>
-                    <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }}>场景描述</label>
-                    <textarea value={sceneDesc} onChange={e => setSceneDesc(e.target.value)} placeholder="描述这个场景能解决什么问题，适合什么情况使用" style={{ width: '100%', minHeight: 80, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', resize: 'vertical' as const, background: 'var(--surface)', outline: 'none', boxSizing: 'border-box' as const, color: 'var(--text-primary)' }} />
-                  </div>
-                  <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '12px 14px', marginBottom: 20 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8 }}>本次对话调用的智能体</div>
-                    {['企业财务异常检测（张老师）', '公告语义分析（平台 · 公共）', '信用风险评估（刘老师）'].map((a, i) => (
-                      <div key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <span style={{ color: 'var(--status-done)', fontWeight: 700 }}>✓</span>{a}
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-                    <button type="button" onClick={() => setShowSceneModal(false)} style={{ padding: '9px 20px', background: 'var(--surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
-                    <button type="submit" style={{ padding: '9px 20px', background: '#7C3AED', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>提交申请</button>
-                  </div>
-                </form>
-              </>
-            )}
-          </div>
-        </>
-      )}
     </div>
   )
 }

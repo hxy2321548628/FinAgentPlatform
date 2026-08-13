@@ -1,21 +1,18 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 
 interface ChatInputProps {
   isRunning?: boolean
-  onSend?: (text: string, files: string[]) => void
+  onSend?: (text: string) => void
   onStop?: () => void
 }
 
 export function ChatInput({ isRunning = false, onSend, onStop }: ChatInputProps) {
   const [text, setText] = useState('')
-  const [attachments, setAttachments] = useState<string[]>([])
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleSend = () => {
-    if (!text.trim() && attachments.length === 0) return
-    onSend?.(text, attachments)
+    if (!text.trim()) return
+    onSend?.(text)
     setText('')
-    setAttachments([])
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -25,11 +22,6 @@ export function ChatInput({ isRunning = false, onSend, onStop }: ChatInputProps)
     }
   }
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []).map(f => f.name)
-    setAttachments(prev => [...prev, ...files])
-    e.target.value = ''
-  }
 
   return (
     <div style={{ padding: '12px 24px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg)', flexShrink: 0 }}>
@@ -42,29 +34,8 @@ export function ChatInput({ isRunning = false, onSend, onStop }: ChatInputProps)
           style={{ width: '100%', minHeight: 52, maxHeight: 160, border: 'none', outline: 'none', fontSize: 14, color: 'var(--text-primary)', background: 'transparent', resize: 'none' as const, fontFamily: 'inherit', lineHeight: 1.65, boxSizing: 'border-box' as const }}
         />
 
-        {attachments.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginBottom: 10 }}>
-            {attachments.map(name => (
-              <div key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', background: 'var(--action-light)', border: '1px solid var(--action-border)', borderRadius: 5, fontSize: 12, color: 'var(--action)' }}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-                {name}
-                <button onClick={() => setAttachments(prev => prev.filter(n => n !== name))} style={{ background: 'none', border: 'none', color: 'var(--action)', cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1 }}>×</button>
-              </div>
-            ))}
-          </div>
-        )}
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-light)' }}>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input ref={fileInputRef} type="file" multiple accept=".csv,.xlsx,.xls,.pdf,.txt" style={{ display: 'none' }} onChange={handleFileChange} />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', border: '1px solid var(--border)', borderRadius: 5, background: 'transparent', fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer', fontFamily: 'inherit' }}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-              附件
-            </button>
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-light)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Enter 发送</span>
             {isRunning ? (

@@ -1,10 +1,24 @@
 import { useState } from 'react'
+import { AdminPageHeader, AdminTableSection } from './AdminUi'
+import {
+  approveButtonStyle,
+  cellStyle,
+  emptyStyle,
+  monoCellStyle,
+  nameCellStyle,
+  pageStyle,
+  rejectButtonStyle,
+  secondaryButtonStyle,
+  tableStyle,
+  tagStyle,
+  thStyle,
+} from './AdminStyles'
 
 interface ScenarioApplication {
   id: string
   agentName: string
   agentAuthor: string
-  scenarioName: string  // 申请时填写的场景展示名
+  scenarioName: string
   subject: string
   submittedAt: string
 }
@@ -31,13 +45,6 @@ const MOCK_PUBLISHED: PublishedScenario[] = [
   { id: 's4', name: '量化因子研究', subject: '金融学', agentName: '（平台内置）', agentAuthor: '金融学院', uses: 64, publishedAt: '2026-07-01' },
 ]
 
-const thStyle: React.CSSProperties = {
-  padding: '10px 16px', textAlign: 'left', fontSize: 11,
-  color: 'var(--text-muted)', fontWeight: 600,
-  textTransform: 'uppercase', letterSpacing: '0.08em',
-  borderBottom: '1px solid var(--border)', background: 'var(--bg)',
-}
-
 export function AdminScenarios() {
   const [applications, setApplications] = useState(MOCK_APPLICATIONS)
   const [scenarios, setScenarios] = useState(MOCK_PUBLISHED)
@@ -52,89 +59,64 @@ export function AdminScenarios() {
       uses: 0,
       publishedAt: new Date().toISOString().split('T')[0],
     }, ...prev])
-    setApplications(prev => prev.filter(a => a.id !== app.id))
-  }
-
-  const handleReject = (id: string) => {
-    setApplications(prev => prev.filter(a => a.id !== id))
-  }
-
-  const handleUnpublish = (id: string) => {
-    setScenarios(prev => prev.filter(s => s.id !== id))
+    setApplications(prev => prev.filter(item => item.id !== app.id))
   }
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px', background: 'var(--bg)' }}>
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 4 }}>// SCENARIO MANAGEMENT</div>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>场景库管理</h1>
-      </div>
+    <div style={pageStyle}>
+      <AdminPageHeader eyebrow="// SCENARIO MANAGEMENT" title="场景管理" pendingCount={applications.length} />
 
-      {/* 上架申请队列 */}
-      {applications.length > 0 && (
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--action-border)', borderRadius: 10, marginBottom: 24, overflow: 'hidden' }}>
-          <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--action-light)' }}>
-            <div style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.2em', color: 'var(--action)', fontWeight: 700 }}>
-              // 上架申请
-            </div>
-            <span style={{ padding: '2px 10px', background: 'var(--action)', color: '#fff', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{applications.length} 个待处理</span>
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr>{['场景名称', '来源 Agent', '申请人', '学科', '申请时间', '操作'].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
-            </thead>
+      <AdminTableSection title="待审核场景">
+        {applications.length === 0 ? (
+          <div style={emptyStyle}>暂无待审核场景</div>
+        ) : (
+          <table style={tableStyle}>
+            <thead><tr>{['场景名称', '来源 Agent', '申请人', '学科', '申请时间', '操作'].map(label => <th key={label} style={thStyle}>{label}</th>)}</tr></thead>
             <tbody>
-              {applications.map((app, i) => (
-                <tr key={app.id} style={{ borderBottom: i < applications.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
-                  <td style={{ padding: '12px 16px', fontWeight: 500, color: 'var(--text-primary)' }}>{app.scenarioName}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--action)', fontSize: 12 }}>{app.agentName}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-secondary)' }}>{app.agentAuthor}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{app.subject}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{app.submittedAt}</td>
-                  <td style={{ padding: '12px 16px' }}>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button onClick={() => handleApprove(app)} style={{ padding: '5px 12px', background: 'var(--status-done)', color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>通过</button>
-                      <button onClick={() => handleReject(app.id)} style={{ padding: '5px 12px', background: 'transparent', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>拒绝</button>
+              {applications.map((application, index) => (
+                <tr key={application.id} style={{ borderBottom: index < applications.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
+                  <td style={nameCellStyle}>{application.scenarioName}</td>
+                  <td style={{ ...cellStyle, color: 'var(--action)', fontSize: 12 }}>{application.agentName}</td>
+                  <td style={cellStyle}>{application.agentAuthor}</td>
+                  <td style={cellStyle}><span style={tagStyle}>{application.subject}</span></td>
+                  <td style={monoCellStyle}>{application.submittedAt}</td>
+                  <td style={cellStyle}>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button type="button" onClick={() => handleApprove(application)} style={approveButtonStyle}>通过</button>
+                      <button type="button" onClick={() => setApplications(prev => prev.filter(item => item.id !== application.id))} style={rejectButtonStyle}>拒绝</button>
                     </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-      )}
+        )}
+      </AdminTableSection>
 
-      {/* 已发布场景列表 */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.3em', color: 'var(--text-muted)' }}>// 已发布场景</div>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>共 {scenarios.length} 个</span>
-      </div>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+      <AdminTableSection title="已发布场景">
         {scenarios.length === 0 ? (
-          <div style={{ padding: '48px 20px', textAlign: 'center' as const, color: 'var(--text-muted)', fontSize: 13 }}>暂无已发布场景</div>
+          <div style={emptyStyle}>暂无已发布场景</div>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr>{['场景名称', '来源 Agent', '创建者', '学科', '使用次数', '发布时间', '操作'].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
-            </thead>
+          <table style={tableStyle}>
+            <thead><tr>{['场景名称', '来源 Agent', '创建者', '学科', '使用次数', '发布时间', '操作'].map(label => <th key={label} style={thStyle}>{label}</th>)}</tr></thead>
             <tbody>
-              {scenarios.map((s, i) => (
-                <tr key={s.id} style={{ borderBottom: i < scenarios.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
-                  <td style={{ padding: '12px 16px', fontWeight: 500, color: 'var(--text-primary)' }}>{s.name}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--action)', fontSize: 12 }}>{s.agentName}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-secondary)' }}>{s.agentAuthor}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{s.subject}</td>
-                  <td style={{ padding: '12px 16px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--text-secondary)' }}>{s.uses}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{s.publishedAt}</td>
-                  <td style={{ padding: '12px 16px' }}>
-                    <button onClick={() => handleUnpublish(s.id)} style={{ padding: '4px 10px', background: 'transparent', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>下架</button>
+              {scenarios.map((scenario, index) => (
+                <tr key={scenario.id} style={{ borderBottom: index < scenarios.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
+                  <td style={nameCellStyle}>{scenario.name}</td>
+                  <td style={{ ...cellStyle, color: 'var(--action)', fontSize: 12 }}>{scenario.agentName}</td>
+                  <td style={cellStyle}>{scenario.agentAuthor}</td>
+                  <td style={cellStyle}><span style={tagStyle}>{scenario.subject}</span></td>
+                  <td style={monoCellStyle}>{scenario.uses}</td>
+                  <td style={monoCellStyle}>{scenario.publishedAt}</td>
+                  <td style={cellStyle}>
+                    <button type="button" onClick={() => setScenarios(prev => prev.filter(item => item.id !== scenario.id))} style={secondaryButtonStyle}>下架</button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
-      </div>
+      </AdminTableSection>
     </div>
   )
 }
