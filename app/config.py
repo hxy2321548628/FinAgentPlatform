@@ -159,7 +159,7 @@ class Settings(StoreSettings):
 
     # **Langfuse 是外部服务，不由本项目的 compose 编排**（2026-08-13）。
     # 三项任缺其一即整个关掉：宁可没有追踪，也不要一个「配了一半、以为在记其实没记」的状态。
-    langfuse_host: str = Field(
+    langfuse_base_url: str = Field(
         default="",
         description="Langfuse 的地址，形如 http://127.0.0.1:3000。留空即不上报",
     )

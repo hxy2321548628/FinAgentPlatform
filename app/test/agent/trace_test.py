@@ -10,7 +10,7 @@ from pydantic import SecretStr
 from agent.trace import SESSION_KEY, USER_KEY, attribution, create_callback
 from config import Settings
 
-HOST = "http://127.0.0.1:3000"
+BASE_URL = "http://127.0.0.1:3000"
 
 PUBLIC_KEY = "pk-lf-test"
 
@@ -18,8 +18,18 @@ SECRET_KEY = "sk-lf-test"
 
 
 def a_settings(**override: object) -> Settings:
-    """一份配置。**必填项只有模型 key**，其余走默认值。"""
-    field: dict[str, object] = {"deepseek_api_key": SecretStr("sk-test")}
+    """一份配置。
+
+    **三项 Langfuse 显式置空，不走默认值** —— `Settings` 会读仓库根的 `.env`，
+    而开发机上那份多半是配好的。不写死的话「没配」这条用例在配了 Langfuse 的机器上
+    直接红，且红得像是代码坏了。
+    """
+    field: dict[str, object] = {
+        "deepseek_api_key": SecretStr("sk-test"),
+        "langfuse_base_url": "",
+        "langfuse_public_key": "",
+        "langfuse_secret_key": SecretStr(""),
+    }
     field.update(override)
     return Settings(**field)  # type: ignore[arg-type]
 
@@ -31,7 +41,7 @@ def test_nothing_configured_means_no_callback() -> None:
 @pytest.mark.parametrize(
     ("missing", "left"),
     [
-        ("langfuse_host", "缺地址"),
+        ("langfuse_base_url", "缺地址"),
         ("langfuse_public_key", "缺 public key"),
         ("langfuse_secret_key", "缺 secret key"),
     ],
@@ -43,7 +53,7 @@ def test_a_half_configured_langfuse_is_switched_off_entirely(missing: str, left:
     而那时人们会去查网络、查密钥，不会想到是这里少了一项。
     """
     field: dict[str, object] = {
-        "langfuse_host": HOST,
+        "langfuse_base_url": BASE_URL,
         "langfuse_public_key": PUBLIC_KEY,
         "langfuse_secret_key": SecretStr(SECRET_KEY),
     }

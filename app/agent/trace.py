@@ -39,7 +39,7 @@ def create_callback(settings: Settings) -> BaseCallbackHandler | None:
         可挂到图上的处理器；地址、public key、secret key 任缺其一则 None。
     """
     secret = settings.langfuse_secret_key.get_secret_value()
-    if not (settings.langfuse_host and settings.langfuse_public_key and secret):
+    if not (settings.langfuse_base_url and settings.langfuse_public_key and secret):
         logger.info("Langfuse 未配置齐全，本进程不上报追踪")
         return None
     # **构造客户端这一步不能省**：回调自己不持有配置，它按 public key 去取全局客户端。
@@ -47,9 +47,9 @@ def create_callback(settings: Settings) -> BaseCallbackHandler | None:
     Langfuse(
         public_key=settings.langfuse_public_key,
         secret_key=secret,
-        host=settings.langfuse_host,
+        host=settings.langfuse_base_url,
     )
-    logger.info("Langfuse 追踪已开启：host=%s", settings.langfuse_host)
+    logger.info("Langfuse 追踪已开启：base_url=%s", settings.langfuse_base_url)
     return CallbackHandler()
 
 

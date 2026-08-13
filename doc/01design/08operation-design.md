@@ -139,7 +139,7 @@ Agent run 是 **IO 密集**的 —— 绝大部分时间在等 LLM 返回。
 |---|---|
 | 接入点 | 回调挂在**图**上而不是模型上（[`app/agent/trace.py`](../../app/agent/trace.py)）—— 挂模型只看得到「调了几次 LLM」，挂图才看得到节点、工具调用与中断，而 agent 出问题多半在工具那一段 |
 | 归属 | `langfuse_session_id` = `thread_id`，`langfuse_user_id` = 提交人。**对上这两个键它才答得出「谁花了多少」**，否则只剩一堆孤立 trace |
-| 开关 | `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` **任缺其一即整个关掉**，并打一条日志说明。宁可没有追踪，也不要「配了一半、以为在记其实没记」 |
+| 开关 | `LANGFUSE_BASE_URL` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` **任缺其一即整个关掉**，并打一条日志说明。宁可没有追踪，也不要「配了一半、以为在记其实没记」 |
 | compose | worker 容器要经 `host.docker.internal` 才够得着它（compose 里已配 `host-gateway`）。**填 `127.0.0.1` 连的是容器自己**，症状是 trace 一条不出现且没有报错 |
 
 **两个必须知道的后果：**
