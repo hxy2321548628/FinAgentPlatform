@@ -14,7 +14,6 @@ from log import run_context
 from run.decision import Decision
 from run.repository import Run
 from task.queue import RunTask, TaskQueue
-from telemetry.context import carry
 
 logger = logging.getLogger(__name__)
 
@@ -63,15 +62,7 @@ class RunSubmitter:
             # 提问同时落库与入队。**两份不是冗余**：队列那份跑完就没了，
             # 而库里那份是聊天历史的用户那一侧 —— 没有它，翻看以前问过什么就无从谈起
             await self._repository.create(run_id=run.id, thread_id=run.thread_id, user_id=user_id, content=content)
-            await self._queue.publish(
-                RunTask(
-                    run_id=run.id,
-                    thread_id=run.thread_id,
-                    content=content,
-                    user_id=user_id,
-                    trace=carry(),
-                )
-            )
+            await self._queue.publish(RunTask(run_id=run.id, thread_id=run.thread_id, content=content, user_id=user_id))
             logger.info("run 已投递")
         return run
 
@@ -91,7 +82,5 @@ class RunSubmitter:
             decisions: 已经校验过的决策。
         """
         with run_context(run_id=run_id, thread_id=thread_id, user_id=user_id):
-            await self._queue.publish(
-                RunTask(run_id=run_id, thread_id=thread_id, user_id=user_id, decisions=decisions, trace=carry())
-            )
+            await self._queue.publish(RunTask(run_id=run_id, thread_id=thread_id, user_id=user_id, decisions=decisions))
             logger.info("审批已回传，run 重新入队续跑")

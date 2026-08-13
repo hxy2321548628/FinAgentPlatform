@@ -88,15 +88,6 @@ class RunTask(BaseModel):
         default=None,
         description="审批决策。为空表示这是第一次开跑",
     )
-    # **整条 trace 上唯一要手接的一段**：HTTP 那几跳由探针自动传，而这里隔着一条
-    # Stream，没有请求头可放。不带过去的话每个 run 断成两条互不相干的 trace，
-    # 而「一个 run 的完整耗时」正好落在断口上。
-    #
-    # 允许为空：这个字段是 P4 才加的，队列里躺着的旧消息没有它
-    trace: dict[str, str] | None = Field(
-        default=None,
-        description="W3C traceparent，把 api 与 worker 两侧的 span 串成一条",
-    )
 
 
 class Delivery(BaseModel):

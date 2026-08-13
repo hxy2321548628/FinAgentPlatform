@@ -11,7 +11,9 @@
 
 ## 部署拓扑与容量输入（承接原架构 §4.4）
 
-平台以单机 Docker Compose 部署。常驻服务包括 Nginx、API、Worker、Sandbox Broker、Postgres、Redis、MinIO，以及 OTel Collector、Tempo、Loki、Prometheus、Grafana。沙箱由 Broker 动态创建，不在 Compose 中静态声明。
+平台以单机 Docker Compose 部署。常驻服务是 Nginx、API、Worker、Sandbox Broker、Postgres、Redis，**六个**。沙箱由 Broker 动态创建，不在 Compose 中静态声明。
+
+> **2026-08-13 撤除七个服务**：OTel Collector、Tempo、Loki、Prometheus、Grafana 五个可观测性服务，以及 MinIO 与它的建桶任务。MinIO 是连带的 —— 产物存储在 `0009` 迁移就搬走了，此后它只剩 Tempo 与 Loki 两个用户。理由见 §8.3。
 
 `pypi-mirror` 曾列在部署骨架中，但本期未部署：沙箱保持 `--network=none`，常用科学计算库和中文字体预装进沙箱镜像。原因见[安全设计 §7.3.3](./07security-design.md)。
 
@@ -36,7 +38,9 @@
  = 理论上限 24 个沙箱
 ```
 
-24 个沙箱同时也消耗约 24 核，CPU 与内存的结论吻合。实际配置上限为 **20**，保留 4 个名额的余量，避免 OOM Killer 误杀 Postgres。P4 新增的五个可观测性服务实测共占约 0.41 GB，落在上述基础服务估算的取整误差内，不改变结论。
+24 个沙箱同时也消耗约 24 核，CPU 与内存的结论吻合。实际配置上限为 **20**，保留 4 个名额的余量，避免 OOM Killer 误杀 Postgres。
+
+~~P4 新增的五个可观测性服务实测共占约 0.41 GB，落在上述基础服务估算的取整误差内，不改变结论。~~ 那五个服务与 MinIO 已于 2026-08-13 撤除，**基础服务的占用只减不增，结论同样不变** —— 沙箱上限仍是 20，不因此上调。腾出的约 0.5 GB 留作余量，而不是换成一个沙箱名额：上限本来就是按内存与 CPU 双约束取的整，多出半个 G 不足以让第 21 个沙箱站得住。
 
 这组数值是当前部署输入，不是架构常量。服务器规格或真实负载变化时，按同一公式重算，并通过配置调整上限。
 
@@ -96,28 +100,36 @@ Agent run 是 **IO 密集**的 —— 绝大部分时间在等 LLM 返回。
 
 ## 8.3 可观测性
 
-> ~~**TODO** ｜ 待回答：本节整体待设计，规划在 P4 落地（[实施计划基线](../03plan/CLAUDE.md)）~~
-> **已于 2026-08-10 全部关闭**（[P4 计划](../03plan/P4-plan.md)，验收八条全过）。四项分两批落地：日志与 token 计量按当初的优先级判断前移到了 P1，其余三项在 P4。
+**现状：只剩结构化日志与账本两项，指标、链路追踪、日志集中收集与告警于 2026-08-13 整体撤除。**
 
-**先落地的两项**（2026-08-06，P1）：
+### 8.3.1 还在的两项
 
-- **结构化日志**：进程日志输出成 JSON 行，`run_id` / `thread_id` 走 `contextvars` 自动带上，一次 run 的全部日志可按 `run_id` 过滤（[`app/log.py`](../../app/log.py)）。异常塞进同一行的 `exception` 字段 —— traceback 换行输出会把一条日志拆成十几行，逐行解析的工具在这里全部失败。
-- **token 计量**：按 cache 命中拆分，口径见 §6.4；契约见 §5.2 的 `run.finished`。
+- **结构化日志**（2026-08-06，P1）：进程日志输出成 JSON 行，`run_id` / `thread_id` / `user_id` 走 `contextvars` 自动带上，一次 run 的全部日志可按 `run_id` 过滤（[`app/log.py`](../../app/log.py)）。异常塞进同一行的 `exception` 字段 —— traceback 换行输出会把一条日志拆成十几行，逐行解析的工具在这里全部失败。**撤除可观测性没有动它一行**，它现在是唯一的排障入口：
 
-**其余三项**（2026-08-10，P4）。选型是 OTel Collector + Tempo + Loki + Prometheus + Grafana，**trace 与日志都以 MinIO 为后端**（论证见 [P4 §7.1 §7.2](../03plan/P4-plan.md)：装全套而非轻量方案，实测五个服务共占 **0.41 GB**，见上方容量基线）：
+  ```bash
+  docker compose -f deploy/compose.yml logs worker | jq -c 'select(.run_id == "…")'
+  ```
 
-| 项 | 落地形态 | 在哪 |
-|---|---|---|
-| **指标** | 三个抓取端点，**谁独有的观测位置谁答**：api 答平台状态（run 各态计数、队列积压、当日 token），broker 答沙箱容器数与内存（唯一持有 `docker.sock`），worker 答 LLM 延迟与失败率（唯一调模型） | `deploy/prometheus.yml` |
-| **链路追踪** | 一个 run 的 trace 跨 api / worker / broker / LLM 四段。整条链路上**只有 api → worker 那一跳要手接** —— 中间隔着 Redis 队列，没有请求头可放 traceparent | `app/telemetry/` |
-| **成本看板** | `GET /admin/usage` 按用户与时间聚合。**账本与闸门分开放**：`report/usage.py` 跨用户聚合，`quota/usage.py` 永远带 `user_id` —— 后者刻意不提供「不带 user 也能查」的入口，多租户最常见的越权来源就是某个接口忘了加 where 条件。**呈现层不在本文登记**：P4 期配过一个 nginx 直接托管的单文件运维页（`deploy/web/usage.html`），现已移除 | `app/report/usage.py` |
-| **日志集中收集** | 走 OTLP 从进程直接发，**不扒容器 stdout**（扒 stdout 要给采集器挂 `/var/lib/docker/containers`，等于开一道本不需要的口子）。顺带把 trace 与日志接上了：OTel 的 handler 把当前 span 的 `trace_id` 写进每条日志。stdout 那一路原样保留，Loki 挂了不影响 `docker logs` 排障 | `app/telemetry/log.py` |
+- **token 计量与成本账本**（P1 计量口径，P4 账本）：`GET /api/admin/usage` 按用户与时间聚合，数据来自 `runs` 表（[`app/report/usage.py`](../../app/report/usage.py)），前端在管理后台的用量页。**账本与闸门分开放**：`report/usage.py` 跨用户聚合，`quota/usage.py` 永远带 `user_id` —— 后者刻意不提供「不带 user 也能查」的入口，多租户最常见的越权来源就是某个接口忘了加 where 条件。
 
-**「能定位」落在两个具体页面上**，不是「日志里都有，自己 grep」：Grafana 的「平台概览」（六个指标）与「按 run 查链路」（填一个 `run_id` 得到它各段耗时与 token 三元组），看板定义在 [`deploy/grafana/dashboard/`](../../deploy/grafana/dashboard/)。
+  > **这一项与 Prometheus 无关，撤除时一个字都没动。** 它常被误当成可观测性 —— 名字里有「看板」，而 P4 又同时交付了它与 Grafana。判据很简单：**它从 `runs` 表读，是业务数据的一个查询端点**，与那五个服务不共享任何代码。
 
-**告警走 Grafana Alerting → 飞书自定义机器人**，四条规则，选择标准只有一个：**对应「教师会直接感受到的故障」**（有进程抓不到了 / 模型调用失败率偏高 / 队列积压不消 / 沙箱名额快用完了）。一条没人会因此做任何事的告警，只会训练大家忽略这个群。阈值都是偏松的初值，**攒够真实运行数据再收紧**。
+### 8.3.2 撤掉了什么，以及撤掉之后失去了什么
 
-> **`/metrics` 不要求登录，挡它的是 nginx 一行 `return 404`。** Prometheus 没有会话，给它发一份长期凭据只是把同一个问题换个地方放；而响应里带着用户名与他今天烧掉的 token，与成本看板同一份数据。Prometheus 在 compose 网络里直连 `api:8000`，走不到 nginx。
+| 撤掉的 | 原来解决什么 | 现在靠什么 | 代价 |
+|---|---|---|---|
+| **指标**（Prometheus + 三个抓取端点） | run 各态计数、队列积压、沙箱容器数与内存、LLM 延迟与失败率 | 无。查库能算出前两项，后两项**量不到了** | 「一次模型调用有多慢」只有调用发生那一刻测得到，事后查任何一张表都还原不出来 |
+| **链路追踪**（OTel + Tempo） | 一个 run 跨 api / worker / broker / LLM 四段的耗时归因 | 日志里的时间戳，**要人工拼** | 跨进程那一跳（api → worker 隔着 Redis 队列）没有任何东西再把两侧串起来 |
+| **日志集中收集**（Loki） | 跨容器按 `run_id` 检索 | `docker compose logs \| jq` | 只能查还在 Docker 日志轮转窗口内的；轮转出去就没了 |
+| **告警**（Grafana Alerting → 飞书） | 四条规则：进程抓不到 / 模型失败率高 / 队列积压 / 沙箱名额将满 | 无。**故障要靠人发现或用户报障** | 这是撤除中最实的一项损失 |
+
+**撤除的理由是减少在建期的复杂度**，不是这套东西没价值 —— 恰恰相反，[P4 §8.13](../03plan/P4-plan.md) 记着一次不跳任何一条的全量重跑照出三个真因，其中包括「磁盘配额从 P1 起就没生效过」。撤的是**当下**的维护面：五个容器、五个依赖、约 1500 行埋点与 750 行测试，以及每次重启都要先 `chown` 三个数据目录的启动前提。
+
+**重新纳入的时机：上线前。** 上线意味着有真实教师在用、故障要靠人发现就来不及，而告警那一行正是为此存在的。届时要重做的不只是把代码找回来 —— 那时的系统比现在多了子智能体、外部 MCP 与 skill 三条链路，埋点面更大，见 [P6 决策 §12](../03plan/P6-decision.md)。
+
+> **P9 的四处「必须实测」不受影响。** 逐条核对过：G6 读的是真跑一次拿到的 `astream` chunk，G7 对的是 `runs` 表与 DeepSeek 后台账单，G8 查的是 `aget_state`，G9 看的是抛出来的是哪一层的 `recursion_limit` —— **四处没有一处依赖 trace 或指标**。撤除不阻塞 P9。
+>
+> **真正被这次撤除改掉的是 F5（MCP 熔断告警）**，它原定「复用 P4 已接的飞书运维通道」，而那条通道没了。修订见 [P6 决策 F5](../03plan/P6-decision.md)。
 
 ## 8.4 部署与发布
 
@@ -141,12 +153,12 @@ location /api/runs/ {
 
 - **Postgres 定时备份** —— checkpoint 丢失意味着中断的任务无法恢复。这不只是数据备份，也是功能可用性的一部分
 - **Postgres 的数据卷必须落在宿主机的持久化目录，不能用匿名卷** —— 否则 `docker compose down -v` 一次就把 checkpoint 全清了，而那正是 P2 花整期保住的东西。这条在 P2 起 Postgres 的那一刻就要做对，事后迁移数据卷代价高
-- **MinIO 磁盘容量监控** —— 产物只增不减，**且 §6.5 定案不设保留期**（2.5 GB/年，删了拉不回来）。因此这条监控是唯一的兜底，不要指望有一个清理任务在后面接着
+- ~~**MinIO 磁盘容量监控**~~ —— MinIO 已于 2026-08-13 撤除。**这条要盯的东西没有消失，只是换了地方**：产物现在只在会话 workspace 里，仍然只增不减、仍然 §6.5 定案不设保留期。盯它的是 [`deploy/workspace-report.sh`](../../deploy/workspace-report.sh)（挂 cron，超水位退出码为 1）
 - **镜像分发方式** —— 内网可能拉不到 Docker Hub，需要私有 registry 或离线导入。**这一条容易被漏到上线当天才发现**
 - **`/data/sandbox` 所在文件系统须为 XFS 且以 `prjquota` 挂载** —— §7.3.5 的磁盘配额依赖它，[ADR-0015](./adr/0015-sandbox-disk-quota-xfs.md)。挂载选项改动要重启，事后补代价高。**P4 起这已不是加固项而是硬启动依赖**：配额改成 fail-closed 之后，挂载不在时 broker 直接拒绝建会话（`POST /threads` 一律 500）。用 loop 设备造的挂载**重启后不会自动挂回来**
 - **重挂之后必须让 broker 重启一次**（2026-08-10，P4）—— 容器的 bind mount 是在它**启动那一刻**解析的。重启后自动起来的 broker 绑的是「挂载还没回来」时那个被遮住的目录，而 `docker compose up -d` **不会重建它**（服务定义没变，compose 认为无事可做）。**症状与没挂一模一样**：实测宿主机看是 xfs、419 个会话目录，容器里看是 ext4、4 个。之前起来的沙箱容器同样绑着旧目录，一并清掉让 broker 重建
 - **compose 部署要把承载 workspace 的块设备映射给 broker**（`SANDBOX_QUOTA_DEVICE`，2026-08-09，P4）—— broker 在容器里调 `xfs_quota`，而它要打开那个块设备；`CAP_SYS_ADMIN` 只是必要条件。loop 挂载每次挂载后可能换号，须现查：`findmnt -no SOURCE --target <workspace 根>`，`setup-xfs.sh` 结尾会直接报出来
-- **Prometheus / Grafana / Tempo / Loki 的数据目录须先建好并归运行用户**（2026-08-08，P4）—— Docker 自动创建缺失的 bind mount 目录时属主是 root，而这几个容器以宿主用户跑。不建的话它们会因为写不进去反复重启，**而 `up -d` 那一刻是绿的**
+- ~~**Prometheus / Grafana / Tempo / Loki 的数据目录须先建好并归运行用户**（2026-08-08，P4）~~ —— 四个服务已于 2026-08-13 撤除，这条启动前提随之消失。**但那个坑本身仍然成立**，将来任何一个以宿主用户跑、往 bind mount 里写的容器都会踩：Docker 自动创建缺失的目录时属主是 root，容器写不进去而反复重启，**`up -d` 那一刻是绿的**
 - **沙箱运行用户的 uid/gid 须与 broker 进程对齐** —— 容器内代码写出的文件 broker 要能读写（[ADR-0016](./adr/0016-sandbox-filesystem-backend.md)）。不对齐会表现为「agent 写得进、读不出」，且症状不指向权限。**P0 探针已验证**：容器以 `--user $(id -u):$(id -g)` 运行时宿主侧读写正常
 - **沙箱镜像须预装中文字体，容器须设 `HOME` 与 `MPLCONFIGDIR`** —— 见 §7.3.5 的预装清单。漏掉不会报错，只会让 agent 白跑几轮、并把告警混进执行结果
 - **Redis 重启 = 全员重新登录**（2026-08-08，P3）—— session 存在 Redis（§7.2.2）。这不是故障，但运维要事先知道，否则一次例行重启会变成一片「怎么突然要重新登录」的报障

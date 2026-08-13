@@ -65,7 +65,7 @@ P0–P4 已于 2026-08-10 全部验收通过。当前状态是“平台链路跑
 | Checkpointer | LangGraph 的状态持久化机制，用于崩溃恢复和人工审批续跑 |
 | Sandbox | 运行 LLM 生成代码的隔离容器，每个 Thread 按需拥有一个 |
 | HITL | 敏感工具执行前暂停，等待用户批准、拒绝、编辑或回应 |
-| Artifact | 分析生成的图表、表格或报告，持久化到 MinIO |
+| Artifact | 分析生成的图表、表格或报告，留在会话 workspace 的 `outputs/` 下 |
 
 ---
 
@@ -76,7 +76,7 @@ P0–P4 已于 2026-08-10 全部验收通过。当前状态是“平台链路跑
 | 约束 | 当前结论 | 架构影响 |
 |---|---|---|
 | 用户规模 | 教师及课题组研究生，约一两百人 | 单机部署，不引入 K8s 与队列分片 |
-| 部署环境 | 学院内网，单台 32 核 / 64 GB 服务器 | 自建 Postgres、Redis、MinIO，以 Docker Compose 编排 |
+| 部署环境 | 学院内网，单台 32 核 / 64 GB 服务器 | 自建 Postgres 与 Redis，以 Docker Compose 编排 |
 | 模型通路 | Worker 可访问公有云 LLM API | 模型调用留在可信应用层，沙箱保持零出网 |
 | 数据合规 | 当前不承载涉密或受等保约束的数据，可发送至公有云模型 | 本期不增加脱敏、静态加密和服务间 mTLS |
 | 开发资源 | 单人 + AI 辅助，无外部交付截止日 | 控制组件数量，以 ADR 和自动验收降低单人决策风险 |
@@ -99,7 +99,7 @@ P0–P4 已于 2026-08-10 全部验收通过。当前状态是“平台链路跑
 ### 2.3 架构原则
 
 - **事件驱动，但不提前分布式化。** 长任务要求异步提交、队列消费和事件订阅；当前规模不要求 K8s、服务网格或分库分表。见 [ADR-0001](./adr/0001-single-host-compose.md)。
-- **持久状态离开进程。** Run 元数据和 checkpoint 在 Postgres，任务与热事件在 Redis，产物在 MinIO；API 与 Worker 因而可以重启和扩副本。
+- **持久状态离开进程。** Run 元数据和 checkpoint 在 Postgres，任务与热事件在 Redis；API 与 Worker 因而可以重启和扩副本。**产物是唯一的例外** —— 它留在会话 workspace 的宿主机目录里（`0009` 迁移撤掉对象存储之后），因此产物的下载路径绑在那台机器上。
 - **不可信执行面最小化。** 只有 sandbox-broker 持有 `docker.sock`，沙箱零出网，应用服务不直接执行生成代码。见 [ADR-0004](./adr/0004-sandbox-broker-docker-sock.md)。
 - **契约隔离框架变化。** Worker 把 DeepAgents/LangGraph 事件映射成平台事件，前端不依赖框架内部结构。见 [ADR-0013](./adr/0013-event-anticorruption-layer-v2-stream.md)。
 - **至少一次投递配合幂等。** 队列允许重投；写工具由 broker 按稳定键去重，避免崩溃恢复重复副作用。见 [ADR-0014](./adr/0014-tool-idempotency-key.md)。
@@ -125,7 +125,6 @@ flowchart TB
     subgraph DATA["持久化层"]
         PG[("<b>Postgres</b><br/>元数据 · checkpoint · 事件归档")]
         REDIS[("<b>Redis</b><br/>任务 · 热事件 · session")]
-        MINIO[("<b>MinIO</b><br/>分析产物 · 可观测性对象")]
     end
 
     subgraph EXEC["不可信执行层"]
@@ -145,8 +144,9 @@ flowchart TB
     WORKER -->|受限 HTTP API| BROKER
     BROKER -->|容器生命周期与执行| SBX
     SBX -.->|bind mount| BROKER
-    BROKER -.->|产物同步| MINIO
 ```
+
+> **持久化层只剩两个存储。** MinIO 已于 2026-08-13 撤除 —— 产物存储在 `0009` 迁移就搬回了会话 workspace，此后它只剩 Tempo 与 Loki 两个用户，而那两个服务同日一并撤除（见[运维设计 §8.3](./08operation-design.md)）。
 
 ### 3.1 组件职责
 
@@ -158,7 +158,7 @@ flowchart TB
 | Sandbox Broker | 管理沙箱、文件和写工具去重；唯一接触 Docker 守护进程 | 持有运行期租约与容器视图 |
 | Postgres | 用户、Thread、Run、事件归档、Artifact 元数据和 checkpoint | 核心持久状态 |
 | Redis | Session、任务队列、Run 热事件、取消标志和限流数据 | 可过期的运行期状态；重启会使 Session 失效 |
-| MinIO | 分析产物，以及 Tempo/Loki 的对象存储后端 | 持久对象 |
+| ~~MinIO~~ | ~~分析产物，以及 Tempo/Loki 的对象存储后端~~ 2026-08-13 撤除 | —— |
 | Sandbox | 执行生成代码，工作区通过 bind mount 持久化 | 不可信、可销毁重建 |
 
 ### 3.2 信任与所有权边界
@@ -175,7 +175,7 @@ flowchart LR
 - API 是浏览器的唯一后端入口，认证与资源归属校验不下放给前端。
 - Repository 查询默认注入 `user_id`，越权资源与不存在资源统一表现为 404。
 - Worker 不持有 `docker.sock`，不直接管理容器。
-- 沙箱不访问 Postgres、Redis、MinIO、LLM 或公网；跨边界能力只有 broker 暴露的受限接口。
+- 沙箱不访问 Postgres、Redis、LLM 或公网；跨边界能力只有 broker 暴露的受限接口。
 - 每个 Thread 的 workspace 独立，目录、容器、配额和产物路径都以 Thread 与用户归属为边界。
 
 ---
@@ -248,7 +248,7 @@ flowchart LR
     THREAD --> CHECKPOINT[LangGraph Checkpoint]
 ```
 
-Postgres 保存可查询的业务事实和 checkpoint，Redis 保存需要低延迟消费或过期的运行期数据，MinIO 保存二进制产物。三者的职责不互相替代。表结构、配额计量和保留期见[数据设计](./06data-design.md)。
+Postgres 保存可查询的业务事实和 checkpoint，Redis 保存需要低延迟消费或过期的运行期数据。两者的职责不互相替代。**二进制产物不在任何一个存储里** —— 它们留在会话 workspace 的宿主机目录，由 nginx 直发。表结构、配额计量和保留期见[数据设计](./06data-design.md)。
 
 ### 5.2 安全基线
 
@@ -262,7 +262,9 @@ Postgres 保存可查询的业务事实和 checkpoint，Redis 保存需要低延
 
 ### 5.3 单机部署
 
-生产形态是单机 Docker Compose：Nginx、API、Worker、Broker、Postgres、Redis、MinIO，以及 OpenTelemetry Collector、Tempo、Loki、Prometheus、Grafana。沙箱由 Broker 动态创建，不在 Compose 中静态声明。
+生产形态是单机 Docker Compose，**六个服务**：Nginx、API、Worker、Broker、Postgres、Redis。沙箱由 Broker 动态创建，不在 Compose 中静态声明。
+
+> ~~以及 MinIO、OpenTelemetry Collector、Tempo、Loki、Prometheus、Grafana。~~ 这七个于 2026-08-13 撤除，理由与重新纳入的时机见[运维设计 §8.3](./08operation-design.md)。**撤的是在建期的维护面，不是这套东西的价值** —— 上线前要装回来。
 
 当前 32 核 / 64 GB 服务器的沙箱上限为 20，超出时排队。这个数字是配置值，不是架构常量；服务器规格或真实负载变化后，应按 CPU、内存和观测数据重算。
 

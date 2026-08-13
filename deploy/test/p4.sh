@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
 #
-# P4 验收六条，一条命令跑完。
+# P4 验收四条，一条命令跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   docker compose -f deploy/compose.yml up -d --build
 #   bash deploy/test/p4.sh
 #
-# 分工：②⑤ 本脚本自己验（全部免费）；① 与 ⑥ 要**真实调用 DeepSeek**或**真的往
-# 飞书发一条消息**；⑦ 复用 p2.sh 造的崩溃场景；⑧ 委托 p3.sh 做 P3 回归。
+# 分工：②⑤ 本脚本自己验（全部免费）；⑦ 复用 p2.sh 造的崩溃场景；⑧ 委托 p3.sh
+# 做 P3 回归。**本脚本自己不再需要 LLM**，`SKIP_LLM` 只是原样转给 p3.sh。
 #
-# **原来的 ③（旧形状产物 id）与 ④（产物列表偶发为空）已随产物存储一起撤掉** ——
-# 那两条验的功能不在了，留着只会永远红。
+# **原来的 ③（旧形状产物 id）与 ④（产物列表偶发为空）已随产物存储一起撤掉；
+# ①（完整 trace 与 token 花费）与 ⑥（告警真的会响）已于 2026-08-13 随可观测性
+# 整体撤除** —— 这四条验的功能都不在了，留着只会永远红。
 #
-#   SKIP_LLM=1 SKIP_FEISHU=1 SKIP_P3=1 bash deploy/test/p4.sh   # 只跑免费的两条
+# **⑤ 成本看板留着，且它才是「花了多少」的唯一判据** —— 那一条走的是 runs 表与
+# `/api/admin/usage`，与 Prometheus 无关，撤可观测性一个字都没动到它。
+#
+#   SKIP_LLM=1 SKIP_P3=1 bash deploy/test/p4.sh   # 只跑本脚本自己那两条
 #
 # **跳过的条目在结果表里记「未验」而不是「通过」** —— 静默跳过的门禁等于没有门禁。
-#
-# **⑥ 会真的往你配的飞书群里发一条消息**，因此单独给了 SKIP_FEISHU。发的内容明确
-# 标着是自检，不是真实告警。
 #
 # **别与别的验收脚本同时跑。** 它们共用同一套 compose 栈，而 p2.sh 会 kill 掉进程、
 # p3.sh 会压限流 —— 两边一起跑的结果是双方都红，且红在互不相干的地方。
@@ -30,12 +31,6 @@ COMPOSE_FILE="$REPO_ROOT/deploy/compose.yml"
 BASE_URL="${BASE_URL:-http://127.0.0.1:${HTTP_PORT:-80}}"
 COMPOSE_PROJECT=zuel-platform
 
-# 一次真实分析跑完的观察窗口，秒
-RUN_WINDOW=600
-
-# span 从进程发出到 Tempo 查得到要经过 collector 攒批与 ingester 落块，等这么久
-TRACE_WINDOW=120
-
 log() { printf '\n\033[36m━━ %s\033[0m\n' "$*"; }
 pass() { printf '\033[32m  ✅ %s\033[0m\n' "$*"; }
 fail() { printf '\033[31m  ❌ %s\033[0m\n' "$*"; failed=$((failed + 1)); }
@@ -47,31 +42,22 @@ declare -A VERDICT=()
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 psql_query() { compose exec -T postgres psql -U "${POSTGRES_USER:-zuel}" -d "${POSTGRES_DB:-zuel}" -tAc "$1"; }
 
-# Tempo 与 Loki 都不映射宿主端口（只有 Grafana 够得着），因此从容器网络里问
-in_network() { docker run --rm --network "${COMPOSE_PROJECT}_default" curlimages/curl:latest -s "$@" 2>/dev/null; }
-
-grafana() {
-    local password
-    password="$(grep '^GF_SECURITY_ADMIN_PASSWORD=' "$REPO_ROOT/.env" | cut -d= -f2-)"
-    curl -s -u "admin:$password" "$@"
-}
-
 # ------------------------------------------------------------------ 前置检查
 log "前置检查"
 [[ $EUID -ne 0 ]] || { echo "别用 root 跑：会把会话目录建成 root 属主" >&2; exit 1; }
 for tool in jq curl docker; do
     command -v "$tool" >/dev/null || { echo "缺 $tool" >&2; exit 1; }
 done
-for service in api broker worker prometheus grafana tempo loki otel-collector minio; do
+for service in nginx api worker broker postgres redis; do
     docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
         --filter "label=com.docker.compose.service=$service" | grep -q . \
         || { echo "$service 没起来，先 docker compose up -d" >&2; exit 1; }
 done
-pass "九个服务都在跑"
+pass "六个服务都在跑"
 
 # **compose.yml 里 SANDBOX_USER 是必填插值**，而本脚本靠 `compose exec` 查库、放产物、
 # 判 resumed。没设的话每次 exec 都以插值失败告终，而判据只收到一个空输出 —— 症状是
-# 「账对不上」「token 对不上」，指向看板与 trace 而不是指向这里。实测栽过一次。
+# 「账对不上」，指向成本看板而不是指向这里。实测栽过一次。
 # 取的是**正在跑的 broker 那一份**：exec 附着到已有容器，值只需能让插值过去，
 # 而与栈实际启动时用的值一致最省事。p1 / p2 / p3 都自己补了这一步，本脚本原来漏了
 BROKER_ENV="$(docker inspect "$(docker ps -q \
@@ -173,93 +159,6 @@ else
 fi
 (( failed == before )) && VERDICT[5]=通过 || VERDICT[5]=未过
 
-# ------------------------------------------------------------------ ① 完整 trace
-log "① 能定位单个 run 的完整 trace 与 token 花费（要 LLM，有费用）"
-if [[ ${SKIP_LLM:-0} == 1 ]]; then
-    info "SKIP_LLM=1，跳过"
-    VERDICT[1]="未验（SKIP_LLM=1）"
-else
-    before="$failed"
-    TRACE_THREAD="$(curl -fsS -b "$JAR" -X POST "$BASE_URL/api/threads" \
-        -H 'Content-Type: application/json' -d '{"title":"p4-trace"}' | jq -r .id)"
-    RUN="$(curl -fsS -b "$JAR" -X POST "$BASE_URL/api/threads/$TRACE_THREAD/runs" \
-        -H 'Content-Type: application/json' \
-        -d '{"content":"用 python 算 1 到 10 的平方和，直接给出结果，不要画图不要存文件。"}' | jq -r .id)"
-    info "run=$RUN，等它跑完"
-    timeout "$RUN_WINDOW" curl -fsS -N -b "$JAR" "$BASE_URL/api/runs/$RUN/events" \
-        | grep -m1 -E '"type": ?"run\.(finished|failed)"' >/dev/null
-
-    info "等 span 落到 Tempo（最多 ${TRACE_WINDOW}s）"
-    deadline=$((SECONDS + TRACE_WINDOW))
-    TRACE_ID=""
-    while (( SECONDS < deadline )); do
-        TRACE_ID="$(in_network --get "http://tempo:3200/api/search" \
-            --data-urlencode "q={ .zuel.run_id = \"$RUN\" }" | jq -r '.traces[0].traceID // empty')"
-        [[ -n $TRACE_ID ]] && break
-        sleep 5
-    done
-    [[ -n $TRACE_ID ]] && pass "按 run_id 检索到 trace：$TRACE_ID" || fail "按 run_id 检索不到 trace"
-
-    if [[ -n $TRACE_ID ]]; then
-        DUMP="$(in_network "http://tempo:3200/api/traces/$TRACE_ID")"
-        # **四段都要在**：少一段就不叫「完整 trace」
-        for segment in zuel-api zuel-worker zuel-broker; do
-            echo "$DUMP" | grep -q "$segment" \
-                && pass "trace 里有 $segment 那一段" || fail "trace 里没有 $segment"
-        done
-        echo "$DUMP" | grep -q "llm.call" && pass "trace 里有 LLM 调用那一段" || fail "trace 里没有 llm.call"
-
-        # token 三元组要在同一个 span 上，且与 runs 表对得上
-        UNCACHED="$(echo "$DUMP" | jq -r '[.. | objects | select(.key? == "zuel.token.input_uncached") | .value.intValue] | first // empty')"
-        DB_UNCACHED="$(psql_query "SELECT tokens_uncached FROM runs WHERE id = '$RUN';" | tr -d ' ')"
-        info "trace 上 $UNCACHED / runs 表 $DB_UNCACHED"
-        [[ -n $UNCACHED && $UNCACHED == "$DB_UNCACHED" ]] \
-            && pass "token 三元组在 span 上，且与 runs 表一致" \
-            || fail "token 对不上 —— trace 上的花费不可信"
-    fi
-
-    # 「能定位」要落到一个具体页面上，不能是「自己 grep」
-    grafana "http://127.0.0.1:3000/api/dashboards/uid/zuel-run" | jq -e '.dashboard.title' >/dev/null \
-        && pass "「按 run 查链路」看板在 Grafana 里" || fail "看板不在 —— 「能定位」没有落到页面上"
-    (( failed == before )) && VERDICT[1]=通过 || VERDICT[1]=未过
-fi
-
-# ------------------------------------------------------------------ ⑥ 告警
-log "⑥ 告警真的会响（会往飞书发一条自检消息）"
-if [[ ${SKIP_FEISHU:-0} == 1 ]]; then
-    info "SKIP_FEISHU=1，跳过"
-    VERDICT[6]="未验（SKIP_FEISHU=1）"
-else
-    before="$failed"
-    HOOK="$(grep '^FEISHU_WEBHOOK_URL=' "$REPO_ROOT/.env" | cut -d= -f2-)"
-    [[ -n $HOOK ]] || fail "没配 FEISHU_WEBHOOK_URL"
-
-    if [[ -n $HOOK ]]; then
-        # 第一层：飞书认不认 Grafana 将要发的那种正文
-        GOOD='{"msg_type":"text","content":{"text":"【智能体平台】p4.sh 通道自检，非真实告警"}}'
-        CODE="$(curl -s -X POST "$HOOK" -H 'Content-Type: application/json' -d "$GOOD" | jq -r '.code // 1')"
-        [[ $CODE == 0 ]] && pass "飞书收下了自检消息（code=0）" || fail "飞书拒了自检消息（code=$CODE）"
-
-        # **第二层：证明这个判据分得开对错。** 飞书对形状不对的正文回的是 HTTP 200
-        # 加一个业务错误码 —— 不读那个码的话，用默认正文也「成功」，而群里什么都没有
-        BAD='{"receiver":"x","status":"firing","alerts":[]}'
-        CODE="$(curl -s -X POST "$HOOK" -H 'Content-Type: application/json' -d "$BAD" | jq -r '.code // 0')"
-        [[ $CODE != 0 ]] \
-            && pass "默认正文被飞书拒掉（code=$CODE）—— 判据分得开对错" \
-            || fail "默认正文也被收下了 —— 这个判据证明不了任何事"
-    fi
-
-    # 第三层：规则与通道在 Grafana 里都装上了
-    RULES="$(grafana "http://127.0.0.1:3000/api/v1/provisioning/alert-rules" | jq -r '[.[].uid] | join(",")')"
-    info "已装规则：$RULES"
-    for uid in zuel-target-down zuel-llm-failure zuel-queue-backlog zuel-sandbox-full; do
-        [[ $RULES == *"$uid"* ]] && pass "规则 $uid 已装" || fail "规则 $uid 没装上"
-    done
-    grafana "http://127.0.0.1:3000/api/v1/provisioning/contact-points" | jq -e '.[] | select(.name == "feishu")' >/dev/null \
-        && pass "飞书通道已装" || fail "飞书通道没装上"
-    (( failed == before )) && VERDICT[6]=通过 || VERDICT[6]=未过
-fi
-
 # ------------------------------------------------------------------ ⑦ resumed
 log "⑦ resumed 语义对得上"
 before="$failed"
@@ -321,16 +220,14 @@ else
 fi
 
 # ------------------------------------------------------------------ 结果
-log "P4 验收六条"
+log "P4 验收四条"
 DESCRIPTION=(
-    [1]="能定位单个 run 的完整 trace 与 token 花费"
     [2]="工作目录里的文件从 nginx 直发，api 碰不到字节"
     [5]="成本看板答得出「谁花了多少」"
-    [6]="告警真的会响"
     [7]="resumed 语义对得上"
     [8]="P3 验收七条不回归"
 )
-for index in 1 2 5 6 7 8; do
+for index in 2 5 7 8; do
     case "${VERDICT[$index]:-未验}" in
         通过) printf '  \033[32m✅ %s %s\033[0m\n' "$index" "${DESCRIPTION[$index]}" ;;
         未过) printf '  \033[31m❌ %s %s\033[0m\n' "$index" "${DESCRIPTION[$index]}" ;;
@@ -342,9 +239,9 @@ if (( failed )); then
     printf '\n\033[31mP4 验收未全过。\033[0m\n'
     exit 1
 fi
-for index in 1 2 5 6 7 8; do
+for index in 2 5 7 8; do
     [[ ${VERDICT[$index]:-未验} == 通过 ]] && continue
     printf '\n\033[33m已验的都过了，但有条目未验 —— 不能据此判定 P4 验收通过。\033[0m\n'
     exit 2
 done
-printf '\n\033[32mP4 验收六条全过。\033[0m\n'
+printf '\n\033[32mP4 验收四条全过。\033[0m\n'

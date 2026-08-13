@@ -75,7 +75,15 @@ cd app && uv run uvicorn api.app:app --reload         # 另开一个终端
 cd app && uv run python -m worker.main                # 再开一个。不起它的话 run 会一直停在 queued
 ```
 
-整套跑起来（nginx + api + worker + broker + 存储 + 可观测性）用 Compose：
+整套跑起来（nginx + api + worker + broker + 两个存储，**六个服务**）用 Compose。
+
+> **可观测性那一套已于 2026-08-13 整体撤除** —— OTel Collector / Tempo / Loki /
+> Prometheus / Grafana 五个服务、`app/telemetry/` 与 `app/metric/` 两个包、五个依赖
+> 全部删掉，MinIO 作为它们的存储后端一并撤除（产物存储在 `0009` 就搬走了，此后
+> 它没有别的用户）。**排障手段回到 `docker logs` + JSON 日志**：`app/log.py` 那一层
+> 原样保留，`run_id` / `thread_id` / `user_id` 仍逐条带着，`docker compose logs api | jq`
+> 照旧按 run 过滤得出来。**成本仍然查得到**，走的是 `/api/admin/usage` 与 `runs` 表，
+> 那条路与 Prometheus 无关。理由与重新纳入的时机见[运维设计 §8.3](doc/01design/08operation-design.md)。
 
 ```bash
 # **新克隆的仓库要建一次这个链接**：compose 的 ${...} 插值只读 compose.yml 同目录的
@@ -89,18 +97,10 @@ ln -sf ../.env deploy/.env
 # 配额一个都设不上。loop 挂载重启后会换号，所以现查
 export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
 
-# Prometheus 与 Grafana 的数据目录**必须先建好并归当前用户**，只需一次。
-# Docker 自动创建缺失的 bind mount 目录时属主是 root，而这两个容器以宿主用户跑 ——
-# 不建的话它们会因为写不进去反复重启，而 `up -d` 那一刻是绿的
-sudo mkdir -p data/prometheus data/grafana data/tempo && sudo chown "$(id -u):$(id -g)" data/prometheus data/grafana data/tempo
-
 docker compose -f deploy/compose.yml up -d --build
 
-# 看板都在 Grafana：127.0.0.1:3000（口令是 .env 的 GF_SECURITY_ADMIN_PASSWORD）。
-# 「平台概览」是六个指标，「按 run 查链路」填一个 run_id 就能看到它各段的耗时与 token。
-# Prometheus 在 127.0.0.1:9090；**Tempo 与 Collector 不映射端口**，只有 Grafana 够得着。
-# 三个都只绑回环 —— 从别的机器看要 SSH 端口转发。
-# api 的 /metrics 不要求登录，挡它的是 nginx 的 `location = /metrics { return 404; }`
+# 排障入口是日志，不再有看板。三个进程都打 JSON 行，一条 run 的全过程这样捞：
+docker compose -f deploy/compose.yml logs worker | jq -c 'select(.run_id == "…")'
 
 # P1 验收六条的总入口，转调下面两个脚本
 bash deploy/test/p1.sh                             # 六条全跑（要 sudo，有 LLM 费用）

@@ -47,7 +47,6 @@ from run.repository import Run, RunStart
 from sandbox.pool import SandboxQueueTimeoutError
 from sandbox.remote import AsyncQueuePositionCallback, RemoteBackendFactory
 from task.queue import RunTask
-from telemetry.run import execution, mark_resumed, record
 
 logger = logging.getLogger(__name__)
 
@@ -193,13 +192,7 @@ class RunExecutor:
     async def _drive(self, run: Run, task: RunTask, user_id: str | None) -> None:
         # 每个 run 跑在自己的任务里，任务启动时会复制一份 context，
         # 因此在这里绑定不会串到并发的其他 run 上。
-        #
-        # trace 那一层同理，父从任务消息里带来的上下文恢复 —— api 与 worker 之间
-        # 隔着队列，那是整条链路上唯一没有请求头可用的一跳
-        with (
-            run_context(run_id=run.id, thread_id=run.thread_id, user_id=user_id),
-            execution(run_id=run.id, thread_id=run.thread_id, user_id=user_id, carrier=task.trace),
-        ):
+        with run_context(run_id=run.id, thread_id=run.thread_id, user_id=user_id):
             # **开跑之前先看一眼**：取消一个还在排队的 run 时，任务消息仍然躺在队列里，
             # worker 迟早会领到它。不在这里挡一道，那次取消就只是把状态改了一下，
             # 而分析照跑不误 —— 那正是「取消没停下来」最典型的形态
@@ -224,7 +217,6 @@ class RunExecutor:
             #
             # 崩溃恢复与审批续跑对前端是同一件事：**别把已经显示的对话重置**。
             resumed = task.decisions is not None or start is RunStart.RESUMED
-            mark_resumed(resumed)
             await self._emit(
                 RunStartedEvent(
                     ts=now_ms(),
@@ -355,9 +347,6 @@ class RunExecutor:
         )
 
     async def _emit(self, event: Event) -> None:
-        # 终态事件顺手把结论钉到 span 上。放在这个唯一的漏斗里而不是逐个终态分支里 ——
-        # 那是七八处，漏一处不报错，只会让那条 trace 少一半信息
-        record(event)
         await self._log.append(event)
 
 

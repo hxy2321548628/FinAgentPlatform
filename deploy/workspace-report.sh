@@ -10,8 +10,9 @@
 #   0 7 * * * cd /path/to/zuel-platform && bash deploy/workspace-report.sh || mail -s ...
 #
 # **本期不回收 workspace**（决策见架构 §6.5）：实测典型会话只有几百 KB，
-# 而删掉就再也拉不回来 —— 归档删除要等 MinIO 到位（P2）。在那之前，
-# 唯一该做的是知道占用在往哪儿走，以及是哪几个会话在推着它走。
+# 而删掉就再也拉不回来 —— 而对象存储已于 2026-08-13 随可观测性一并撤除，
+# 归档暂时无处可归。在那之前，唯一该做的是知道占用在往哪儿走，
+# 以及是哪几个会话在推着它走。
 
 set -uo pipefail
 
@@ -58,7 +59,7 @@ if (( USED_PERCENT >= WARN_PERCENT )); then
         "$USED_PERCENT" "$WARN_PERCENT"
     printf '      1. 上面点名的大会话，确认无用后手工删 \n'
     printf '      2. 扩容承载 workspace 的分区\n'
-    printf '      3. 若这已成常态，说明 MinIO 归档（P2）该提前排\n'
+    printf '      3. 若这已成常态，说明归档与回收机制该提前排\n'
     exit 1
 fi
 printf '\033[32m   ✅ 已用 %s%%，低于 %s%% 阈值\033[0m\n' "$USED_PERCENT" "$WARN_PERCENT"

@@ -9,15 +9,12 @@ import logging
 import os
 import socket
 from dataclasses import dataclass
-from wsgiref.simple_server import WSGIServer
 
-from prometheus_client import CollectorRegistry, start_http_server
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agent.factory import Agent, create_model
 from config import Settings
-from metric.llm import LlmMetric
 from run.archive import EventArchive
 from run.cancel import CancelFlag
 from run.executor import RunExecutor
@@ -27,7 +24,6 @@ from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandbox
 from store import postgres, redis
 from store.checkpoint import CheckpointPool, open_checkpoint
 from task.queue import TaskQueue
-from telemetry.llm import callback as trace_callback
 from worker.loop import Worker
 
 logger = logging.getLogger(__name__)
@@ -53,14 +49,9 @@ class WorkerRuntime:
     connection: BrokerConnection
     backend_factory: RemoteBackendFactory
     checkpoint_pool: CheckpointPool
-    # 抓取端口的服务器。**可以没有** —— 端口被占时 worker 照常跑分析，
-    # 只是在 Prometheus 上显示为 down，见 `_serve_metric`
-    metric_server: WSGIServer | None = None
 
     async def aclose(self) -> None:
         """归还所有外部连接。"""
-        if self.metric_server is not None:
-            self.metric_server.shutdown()
         self.backend_factory.close()
         await self.connection.aclose()
         await self.engine.dispose()
@@ -91,15 +82,11 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
 
     connection = BrokerConnection(base_url=settings.broker_url)
     backend_factory = RemoteBackendFactory(base_url=settings.broker_url)
-    # **只有这个进程调模型**，因此「一次调用有多慢、失不失败」也只有它量得到。
-    # 指标与追踪各挂一个回调，不合成一个：前者攒的是所有调用的耗时分布，
-    # 后者给的是「这一次 run 里第 3 轮调用花了多久」，两者的失效方式完全不同
-    llm = LlmMetric()
     executor = RunExecutor(
         pool=RemoteSandboxPool(connection),
         log=EventLog(cache, archive=EventArchive(engine)),
         agent=Agent(
-            model=create_model(settings, callback=[llm.callback(), trace_callback()]),
+            model=create_model(settings),
             checkpointer=checkpoint.saver,
         ),
         repository=RunRepository(engine),
@@ -124,26 +111,4 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
         connection=connection,
         backend_factory=backend_factory,
         checkpoint_pool=checkpoint.pool,
-        metric_server=_serve_metric(settings.worker_metric_port, llm.registry),
     )
-
-
-def _serve_metric(port: int, registry: CollectorRegistry) -> WSGIServer | None:
-    """把指标挂到一个端口上给 Prometheus 抓。
-
-    **worker 不是 HTTP 服务**，这是它唯一监听的端口，只服务抓取。
-
-    **端口起不来不拦启动**：worker 的职责是把分析跑完，为一个观测端口拒绝启动，
-    等于把观测手段变成可用性风险。这不是静默降级 —— 抓不到的那一刻 Prometheus 的
-    `up` 就是 0，告警规则看得见（本机手工起第二个 worker 时正是这条路：
-    两个进程抢同一个端口，后起的那个只是不上报）。
-    """
-    if port <= 0:
-        logger.info("未配 worker 指标端口，本进程不暴露指标")
-        return None
-    try:
-        server, _ = start_http_server(port, registry=registry)
-    except OSError:
-        logger.error("worker 指标端口起不来，本进程在 Prometheus 上会显示为 down：port=%s", port, exc_info=True)
-        return None
-    return server
