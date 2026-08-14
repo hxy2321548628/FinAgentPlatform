@@ -132,9 +132,14 @@ make all                                     # 门禁全绿
 docker build -f deploy/sandbox.Dockerfile -t zuel-sandbox:latest .
 docker compose -f deploy/compose.yml up -d   # nginx + api + broker
 
-# 六条一条命令跑完。③④⑤⑥ 由它自己验，① 转调 hostile.sh，② 转调 acceptance.sh
-bash deploy/test/p1.sh
+# 本期六条在这里面，编号 P1①–P1⑥
+bash deploy/test/verify.sh                             # 六条都在里面
+SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只剩 ③④⑤⑥，① 与 ② 记「未验」
 ```
+
+> **脚本在 2026-08-13 换了**：`p1.sh` 与它转调的 `hostile.sh` / `acceptance.sh` 已并进
+> [`deploy/test/verify.sh`](../../deploy/test/verify.sh)。判据编号原样保留，
+> 下方 §4.1 与 §8 里出现的 `p1.sh` 是当时的记录，照着跑要换成上面这几条。
 
 每条该看到什么、失败时看哪里，见下方通过条件与 §8 实施记录。（原来另有一份 `doc/04acceptance-guide/P1/` 操作指南，已移除。）
 

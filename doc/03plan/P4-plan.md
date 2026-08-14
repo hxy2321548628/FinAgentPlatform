@@ -196,14 +196,18 @@ cd app && uv run alembic upgrade head
 
 ## 4. 验收标准
 
-与前四期同样的口径，**一条命令能跑完**。本期新增的判据进 `deploy/test/p4.sh`，P0–P3 的回归由既有脚本转调。
+与前四期同样的口径，**一条命令能跑完**。
 
 ```bash
 make all
 docker compose -f deploy/compose.yml up -d
 
-bash deploy/test/p4.sh                       # 本期若干条，转调 p3.sh 做回归
+bash deploy/test/verify.sh                             # 本期剩下两条编号 P4②⑦，与其余各期一起跑
 ```
+
+> **脚本在 2026-08-13 换了**：`p4.sh` 已并进 [`deploy/test/verify.sh`](../../deploy/test/verify.sh)，
+> ⑧（P3 回归）那条转调随之消失。本期八条此前已撤掉五条（①⑥ 随可观测性、③④ 随产物存储、
+> ⑤ 随成本账本），**剩下 ②⑦ 两条**。判据编号原样保留；下方 §8 里的 `p4.sh` 是当时的记录。
 
 **通过条件**（八条全中才算完）。第 1 条是[计划基线](./CLAUDE.md) 给 P4 定的原文标准：
 

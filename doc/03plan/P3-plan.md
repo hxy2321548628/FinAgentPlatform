@@ -148,14 +148,19 @@ Redis 本期多两类键：session（`7 天滑动过期`）与 cancel flag。两
 
 ## 4. 验收标准
 
-与前三期同样的口径，**一条命令能跑完**。本期新增的判据进 `deploy/test/p3.sh`，P0 / P1 / P2 的回归由既有脚本转调。
+与前三期同样的口径，**一条命令能跑完**。
 
 ```bash
 make all                                     # 门禁全绿
 docker compose -f deploy/compose.yml up -d
 
-bash deploy/test/p3.sh                       # 本期七条，转调 p2.sh 做回归
+bash deploy/test/verify.sh                             # 本期六条编号 P3①–⑥，与其余各期一起跑
+SKIP_LLM=1 bash deploy/test/verify.sh                  # ① 要真实分析，跳过则记「未验」
 ```
+
+> **脚本在 2026-08-13 换了**：`p3.sh` 与被它抽出去的 `session.sh` 已并进
+> [`deploy/test/verify.sh`](../../deploy/test/verify.sh)，⑦（P2 回归）那条转调
+> 随之消失 —— 跑整个文件就把它跑了。判据编号原样保留；下方 §8 里的 `p3.sh` 是当时的记录。
 
 **通过条件**（七条全中才算完）。前三条是[计划基线](./CLAUDE.md) 给 P3 定的原文标准：
 
