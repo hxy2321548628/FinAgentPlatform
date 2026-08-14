@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from pydantic import ValidationError
 
 from api.error import concurrency_limit, invalid, not_found, quota_exceeded, unauthenticated
 from api.platform import Platform, get_platform
@@ -119,7 +120,7 @@ async def update_thread(
         thread_id,
         user_id=current.user_id,
         title=request.title,
-        agent_config=request.agent_config,
+        agent_config=None if request.agent_config is None else request.agent_config.model_dump(exclude_none=True),
     )
     if changed is None:
         raise not_found(f"会话不存在：{thread_id}")
@@ -186,7 +187,18 @@ async def submit_run(
     thread = await require_thread(platform, thread_id, current.user_id)
     await _require_quota(platform, current.user_id)
 
-    run = await platform.submitter.submit(thread_id=thread_id, content=request.content, user_id=current.user_id)
+    try:
+        run = await platform.submitter.submit(
+            thread_id=thread_id,
+            content=request.content,
+            user_id=current.user_id,
+            thread_config=thread.agent_config,
+            agent_config=request.agent_config,
+        )
+    except ValidationError as exc:
+        # P6 之前 thread 接口允许任意 JSON，历史行可能带着已不支持的键。
+        # 读会话仍原样返回，但提交不能静默忽略它，更不能漏成无上下文的 500。
+        raise invalid(f"会话默认的 agent 配置无效，请重新保存配置：{exc}") from exc
     # 列表按最后活动排序，靠的就是这一下。不推的话，一个用了半年的会话仍旧沉在底下
     await platform.thread.touch(thread_id, user_id=current.user_id)
 
@@ -194,7 +206,12 @@ async def submit_run(
     # 另一件事（模型往返期间教师自己改了名），两道都要
     if not thread.title:
         background.add_task(platform.title.compose, thread_id, user_id=current.user_id, content=request.content)
-    return RunResponse(id=run.id, thread_id=run.thread_id, status=run.status)
+    return RunResponse(
+        id=run.id,
+        thread_id=run.thread_id,
+        status=run.status,
+        agent_config=run.agent_config.model_dump(exclude_none=True),
+    )
 
 
 @router.get("/{thread_id}/runs")
@@ -228,6 +245,7 @@ async def list_run(
                 error_message=one.error_message,
                 started_at=one.started_at,
                 ended_at=one.ended_at,
+                agent_config=one.agent_config.model_dump(exclude_none=True),
             )
             for one in page.items
         ],

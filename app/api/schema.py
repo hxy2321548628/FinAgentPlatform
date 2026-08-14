@@ -8,6 +8,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from agent.config import AgentConfig
 from event.model import RunErrorCode, RunStatus
 from group.model import JoinRequestStatus
 from run.decision import Decision
@@ -223,9 +224,7 @@ class UpdateThreadRequest(BaseModel):
     """
 
     title: str | None = Field(default=None, max_length=MAX_THREAD_TITLE_LENGTH, description="新标题，不传则不动")
-    agent_config: dict[str, object] | None = Field(
-        default=None, description="新配置，**整块替换**而不是合并，不传则不动"
-    )
+    agent_config: AgentConfig | None = Field(default=None, description="新配置，**整块替换**而不是合并，不传则不动")
 
 
 class RunHistoryResponse(BaseModel):
@@ -242,6 +241,7 @@ class RunHistoryResponse(BaseModel):
     error_message: str | None = Field(default=None, description="失败说明，中文，可直接展示")
     started_at: datetime = Field(description="提交时间，UTC")
     ended_at: datetime | None = Field(default=None, description="结束时间，UTC。还在跑的为空")
+    agent_config: dict[str, object] = Field(description="这一轮实际生效的 agent 配置快照")
 
 
 class RunPageResponse(BaseModel):
@@ -297,6 +297,10 @@ class RunRequest(BaseModel):
     """提交一次分析。"""
 
     content: str = Field(min_length=1, description="教师的问题")
+    agent_config: AgentConfig | None = Field(
+        default=None,
+        description="这一轮的配置覆盖；不传则继承会话默认，空对象表示改回平台默认",
+    )
 
 
 class RunResponse(BaseModel):
@@ -305,3 +309,4 @@ class RunResponse(BaseModel):
     id: str = Field(min_length=1, description="run 标识")
     thread_id: str = Field(min_length=1, description="所属会话")
     status: RunStatus = Field(description="当前状态")
+    agent_config: dict[str, object] = Field(description="这一次 run 实际生效的配置快照")

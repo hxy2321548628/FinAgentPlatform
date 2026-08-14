@@ -96,6 +96,21 @@ def test_the_resumed_run_says_it_is_a_resume(client: TestClient, agent: Agent, t
     assert len([one for one in started if '"resumed":false' in one.replace(" ", "")]) == 1
 
 
+def test_an_approval_resume_uses_the_original_run_snapshot(client: TestClient, agent: Agent, thread_id: str) -> None:
+    original = {"system_prompt": "这是提交时的配置"}
+    client.patch(f"/api/threads/{thread_id}", json={"agent_config": original})
+    run_id = _interrupted(client, agent, thread_id)
+    client.patch(
+        f"/api/threads/{thread_id}",
+        json={"agent_config": {"system_prompt": "这是审批前后来改的配置"}},
+    )
+
+    client.post(f"/api/runs/{run_id}/approve", json={"decisions": [{"index": 0, "type": "approve"}]})
+    _settle(client, run_id, RunStatus.SUCCEEDED)
+
+    assert [one.model_dump(exclude_none=True) for one in agent.configured] == [original, original]
+
+
 def test_a_missing_index_is_a_validation_error(client: TestClient, agent: Agent, thread_id: str) -> None:
     """两个待确认的调用只回一个决策 —— 恢复时会把 A 的决策套到 B 的调用上。"""
     agent.interrupt = [

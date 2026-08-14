@@ -170,11 +170,24 @@ def test_the_title_can_be_renamed(client: TestClient, thread_id: str) -> None:
 
 def test_renaming_leaves_the_agent_config_alone(client: TestClient, thread_id: str) -> None:
     """一次改名把 agent 配置清空，是那种改完当时没事、下次跑分析才发现的故障。"""
-    client.patch(f"/api/threads/{thread_id}", json={"agent_config": {"model": "aux"}})
+    client.patch(f"/api/threads/{thread_id}", json={"agent_config": {"system_prompt": "只用新闻口径"}})
 
     response = client.patch(f"/api/threads/{thread_id}", json={"title": "只改标题"})
 
-    assert response.json()["agent_config"] == {"model": "aux"}
+    assert response.json()["agent_config"] == {"system_prompt": "只用新闻口径"}
+
+
+def test_an_unknown_agent_config_field_is_rejected(client: TestClient, thread_id: str) -> None:
+    response = client.patch(f"/api/threads/{thread_id}", json={"agent_config": {"model": "aux"}})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_an_over_long_agent_prompt_is_rejected(client: TestClient, thread_id: str) -> None:
+    response = client.patch(f"/api/threads/{thread_id}", json={"agent_config": {"system_prompt": "角" * 4001}})
+
+    assert response.status_code == 422
 
 
 def test_an_over_long_title_is_rejected(client: TestClient, thread_id: str) -> None:

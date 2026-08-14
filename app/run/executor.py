@@ -17,6 +17,7 @@ from typing import Protocol
 
 from deepagents.backends.protocol import BackendProtocol
 
+from agent.config import AgentConfig
 from event.mapper import StreamChunk, map_chunk
 from event.model import (
     Event,
@@ -59,7 +60,13 @@ class AgentProtocol(Protocol):
     """
 
     def stream(
-        self, backend: BackendProtocol, thread_id: str, content: str, *, user_id: str | None = None
+        self,
+        backend: BackendProtocol,
+        thread_id: str,
+        content: str,
+        agent_config: AgentConfig,
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """第一次跑一个提问。
 
@@ -73,13 +80,16 @@ class AgentProtocol(Protocol):
         backend: BackendProtocol,
         thread_id: str,
         decisions: list[dict[str, object]],
+        agent_config: AgentConfig,
         *,
         user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """带着教师的决策从中断点接着跑。"""
         ...
 
-    async def pending(self, backend: BackendProtocol, thread_id: str) -> list[InterruptAction]:
+    async def pending(
+        self, backend: BackendProtocol, thread_id: str, agent_config: AgentConfig
+    ) -> list[InterruptAction]:
         """有没有在等人确认。"""
         ...
 
@@ -298,7 +308,7 @@ class RunExecutor:
         # **流自然结束不等于跑完了**：中断会让执行暂停、流跟着结束，因此要回头查一次
         # 图状态。查状态而不是查流，是因为它两套 stream API 都成立，
         # 不依赖「某个模式会不会吐出中断」这个框架未确认的行为
-        if await self._suspend(backend, run, tokens):
+        if await self._suspend(backend, run, tokens, task.agent_config):
             return
 
         # 先落库再发终态事件：订阅方收到 run.finished 就会回头查 GET /runs/{id}，
@@ -315,16 +325,34 @@ class RunExecutor:
     def _start(self, backend: BackendProtocol, run: Run, task: RunTask) -> AsyncIterator[StreamChunk]:
         """开跑或续跑。带着决策来的就是续跑，从中断点接着走。"""
         if task.decisions is None:
-            return self._agent.stream(backend, run.thread_id, task.content, user_id=task.user_id)
-        return self._agent.resume(backend, run.thread_id, to_resume(task.decisions), user_id=task.user_id)
+            return self._agent.stream(
+                backend,
+                run.thread_id,
+                task.content,
+                task.agent_config,
+                user_id=task.user_id,
+            )
+        return self._agent.resume(
+            backend,
+            run.thread_id,
+            to_resume(task.decisions),
+            task.agent_config,
+            user_id=task.user_id,
+        )
 
-    async def _suspend(self, backend: BackendProtocol, run: Run, tokens: TokenUsage) -> bool:
+    async def _suspend(
+        self,
+        backend: BackendProtocol,
+        run: Run,
+        tokens: TokenUsage,
+        agent_config: AgentConfig,
+    ) -> bool:
         """流结束后查一次中断；有就转 `waiting_approval` 并推 `interrupt`。
 
         Returns:
             是否停在了等人确认上。
         """
-        actions = await self._agent.pending(backend, run.thread_id)
+        actions = await self._agent.pending(backend, run.thread_id, agent_config)
         if not actions:
             return False
         if await self._repository.wait_approval(run.id, tokens=tokens):

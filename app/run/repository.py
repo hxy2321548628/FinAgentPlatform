@@ -9,16 +9,18 @@
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID
 
 from sqlalchemy import Column, Enum, Index, func, text, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import Field, SQLModel, col, select, tuple_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from agent.config import AgentConfig
 from cursor import DEFAULT_PAGE_SIZE, Page, decode, encode, split
 from event.model import RunErrorCode, RunStatus, TokenUsage
 
@@ -78,13 +80,14 @@ def _value_column(enum: type[StrEnum], *, nullable: bool = False) -> Column[Enum
 class Run:
     """一次提问的执行记录。
 
-    **只有驱动执行要的那三样。** 翻看历史要的东西在 `RunDetail` —— 分成两个形状是因为
-    执行路径上每个 run 都要构造一次，而它一个字段都用不上其余那些。
+    只放执行状态与审批续跑必需的快照。翻看历史要的其余字段在 `RunDetail` ——
+    分成两个形状是为了不让高频的状态查询携带用不到的历史字段。
     """
 
     id: str
     thread_id: str
     status: RunStatus
+    agent_config: AgentConfig = field(default_factory=AgentConfig)
 
 
 @dataclass(frozen=True)
@@ -106,6 +109,7 @@ class RunDetail:
     started_at: datetime
     # 还没跑完的为空
     ended_at: datetime | None
+    agent_config: AgentConfig = field(default_factory=AgentConfig)
 
 
 class RunRecord(SQLModel, table=True):
@@ -126,6 +130,8 @@ class RunRecord(SQLModel, table=True):
     thread_id: UUID = Field(index=False, foreign_key="threads.id")
     # 教师的问题。本版之前的 run 在这一列上是空的 —— 那些提问已经不存在于任何地方
     content: str | None = Field(default=None)
+    # 这次 run 实际生效的配置快照。P6 之前的历史行为 NULL，读时当默认配置。
+    agent_config: dict[str, object] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     # P2 之前建的行在这一列上是空的：那批 run 没有真实归属，编一个 owner 只会造假数据。
     # 空值因此是遗留而不是 bug，见 migration/version/0003_user_thread.py
     user_id: UUID | None = Field(default=None, foreign_key="users.id")
@@ -143,7 +149,12 @@ class RunRecord(SQLModel, table=True):
 
     def to_run(self) -> Run:
         """转成执行器与端点认的那个形状。"""
-        return Run(id=self.id.hex, thread_id=self.thread_id.hex, status=self.status)
+        return Run(
+            id=self.id.hex,
+            thread_id=self.thread_id.hex,
+            status=self.status,
+            agent_config=AgentConfig.model_validate({} if self.agent_config is None else self.agent_config),
+        )
 
     def to_detail(self) -> RunDetail:
         """转成会话历史里那个形状。"""
@@ -161,6 +172,7 @@ class RunRecord(SQLModel, table=True):
             error_message=self.error_message,
             started_at=self.started_at,
             ended_at=self.ended_at,
+            agent_config=AgentConfig.model_validate({} if self.agent_config is None else self.agent_config),
         )
 
 
@@ -174,7 +186,15 @@ class RunRepository:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
-    async def create(self, *, run_id: str, thread_id: str, user_id: str, content: str | None = None) -> None:
+    async def create(
+        self,
+        *,
+        run_id: str,
+        thread_id: str,
+        user_id: str,
+        content: str | None = None,
+        agent_config: dict[str, object] | None = None,
+    ) -> None:
         """记下一个刚提交、还没开跑的 run。
 
         `user_id` 是有意的反范式（严格范式下它该经 `threads` 推导）：配额统计与隔离
@@ -187,12 +207,14 @@ class RunRepository:
             user_id: 提交的人。
             content: 教师的问题。不给就是「没记下来」，与本版之前那批 run 同义 ——
                 那样的 run 在会话历史里只有 agent 那一半。
+            agent_config: 这次 run 实际生效的配置快照。
         """
         record = RunRecord(
             id=UUID(run_id),
             thread_id=UUID(thread_id),
             user_id=UUID(user_id),
             content=content,
+            agent_config=agent_config,
             status=RunStatus.QUEUED,
             started_at=datetime.now(UTC),
         )

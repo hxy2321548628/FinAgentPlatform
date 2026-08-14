@@ -5,12 +5,16 @@
 表现出来是「run 卡在 queued，事件却一路跑完了」。
 """
 
+from typing import cast
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 from redis.asyncio import Redis
 
+from agent.config import AgentConfig
 from event.model import RunStatus
+from run.decision import Decision, DecisionType
 from run.submitter import RunSubmitter
 from task.queue import TaskQueue
 from test.conftest import json_log
@@ -30,11 +34,21 @@ class RecordingRepository:
         self._queue = queue
         self.created: list[tuple[str, str, str]] = []
         self.content: list[str | None] = []
+        self.agent_config: list[dict[str, object] | None] = []
         self.queued_when_created: list[int] = []
 
-    async def create(self, *, run_id: str, thread_id: str, user_id: str, content: str | None = None) -> None:
+    async def create(
+        self,
+        *,
+        run_id: str,
+        thread_id: str,
+        user_id: str,
+        content: str | None = None,
+        agent_config: dict[str, object] | None = None,
+    ) -> None:
         self.created.append((run_id, thread_id, user_id))
         self.content.append(content)
+        self.agent_config.append(agent_config)
         self.queued_when_created.append(await self._queue.pending_count())
 
 
@@ -77,6 +91,7 @@ async def test_the_task_carries_everything_the_worker_needs(queue: TaskQueue) ->
     assert delivery.task.run_id == run.id
     assert delivery.task.thread_id == thread_id
     assert delivery.task.content == "算个波动率"
+    assert delivery.task.agent_config == AgentConfig()
 
 
 async def test_the_question_is_written_down_as_well_as_queued(queue: TaskQueue) -> None:
@@ -97,6 +112,102 @@ async def test_the_row_is_written_before_the_task_is_published(queue: TaskQueue)
     await submitter.submit(thread_id=uuid4().hex, content="一", user_id=USER_ID)
 
     assert repository.queued_when_created == [0]
+
+
+async def test_a_run_inherits_the_thread_default_and_snapshots_it_once(queue: TaskQueue) -> None:
+    repository = RecordingRepository(queue)
+    submitter = RunSubmitter(repository=repository, queue=queue)
+    configured: dict[str, object] = {"system_prompt": "每句以喵开头"}
+
+    run = await submitter.submit(
+        thread_id=uuid4().hex,
+        content="一",
+        user_id=USER_ID,
+        thread_config=configured,
+    )
+
+    delivery = await queue.reserve()
+    assert delivery is not None
+    assert run.agent_config.model_dump(exclude_none=True) == configured
+    assert repository.agent_config == [configured]
+    assert delivery.task.agent_config.model_dump(exclude_none=True) == configured
+
+
+async def test_a_run_override_replaces_the_whole_thread_default(queue: TaskQueue) -> None:
+    repository = RecordingRepository(queue)
+    submitter = RunSubmitter(repository=repository, queue=queue)
+
+    await submitter.submit(
+        thread_id=uuid4().hex,
+        content="一",
+        user_id=USER_ID,
+        thread_config={"system_prompt": "thread"},
+        agent_config=AgentConfig(system_prompt="run"),
+    )
+
+    assert repository.agent_config == [{"system_prompt": "run"}]
+
+
+async def test_an_explicit_empty_run_config_clears_the_thread_default(queue: TaskQueue) -> None:
+    repository = RecordingRepository(queue)
+    submitter = RunSubmitter(repository=repository, queue=queue)
+
+    await submitter.submit(
+        thread_id=uuid4().hex,
+        content="一",
+        user_id=USER_ID,
+        thread_config={"system_prompt": "thread"},
+        agent_config=AgentConfig(),
+    )
+
+    assert repository.agent_config == [{}]
+
+
+async def test_a_dirty_legacy_thread_config_is_rejected_before_the_row_is_written(queue: TaskQueue) -> None:
+    repository = RecordingRepository(queue)
+    submitter = RunSubmitter(repository=repository, queue=queue)
+
+    with pytest.raises(ValidationError):
+        await submitter.submit(
+            thread_id=uuid4().hex,
+            content="一",
+            user_id=USER_ID,
+            thread_config={"model": "legacy"},
+        )
+
+    assert repository.created == []
+
+
+async def test_a_falsy_non_object_thread_config_is_not_treated_as_the_default(queue: TaskQueue) -> None:
+    repository = RecordingRepository(queue)
+    submitter = RunSubmitter(repository=repository, queue=queue)
+
+    with pytest.raises(ValidationError):
+        await submitter.submit(
+            thread_id=uuid4().hex,
+            content="一",
+            user_id=USER_ID,
+            thread_config=cast(dict[str, object], []),
+        )
+
+    assert repository.created == []
+
+
+async def test_an_approval_resubmission_carries_the_original_snapshot(queue: TaskQueue) -> None:
+    submitter = RunSubmitter(repository=RecordingRepository(queue), queue=queue)
+    config = AgentConfig(system_prompt="这是原 run 的快照")
+
+    await submitter.resubmit(
+        run_id=uuid4().hex,
+        thread_id=uuid4().hex,
+        user_id=USER_ID,
+        decisions=[Decision(index=0, type=DecisionType.APPROVE)],
+        agent_config=config,
+    )
+
+    delivery = await queue.reserve()
+    assert delivery is not None
+    assert delivery.task.agent_config == config
 
 
 async def test_the_submission_log_carries_the_run_identity(queue: TaskQueue) -> None:

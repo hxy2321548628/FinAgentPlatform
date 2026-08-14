@@ -30,6 +30,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from agent.config import AgentConfig
 from api.app import create_app
 from api.platform import Platform
 from auth.password import PasswordHasher
@@ -126,6 +127,8 @@ class Agent:
         self.asked: list[str] = []
         self.produce: dict[str, bytes] = {}
         self.resumed: list[list[dict[str, object]]] = []
+        self.configured: list[AgentConfig] = []
+        self.pending_config: list[AgentConfig] = []
         # 下一次流结束后报告的待确认调用。**用完即清**：续跑那一次不该再停下来
         self.interrupt: list[InterruptAction] = []
         # 卡住不往下走，直到用例放行。**取消那几条用例非它不可**：假 agent 转眼就跑完，
@@ -133,9 +136,16 @@ class Agent:
         self.blocked = False
 
     def stream(
-        self, backend: BackendProtocol, thread_id: str, content: str, *, user_id: str | None = None
+        self,
+        backend: BackendProtocol,
+        thread_id: str,
+        content: str,
+        agent_config: AgentConfig,
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         self.asked.append(content)
+        self.configured.append(agent_config)
         return self._stream(backend)
 
     def resume(
@@ -143,14 +153,19 @@ class Agent:
         backend: BackendProtocol,
         thread_id: str,
         decisions: list[dict[str, object]],
+        agent_config: AgentConfig,
         *,
         user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         self.resumed.append(decisions)
+        self.configured.append(agent_config)
         return self._stream(backend)
 
-    async def pending(self, backend: BackendProtocol, thread_id: str) -> list[InterruptAction]:
+    async def pending(
+        self, backend: BackendProtocol, thread_id: str, agent_config: AgentConfig
+    ) -> list[InterruptAction]:
         """下一次流结束后要不要停在等人确认上。用完即清 —— 续跑那一次就不该再停。"""
+        self.pending_config.append(agent_config)
         waiting, self.interrupt = self.interrupt, []
         return waiting
 

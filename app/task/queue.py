@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
+from agent.config import AgentConfig
 from run.decision import Decision
 from store.redis import StreamEntry
 
@@ -82,6 +83,10 @@ class RunTask(BaseModel):
     # worker 不拿它做任何判断（授权在提交那一刻就做完了），只把它带进日志 ——
     # 少了它，「这个用户今天的执行日志」在 worker 那一侧一条都过滤不出来
     user_id: str | None = Field(default=None, description="提交的人，只用于日志归集")
+    agent_config: AgentConfig = Field(
+        default_factory=AgentConfig,
+        description="这一次 run 实际生效的配置快照",
+    )
     # **一次 run 会多次入队**：每轮审批之后都作为一条新任务重新投递。
     # 带上决策就表示这是续跑，worker 据此从中断点恢复而不是从头开始
     decisions: list[Decision] | None = Field(
@@ -153,7 +158,7 @@ class TaskQueue:
         """
         assigned = await self._client.xadd(
             TASK_STREAM,
-            {PAYLOAD_FIELD: task.model_dump_json()},
+            {PAYLOAD_FIELD: task.model_dump_json(exclude_none=True)},
             maxlen=self._max_length,
             approximate=True,
         )

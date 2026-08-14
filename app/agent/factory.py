@@ -21,7 +21,8 @@ from langchain_deepseek import ChatDeepSeek
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
-from agent.prompt import SYSTEM_PROMPT
+from agent.config import AgentConfig
+from agent.prompt import compose_prompt
 from agent.trace import attribution
 from config import Settings
 from event.mapper import StreamChunk
@@ -122,16 +123,29 @@ class Agent:
         self._callback = callback
 
     def stream(
-        self, backend: BackendProtocol, thread_id: str, content: str, *, user_id: str | None = None
+        self,
+        backend: BackendProtocol,
+        thread_id: str,
+        content: str,
+        agent_config: AgentConfig | None = None,
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """第一次跑一个提问。"""
-        return self._astream(backend, thread_id, {"messages": [{"role": "user", "content": content}]}, user_id=user_id)
+        return self._astream(
+            backend,
+            thread_id,
+            {"messages": [{"role": "user", "content": content}]},
+            agent_config,
+            user_id=user_id,
+        )
 
     def resume(
         self,
         backend: BackendProtocol,
         thread_id: str,
         decisions: list[dict[str, object]],
+        agent_config: AgentConfig | None = None,
         *,
         user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
@@ -139,9 +153,17 @@ class Agent:
 
         **决策的顺序必须与 `action_requests` 对齐** —— 重排在 `run/approval.py` 里做完了。
         """
-        return self._astream(backend, thread_id, Command(resume={RESUME_KEY: decisions}), user_id=user_id)
+        return self._astream(
+            backend,
+            thread_id,
+            Command(resume={RESUME_KEY: decisions}),
+            agent_config,
+            user_id=user_id,
+        )
 
-    async def pending(self, backend: BackendProtocol, thread_id: str) -> list[InterruptAction]:
+    async def pending(
+        self, backend: BackendProtocol, thread_id: str, agent_config: AgentConfig | None = None
+    ) -> list[InterruptAction]:
         """问一句「有没有在等人确认」。
 
         **查状态而不是查流**：中断让执行暂停、流自然结束，它不是流里的某个事件。
@@ -150,11 +172,12 @@ class Agent:
         Args:
             backend: 会话的沙箱 backend。
             thread_id: 会话标识。
+            agent_config: 这次 run 的配置快照。
 
         Returns:
             待确认的调用，按 index 排列；没有中断则空列表。
         """
-        snapshot = await self._graph(backend).aget_state(self._config(thread_id))
+        snapshot = await self._graph(backend, agent_config).aget_state(self._config(thread_id))
         return _actions(getattr(snapshot, "interrupts", ()))
 
     def _astream(
@@ -162,17 +185,18 @@ class Agent:
         backend: BackendProtocol,
         thread_id: str,
         entry: dict[str, object] | Command[object],
+        agent_config: AgentConfig | None,
         *,
         user_id: str | None,
     ) -> AsyncIterator[StreamChunk]:
-        return self._graph(backend).astream(
+        return self._graph(backend, agent_config).astream(
             entry,
             self._config(thread_id, user_id=user_id),
             stream_mode=STREAM_MODE,
             subgraphs=True,
         )
 
-    def _graph(self, backend: BackendProtocol) -> SupportsAgent:
+    def _graph(self, backend: BackendProtocol, agent_config: AgentConfig | None = None) -> SupportsAgent:
         # LangGraph 的 astream 按 stream_mode 的字面量类型分重载，表达不了
         # 「传 list 且 subgraphs=True 时逐个吐 (ns, mode, payload) 三元组」这个组合，
         # 于是收窄成本模块自己的 Protocol。三元组的形状由入库的真实 chunk 钉住。
@@ -181,7 +205,7 @@ class Agent:
             create_deep_agent(
                 model=self._model,
                 backend=backend,
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=compose_prompt(agent_config),
                 checkpointer=self._checkpointer,
                 # `MappingProxyType` 是为了不构成可变全局状态，交出去时复制一份
                 interrupt_on=dict(INTERRUPT_ON),

@@ -39,6 +39,9 @@ BEFORE_USER_MODEL = "0002_run_events"
 # 给 runs.thread_id 补外键之前的那一版
 BEFORE_RUN_THREAD_FOREIGN_KEY = "0003_user_thread"
 
+# 给 runs 补当次配置快照之前的那一版
+BEFORE_RUN_AGENT_CONFIG = "0009_drop_artifacts"
+
 
 @pytest.fixture
 def scratch() -> Iterator[str]:
@@ -85,6 +88,15 @@ def _index(database: str, table: str) -> dict[str, str]:
             (table,),
         ).fetchall()
     return {str(one[0]): str(one[1]) for one in found}
+
+
+def _column(database: str, table: str) -> set[str]:
+    with _connect(database) as connection:
+        found = connection.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = %s",
+            (table,),
+        ).fetchall()
+    return {str(one[0]) for one in found}
 
 
 def _insert_user(connection: psycopg.Connection[tuple[object, ...]], user_id: str) -> None:
@@ -181,6 +193,33 @@ def test_existing_run_rows_survive_the_upgrade(scratch: str) -> None:
         found = connection.execute("SELECT user_id FROM runs WHERE id = %s", (orphan,)).fetchone()
     assert found is not None
     assert found[0] is None
+
+
+def test_run_agent_config_migration_upgrades_and_downgrades_without_touching_old_rows(scratch: str) -> None:
+    _upgrade(scratch, BEFORE_RUN_AGENT_CONFIG)
+    user_id, thread_id, old_run = uuid4().hex, uuid4().hex, uuid4().hex
+    with _connect(scratch) as connection:
+        _insert_user(connection, user_id)
+        _insert_thread(connection, thread_id, user_id)
+        _insert_run(connection, old_run, thread_id)
+
+    _upgrade(scratch, "head")
+
+    assert "agent_config" in _column(scratch, "runs")
+    with _connect(scratch) as connection:
+        old_config = connection.execute("SELECT agent_config FROM runs WHERE id = %s", (old_run,)).fetchone()
+        # 新版仍允许显式列名的旧 INSERT 不带 agent_config。
+        another = uuid4().hex
+        _insert_run(connection, another, thread_id)
+        another_config = connection.execute("SELECT agent_config FROM runs WHERE id = %s", (another,)).fetchone()
+    assert old_config == (None,)
+    assert another_config == (None,)
+
+    _downgrade(scratch, BEFORE_RUN_AGENT_CONFIG)
+
+    assert "agent_config" not in _column(scratch, "runs")
+    with _connect(scratch) as connection:
+        assert connection.execute("SELECT 1 FROM runs WHERE id = %s", (old_run,)).fetchone() is not None
 
 
 def test_a_new_run_must_point_at_an_existing_thread(scratch: str) -> None:
@@ -294,6 +333,7 @@ def test_a_run_can_be_written_with_its_owner(scratch: str) -> None:
             " VALUES (%s, %s, %s, 'queued', 0, 0, 0, %s)",
             (run_id, thread_id, user_id, datetime.now(UTC)),
         )
-        found = connection.execute("SELECT user_id FROM runs WHERE id = %s", (run_id,)).fetchone()
+        found = connection.execute("SELECT user_id, agent_config FROM runs WHERE id = %s", (run_id,)).fetchone()
     assert found is not None
     assert str(found[0]).replace("-", "") == user_id
+    assert found[1] is None

@@ -47,7 +47,12 @@ async def get_run(
 ) -> RunResponse:
     """查一次 run 的当前状态。别人的 run 与不存在的 run 是同一个回答。"""
     run = await _require_run(platform, run_id, current.user_id)
-    return RunResponse(id=run.id, thread_id=run.thread_id, status=run.status)
+    return RunResponse(
+        id=run.id,
+        thread_id=run.thread_id,
+        status=run.status,
+        agent_config=run.agent_config.model_dump(exclude_none=True),
+    )
 
 
 @router.get("/{run_id}/events")
@@ -114,7 +119,12 @@ async def cancel_run(
     # 回真实状态而不是一律回 cancelled：已经跑完的那一次并没有被取消，
     # 谎报会让前端把一次成功的分析显示成被中断
     current_run = await _require_run(platform, run_id, current.user_id)
-    return RunResponse(id=current_run.id, thread_id=current_run.thread_id, status=current_run.status)
+    return RunResponse(
+        id=current_run.id,
+        thread_id=current_run.thread_id,
+        status=current_run.status,
+        agent_config=current_run.agent_config.model_dump(exclude_none=True),
+    )
 
 
 @router.post("/{run_id}/approve", status_code=status.HTTP_202_ACCEPTED)
@@ -150,9 +160,15 @@ async def approve_run(
             thread_id=run.thread_id,
             user_id=current.user_id,
             decisions=request.decisions,
+            agent_config=run.agent_config,
         )
 
-    return RunResponse(id=run_id, thread_id=run.thread_id, status=RunStatus.QUEUED)
+    return RunResponse(
+        id=run_id,
+        thread_id=run.thread_id,
+        status=RunStatus.QUEUED,
+        agent_config=run.agent_config.model_dump(exclude_none=True),
+    )
 
 
 async def _pending_action_count(platform: Platform, run_id: str) -> int:

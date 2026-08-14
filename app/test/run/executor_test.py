@@ -17,6 +17,7 @@ from deepagents.backends.protocol import BackendProtocol
 from langchain_core.messages import AIMessage, AIMessageChunk
 from redis.asyncio import Redis
 
+from agent.config import AgentConfig
 from event.mapper import StreamChunk
 from event.model import (
     EventType,
@@ -146,6 +147,8 @@ class FakeAgent:
         self._runner = runner
         self.asked: list[str] = []
         self.resumed: list[list[dict[str, object]]] = []
+        self.configured: list[AgentConfig] = []
+        self.pending_config: list[AgentConfig] = []
         # 每次开跑收到的 user_id。**追踪那一侧靠它把花费归到人头上**，
         # 丢了不会报错，只会让账上多一堆没有主人的调用
         self.attributed: list[str | None] = []
@@ -153,9 +156,16 @@ class FakeAgent:
         self.interrupt: list[InterruptAction] = []
 
     def stream(
-        self, backend: BackendProtocol, thread_id: str, content: str, *, user_id: str | None = None
+        self,
+        backend: BackendProtocol,
+        thread_id: str,
+        content: str,
+        agent_config: AgentConfig,
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         self.asked.append(content)
+        self.configured.append(agent_config)
         self.attributed.append(user_id)
         return self._runner(backend, thread_id, content)
 
@@ -164,14 +174,19 @@ class FakeAgent:
         backend: BackendProtocol,
         thread_id: str,
         decisions: list[dict[str, object]],
+        agent_config: AgentConfig,
         *,
         user_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         self.resumed.append(decisions)
+        self.configured.append(agent_config)
         self.attributed.append(user_id)
         return self._runner(backend, thread_id, "")
 
-    async def pending(self, backend: BackendProtocol, thread_id: str) -> list[InterruptAction]:
+    async def pending(
+        self, backend: BackendProtocol, thread_id: str, agent_config: AgentConfig
+    ) -> list[InterruptAction]:
+        self.pending_config.append(agent_config)
         waiting, self.interrupt = self.interrupt, []
         return waiting
 
@@ -762,6 +777,35 @@ async def test_a_resumed_run_carries_the_decisions_to_the_agent(pool: FakePool, 
     assert agent.resumed == [[{"type": "approve"}]]
     assert agent.asked == []
     assert repository.status[run.run_id] is RunStatus.SUCCEEDED
+
+
+async def test_the_same_task_snapshot_drives_first_run_and_pending_check(pool: FakePool, log: EventLog) -> None:
+    agent = FakeAgent(lambda *_: chunk_stream())
+    executor, _ = make_executor_with(pool, log, agent._runner, agent=agent)
+    config = AgentConfig(system_prompt="首跑快照")
+    run = a_task().model_copy(update={"agent_config": config})
+
+    await executor.execute(run)
+
+    assert agent.configured == [config]
+    assert agent.pending_config == [config]
+
+
+async def test_the_same_task_snapshot_drives_approval_resume_and_pending_check(pool: FakePool, log: EventLog) -> None:
+    agent = FakeAgent(lambda *_: chunk_stream())
+    executor, _ = make_executor_with(pool, log, agent._runner, agent=agent)
+    config = AgentConfig(system_prompt="续跑快照")
+    run = a_task().model_copy(
+        update={
+            "agent_config": config,
+            "decisions": [Decision(index=0, type=DecisionType.APPROVE)],
+        }
+    )
+
+    await executor.execute(run)
+
+    assert agent.configured == [config]
+    assert agent.pending_config == [config]
 
 
 async def test_a_resumed_run_says_so_in_run_started(pool: FakePool, log: EventLog) -> None:

@@ -133,12 +133,12 @@ async def test_the_title_can_be_changed(threads: ThreadRepository, owner: User) 
 async def test_changing_the_title_leaves_the_agent_config_alone(threads: ThreadRepository, owner: User) -> None:
     """两个字段是分别可选的 —— 只改标题不该把配置清空。"""
     created = await threads.create(user_id=owner.id)
-    await threads.update(created.id, user_id=owner.id, agent_config={"model": "aux"})
+    await threads.update(created.id, user_id=owner.id, agent_config={"system_prompt": "只用新闻口径"})
 
     changed = await threads.update(created.id, user_id=owner.id, title="只改标题")
 
     assert changed is not None
-    assert changed.agent_config == {"model": "aux"}
+    assert changed.agent_config == {"system_prompt": "只用新闻口径"}
 
 
 async def test_someone_elses_thread_cannot_be_renamed(threads: ThreadRepository, owner: User, stranger: User) -> None:

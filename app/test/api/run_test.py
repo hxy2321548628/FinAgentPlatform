@@ -63,7 +63,12 @@ def test_a_finished_run_reports_succeeded(client: TestClient, thread_id: str, ag
     response = client.get(f"/api/runs/{run_id}")
 
     assert response.status_code == 200
-    assert response.json() == {"id": run_id, "thread_id": thread_id, "status": RunStatus.SUCCEEDED.value}
+    assert response.json() == {
+        "id": run_id,
+        "thread_id": thread_id,
+        "status": RunStatus.SUCCEEDED.value,
+        "agent_config": {},
+    }
 
 
 def test_a_failed_run_reports_failed(client: TestClient, thread_id: str, agent: Agent) -> None:
@@ -79,6 +84,54 @@ def test_an_unknown_run_is_not_found(client: TestClient) -> None:
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_a_run_inherits_and_exposes_the_thread_agent_config(client: TestClient, thread_id: str) -> None:
+    configured = {"system_prompt": "每句以喵开头"}
+    assert client.patch(f"/api/threads/{thread_id}", json={"agent_config": configured}).status_code == 200
+
+    run_id = submit(client, thread_id)
+    drain(client, run_id)
+
+    assert client.get(f"/api/runs/{run_id}").json()["agent_config"] == configured
+    history = client.get(f"/api/threads/{thread_id}/runs").json()["items"]
+    assert next(one for one in history if one["id"] == run_id)["agent_config"] == configured
+
+
+def test_an_explicit_empty_run_config_clears_the_thread_default(client: TestClient, thread_id: str) -> None:
+    client.patch(f"/api/threads/{thread_id}", json={"agent_config": {"system_prompt": "thread"}})
+
+    response = client.post(
+        f"/api/threads/{thread_id}/runs",
+        json={"content": "一", "agent_config": {}},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["agent_config"] == {}
+
+
+def test_an_unknown_run_agent_config_field_is_rejected(client: TestClient, thread_id: str) -> None:
+    response = client.post(
+        f"/api/threads/{thread_id}/runs",
+        json={"content": "一", "agent_config": {"model": "aux"}},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_a_dirty_legacy_thread_config_gets_an_understandable_validation_error(
+    client: TestClient, thread_id: str, platform: Platform
+) -> None:
+    assert client.portal is not None
+    user_id = client.get("/api/auth/me").json()["id"]
+    client.portal.call(partial(platform.thread.update, thread_id, user_id=user_id, agent_config={"model": "legacy"}))
+
+    response = client.post(f"/api/threads/{thread_id}/runs", json={"content": "一"})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert "agent 配置无效" in response.json()["error"]["message"]
 
 
 # ------------------------------------------------------------------ SSE 形状

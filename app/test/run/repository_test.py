@@ -11,9 +11,11 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from agent.config import AgentConfig
 from event.model import RunErrorCode, RunStatus, TokenUsage
 from run.repository import RunRepository, RunStart
 from test.conftest import FAKE_HASH
@@ -42,6 +44,67 @@ async def test_a_submitted_run_starts_out_queued(
     assert found is not None
     assert found.status is RunStatus.QUEUED
     assert found.thread_id == owned_thread.id
+    assert found.agent_config == AgentConfig()
+
+
+async def test_a_run_keeps_its_effective_agent_config(
+    repository: RunRepository, owner: User, owned_thread: Thread
+) -> None:
+    run_id = uuid4().hex
+    snapshot: dict[str, object] = {"system_prompt": "每句以喵开头"}
+
+    await repository.create(
+        run_id=run_id,
+        thread_id=owned_thread.id,
+        user_id=owner.id,
+        agent_config=snapshot,
+    )
+
+    found = await repository.get(run_id, user_id=owner.id)
+    assert found is not None
+    assert found.agent_config.model_dump(exclude_none=True) == snapshot
+
+
+async def test_a_falsy_non_object_run_snapshot_is_not_treated_as_the_default(
+    repository: RunRepository,
+    submitted: str,
+    owner: User,
+    live_engine: AsyncEngine,
+) -> None:
+    async with live_engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE runs SET agent_config = CAST(:config AS jsonb) WHERE id = :id"),
+            {"config": "[]", "id": submitted},
+        )
+
+    try:
+        with pytest.raises(ValidationError):
+            await repository.get(submitted, user_id=owner.id)
+    finally:
+        async with live_engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE runs SET agent_config = NULL WHERE id = :id"),
+                {"id": submitted},
+            )
+
+
+async def test_the_history_exposes_each_runs_agent_config(
+    repository: RunRepository, owner: User, owned_thread: Thread
+) -> None:
+    run_id = uuid4().hex
+    snapshot: dict[str, object] = {"system_prompt": "这一轮的配置"}
+    await repository.create(
+        run_id=run_id,
+        thread_id=owned_thread.id,
+        user_id=owner.id,
+        content="一",
+        agent_config=snapshot,
+    )
+
+    page = await repository.list_by_thread(owned_thread.id, user_id=owner.id)
+
+    detail = next(one for one in page.items if one.id == run_id)
+    assert detail.agent_config.model_dump(exclude_none=True) == snapshot
 
 
 # ------------------------------------------------------------ 开跑：是不是第一次

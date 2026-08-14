@@ -14,8 +14,9 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import SecretStr
 
+from agent.config import AgentConfig
 from agent.factory import ALLOWED_DECISION, DELETE_TOOL, INTERRUPT_ON, RECURSION_LIMIT, STREAM_MODE, Agent, create_model
-from agent.prompt import SYSTEM_PROMPT
+from agent.prompt import SYSTEM_PROMPT, compose_prompt
 from agent.trace import SESSION_KEY, USER_KEY
 from config import Settings
 from event.mapper import StreamChunk
@@ -93,6 +94,16 @@ async def test_the_agent_is_built_with_the_platform_prompt(recorded: tuple[Recor
     await drain(runner.stream(FakeBackend(), "thread-1", "算个波动率"))  # type: ignore[arg-type]
 
     assert built["system_prompt"] == SYSTEM_PROMPT
+
+
+async def test_a_run_config_reaches_the_graph_prompt(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+    config = AgentConfig(system_prompt="每一句都以「喵」开头。")
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一", config))  # type: ignore[arg-type]
+
+    assert built["system_prompt"] == compose_prompt(config)
 
 
 async def test_the_sandbox_backend_drives_the_builtin_tools(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
@@ -272,12 +283,34 @@ async def test_resuming_carries_the_decisions(recorded: tuple[RecordingAgent, di
     assert agent.call["input"].resume == {"decisions": [{"type": "approve"}]}
 
 
+async def test_resuming_keeps_the_same_run_prompt(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+    config = AgentConfig(system_prompt="一次 run 内不能换提示词。")
+
+    await drain(runner.resume(FakeBackend(), "thread-1", [{"type": "approve"}], config))  # type: ignore[arg-type]
+
+    assert built["system_prompt"] == compose_prompt(config)
+
+
 async def test_a_thread_without_an_interrupt_has_nothing_pending(
     recorded: tuple[RecordingAgent, dict[str, Any]],
 ) -> None:
     runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
 
     assert await runner.pending(FakeBackend(), "thread-1") == []  # type: ignore[arg-type]
+
+
+async def test_pending_state_is_read_from_the_same_configured_graph(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+    config = AgentConfig(system_prompt="查中断也不能换图。")
+
+    await runner.pending(FakeBackend(), "thread-1", config)  # type: ignore[arg-type]
+
+    assert built["system_prompt"] == compose_prompt(config)
 
 
 async def test_two_parallel_arrays_are_merged_into_one_indexed_list(

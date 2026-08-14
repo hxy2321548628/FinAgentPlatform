@@ -9,6 +9,7 @@ import logging
 from typing import Protocol
 from uuid import uuid4
 
+from agent.config import AgentConfig
 from event.model import RunStatus
 from log import run_context
 from run.decision import Decision
@@ -24,7 +25,15 @@ class RunCreatorProtocol(Protocol):
     查状态是端点的事，改状态是 worker 的事，都不经过这里。
     """
 
-    async def create(self, *, run_id: str, thread_id: str, user_id: str, content: str | None = None) -> None:
+    async def create(
+        self,
+        *,
+        run_id: str,
+        thread_id: str,
+        user_id: str,
+        content: str | None = None,
+        agent_config: dict[str, object] | None = None,
+    ) -> None:
         """记下一个刚提交的 run。"""
         ...
 
@@ -41,7 +50,15 @@ class RunSubmitter:
         self._repository = repository
         self._queue = queue
 
-    async def submit(self, *, thread_id: str, content: str, user_id: str) -> Run:
+    async def submit(
+        self,
+        *,
+        thread_id: str,
+        content: str,
+        user_id: str,
+        thread_config: dict[str, object] | None = None,
+        agent_config: AgentConfig | None = None,
+    ) -> Run:
         """接下一次提问并立刻返回，执行由 worker 进行。
 
         **调用方必须先用同一个 `user_id` 查到这个 thread**：`runs.user_id` 与
@@ -51,22 +68,51 @@ class RunSubmitter:
             thread_id: 提问所属的会话。
             content: 教师的问题。
             user_id: 提交的人。
+            thread_config: 会话的默认配置。
+            agent_config: 这一轮的整块配置覆盖；不传则继承会话。
 
         Returns:
             状态为 `queued` 的 run 记录，`id` 用于订阅事件与查询状态。
         """
-        run = Run(id=uuid4().hex, thread_id=thread_id, status=RunStatus.QUEUED)
+        # `None` 表示这一轮没覆盖，显式的 `{}` 则是整块覆盖为平台默认。
+        # 不能用 `agent_config or thread_config`，那会把这两种语义合并。
+        stored_default = {} if thread_config is None else thread_config
+        effective = agent_config if agent_config is not None else AgentConfig.model_validate(stored_default)
+        snapshot = effective.model_dump(exclude_none=True)
+        run = Run(id=uuid4().hex, thread_id=thread_id, status=RunStatus.QUEUED, agent_config=effective)
         # 执行搬到 worker 之后，api 进程里关于一个 run 就只剩这一段。不绑身份的话，
         # 「按 run_id 把一次 run 的日志过滤出来」在 api 侧恒为空
         with run_context(run_id=run.id, thread_id=run.thread_id, user_id=user_id):
             # 提问同时落库与入队。**两份不是冗余**：队列那份跑完就没了，
             # 而库里那份是聊天历史的用户那一侧 —— 没有它，翻看以前问过什么就无从谈起
-            await self._repository.create(run_id=run.id, thread_id=run.thread_id, user_id=user_id, content=content)
-            await self._queue.publish(RunTask(run_id=run.id, thread_id=run.thread_id, content=content, user_id=user_id))
+            await self._repository.create(
+                run_id=run.id,
+                thread_id=run.thread_id,
+                user_id=user_id,
+                content=content,
+                agent_config=snapshot,
+            )
+            await self._queue.publish(
+                RunTask(
+                    run_id=run.id,
+                    thread_id=run.thread_id,
+                    content=content,
+                    user_id=user_id,
+                    agent_config=effective,
+                )
+            )
             logger.info("run 已投递")
         return run
 
-    async def resubmit(self, *, run_id: str, thread_id: str, user_id: str, decisions: list[Decision]) -> None:
+    async def resubmit(
+        self,
+        *,
+        run_id: str,
+        thread_id: str,
+        user_id: str,
+        decisions: list[Decision],
+        agent_config: AgentConfig,
+    ) -> None:
         """审批之后把同一个 run 重新投一次。
 
         **不建新行**：`runs` 里那一行还是原来那个，只是状态从 `waiting_approval`
@@ -80,7 +126,16 @@ class RunSubmitter:
             thread_id: 它所属的会话。
             user_id: 审批的人。
             decisions: 已经校验过的决策。
+            agent_config: 原 run 提交时落下的配置快照。
         """
         with run_context(run_id=run_id, thread_id=thread_id, user_id=user_id):
-            await self._queue.publish(RunTask(run_id=run_id, thread_id=thread_id, user_id=user_id, decisions=decisions))
+            await self._queue.publish(
+                RunTask(
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    decisions=decisions,
+                    agent_config=agent_config,
+                )
+            )
             logger.info("审批已回传，run 重新入队续跑")

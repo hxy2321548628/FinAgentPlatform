@@ -4,7 +4,8 @@
 而那种失败不会让任何测试变红 —— 只会表现成 token 账单变高。
 """
 
-from agent.prompt import SYSTEM_PROMPT
+from agent.config import AgentConfig
+from agent.prompt import ANALYSIS_SEGMENT, ENVIRONMENT_SEGMENT, ROLE_SEGMENT, SYSTEM_PROMPT, compose_prompt
 from sandbox.path import OUTPUT_DIR, SANDBOX_ROOT
 
 
@@ -31,3 +32,30 @@ def test_the_prompt_forbids_hunting_for_chinese_fonts() -> None:
     """实测到的第一个真实失败模式：agent 为找中文字体跑了一轮 pip 与 apt，在零出网的沙箱里必然全败。"""
     assert "字体" in SYSTEM_PROMPT
     assert "rcParams" in SYSTEM_PROMPT
+
+
+def test_the_default_prompt_is_composed_from_all_platform_segments() -> None:
+    assert compose_prompt(AgentConfig()) == SYSTEM_PROMPT
+    assert ROLE_SEGMENT in SYSTEM_PROMPT
+    assert ANALYSIS_SEGMENT in SYSTEM_PROMPT
+    assert ENVIRONMENT_SEGMENT in SYSTEM_PROMPT
+
+
+def test_a_custom_prompt_replaces_only_the_role_segment() -> None:
+    custom = "你是一只认真做金融分析的猫。"
+
+    prompt = compose_prompt(AgentConfig(system_prompt=custom))
+
+    assert custom in prompt
+    assert ROLE_SEGMENT not in prompt
+    assert ANALYSIS_SEGMENT in prompt
+    assert ENVIRONMENT_SEGMENT in prompt
+
+
+def test_the_environment_contract_is_always_last() -> None:
+    custom = "把图保存到当前目录。"
+
+    prompt = compose_prompt(AgentConfig(system_prompt=custom))
+
+    assert prompt.index(custom) < prompt.index(ANALYSIS_SEGMENT) < prompt.index(ENVIRONMENT_SEGMENT)
+    assert prompt.endswith(ENVIRONMENT_SEGMENT)

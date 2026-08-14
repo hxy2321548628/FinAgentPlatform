@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 from redis.asyncio import Redis
 
+from agent.config import AgentConfig
 from task.queue import RunTask, TaskQueue
 
 # 认领阈值取 0：pending 里的消息一律可认领。取一个很小的正数会让断言的真假
@@ -42,13 +43,29 @@ async def queue(live_cache: Redis) -> TaskQueue:
 
 # ------------------------------------------------------------------ 投递与领取
 async def test_a_published_task_comes_back_intact(queue: TaskQueue) -> None:
-    task = a_task("算个波动率")
+    task = a_task("算个波动率").model_copy(update={"agent_config": AgentConfig(system_prompt="每句以喵开头")})
     await queue.publish(task)
 
     delivery = await queue.reserve()
 
     assert delivery is not None
     assert delivery.task == task
+
+
+def test_an_old_task_without_agent_config_uses_platform_defaults() -> None:
+    old_payload = RunTask(run_id=uuid4().hex, thread_id=uuid4().hex).model_dump(exclude={"agent_config"})
+
+    restored = RunTask.model_validate(old_payload)
+
+    assert restored.agent_config == AgentConfig()
+
+
+def test_the_task_snapshot_omits_default_none_values() -> None:
+    task = a_task().model_copy(update={"agent_config": AgentConfig()})
+
+    payload = task.model_dump(exclude_none=True)
+
+    assert payload["agent_config"] == {}
 
 
 async def test_an_empty_queue_hands_out_nothing(queue: TaskQueue) -> None:
