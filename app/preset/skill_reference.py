@@ -47,6 +47,7 @@ async def resolve_skill_references(
     Raises:
         SkillReferenceError: 数量超限、引用不可用或名称撞车。
     """
+    bundled = config.skills or []
     if not skill_ids:
         return config
     if len(skill_ids) > MAX_SKILLS_PER_RUN:
@@ -60,15 +61,31 @@ async def resolve_skill_references(
             raise SkillReferenceError(UNAVAILABLE_MESSAGE)
         resolved.append(one)
 
-    duplicate = _duplicate_name(resolved)
+    temporary = [SkillReference(skill_id=one.skill_id, version=one.version, name=one.name) for one in resolved]
+    references = _unique_references([*bundled, *temporary])
+    if len(references) > MAX_SKILLS_PER_RUN:
+        raise SkillReferenceError(TOO_MANY_MESSAGE)
+
+    duplicate = _duplicate_name(references)
     if duplicate is not None:
         raise SkillReferenceError(f"同一次运行不能挂两个同名 Skill：{duplicate}")
 
-    references = [SkillReference(skill_id=one.skill_id, version=one.version, name=one.name) for one in resolved]
     return config.model_copy(update={"skills": references})
 
 
-def _duplicate_name(skills: list[ResolvedSkill]) -> str | None:
+def _unique_references(references: list[SkillReference]) -> list[SkillReference]:
+    """按冻结三元组取并集，并保持 Agent 自带引用在前。"""
+    unique: list[SkillReference] = []
+    seen: set[tuple[str, int, str]] = set()
+    for reference in references:
+        identity = (reference.skill_id, reference.version, reference.name)
+        if identity not in seen:
+            unique.append(reference)
+            seen.add(identity)
+    return unique
+
+
+def _duplicate_name(skills: list[SkillReference]) -> str | None:
     """返回第一个重复名称，没有则为 None。"""
     seen: set[str] = set()
     for skill in skills:

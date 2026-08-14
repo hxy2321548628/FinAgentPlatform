@@ -16,6 +16,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 
+from agent.config import AgentConfig, SkillReference
 from api.error import invalid, not_found
 from api.platform import Platform, get_platform
 from api.schema import (
@@ -32,6 +33,7 @@ from api.security import CurrentUser
 from preset.model import ReviewStatus, VersionStatus
 from preset.repository import AgentDetail, AgentListing
 from preset.review import Review
+from preset.skill_reference import SkillReferenceError, resolve_skill_references
 
 logger = logging.getLogger(__name__)
 
@@ -119,12 +121,14 @@ async def create_agent(
     Raises:
         ApiError: 同名的智能体你已经有一个了。
     """
+    skill_refs = await _resolve_skills(platform, request.skills, current.user_id)
     created = await platform.agent.create(
         owner_id=current.user_id,
         name=request.name,
         description=request.description,
         subject=request.subject,
         system_prompt=request.system_prompt,
+        skill_refs=skill_refs,
     )
     if created is None:
         raise invalid(NAME_TAKEN_MESSAGE)
@@ -173,7 +177,12 @@ async def write_draft(
     """
     await _require_owned(platform, agent_id, current.user_id)
     if (
-        await platform.agent.write_draft(agent_id, owner_id=current.user_id, system_prompt=request.system_prompt)
+        await platform.agent.write_draft(
+            agent_id,
+            owner_id=current.user_id,
+            system_prompt=request.system_prompt,
+            skill_refs=await _resolve_skills(platform, request.skills, current.user_id),
+        )
         is None
     ):
         raise not_found(AGENT_NOT_FOUND_MESSAGE)
@@ -332,6 +341,7 @@ def _to_my_agent(detail: AgentDetail, latest: dict[str, Review], approved: set[s
             version=one.version,
             status=one.status,
             system_prompt=one.system_prompt,
+            skill_refs=one.skill_refs,
             created_at=one.created_at,
             released_at=one.released_at,
             review_id=None if one.id not in latest else latest[one.id].id,
@@ -368,6 +378,21 @@ def _to_listing(listing: AgentListing) -> AgentListingResponse:
         call_count=listing.call_count,
         version=listing.version,
         system_prompt=listing.system_prompt,
+        skill_refs=listing.skill_refs,
         source=listing.source,
         updated_at=listing.updated_at,
     )
+
+
+async def _resolve_skills(platform: Platform, skill_ids: list[str] | None, user_id: str) -> list[SkillReference] | None:
+    """按作者当前可见性把草稿选择解析成版本引用。"""
+    try:
+        resolved = await resolve_skill_references(
+            AgentConfig(),
+            skill_ids=skill_ids,
+            user_id=user_id,
+            resolver=platform.skill,
+        )
+    except SkillReferenceError as exc:
+        raise invalid(str(exc)) from exc
+    return resolved.skills

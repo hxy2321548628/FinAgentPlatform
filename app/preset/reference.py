@@ -71,4 +71,5 @@ async def resolve_reference(
         agent_id=resolved.agent_id,
         agent_version=resolved.version,
         system_prompt=resolved.system_prompt,
+        skills=resolved.skill_refs,
     )

@@ -85,6 +85,18 @@ def create_agent(client: TestClient, *, prompt: str = CAT_PROMPT) -> Body:
     return created
 
 
+def create_skill(client: TestClient, name: str) -> str:
+    content = f"---\nname: {name}\ndescription: agent 自带能力\n---\n\n# {name}\n".encode()
+    response = client.post(
+        "/api/skills",
+        files={"file": (f"{name}.md", content, "text/markdown")},
+    )
+    assert response.status_code == 201, response.text
+    skill_id = str(response.json()["id"])
+    assert client.post(f"/api/skills/{skill_id}/versions").status_code == 201
+    return skill_id
+
+
 def release(client: TestClient, agent_id: str) -> Body:
     response = client.post(f"{AGENT_PATH}/{agent_id}/versions")
     assert response.status_code == 201, response.text
@@ -367,6 +379,30 @@ def test_referencing_an_agent_freezes_its_prompt_into_the_run_snapshot(client: T
         "agent_id": agent_id,
         "agent_version": 1,
     }
+
+
+def test_an_agent_carries_its_frozen_skills_into_a_run(client: TestClient, thread_id: str) -> None:
+    skill_id = create_skill(client, f"annualized-{uuid4().hex[:8]}")
+    response = client.post(
+        AGENT_PATH,
+        json={
+            "name": f"带能力智能体-{uuid4().hex[:8]}",
+            "system_prompt": "按能力说明工作",
+            "skills": [skill_id],
+        },
+    )
+    assert response.status_code == 201, response.text
+    agent_id = str(response.json()["id"])
+    released = release(client, agent_id)
+    frozen = versions(released)[0]["skill_refs"]
+
+    run = client.post(
+        f"/api/threads/{thread_id}/runs",
+        json={"content": "算年化收益", "agent_config": {"agent_id": agent_id}},
+    )
+
+    assert run.status_code == 202, run.text
+    assert run.json()["agent_config"]["skills"] == frozen
 
 
 def test_a_reference_counts_as_one_call(client: TestClient, thread_id: str) -> None:
