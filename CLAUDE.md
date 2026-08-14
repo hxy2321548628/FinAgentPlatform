@@ -52,10 +52,10 @@ sudo bash deploy/setup-gvisor.sh && sudo bash deploy/setup-xfs.sh && sudo bash d
 # 而配额设不上时 broker 直接拒绝建会话（fail-closed，见 P4 计划 §8.13）——
 # 症状是 POST /api/threads 一律 500，日志里是 QuotaError。
 #
-# **挂完必须让 broker 与 nginx 都重启一次**：容器的 bind mount 是在它启动那一刻
-# 解析的，重启后自动起来的容器绑的是「挂载还没回来」时那个被遮住的 ext4 目录 ——
-# 症状与没挂一模一样，而 `docker compose up -d` **不会重建它们**（服务定义没变，
-# compose 认为无事可做）。实测踩过两次：
+# **挂完必须动 broker 与 nginx 两个容器**（broker 要重建，nginx 重启即可，见下）：
+# 容器的 bind mount 是在它启动那一刻解析的，重启后自动起来的容器绑的是「挂载还没
+# 回来」时那个被遮住的 ext4 目录 —— 症状与没挂一模一样，而 `docker compose up -d`
+# **不会重建它们**（服务定义没变，compose 认为无事可做）。实测踩过两次：
 #
 #   - broker：宿主机看是 xfs / 419 个会话目录，容器里看是 ext4 / 4 个，建会话一律 500；
 #   - nginx：**只重启 broker 会漏掉它**。文件下载走 X-Accel-Redirect，字节由 nginx
@@ -64,9 +64,25 @@ sudo bash deploy/setup-gvisor.sh && sudo bash deploy/setup-xfs.sh && sudo bash d
 #     error log 里那一行 `open() ... failed` 说得出真相。
 sudo bash deploy/setup-xfs.sh
 export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
-docker compose -f deploy/compose.yml restart broker nginx
+
+# **broker 要 force-recreate，不能只 restart。** bind mount 靠 restart 就能重新解析，
+# 但 `devices:` 那一项是**建容器那一刻**定死的 —— 而 loop 设备每次挂载都可能换号
+# （实测 loop0 → loop28），于是 restart 之后 broker 里映射的还是上一次那个设备。
+# 症状与「没给设备」完全一样：xfs_quota 每条命令往 stderr 打一句然后退出 0，
+# 配额一个都设不上，broker fail-closed，建会话仍旧一律 500 —— 而你刚挂完盘，
+# 最不会怀疑的就是挂载。**2026-08-13 实测踩过**，`restart` 之后容器里仍是 /dev/null。
+#
+# 核对方式（比看日志快）：
+#   docker inspect zuel-platform-broker-1 --format '{{range .HostConfig.Devices}}{{.PathOnHost}}{{end}}'
+docker compose -f deploy/compose.yml up -d --no-deps --force-recreate broker
+# nginx 只绑卷不要设备，restart 足够
+docker compose -f deploy/compose.yml restart nginx
 # 之前起来的沙箱容器同样绑着旧目录，一并清掉让 broker 按需重建（它们本来就是 --rm）
 docker ps -q --filter 'name=zuel-sandbox' | xargs -r docker rm -f
+
+# **配额设没设上要回读，不能信退出码**（xfs_quota 探不到挂载点也退 0）。
+# 有 5242880 这样的 hard 限额才算真设上了
+sudo xfs_quota -x -c 'report -p -N' "$(pwd)/data/sandbox" | tail -3
 
 # 起服务。**三个进程**：broker 持有 docker.sock；worker 驱动智能体；api 只投递任务与转 SSE。
 # cwd 必须在 app/ —— 模块路径是 api.app，从仓库根起会 ModuleNotFoundError

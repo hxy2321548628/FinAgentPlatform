@@ -48,6 +48,12 @@
 #     `env_reset` 而没有 SETENV 时，`sudo -E` 与 `sudo VAR=val` 一律被拒
 #     （本机实测「抱歉，您无权保留环境」）—— 而失败会被结果表记成「未过」，
 #     成了一条永远红的判据。破坏性那一组的参数改走命令行。
+#   - **`p1.sh` 重建 broker 时会把磁盘配额悄悄关掉**：它推导了 `SANDBOX_USER` 与
+#     `SANDBOX_WORKSPACE_ROOT`，**唯独漏了 `SANDBOX_QUOTA_DEVICE`** —— 而 compose 的
+#     `devices:` 取 `${SANDBOX_QUOTA_DEVICE:-/dev/null}`，于是重建出来的 broker 拿到
+#     `/dev/null`，配额一个都设不上，broker fail-closed，此后每次建会话都 500。
+#     症状全落在配额、越权、限流那几条判据上，没有一条指向 broker 被重建过。
+#     现在这一项也从跑着的 broker 身上读回来，另在两处重建之后各加一次建会话冒烟。
 #   - `session.sh` 造号时 `ON CONFLICT (name) DO NOTHING` 而不回读，撞名时静默什么
 #     都不做，失败要等到登录那一步 —— 报出来的是「登不进去」，指向登录而非造号。
 #   - `p4.sh` 建会话时发 `{"title":"…"}`，而 `POST /api/threads` 根本不收请求体
@@ -578,6 +584,20 @@ TIP
 }
 export SANDBOX_USER="${SANDBOX_USER:-$(env_of "$BROKER_ID" SANDBOX_USER)}"
 export SANDBOX_WORKSPACE_ROOT="${SANDBOX_WORKSPACE_ROOT:-$(env_of "$BROKER_ID" SANDBOX_WORKSPACE_ROOT)}"
+
+# **配额设备也要继承，理由比上面两个更隐蔽。** P1④⑤ 会重建 broker，而 compose 的
+# `devices:` 取的是 `${SANDBOX_QUOTA_DEVICE:-/dev/null}` —— 这个变量不在本脚本的环境里
+# （它是 loop 设备号，每次挂载都换，因此只 export 不写文件），重建出来的 broker 就
+# 拿到 `/dev/null`。于是 xfs_quota 每条命令往 stderr 打一句然后**退出 0**，配额一个都
+# 设不上，broker fail-closed，**此后每一次建会话都 500**。
+#
+# **症状全落在与它无关的判据上**：2026-08-13 实测那一轮报的是「配额那道闸没关上」
+# 「cache_read 被算进了配额」「并发那道闸没关上」，还往 psql 里插了空的 thread_id ——
+# 没有一条指向「broker 刚才被重建过」。
+#
+# 取正在跑的那个 broker 身上的值：它就是当前正确的那一个
+export SANDBOX_QUOTA_DEVICE="${SANDBOX_QUOTA_DEVICE:-$(docker inspect "$BROKER_ID" \
+    --format '{{range .HostConfig.Devices}}{{println .PathOnHost}}{{end}}' | head -1)}"
 WORKSPACE_ROOT="$SANDBOX_WORKSPACE_ROOT"
 [[ -n $SANDBOX_USER && -n $WORKSPACE_ROOT ]] \
     || { echo "broker 容器里没有 SANDBOX_USER / SANDBOX_WORKSPACE_ROOT，栈不是按文档起的" >&2; exit 1; }
@@ -649,26 +669,50 @@ fi
 info "网关 $BASE_URL ｜ workspace $WORKSPACE_ROOT ｜ worker 副本 $WORKER_COUNT 个"
 
 # **冒烟造一个号、建一个会话再往下走。** 除破坏性那四条外，每一条判据的第一个动作
-# 都是建会话，而它最容易在一个与被测功能毫无关系的地方失败 —— 不拦在这里的话，
-# 十几条判据会一起红在各自不同的位置，没有一条指向真因（实测：P4② 会以
-# 「api 没回 X-Accel-Redirect」收场，而真相是 thread_id 压根是空的）
-session_for smoke || { echo "造不出账号或登不进去 —— 后面每一条都会红成 401" >&2; exit 1; }
-SMOKE_THREAD="$(curl -fsS -b "$SESSION_JAR" -X POST "$BASE_URL/api/threads" 2>/dev/null | jq -r '.id // empty')"
-[[ -n $SMOKE_THREAD ]] || {
+# 都是建会话，而它最容易在一个与被测功能毫无关系的地方失败 —— 不拦的话，十几条判据
+# 会一起红在各自不同的位置，没有一条指向真因（实测：P4② 以「api 没回
+# X-Accel-Redirect」收场而真相是 thread_id 是空的；P3⑤ 以「配额那道闸没关上」
+# 收场而真相是 broker 刚被重建、配额设备丢了）。
+#
+# **不只在开头冒一次**：broker 每次被重建之后都要再冒一次 —— 上面那第二种真因
+# 正是重建带来的，开头那次冒烟拦不住它
+smoke_thread() {
+    local id
+    id="$(curl -fsS -b "$SESSION_JAR" -X POST "$BASE_URL/api/threads" 2>/dev/null | jq -r '.id // empty')"
+    [[ -n $id ]] || return 1
+    curl -fsS -b "$SESSION_JAR" -X DELETE "$BASE_URL/api/threads/$id" >/dev/null 2>&1
+    return 0
+}
+
+smoke_or_die() {
+    smoke_thread && { info "冒烟通过（$1）：建会话、删会话都成"; return 0; }
+    echo "建会话失败（POST /api/threads 没给出 id）—— 位置：$1" >&2
     cat >&2 <<'TIP'
-建会话失败（POST /api/threads 没给出 id）。**最常见的原因不是平台坏了**：
-XFS prjquota 那个 loop 挂载重启之后不会自动挂回来，而 broker 对配额 fail-closed ——
-这时它一律回 500，响应体里只有一句 Internal Server Error，QuotaError 只在日志里。
+
+**两个常见真因，都不在被测的功能上：**
+
+1. XFS prjquota 那个 loop 挂载重启之后不会自动挂回来，broker 对配额 fail-closed，
+   一律回 500，响应体里只有一句 Internal Server Error，QuotaError 只在日志里。
+
+2. **broker 被重建时丢了配额设备**：compose 的 devices: 取
+   ${SANDBOX_QUOTA_DEVICE:-/dev/null}，这个变量不在环境里就退化成 /dev/null。
+   核对：docker inspect zuel-platform-broker-1 \
+           --format '{{range .HostConfig.Devices}}{{.PathOnHost}}{{end}}'
+
+两种都这么修（broker 必须 force-recreate，restart 不会重新解析 devices:）：
 
     sudo bash deploy/setup-xfs.sh
     export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
-    docker compose -f deploy/compose.yml restart broker nginx
+    docker compose -f deploy/compose.yml up -d --no-deps --force-recreate broker
+    docker compose -f deploy/compose.yml restart nginx
     docker ps -q --filter 'name=zuel-sandbox' | xargs -r docker rm -f
+    sudo xfs_quota -x -c 'report -p -N' "$(pwd)/data/sandbox" | tail -3   # 回读，别信退出码
 TIP
     exit 1
 }
-curl -fsS -b "$SESSION_JAR" -X DELETE "$BASE_URL/api/threads/$SMOKE_THREAD" >/dev/null 2>&1
-info "冒烟：造号、登录、建会话、删会话都通"
+
+session_for smoke || { echo "造不出账号或登不进去 —— 后面每一条都会红成 401" >&2; exit 1; }
+smoke_or_die "前置检查"
 
 # ===========================================================================
 # P1：沙箱边界、重启认领、心跳、日志
@@ -729,6 +773,8 @@ docker compose -f "$COMPOSE_FILE" -f "$WORK_DIR/broker-override.yml" \
     up -d --no-deps --force-recreate broker >/dev/null 2>&1
 wait_broker "$BROKER_ID" \
     || { echo "broker 换配置后没起来：docker compose -f deploy/compose.yml logs broker" >&2; exit 1; }
+# 刚重建过，立刻再冒一次 —— 「起来了」与「还能建会话」是两回事
+smoke_or_die "P1 压名额、重建 broker 之后"
 
 # 基线在换配置之后才量：上面那次重建会把先前留下的沙箱一并销毁，
 # 在它之前量出来的数对不上后面的账
@@ -906,7 +952,8 @@ THREAD_HELD=""; THREAD_QUEUED=""; BROKER_OVERRIDDEN=""
 # **必须等 broker 起完再往下走**：上面把它强制重建了，而后面每一组的第一个动作
 # 都是建会话 —— api 建会话要调 broker 建目录，打在正启动的 broker 上就是 500。
 # 实测这条让 P0 整组红过一次，而报错只说「建会话失败」，不指向重建时序
-wait_broker || info "broker 重建后没在 60 秒内应答，后面几组可能会以「建会话失败」收场"
+wait_broker || info "broker 重建后没在 60 秒内应答，后面几条可能会以「建会话失败」收场"
+smoke_or_die "P1 收尾、还原 broker 之后"
 
 
 # ===========================================================================
