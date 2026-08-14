@@ -1235,12 +1235,43 @@ else
     # 固定 sleep 赌不赢：这道题在 prompt 缓存热的时候十几秒就跑完了，2026-08-08
     # 实测等满 20 秒与等满 10 秒各有一次砍空。**砍空不会报错**，它只会让这条验收
     # 什么都没验着，而判据若不识别这种情况就会把它记成通过
+    #
+    # **判据不能是管道的退出码**（2026-08-14 修）。本脚本开着 `set -o pipefail`，
+    # 而原来那句 `curl -N … | grep -q -m1` 里，grep 一匹配上就退出，上游 curl 随即
+    # 吃一个 SIGPIPE —— 管道退出码变成 141，**「匹配成功」这件事本身把判据判成了
+    # 失败**。方向还正好是反的：流还开着（run 在跑，唯一砍得到的场景）必然判失败；
+    # 流自然收尾（run 已跑完，砍了也是砍空）反而判成立。实测两种情形各得 141 与 0。
+    #
+    # 这就是这条判据反复记「未验」的根子，而它伪装成了「等太短」：2026-08-14 那轮
+    # 报的是「等待 180s 未观察到 tool_result」，可库里那条 tool_result 在第 11.35 秒
+    # 就落了，nginx 日志里那次订阅也正好在同一秒结束 —— grep 明明匹配上了。
+    #
+    # 改成 curl 后台落盘、主循环轮询文件：判据是「那一行到底出现没有」，不是任何一
+    # 个进程的退出码。轮询要密 —— 从 tool_result 到 run 收尾可能只隔几秒。
     CHECKPOINT_READY=0
-    if timeout "$KILL_WINDOW" curl -fsS -b "$JAR_P2" -N \
-        "$BASE_URL/api/runs/$RUN_P2/events" 2>/dev/null \
-        | grep -q -m1 '^event: tool_result'; then
-        CHECKPOINT_READY=1
-    fi
+    P2_SSE="$WORK_DIR/p2_events.sse"
+    : > "$P2_SSE"
+    timeout "$KILL_WINDOW" curl -fsS -b "$JAR_P2" -N \
+        "$BASE_URL/api/runs/$RUN_P2/events" > "$P2_SSE" 2>/dev/null &
+    P2_SSE_PID=$!
+    P2_ENDED_EARLY=0
+    p2_deadline=$((SECONDS + KILL_WINDOW))
+    while :; do
+        if grep -q '^event: tool_result' "$P2_SSE" 2>/dev/null; then
+            CHECKPOINT_READY=1
+            break
+        fi
+        # run 自己先走到了终态：流马上收尾，再等下去只是白等满窗口，而且这一刻
+        # 已经砍不到途中了 —— 要与「等超时」分开报，两者该做的事不一样
+        if grep -qE '^event: run\.(finished|failed|cancelled)' "$P2_SSE" 2>/dev/null; then
+            P2_ENDED_EARLY=1
+            break
+        fi
+        (( SECONDS < p2_deadline )) || break
+        sleep 0.5
+    done
+    kill "$P2_SSE_PID" 2>/dev/null
+    wait "$P2_SSE_PID" 2>/dev/null
 
     if [[ -z $VICTIM ]]; then
         fail "队列 pending owner 无法映射到 worker：${P2_CONSUMER:-查不到 consumer}"
@@ -1250,6 +1281,8 @@ else
         final="$(p2_status "$RUN_P2")"
         if [[ $final == failed ]]; then
             fail "第一条 tool_result 出现前 run 已失败，造不出可续跑的 checkpoint"
+        elif (( P2_ENDED_EARLY )); then
+            undone "run 在第一条 tool_result 之前就走到终态（$final），砍不到途中，无法验证 checkpoint 续跑"
         else
             undone "等待 ${KILL_WINDOW}s 未观察到 tool_result，无法验证 checkpoint 续跑"
         fi
