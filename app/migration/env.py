@@ -26,7 +26,8 @@ from config import StoreSettings
 
 # 导入是为了让表定义注册进 SQLModel.metadata，autogenerate 才看得见它们
 import group.model  # noqa: F401  isort:skip
-import preset.model  # noqa: F401  isort:skip
+import preset.model  # isort:skip
+import preset.skill  # noqa: F401  isort:skip
 import run.repository  # noqa: F401  isort:skip
 import thread.model  # noqa: F401  isort:skip
 import user.model  # noqa: F401  isort:skip

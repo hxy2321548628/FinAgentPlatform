@@ -23,6 +23,7 @@ from enum import StrEnum
 from uuid import UUID
 
 from sqlalchemy import Column, Enum, Index, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 TABLE_NAME = "agents"
@@ -79,11 +80,11 @@ class ReviewStatus(StrEnum):
 class ResourceKind(StrEnum):
     """能被共享与被审核的资源种类。
 
-    **本期取值只有一个。** 列现在就在，是因为 skill 与 MCP 复用的是同一套共享与审核
-    流程 —— 那时加的是取值，不是列。
+    Skill 与智能体复用同一套共享与审核流程；表结构不因资源种类增加而变化。
     """
 
     AGENT = "agent"
+    SKILL = "skill"
 
 
 def _value_enum(enum: type[StrEnum], *, primary_key: bool = False) -> Column[Enum]:
@@ -146,8 +147,7 @@ class AgentRecord(SQLModel, table=True):
 class AgentVersionRecord(SQLModel, table=True):
     """`agent_versions` 表的一行：一个版本的内容。
 
-    **本期内容只有提示词一项。** skill / 子智能体 / MCP 的引用要等那三张表存在，
-    那时往这里加列。
+    提示词与 skill 引用在发布时一起冻结；子智能体与 MCP 引用等对应目录存在后再加。
     """
 
     __tablename__ = VERSION_TABLE_NAME
@@ -166,6 +166,7 @@ class AgentVersionRecord(SQLModel, table=True):
     version: int
     status: VersionStatus = Field(sa_column=_value_enum(VersionStatus))
     system_prompt: str = Field(default="")
+    skill_refs: list[dict[str, object]] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     created_at: datetime
     # 发布那一刻。草稿为空 —— 广场按它排序，而没定稿的东西根本进不了广场
     released_at: datetime | None = Field(default=None)

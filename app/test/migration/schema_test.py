@@ -35,6 +35,8 @@ PLATFORM_TABLE = (
     "agent_versions",
     "reviews",
     "resource_groups",
+    "skills",
+    "skill_versions",
 )
 
 # 建用户模型之前的那一版。已有的 runs 行就是在这一版上写下的
@@ -48,6 +50,9 @@ BEFORE_RUN_AGENT_CONFIG = "0009_drop_artifacts"
 
 # 建智能体目录四张表之前的那一版
 BEFORE_AGENT_CATALOG = "0010_run_agent_config"
+
+# 建 skill 目录两张表、给 agent 版本补 skill 引用之前的那一版
+BEFORE_SKILL_CATALOG = "0011_agent_catalog"
 
 
 @pytest.fixture
@@ -554,3 +559,146 @@ def test_a_run_can_be_written_with_its_owner(scratch: str) -> None:
     assert found is not None
     assert str(found[0]).replace("-", "") == user_id
     assert found[1] is None
+
+
+def _insert_skill(
+    connection: psycopg.Connection[tuple[object, ...]],
+    skill_id: str,
+    owner_id: str,
+    *,
+    name: str | None = None,
+    is_deleted: bool = False,
+) -> None:
+    now = datetime.now(UTC)
+    connection.execute(
+        "INSERT INTO skills (id, owner_id, name, subject, visibility, call_count,"
+        " is_deleted, created_at, updated_at)"
+        " VALUES (%s, %s, %s, '', 'private', 0, %s, %s, %s)",
+        (skill_id, owner_id, name or f"s-{skill_id[:8]}", is_deleted, now, now),
+    )
+
+
+def _insert_skill_version(
+    connection: psycopg.Connection[tuple[object, ...]],
+    version_id: str,
+    skill_id: str,
+    *,
+    version: int = 1,
+    status: str = "draft",
+) -> None:
+    connection.execute(
+        "INSERT INTO skill_versions"
+        " (id, skill_id, version, status, description, file_count, total_bytes, created_at)"
+        " VALUES (%s, %s, %s, %s, '', 1, 8, %s)",
+        (version_id, skill_id, version, status, datetime.now(UTC)),
+    )
+
+
+def test_skill_catalog_migration_is_reversible_without_touching_agent_rows(scratch: str) -> None:
+    _upgrade(scratch, BEFORE_SKILL_CATALOG)
+    owner, agent, version = uuid4().hex, uuid4().hex, uuid4().hex
+    with _connect(scratch) as connection:
+        _insert_user(connection, owner)
+        _insert_agent(connection, agent, owner)
+        _insert_version(connection, version, agent)
+        review_columns = _column(scratch, "reviews")
+        resource_group_columns = _column(scratch, "resource_groups")
+
+    _upgrade(scratch, "head")
+
+    assert {"skills", "skill_versions"} <= _table(scratch)
+    assert "skill_refs" in _column(scratch, "agent_versions")
+    assert _column(scratch, "reviews") == review_columns
+    assert _column(scratch, "resource_groups") == resource_group_columns
+    with _connect(scratch) as connection:
+        found = connection.execute("SELECT skill_refs FROM agent_versions WHERE id = %s", (version,)).fetchone()
+    assert found == (None,)
+
+    _downgrade(scratch, BEFORE_SKILL_CATALOG)
+
+    assert not {"skills", "skill_versions"} & _table(scratch)
+    assert "skill_refs" not in _column(scratch, "agent_versions")
+    with _connect(scratch) as connection:
+        assert connection.execute("SELECT 1 FROM agent_versions WHERE id = %s", (version,)).fetchone() is not None
+
+
+def test_one_author_cannot_use_the_same_active_skill_name_twice(scratch: str) -> None:
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner = uuid4().hex
+        _insert_user(connection, owner)
+        _insert_skill(connection, uuid4().hex, owner, name="annualized-naming")
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _insert_skill(connection, uuid4().hex, owner, name="annualized-naming")
+
+
+def test_deleting_a_skill_frees_its_name(scratch: str) -> None:
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner = uuid4().hex
+        _insert_user(connection, owner)
+        _insert_skill(connection, uuid4().hex, owner, name="annualized-naming", is_deleted=True)
+        _insert_skill(connection, uuid4().hex, owner, name="annualized-naming")
+
+        found = connection.execute(
+            "SELECT count(*) FROM skills WHERE owner_id = %s AND name = 'annualized-naming'", (owner,)
+        ).fetchone()
+    assert found is not None
+    assert found[0] == 2
+
+
+def test_one_skill_cannot_have_two_drafts(scratch: str) -> None:
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, skill = uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_skill(connection, skill, owner)
+        _insert_skill_version(connection, uuid4().hex, skill)
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _insert_skill_version(connection, uuid4().hex, skill, version=2)
+
+        _insert_skill_version(connection, uuid4().hex, skill, version=2, status="released")
+
+
+def test_a_skill_version_number_cannot_repeat(scratch: str) -> None:
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, skill = uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_skill(connection, skill, owner)
+        _insert_skill_version(connection, uuid4().hex, skill, status="released")
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _insert_skill_version(connection, uuid4().hex, skill, status="released")
+
+
+def test_shared_and_reviewed_resources_accept_skill_kind(scratch: str) -> None:
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, skill, version, group = uuid4().hex, uuid4().hex, uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_group(connection, group, owner)
+        _insert_skill(connection, skill, owner)
+        _insert_skill_version(connection, version, skill, status="released")
+        connection.execute(
+            "INSERT INTO resource_groups (resource_kind, resource_id, group_id) VALUES ('skill', %s, %s)",
+            (skill, group),
+        )
+        connection.execute(
+            "INSERT INTO reviews (id, target_kind, target_id, status, responsibility_confirmed,"
+            " submitted_by, created_at) VALUES (%s, 'skill', %s, 'pending', true, %s, %s)",
+            (uuid4().hex, version, owner, datetime.now(UTC)),
+        )
+
+        shared = connection.execute(
+            "SELECT count(*) FROM resource_groups WHERE resource_kind = 'skill' AND resource_id = %s", (skill,)
+        ).fetchone()
+        reviewed = connection.execute(
+            "SELECT count(*) FROM reviews WHERE target_kind = 'skill' AND target_id = %s", (version,)
+        ).fetchone()
+    assert shared == (1,)
+    assert reviewed == (1,)
