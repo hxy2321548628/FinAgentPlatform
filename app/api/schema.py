@@ -13,6 +13,7 @@ from event.model import RunErrorCode, RunStatus
 from group.model import JoinRequestStatus
 from preset.model import ResourceKind, ReviewStatus, VersionStatus, Visibility
 from preset.repository import AgentSource
+from preset.skill import SkillSource
 from run.decision import Decision
 from user.model import UserRole
 
@@ -443,21 +444,82 @@ class AgentListingResponse(BaseModel):
     updated_at: datetime = Field(description="最后改动时间，UTC")
 
 
+class UpdateSkillRequest(BaseModel):
+    """Skill 的身份元信息；name 由首版 frontmatter 冻结。"""
+
+    subject: str = Field(default="", max_length=MAX_AGENT_SUBJECT_LENGTH, description="学科")
+
+
+class SkillVersionResponse(BaseModel):
+    """一个 Skill 版本及它最近一次审核状态。"""
+
+    id: str = Field(min_length=1, description="版本行标识")
+    version: int = Field(ge=1, description="版本号")
+    status: VersionStatus = Field(description="草稿或已发布")
+    description: str = Field(description="该版 frontmatter 的 description")
+    file_count: int = Field(ge=1, description="文件数量")
+    total_bytes: int = Field(ge=0, description="文件总字节数")
+    created_at: datetime = Field(description="上传时间，UTC")
+    released_at: datetime | None = Field(default=None, description="发布时间，UTC")
+    review_id: str | None = Field(default=None, description="最近一次审核标识")
+    review_status: ReviewStatus | None = Field(default=None, description="最近一次审核状态")
+    review_reason: str | None = Field(default=None, description="最近一次拒绝理由")
+
+
+class MySkillResponse(BaseModel):
+    """作者视角的一条 Skill。"""
+
+    id: str = Field(min_length=1)
+    owner_name: str = Field(min_length=1)
+    name: str = Field(min_length=1, description="首版 frontmatter 冻结的 name")
+    subject: str
+    visibility: Visibility
+    call_count: int = Field(ge=0)
+    is_deleted: bool
+    in_catalog: bool
+    group_ids: list[str]
+    versions: list[SkillVersionResponse]
+    created_at: datetime
+    updated_at: datetime
+
+
+class SkillListingResponse(BaseModel):
+    """Skill 广场或可用列表的一行。"""
+
+    id: str = Field(min_length=1)
+    owner_id: str = Field(min_length=1)
+    owner_name: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: str
+    subject: str
+    visibility: Visibility
+    call_count: int = Field(ge=0)
+    version: int = Field(ge=1)
+    file_count: int = Field(ge=1)
+    total_bytes: int = Field(ge=0)
+    source: SkillSource
+    updated_at: datetime
+
+
 class ReviewResponse(BaseModel):
     """审核队列里的一条，带 reviewer 判断需要的全部信息。"""
 
     id: str = Field(min_length=1, description="审核标识，决策时用它")
-    target_kind: ResourceKind = Field(description="审的是什么资源。**本期只有 agent**")
+    target_kind: ResourceKind = Field(description="审的是 Agent 还是 Skill")
     target_id: str = Field(min_length=1, description="被审的版本行标识")
     status: ReviewStatus = Field(description="待审 / 通过 / 拒绝")
     responsibility_confirmed: bool = Field(description="作者勾没勾责任确认")
     reason: str | None = Field(default=None, description="拒绝理由")
     created_at: datetime = Field(description="提审时间，UTC")
     decided_at: datetime | None = Field(default=None, description="决策时间，UTC。待审为空")
-    agent_id: str = Field(min_length=1, description="所属智能体")
-    agent_name: str = Field(min_length=1, description="智能体名称")
     owner_name: str = Field(min_length=1, description="作者姓名")
-    description: str = Field(description="一句话说明")
+    description: str = Field(description="被审版本的说明")
     subject: str = Field(description="学科")
     version: int = Field(ge=1, description="被审的是第几版")
-    system_prompt: str = Field(description="被审的提示词全文 —— reviewer 要审的正是这段文字")
+    agent_id: str | None = Field(default=None, description="Agent 标识；Skill 审核时为空")
+    agent_name: str | None = Field(default=None, description="Agent 名称；Skill 审核时为空")
+    system_prompt: str | None = Field(default=None, description="Agent 提示词；Skill 审核时为空")
+    skill_id: str | None = Field(default=None, description="Skill 标识；Agent 审核时为空")
+    skill_name: str | None = Field(default=None, description="Skill 名称；Agent 审核时为空")
+    file_count: int | None = Field(default=None, ge=1, description="Skill 文件数")
+    total_bytes: int | None = Field(default=None, ge=0, description="Skill 文件总字节数")

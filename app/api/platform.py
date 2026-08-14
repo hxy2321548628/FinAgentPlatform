@@ -25,6 +25,8 @@ from config import Settings
 from group.repository import GroupRepository, JoinRequestRepository
 from preset.repository import AgentRepository
 from preset.review import ReviewRepository
+from preset.skill import SkillRepository
+from preset.skill_remote import RemoteSkillStore
 from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
 from quota.usage import RunUsage
@@ -67,6 +69,8 @@ class Platform:
     # 智能体目录与它的审核。**引用解析走 `agent.resolve`**，与 `list_available`
     # 是同一条语句 —— 列表看得见什么就引用得到什么，一行都不多
     agent: AgentRepository
+    skill: SkillRepository
+    skill_store: RemoteSkillStore
     review: ReviewRepository
     thread: ThreadRepository
     # 会话标题的生成。**放在网关而不是 worker**：教师要的是提交完就看见侧边栏有了名字，
@@ -134,6 +138,8 @@ async def build_platform(settings: Settings) -> Platform:
         group=GroupRepository(engine),
         join_request=JoinRequestRepository(engine),
         agent=AgentRepository(engine),
+        skill=SkillRepository(engine),
+        skill_store=RemoteSkillStore(connection),
         review=ReviewRepository(engine),
         thread=thread,
         # 走辅助模型：概括一句话不需要主模型那份多步推理能力，而主模型贵一个数量级

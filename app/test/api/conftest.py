@@ -44,6 +44,8 @@ from event.model import InterruptAction
 from group.repository import Group, GroupRepository, JoinRequestRepository
 from preset.repository import AgentRepository
 from preset.review import ReviewRepository
+from preset.skill import SkillRepository
+from preset.skill_remote import RemoteSkillStore
 from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
 from quota.usage import RunUsage
@@ -291,6 +293,8 @@ def platform(
         group=GroupRepository(live_engine),
         join_request=JoinRequestRepository(live_engine),
         agent=AgentRepository(live_engine),
+        skill=SkillRepository(live_engine),
+        skill_store=RemoteSkillStore(connection),
         review=ReviewRepository(live_engine),
         thread=thread,
         title=TitleWriter(model=title_model, repository=thread),

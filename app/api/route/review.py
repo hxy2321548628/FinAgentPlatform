@@ -20,7 +20,6 @@ from api.error import invalid, not_found
 from api.platform import Platform, get_platform
 from api.schema import DecideReviewRequest, ReviewResponse
 from api.security import ReviewerUser
-from preset.model import ResourceKind
 from preset.review import ReviewItem
 
 logger = logging.getLogger(__name__)
@@ -96,7 +95,7 @@ async def decide_review(
 def _to_response(item: ReviewItem) -> ReviewResponse:
     return ReviewResponse(
         id=item.review.id,
-        target_kind=ResourceKind.AGENT,
+        target_kind=item.review.target_kind,
         target_id=item.review.target_id,
         status=item.review.status,
         responsibility_confirmed=item.review.responsibility_confirmed,
@@ -110,4 +109,8 @@ def _to_response(item: ReviewItem) -> ReviewResponse:
         subject=item.subject,
         version=item.version,
         system_prompt=item.system_prompt,
+        skill_id=item.skill_id,
+        skill_name=item.skill_name,
+        file_count=item.file_count,
+        total_bytes=item.total_bytes,
     )

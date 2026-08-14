@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI
 
 from api.error import install_handler
 from api.platform import Platform, build_platform
-from api.route import admin, agent, auth, file, group, review, run, thread
+from api.route import admin, agent, auth, file, group, review, run, skill, thread
 from api.security import limit_by_user, require_user
 from auth.bootstrap import ensure_first_admin
 from config import get_settings
@@ -74,6 +74,7 @@ def create_app(platform: Platform | None = None) -> FastAPI:
         group.router,
         admin.router,
         agent.router,
+        skill.router,
         review.router,
     )
     for router in protected:
