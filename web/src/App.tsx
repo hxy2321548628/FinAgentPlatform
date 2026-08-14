@@ -8,6 +8,7 @@ import { Scenarios } from './pages/Scenarios'
 import { Capabilities } from './pages/Capabilities'
 import { DataAssets } from './pages/DataAssets'
 import { Login } from './pages/Login'
+import { AuthGuard } from './auth/AuthGuard'
 import { WorkspaceLayout } from './workspace/WorkspaceLayout'
 import { WorkspaceRouter } from './workspace/WorkspaceRouter'
 import { AdminGuard } from './workspace/pages/admin/AdminGuard'
@@ -37,8 +38,10 @@ export default function App() {
             <Route path="*" element={<NotFound title="后台页面不存在" description="该管理页面不存在，或已经被移除。" primaryTo="/admin/users" primaryLabel="返回用户管理" secondaryTo="/workspace" secondaryLabel="返回工作台" />} />
           </Route>
         </Route>
-        <Route path="/workspace/*" element={<WorkspaceLayout />}>
-          <Route path="*" element={<WorkspaceRouter />} />
+        <Route element={<AuthGuard />}>
+          <Route path="/workspace/*" element={<WorkspaceLayout />}>
+            <Route path="*" element={<WorkspaceRouter />} />
+          </Route>
         </Route>
         <Route path="*" element={
           <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>

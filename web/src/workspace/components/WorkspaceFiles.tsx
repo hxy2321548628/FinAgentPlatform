@@ -1,16 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-
-interface WorkspaceEntry {
-  path: string
-  is_dir: boolean
-  size: number
-  modified_at: string | null
-}
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { deleteFile as removeFile, fileKeys, listFiles, rawFileUrl, readFile, uploadFile } from '../../api/files'
+import { errorMessage } from '../../api/request'
+import type { WorkspaceEntry } from '../../api/types'
 
 interface FilePreview {
   path: string
   text: string
   isBinary: boolean
+  truncated: boolean
   rawUrl: string
 }
 
@@ -20,17 +18,8 @@ interface WorkspaceFilesProps {
   compact?: boolean
 }
 
-const FALLBACK_ENTRIES: WorkspaceEntry[] = [
-  { path: 'inputs', is_dir: true, size: 0, modified_at: null },
-  { path: 'inputs/portfolio_2026Q2.csv', is_dir: false, size: 1_258_291, modified_at: '2026-08-06T06:32:00Z' },
-  { path: 'volatility_analysis.py', is_dir: false, size: 2_146, modified_at: '2026-08-06T06:35:00Z' },
-  { path: 'outputs', is_dir: true, size: 0, modified_at: null },
-  { path: 'outputs/volatility_chart.png', is_dir: false, size: 86_016, modified_at: '2026-08-06T06:36:00Z' },
-  { path: 'outputs/rebalance_plan.csv', is_dir: false, size: 18_432, modified_at: '2026-08-06T06:36:00Z' },
-]
-
-const TEXT_EXTENSIONS = new Set(['csv', 'json', 'md', 'py', 'txt', 'yaml', 'yml', 'toml', 'log', 'sql', 'ts', 'tsx', 'js', 'jsx'])
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
+const EMPTY_ENTRIES: WorkspaceEntry[] = []
 
 function fileName(path: string) {
   return path.split('/').at(-1) ?? path
@@ -52,17 +41,6 @@ function formatSize(size: number) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
-function rawFileUrl(threadId: string, path: string, download = false) {
-  const query = new URLSearchParams({ path, download: String(download) })
-  return `/api/threads/${encodeURIComponent(threadId)}/files/raw?${query}`
-}
-
-function fallbackText(path: string) {
-  if (path.endsWith('.csv')) return 'industry,weight,annual_volatility\n科技,0.183,0.312\n能源,0.124,0.241\n材料,0.051,0.228\n'
-  if (path.endsWith('.py')) return '# 波动率分析脚本\nimport pandas as pd\n\nportfolio = pd.read_csv("inputs/portfolio_2026Q2.csv")\n'
-  return `# ${fileName(path)}\n\n当前展示的是原型数据。连接 API 后将读取 thread ${path} 的真实文件内容。`
-}
-
 function EntryIcon({ entry }: { entry: WorkspaceEntry }) {
   if (entry.is_dir) {
     return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -71,35 +49,20 @@ function EntryIcon({ entry }: { entry: WorkspaceEntry }) {
 }
 
 export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFilesProps) {
-  const [entries, setEntries] = useState<WorkspaceEntry[]>(FALLBACK_ENTRIES)
+  const queryClient = useQueryClient()
+  const tree = useQuery({ queryKey: fileKeys.tree(threadId), queryFn: () => listFiles(threadId) })
+  const entries = tree.data?.entries ?? EMPTY_ENTRIES
   const [currentDir, setCurrentDir] = useState('')
   const [preview, setPreview] = useState<FilePreview | null>(null)
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
-  const [usingFallback, setUsingFallback] = useState(false)
   const uploadRef = useRef<HTMLInputElement>(null)
-
-  const loadEntries = useCallback(async () => {
-    try {
-      const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/files`, { credentials: 'include' })
-      if (!response.ok) throw new Error('工作目录读取失败')
-      const body = await response.json() as { entries: WorkspaceEntry[] }
-      setEntries(body.entries)
-      setUsingFallback(false)
-    } catch {
-      setEntries(FALLBACK_ENTRIES)
-      setUsingFallback(true)
-    }
-  }, [threadId])
 
   useEffect(() => {
     setCurrentDir('')
     setPreview(null)
-    setEditing(false)
-    void loadEntries()
-  }, [loadEntries])
+    setNotice('')
+  }, [threadId])
 
   const visibleEntries = useMemo(() => entries.filter(entry => {
     const parent = directoryName(entry.path)
@@ -110,38 +73,27 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
     if (entry.is_dir) {
       setCurrentDir(entry.path)
       setPreview(null)
-      setEditing(false)
       return
     }
 
     const ext = extension(entry.path)
     const rawUrl = rawFileUrl(threadId, entry.path)
     if (IMAGE_EXTENSIONS.has(ext)) {
-      setPreview({ path: entry.path, text: '', isBinary: true, rawUrl })
-      setEditing(false)
-      return
-    }
-
-    if (!TEXT_EXTENSIONS.has(ext)) {
-      setPreview({ path: entry.path, text: '', isBinary: true, rawUrl })
-      setEditing(false)
+      setPreview({ path: entry.path, text: '', isBinary: true, truncated: false, rawUrl })
       return
     }
 
     try {
-      const query = new URLSearchParams({ path: entry.path })
-      const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/files/content?${query}`, { credentials: 'include' })
-      if (!response.ok) throw new Error('文件预览失败')
-      const body = await response.json() as { text: string; is_binary: boolean }
-      const next = { path: entry.path, text: body.text, isBinary: body.is_binary, rawUrl }
+      const body = await queryClient.fetchQuery({
+        queryKey: fileKeys.content(threadId, entry.path),
+        queryFn: () => readFile(threadId, entry.path),
+      })
+      const next = { path: entry.path, text: body.text, isBinary: body.is_binary, truncated: body.truncated, rawUrl }
       setPreview(next)
-      setDraft(body.text)
-    } catch {
-      const text = fallbackText(entry.path)
-      setPreview({ path: entry.path, text, isBinary: false, rawUrl })
-      setDraft(text)
+    } catch (error) {
+      setPreview(null)
+      setNotice(errorMessage(error, '文件预览失败'))
     }
-    setEditing(false)
   }
 
   const uploadFiles = async (files: FileList | File[], directory = currentDir) => {
@@ -149,19 +101,10 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
     setNotice('')
     try {
       for (const file of Array.from(files)) {
-        if (usingFallback) {
-          const path = directory ? `${directory}/${file.name}` : file.name
-          setEntries(previous => [...previous.filter(entry => entry.path !== path), { path, is_dir: false, size: file.size, modified_at: new Date().toISOString() }])
-          continue
-        }
-        const form = new FormData()
-        form.append('file', file)
-        form.append('directory', directory)
-        const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/files`, { method: 'POST', body: form, credentials: 'include' })
-        if (!response.ok) throw new Error(`上传失败：${file.name}`)
+        await uploadFile(threadId, file, directory)
       }
       setNotice('文件已上传')
-      if (!usingFallback) await loadEntries()
+      await queryClient.invalidateQueries({ queryKey: fileKeys.tree(threadId) })
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '上传失败')
     } finally {
@@ -170,27 +113,13 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
     }
   }
 
-  const saveFile = async () => {
-    if (!preview) return
-    const blob = new File([draft], fileName(preview.path), { type: 'text/plain;charset=utf-8' })
-    await uploadFiles([blob], directoryName(preview.path))
-    setPreview({ ...preview, text: draft })
-    setEditing(false)
-  }
-
   const deleteFile = async (path: string) => {
     if (!window.confirm(`确认删除 ${path}？此操作不可撤销。`)) return
     setBusy(true)
     setNotice('')
     try {
-      if (!usingFallback) {
-        const query = new URLSearchParams({ path })
-        const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/files?${query}`, { method: 'DELETE', credentials: 'include' })
-        if (!response.ok) throw new Error('删除失败')
-        await loadEntries()
-      } else {
-        setEntries(previous => previous.filter(entry => entry.path !== path))
-      }
+      await removeFile(threadId, path)
+      await queryClient.invalidateQueries({ queryKey: fileKeys.tree(threadId) })
       if (preview?.path === path) setPreview(null)
       setNotice('文件已删除')
     } catch (error) {
@@ -217,7 +146,7 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <input ref={uploadRef} type="file" multiple style={{ display: 'none' }} onChange={event => event.target.files && void uploadFiles(event.target.files)} />
           <button type="button" disabled={busy} onClick={() => uploadRef.current?.click()} style={{ padding: '6px 10px', border: 'none', borderRadius: 6, background: 'var(--action)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>上传</button>
-          <button type="button" onClick={() => void loadEntries()} title="刷新" style={{ width: 30, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer' }}>↻</button>
+          <button type="button" onClick={() => void tree.refetch()} title="刷新" style={{ width: 30, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer' }}>↻</button>
         </div>
       </div>
 
@@ -230,10 +159,13 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
       </div>
 
       <div style={{ flex: preview ? '0 0 auto' : 1, maxHeight: preview ? (compact ? 250 : 300) : undefined, overflowY: 'auto' }}>
+        {tree.isPending && <div style={{ padding: 28, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>正在加载工作目录…</div>}
+        {tree.isError && <div role="alert" style={{ padding: 20, color: '#DC2626', fontSize: 12 }}>{errorMessage(tree.error, '工作目录读取失败')}</div>}
+        {tree.data?.truncated && <div style={{ padding: '7px 12px', background: '#FFFBEB', color: '#92400E', fontSize: 11 }}>文件过多，当前只显示部分条目。</div>}
         {currentDir && (
           <button type="button" onClick={() => { setCurrentDir(directoryName(currentDir)); setPreview(null) }} style={{ width: '100%', padding: '9px 14px', border: 'none', borderBottom: '1px solid var(--border-light)', background: 'transparent', color: 'var(--text-secondary)', textAlign: 'left', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>← 返回上一级</button>
         )}
-        {visibleEntries.length === 0 ? (
+        {!tree.isPending && !tree.isError && visibleEntries.length === 0 ? (
           <div style={{ padding: 28, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>目录为空，可上传文件到这里</div>
         ) : visibleEntries.map(entry => (
           <div key={entry.path} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: compact ? '9px 12px' : '11px 16px', borderBottom: '1px solid var(--border-light)', background: preview?.path === entry.path ? 'var(--action-light)' : 'transparent' }}>
@@ -259,14 +191,11 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
         <div style={{ flex: 1, minHeight: compact ? 220 : 300, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--border-light)', background: 'var(--bg)' }}>
             <span style={{ flex: 1, minWidth: 0, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview.path}</span>
-            {!preview.isBinary && !editing && <button type="button" onClick={() => { setDraft(preview.text); setEditing(true) }} style={smallButtonStyle}>编辑</button>}
-            {editing && <><button type="button" disabled={busy} onClick={() => void saveFile()} style={{ ...smallButtonStyle, background: 'var(--action)', color: '#fff', borderColor: 'var(--action)' }}>保存</button><button type="button" onClick={() => setEditing(false)} style={smallButtonStyle}>取消</button></>}
-            <button type="button" onClick={() => { setPreview(null); setEditing(false) }} style={smallButtonStyle}>关闭</button>
+            <button type="button" onClick={() => setPreview(null)} style={smallButtonStyle}>关闭</button>
           </div>
           <div style={{ flex: 1, overflow: 'auto', padding: 12, background: '#F8FAFD' }}>
-            {editing ? (
-              <textarea value={draft} onChange={event => setDraft(event.target.value)} style={{ width: '100%', height: '100%', minHeight: 220, resize: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: 12, outline: 'none', fontSize: 12, lineHeight: 1.65, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', background: 'var(--surface)' }} />
-            ) : IMAGE_EXTENSIONS.has(extension(preview.path)) ? (
+            {preview.truncated && <div style={{ marginBottom: 10, padding: '7px 9px', borderRadius: 5, background: '#FFFBEB', color: '#92400E', fontSize: 11 }}>文件较长，当前仅展示开头部分；下载可查看完整内容。</div>}
+            {IMAGE_EXTENSIONS.has(extension(preview.path)) ? (
               <img src={preview.rawUrl} alt={fileName(preview.path)} style={{ display: 'block', maxWidth: '100%', maxHeight: 360, margin: '0 auto', objectFit: 'contain' }} />
             ) : preview.isBinary ? (
               <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>该文件不支持文本预览，请点击“下载”查看。</div>

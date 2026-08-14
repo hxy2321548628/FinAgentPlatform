@@ -1,0 +1,86 @@
+import { describe, expect, it } from 'vitest'
+import type { RunEvent } from '../api/events'
+import { createRunViewState, runViewReducer } from './eventReducer'
+
+function event<T extends RunEvent>(value: T): T {
+  return value
+}
+
+describe('runViewReducer', () => {
+  it('aggregates token and reasoning deltas without mixing paths', () => {
+    let state = createRunViewState('queued')
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'reasoning', ts: 1, run_id: 'r1', path: [], data: { text: '思考' },
+    }) })
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'reasoning', ts: 2, run_id: 'r1', path: [], data: { text: '中' },
+    }) })
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'token', ts: 3, run_id: 'r1', path: [], data: { text: '结' },
+    }) })
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'token', ts: 4, run_id: 'r1', path: [], data: { text: '论' },
+    }) })
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'token', ts: 5, run_id: 'r1', path: ['child'], data: { text: '子任务' },
+    }) })
+
+    expect(state.items).toMatchObject([
+      { kind: 'reasoning', text: '思考中', path: [] },
+      { kind: 'answer', text: '结论', path: [] },
+      { kind: 'answer', text: '子任务', path: ['child'] },
+    ])
+  })
+
+  it('pairs tool results by call id', () => {
+    let state = createRunViewState('running')
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'tool_call', ts: 1, run_id: 'r1', path: [],
+      data: { id: 'call-1', name: 'delete', args: { path: 'old.csv' } },
+    }) })
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'tool_result', ts: 2, run_id: 'r1', path: [],
+      data: { tool_call_id: 'call-1', name: 'delete', content: 'ok', status: 'success' },
+    }) })
+    expect(state.items[0]).toMatchObject({
+      kind: 'tool', id: 'call-1', status: 'success', content: 'ok',
+    })
+  })
+
+  it('keeps prior output on resume and exposes a whole interrupt batch', () => {
+    let state = createRunViewState('running')
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'token', ts: 1, run_id: 'r1', path: [], data: { text: '已完成的内容' },
+    }) })
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'interrupt', ts: 2, run_id: 'r1', path: [], data: { actions: [
+        { index: 0, tool_name: 'delete', args: { path: 'a' }, allowed_decisions: ['approve', 'reject'] },
+        { index: 1, tool_name: 'delete', args: { path: 'b' }, allowed_decisions: ['edit', 'respond'] },
+      ] },
+    }) })
+    expect(state.status).toBe('waiting_approval')
+    expect(state.pendingActions).toHaveLength(2)
+
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'run.started', ts: 3, run_id: 'r1', path: [], data: { thread_id: 't1', resumed: true },
+    }) })
+    expect(state.status).toBe('running')
+    expect(state.pendingActions).toBeNull()
+    expect(state.items).toMatchObject([{ kind: 'answer', text: '已完成的内容' }])
+  })
+
+  it('records terminal state and nonfatal errors', () => {
+    let state = createRunViewState('running')
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'error', ts: 1, run_id: 'r1', path: [],
+      data: { code: 'INTERNAL', message: '一次可恢复告警' },
+    }) })
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'run.finished', ts: 2, run_id: 'r1', path: [],
+      data: { status: 'succeeded', tokens: { input_cache_read: 1, input_uncached: 2, output: 3 } },
+    }) })
+    expect(state.status).toBe('succeeded')
+    expect(state.items).toMatchObject([{ kind: 'notice', message: '一次可恢复告警' }])
+    expect(state.tokens).toEqual({ input_cache_read: 1, input_uncached: 2, output: 3 })
+  })
+})

@@ -1,39 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useInfiniteQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { errorMessage } from '../../api/request'
+import { listThreads, threadKeys } from '../../api/threads'
 import { WorkspaceFiles } from '../components/WorkspaceFiles'
-
-interface ThreadSummary {
-  id: string
-  title: string
-  updated_at: string
-}
-
-const FALLBACK_THREADS: ThreadSummary[] = [
-  { id: '1', title: '新能源行业波动率分析', updated_at: '2026-08-12T06:14:00Z' },
-  { id: '2', title: 'A 股收益归因分解', updated_at: '2026-08-11T06:32:00Z' },
-  { id: '3', title: 'Fama-French 三因子复现', updated_at: '2026-08-10T09:15:00Z' },
-]
 
 export function MyData() {
   const navigate = useNavigate()
-  const [threads, setThreads] = useState<ThreadSummary[]>(FALLBACK_THREADS)
-  const [selectedId, setSelectedId] = useState(FALLBACK_THREADS[0].id)
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const response = await fetch('/api/threads?limit=100', { credentials: 'include' })
-        if (!response.ok) return
-        const body = await response.json() as { items: ThreadSummary[] }
-        if (body.items.length === 0) return
-        setThreads(body.items)
-        setSelectedId(current => body.items.some(thread => thread.id === current) ? current : body.items[0].id)
-      } catch {
-        // API 未启动时保留原型数据，页面仍可完成交互评审。
-      }
-    }
-    void load()
-  }, [])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const threadsQuery = useInfiniteQuery({
+    queryKey: threadKeys.list(),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => listThreads(pageParam),
+    getNextPageParam: page => page.next_cursor ?? undefined,
+  })
+  const threads = threadsQuery.data?.pages.flatMap(page => page.items) ?? []
 
   const selected = threads.find(thread => thread.id === selectedId) ?? threads[0]
 
@@ -54,6 +35,9 @@ export function MyData() {
       <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)', gap: 16 }}>
         <aside style={{ minHeight: 0, overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
           <div style={{ padding: '11px 16px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.12em' }}>THREAD 列表</div>
+          {threadsQuery.isPending && <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>正在加载会话…</div>}
+          {threadsQuery.isError && <div role="alert" style={{ padding: 16, color: '#DC2626', fontSize: 12 }}>{errorMessage(threadsQuery.error)}</div>}
+          {!threadsQuery.isPending && !threadsQuery.isError && threads.length === 0 && <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>还没有可管理的工作空间</div>}
           {threads.map(thread => {
             const active = thread.id === selected?.id
             return (
@@ -63,6 +47,9 @@ export function MyData() {
               </button>
             )
           })}
+          {threadsQuery.hasNextPage && <button type="button" disabled={threadsQuery.isFetchingNextPage} onClick={() => void threadsQuery.fetchNextPage()} style={{ width: '100%', padding: 10, border: 'none', background: 'transparent', color: 'var(--action)', cursor: 'pointer', fontSize: 12 }}>
+            {threadsQuery.isFetchingNextPage ? '正在加载…' : '加载更早会话'}
+          </button>}
         </aside>
 
         <section style={{ minWidth: 0, minHeight: 0, overflow: 'hidden', border: '1px solid var(--border)', borderRadius: 10 }}>
