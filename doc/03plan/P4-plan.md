@@ -187,8 +187,15 @@ cd app && uv run alembic upgrade head
 
 | 变量 | 用途 |
 |---|---|
-| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | MinIO 凭据 |
-| `FEISHU_WEBHOOK_URL` | 告警投递（§7.3） |
+| ~~`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`~~ | ~~MinIO 凭据~~ |
+| ~~`FEISHU_WEBHOOK_URL`~~ | ~~告警投递（§7.3）~~ |
+
+> **本节整段已失效**（2026-08-13 撤除可观测性与 MinIO）：上面那行 `docker compose
+> up -d otel-collector tempo loki prometheus grafana` 里的五个服务、`artifacts` 表的
+> 迁移、以及这三个变量**都不存在了**。2026-08-14 把 `.env` 里遗留的七个孤儿键
+> （上面三个 + `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` / `MINIO_DATA_DIR` /
+> `GF_SECURITY_ADMIN_PASSWORD`）与 `data/` 下四个孤儿数据目录一并清掉。
+> **本节保留为历史记录，不要照着执行。** 当前的环境前提以[仓库根 CLAUDE.md](../../CLAUDE.md) 为准。
 
 沿用已有的：gVisor + XFS prjquota、`zuel-sandbox:latest` 镜像、Postgres（宿主机 **5433**）与 Redis、仓库根的 `.env`。
 
