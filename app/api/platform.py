@@ -22,6 +22,8 @@ from auth.password import PasswordHasher
 from auth.session import SessionStore
 from config import Settings
 from group.repository import GroupRepository, JoinRequestRepository
+from preset.repository import AgentRepository
+from preset.review import ReviewRepository
 from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
 from quota.usage import RunUsage
@@ -61,6 +63,10 @@ class Platform:
     user: UserRepository
     group: GroupRepository
     join_request: JoinRequestRepository
+    # 智能体目录与它的审核。**引用解析走 `agent.resolve`**，与 `list_available`
+    # 是同一条语句 —— 列表看得见什么就引用得到什么，一行都不多
+    agent: AgentRepository
+    review: ReviewRepository
     thread: ThreadRepository
     # 会话标题的生成。**放在网关而不是 worker**：教师要的是提交完就看见侧边栏有了名字，
     # 而 worker 可能几分钟后才领到这条任务
@@ -126,6 +132,8 @@ async def build_platform(settings: Settings) -> Platform:
         user=UserRepository(engine),
         group=GroupRepository(engine),
         join_request=JoinRequestRepository(engine),
+        agent=AgentRepository(engine),
+        review=ReviewRepository(engine),
         thread=thread,
         # 走辅助模型：概括一句话不需要主模型那份多步推理能力，而主模型贵一个数量级
         title=TitleWriter(model=create_model(settings, model_name=settings.model_aux), repository=thread),

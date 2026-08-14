@@ -33,6 +33,14 @@ const ADMIN_GROUPS = [
 export function AdminLayout() {
   const navigate = useNavigate()
   const current = useQuery({ queryKey: AUTH_QUERY_KEY, queryFn: () => me() })
+  // **reviewer 只看得到审核那一条。** 列出它打不开的入口，点进去只会被弹回工作台 ——
+  // 那种「看得见却进不去」比没有入口更让人以为是坏了
+  const reviewerOnly = current.data?.role === 'reviewer'
+  const visible = reviewerOnly
+    ? ADMIN_GROUPS.map(group => ({ ...group, links: group.links.filter(link => link.to === '/admin/agents') })).filter(
+        group => group.links.length > 0,
+      )
+    : ADMIN_GROUPS
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
@@ -43,7 +51,7 @@ export function AdminLayout() {
         </div>
 
         <nav style={{ flex: 1, overflowY: 'auto', padding: '8px 0 10px' }}>
-          {ADMIN_GROUPS.map((group, index) => (
+          {visible.map((group, index) => (
             <div key={group.label} style={{ paddingTop: index === 0 ? 0 : 6, borderTop: index === 0 ? 'none' : '1px solid var(--ws-sidebar-border)', marginTop: index === 0 ? 0 : 6 }}>
               <div style={{ padding: '7px 16px 5px', fontSize: 10, color: 'var(--ws-sidebar-text)', letterSpacing: '0.12em' }}>{group.label}</div>
               {group.links.map(link => (

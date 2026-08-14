@@ -30,10 +30,14 @@ DEFAULT_OUTPUT_WEIGHT = 1
 #
 # **教师与学生的权限完全相同，配额是二者唯一的实质差别**，也是控制成本的唯一手段 ——
 # 学生人数通常远多于教师，配额若相同，成本结构会由学生侧主导。
-# admin 与 teacher 同档：管理员的会话与教师同权，它多的只是管账号的能力
+# admin 与 teacher 同档：管理员的会话与教师同权，它多的只是管账号的能力。
+# reviewer 同理 —— 它多的只是审平台目录的能力，跑分析时就是个普通老师。
+# **每个角色都要在这两张表里有一行**：查不到时是 KeyError 而不是「按最严的档算」，
+# 症状是那个角色的人一提交就 500
 DEFAULT_TOKEN_DAILY = MappingProxyType(
     {
         UserRole.ADMIN: 1_000_000,
+        UserRole.REVIEWER: 1_000_000,
         UserRole.TEACHER: 1_000_000,
         UserRole.STUDENT: 400_000,
     }
@@ -46,6 +50,7 @@ DEFAULT_TOKEN_DAILY = MappingProxyType(
 DEFAULT_CONCURRENT_RUN = MappingProxyType(
     {
         UserRole.ADMIN: 3,
+        UserRole.REVIEWER: 3,
         UserRole.TEACHER: 3,
         UserRole.STUDENT: 2,
     }

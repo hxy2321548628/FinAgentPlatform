@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 平台回归验收：P0–P6 的 29 条判据，一个文件跑完。
+# 平台回归验收：P0–P7 的 35 条判据，一个文件跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
@@ -10,16 +10,24 @@
 # 常用跑法：
 #
 #   bash deploy/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
-#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 20 条，约 25 分钟
+#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 25 条，约 25 分钟
 #
 # **默认全跑，不分 phase，也没有挑某一期跑的参数** —— P6 决策 §L2 的定案。
 # 保留的是 `SKIP_LLM` / `SKIP_HOSTILE` 两个开关：它们分的是**成本**（要不要花钱、
 # 要不要 root），不是期次。按期挑着跑，等于把刚拆掉的那层级联结构又装回来，
 # 还多一条「以为全验了其实只验了一期」的路。
 #
-# 29 条里 **9 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
-# P2① 与 P3① 各要一次真实分析、P6① 要两次便宜的真实分析、P1① 那四条
-# 破坏性测试要 root。其余 20 条全免费。
+# 35 条里 **10 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
+# P2① 与 P3① 各要一次真实分析、P6① 与 P7③ 各要两次便宜的真实分析、P1① 那四条
+# 破坏性测试要 root。其余 25 条全免费。
+#
+# ---------------------------------------------------------------------------
+# **P7 那一组是 2026-08-14 随本期开发一起加的**，六条：三档可见性、审核闸门、
+# 引用真的改变行为、版本冻结、`reviewer` 的边界，以及一条 playwright 走查。
+#
+# **P7⑥ 是这个文件里唯一一条要浏览器的判据**，缺 chromium 二进制时记「未验」——
+# 与沙箱镜像缺失同一套规矩。它不进 `make all`：那是纯本地门禁，跑它不需要任何服务
+# 起着，而这一条要六个服务、真账号、真库。
 #
 # ---------------------------------------------------------------------------
 # **P5 那一组是 2026-08-14 补的**（P6 开工前的最后一件事）。P5 期是唯一一期没留下
@@ -655,43 +663,62 @@ WORK_DIR="$(mktemp -d)"
 WORKER_COUNT="$(worker_ids | wc -l)"
 LOG_SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# P6③ 停着 worker 提交的两条 run 必须先取消、再恢复 worker。这个函数既走正常路径，
+# 停着 worker 提交的 queued run 必须先取消、再恢复 worker。这个函数既走正常路径，
 # 也走 EXIT trap：脚本在两步之间被打断时，不能让清理动作反而把付费分析跑起来。
-cancel_p6_snapshot_runs() {
-    local require_cancelled="${1:-0}"
-    local run_id response status discovered="" run_ids="${P6_SNAPSHOT_RUNS:-}" failed=0
+#
+# **P6③ 与 P7④ 共用这一份**，不各写一份 —— 两份 fail-closed 迟早只有一处是对的，
+# 而错的那一处的症状是「一条免费判据在收尾时变成一次付费分析」，账单上才看得见。
+#
+# 登记的是「thread jar」对：两条判据用的是不同的账号，取消要拿本人的 cookie 打。
+SNAPSHOT_PENDING=()
 
-    # 不能只信 POST 响应里的 id：服务端可能已经落库、客户端却在收到响应前断了。
-    # 按这条判据专用的 thread 回查，才能保证恢复 worker 前没有漏网的付费任务。
-    if [[ -n ${THREAD_P6_SNAPSHOT:-} ]]; then
-        discovered="$(psql_query "SELECT id FROM runs
-            WHERE thread_id='$THREAD_P6_SNAPSHOT'
-              AND status IN ('queued', 'running', 'waiting_approval');")" || return 1
-        run_ids="${run_ids:+$run_ids }$discovered"
-    fi
-    [[ -z $run_ids ]] && { P6_SNAPSHOT_RUNS=""; THREAD_P6_SNAPSHOT=""; return 0; }
-    [[ -n ${JAR_P6:-} ]] || return 1
-
-    for run_id in $run_ids; do
-        if ! response="$(curl -sS --connect-timeout 5 --max-time 20 -b "$JAR_P6" \
-            -X POST "$BASE_URL/api/runs/$run_id/cancel")"; then
-            failed=1
-            continue
-        fi
-        status="$(jq -r '.status // empty' <<<"$response" 2>/dev/null)"
-        case "$status" in
-            cancelled) ;;
-            succeeded|failed) (( require_cancelled == 0 )) || failed=1 ;;
-            *) failed=1 ;;
-        esac
-    done
-    (( failed == 0 )) || return 1
-    P6_SNAPSHOT_RUNS=""
-    THREAD_P6_SNAPSHOT=""
-    return 0
+register_snapshot_thread() {
+    SNAPSHOT_PENDING+=("$1 $2")
 }
 
-restore_p6_workers() {
+cancel_snapshot_runs() {
+    local require_cancelled="${1:-0}"
+    local entry thread jar run_id response status discovered failed=0 stuck
+    local kept=()
+
+    for entry in ${SNAPSHOT_PENDING[@]+"${SNAPSHOT_PENDING[@]}"}; do
+        read -r thread jar <<<"$entry"
+        [[ -n $thread && -n $jar ]] || continue
+        # 不能只信 POST 响应里的 id：服务端可能已经落库、客户端却在收到响应前断了。
+        # 按这条判据专用的 thread 回查，才能保证恢复 worker 前没有漏网的付费任务。
+        if ! discovered="$(psql_query "SELECT id FROM runs
+            WHERE thread_id='$thread'
+              AND status IN ('queued', 'running', 'waiting_approval');")"; then
+            failed=1
+            kept+=("$entry")
+            continue
+        fi
+        stuck=0
+        for run_id in $discovered; do
+            if ! response="$(curl -sS --connect-timeout 5 --max-time 20 -b "$jar" \
+                -X POST "$BASE_URL/api/runs/$run_id/cancel")"; then
+                stuck=1
+                continue
+            fi
+            status="$(jq -r '.status // empty' <<<"$response" 2>/dev/null)"
+            case "$status" in
+                cancelled) ;;
+                # 已经跑完的那条不是「取消成功」：它意味着 worker 真的领走跑了一次，
+                # 而这两条判据本该一分钱都不花
+                succeeded|failed) (( require_cancelled == 0 )) || stuck=1 ;;
+                *) stuck=1 ;;
+            esac
+        done
+        if (( stuck )); then
+            failed=1
+            kept+=("$entry")
+        fi
+    done
+    SNAPSHOT_PENDING=(${kept[@]+"${kept[@]}"})
+    (( failed == 0 ))
+}
+
+restore_workers() {
     compose up -d --no-recreate worker >/dev/null 2>&1 || return 1
     wait_worker "$WORKER_COUNT"
 }
@@ -700,19 +727,19 @@ restore_p6_workers() {
 # P3⑤⑥ 与 P6③ 会把 worker 停掉 —— 中途失败时不还原的话，这台机器上此后每一次
 # 跑法都在一个说不清的状态里起步，而症状不指向上一轮验收
 cleanup() {
-    local p6_uncertain_thread="${THREAD_P6_SNAPSHOT:-未知}"
+    local uncertain="${SNAPSHOT_PENDING[*]:-未知}"
     [[ -n ${THREAD_HELD:-} ]] && docker rm -f "$(sandbox_of "$THREAD_HELD")" >/dev/null 2>&1
     [[ -n ${BROKER_OVERRIDDEN:-} ]] && compose up -d --no-deps --force-recreate broker >/dev/null 2>&1
     if [[ -n ${WORKER_TOUCHED:-} ]]; then
         # 客户端超时/被中断时，服务端可能仍在提交；一次“查不到”不能证明稍后不会入队。
-        if (( ${P6_POST_IN_FLIGHT:-0} )); then
-            cancel_p6_snapshot_runs || true
-            echo "P6③ 的 POST 结果不确定，worker 保持停止；thread=$p6_uncertain_thread，请人工确认后再启动" >&2
-        elif cancel_p6_snapshot_runs; then
-            restore_p6_workers \
+        if (( ${SNAPSHOT_POST_IN_FLIGHT:-0} )); then
+            cancel_snapshot_runs || true
+            echo "停 worker 期间的 POST 结果不确定，worker 保持停止；待查 thread=$uncertain，请人工确认后再启动" >&2
+        elif cancel_snapshot_runs; then
+            restore_workers \
                 || echo "worker 清理后仍未恢复到 $WORKER_COUNT 个副本，请人工检查" >&2
         else
-            echo "P6③ 的 queued run 没能全部取消，worker 保持停止；请人工取消后再启动" >&2
+            echo "停 worker 期间的 queued run 没能全部取消，worker 保持停止；请人工取消后再启动" >&2
         fi
     fi
     for thread_id in ${THREAD_HELD:-} ${THREAD_QUEUED:-}; do
@@ -2145,7 +2172,6 @@ end
 
 P6_TAG="$$-$(date +%s%N | tail -c 5)"
 P6_JAR_READY=0
-P6_SNAPSHOT_RUNS=""
 if session_for p6; then
     JAR_P6="$SESSION_JAR"
     P6_JAR_READY=1
@@ -2282,6 +2308,7 @@ if (( ! P6_JAR_READY )); then
     fail "造不出账号，快照链路验不了"
 else
     THREAD_P6_SNAPSHOT="$(new_thread "$JAR_P6")"
+    register_snapshot_thread "$THREAD_P6_SNAPSHOT" "$JAR_P6"
     P6_CONFIG_A="P6-snapshot-A-$P6_TAG"
     P6_CONFIG_B="P6-snapshot-B-$P6_TAG"
     WORKER_TOUCHED=1
@@ -2290,7 +2317,7 @@ else
         || ! P6_STOPPED_WORKERS="$(worker_ids)" \
         || [[ -n $P6_STOPPED_WORKERS ]]; then
         fail "worker 没停干净，不提交本来应该免费的快照 run"
-        if restore_p6_workers; then
+        if restore_workers; then
             WORKER_TOUCHED=""
         else
             fail "worker 停止失败后也没恢复到 $WORKER_COUNT 个副本，终止后续判据"
@@ -2314,19 +2341,18 @@ else
         end
         exit 1
     fi
-    P6_POST_IN_FLIGHT=1
+    SNAPSHOT_POST_IN_FLIGHT=1
     P6_POST_RESPONSE_A=""
     if P6_POST_RESPONSE_A="$(curl -fsS --connect-timeout 5 --max-time 20 -b "$JAR_P6" \
         -X POST "$BASE_URL/api/threads/$THREAD_P6_SNAPSHOT/runs" \
         -H 'Content-Type: application/json' -d '{"content":"P6 快照 A"}')"; then
-        P6_POST_IN_FLIGHT=0
+        SNAPSHOT_POST_IN_FLIGHT=0
     else
         fail "第一条快照 run 的提交结果不确定，worker 保持停止并终止后续判据"
         end
         exit 1
     fi
     RUN_P6_SNAPSHOT_A="$(jq -r '.id // empty' <<<"$P6_POST_RESPONSE_A")"
-    [[ -z $RUN_P6_SNAPSHOT_A ]] || P6_SNAPSHOT_RUNS="$RUN_P6_SNAPSHOT_A"
     P6_OLD_INITIAL=""
     if [[ -n $RUN_P6_SNAPSHOT_A ]]; then
         P6_OLD_INITIAL="$(psql_query \
@@ -2351,19 +2377,18 @@ else
             "SELECT COALESCE(agent_config->>'system_prompt', '') FROM runs WHERE id='$RUN_P6_SNAPSHOT_A';" | tr -d '\r\n')"
     fi
 
-    P6_POST_IN_FLIGHT=1
+    SNAPSHOT_POST_IN_FLIGHT=1
     P6_POST_RESPONSE_B=""
     if P6_POST_RESPONSE_B="$(curl -fsS --connect-timeout 5 --max-time 20 -b "$JAR_P6" \
         -X POST "$BASE_URL/api/threads/$THREAD_P6_SNAPSHOT/runs" \
         -H 'Content-Type: application/json' -d '{"content":"P6 快照 B"}')"; then
-        P6_POST_IN_FLIGHT=0
+        SNAPSHOT_POST_IN_FLIGHT=0
     else
         fail "第二条快照 run 的提交结果不确定，worker 保持停止并终止后续判据"
         end
         exit 1
     fi
     RUN_P6_SNAPSHOT_B="$(jq -r '.id // empty' <<<"$P6_POST_RESPONSE_B")"
-    [[ -z $RUN_P6_SNAPSHOT_B ]] || P6_SNAPSHOT_RUNS="${P6_SNAPSHOT_RUNS:+$P6_SNAPSHOT_RUNS }$RUN_P6_SNAPSHOT_B"
     P6_NEW_SNAPSHOT=""
     if [[ -n $RUN_P6_SNAPSHOT_B ]]; then
         P6_NEW_SNAPSHOT="$(psql_query \
@@ -2384,13 +2409,13 @@ else
     # EXIT trap 会再试一次；仍失败则保持 worker 停止，留给人工处理。
     P6_SUBMITTED_BOTH=0
     [[ -n $RUN_P6_SNAPSHOT_A && -n $RUN_P6_SNAPSHOT_B ]] && P6_SUBMITTED_BOTH=1
-    if cancel_p6_snapshot_runs 1; then
+    if cancel_snapshot_runs 1; then
         if (( P6_SUBMITTED_BOTH )); then
             pass "两条 queued run 都已取消，现在才恢复 worker"
         else
             fail "没有成功提交两条 run；已取消实际提交的那些，现在才恢复 worker"
         fi
-        if restore_p6_workers; then
+        if restore_workers; then
             WORKER_TOUCHED=""
         else
             fail "worker 没恢复到 $WORKER_COUNT 个副本，终止后续判据"
@@ -2402,6 +2427,522 @@ else
         end
         exit 1
     fi
+    fi
+fi
+end
+
+
+# ===========================================================================
+# P7：智能体目录、三档可见性与审核（五条免费，一条要 LLM）
+# ===========================================================================
+#
+# **本期唯一会安静失效的缺陷是「多看见了一条」** —— 别组的老师在列表里刷到一个
+# 不该看到的提示词，既不报错也不会有人来报。因此这一组每一条可见性断言都是**双向**的，
+# 且「能不能引用」与「列表里看不看得见」**分开各断一次**：列表过滤对了而提交侧忘了查，
+# 是最典型的漏洞形状。
+#
+# **三个账号必须真的分属不同组**，否则「别组看不见」那一半根本没被触发过 ——
+# 下面回读 `user_groups` 确认这一条，不靠「我建组时是这么写的」。
+
+P7_TAG="$$-$(date +%s%N | tail -c 5)"
+P7_SECRET="zuel-p7-$$"
+P7_READY=0
+P7_SETUP_NOTE="未开始"
+
+# 造一个号并登录。**名字要留得住** —— 加人进组走的是用户名而不是 uuid，
+# `open_session` 只回 id，这里另起一份
+p7_open() {
+    local slot="$1" role="$2" name jar uid
+    name="zuel-p7-$slot-$P7_TAG"
+    jar="$WORK_DIR/cookie-p7-$slot"
+    make_user "$name" "$P7_SECRET" "$role" || return 1
+    login "$name" "$P7_SECRET" "$jar" || return 1
+    uid="$(curl -fsS -b "$jar" "$BASE_URL/api/auth/me" | jq -r '.id // empty')"
+    [[ -n $uid ]] || return 1
+    printf '%s %s %s\n' "$jar" "$uid" "$name"
+}
+
+p7_setup() {
+    read -r JAR_P7_A UID_P7_A NAME_P7_A <<<"$(p7_open a teacher)" || { P7_SETUP_NOTE="造不出作者 A"; return 1; }
+    read -r JAR_P7_B UID_P7_B NAME_P7_B <<<"$(p7_open b teacher)" || { P7_SETUP_NOTE="造不出同组 B"; return 1; }
+    read -r JAR_P7_C UID_P7_C NAME_P7_C <<<"$(p7_open c teacher)" || { P7_SETUP_NOTE="造不出别组 C"; return 1; }
+    read -r JAR_P7_R UID_P7_R NAME_P7_R <<<"$(p7_open r reviewer)" || { P7_SETUP_NOTE="造不出审核员"; return 1; }
+    read -r JAR_P7_ADMIN UID_P7_ADMIN NAME_P7_ADMIN <<<"$(p7_open admin admin)" || { P7_SETUP_NOTE="造不出管理员"; return 1; }
+
+    GROUP_P7_1="$(api "$JAR_P7_ADMIN" -X POST "$BASE_URL/api/admin/groups" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "P7-G1-$P7_TAG" --arg o "$UID_P7_A" '{name:$n,owner_id:$o}')" | jq -r '.id // empty')"
+    GROUP_P7_2="$(api "$JAR_P7_ADMIN" -X POST "$BASE_URL/api/admin/groups" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "P7-G2-$P7_TAG" --arg o "$UID_P7_C" '{name:$n,owner_id:$o}')" | jq -r '.id // empty')"
+    [[ -n $GROUP_P7_1 && -n $GROUP_P7_2 ]] || { P7_SETUP_NOTE="两个课题组没建出来"; return 1; }
+
+    api "$JAR_P7_A" -X POST "$BASE_URL/api/groups/$GROUP_P7_1/members" \
+        -H 'Content-Type: application/json' -d "$(jq -nc --arg n "$NAME_P7_B" '{name:$n}')" >/dev/null || {
+        P7_SETUP_NOTE="B 没加进 G1"; return 1; }
+
+    # **回读 user_groups**：三个人真的分属不同组，这一条不成立的话
+    # 「别组看不见」那一半根本没被触发过，而判据照样会绿
+    local both same
+    both="$(psql_query "SELECT count(*) FROM user_groups
+        WHERE group_id = '$GROUP_P7_1' AND user_id IN ('$UID_P7_A', '$UID_P7_B');" | tr -d '[:space:]')"
+    same="$(psql_query "SELECT count(*) FROM user_groups a JOIN user_groups b USING (group_id)
+        WHERE a.user_id = '$UID_P7_A' AND b.user_id = '$UID_P7_C';" | tr -d '[:space:]')"
+    [[ $both == 2 ]] || { P7_SETUP_NOTE="A 与 B 不在同一个组里（G1 里只有 ${both:-?} 人）"; return 1; }
+    [[ $same == 0 ]] || { P7_SETUP_NOTE="C 与 A 竟然同组，「别组看不见」这一半验不了"; return 1; }
+    P7_SETUP_NOTE="三个账号两个组已就绪"
+    return 0
+}
+
+# 建一个 agent 并发布 v1，标准输出是 agent_id
+p7_new_agent() {
+    local jar="$1" name="$2" prompt="$3" agent_id
+    agent_id="$(api "$jar" -X POST "$BASE_URL/api/agents" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "$name" --arg p "$prompt" \
+            '{name:$n,description:"P7 验收用",subject:"金融学",system_prompt:$p}')" | jq -r '.id // empty')"
+    [[ -n $agent_id ]] || return 1
+    api "$jar" -X POST "$BASE_URL/api/agents/$agent_id/versions" >/dev/null || return 1
+    printf '%s\n' "$agent_id"
+}
+
+# 改内容再发布一版，标准输出是新的版本号
+p7_release_next() {
+    local jar="$1" agent_id="$2" prompt="$3" body
+    api "$jar" -X PUT "$BASE_URL/api/agents/$agent_id/draft" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg p "$prompt" '{system_prompt:$p}')" >/dev/null || return 1
+    body="$(api "$jar" -X POST "$BASE_URL/api/agents/$agent_id/versions")" || return 1
+    jq -r '[.versions[] | select(.status == "released") | .version] | max' <<<"$body"
+}
+
+p7_share() {
+    api "$1" -X PUT "$BASE_URL/api/agents/$2/sharing" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg g "$3" '{visibility:"group",group_ids:[$g]}')" >/dev/null
+}
+
+p7_unshare() {
+    api "$1" -X PUT "$BASE_URL/api/agents/$2/sharing" -H 'Content-Type: application/json' \
+        -d '{"visibility":"private","group_ids":[]}' >/dev/null
+}
+
+# 提审最新已发布的那一版，标准输出是这条审核记录的 id
+p7_submit_review() {
+    local jar="$1" agent_id="$2" body
+    body="$(api "$jar" -X POST "$BASE_URL/api/agents/$agent_id/reviews" -H 'Content-Type: application/json' \
+        -d '{"responsibility_confirmed":true}')" || return 1
+    jq -r 'first(.versions[] | select(.review_status == "pending") | .review_id) // empty' <<<"$body"
+}
+
+# 某个人的「我能引用的」里有没有它
+p7_available_has() {
+    api "$1" "$BASE_URL/api/agents/available" | jq -e --arg id "$2" 'any(.[]; .id == $id)' >/dev/null 2>&1
+}
+
+# 广场上有没有它
+p7_catalog_has() {
+    api "$1" "$BASE_URL/api/agents" | jq -e --arg id "$2" 'any(.[]; .id == $id)' >/dev/null 2>&1
+}
+
+# 广场上展示的是哪一版
+p7_catalog_version() {
+    api "$1" "$BASE_URL/api/agents" | jq -r --arg id "$2" 'first(.[] | select(.id == $id) | .version) // empty'
+}
+
+# 这个会话里现在有几条 run。422 那几条断言全靠它 —— 只看状态码的话，
+# 一个「先落库再校验」的实现照样会绿，而它已经把别人的提示词跑起来了
+p7_run_count() {
+    psql_query "SELECT count(*) FROM runs WHERE thread_id = '$1';" | tr -d '[:space:]'
+}
+
+if p7_setup; then
+    P7_READY=1
+fi
+log "P7 前置：$P7_SETUP_NOTE"
+
+# ------------------------------------------- P7① 组内共享同组看得见、别组看不见
+begin "P7①" "组内共享同组看得见、别组看不见，撤回之后立刻收得回"
+
+if (( ! P7_READY )); then
+    fail "前置没就绪（$P7_SETUP_NOTE），可见性验不了"
+else
+    AGENT_P7_SHARE="$(p7_new_agent "$JAR_P7_A" "P7 共享 $P7_TAG" "每一句都以「喵」开头。")" || AGENT_P7_SHARE=""
+    if [[ -z $AGENT_P7_SHARE ]]; then
+        fail "A 没能建出并发布一个 agent"
+    else
+        p7_share "$JAR_P7_A" "$AGENT_P7_SHARE" "$GROUP_P7_1" || fail "A 没能把它共享给 G1"
+
+        # **双向断言。** 只断 B 看得见是不够的：C 也看得见说明过滤漏了，
+        # 两个都看不见说明共享压根没写进去
+        p7_available_has "$JAR_P7_B" "$AGENT_P7_SHARE" \
+            && pass "同组 B 在「我能引用的」里看得见它" \
+            || fail "同组 B 看不见它 —— 共享没写进去"
+        p7_available_has "$JAR_P7_C" "$AGENT_P7_SHARE" \
+            && fail "别组 C 也看得见它 —— 可见性过滤漏了条件" \
+            || pass "别组 C 看不见它"
+
+        # 越权走 404 不是 403：403 等于确认了「你猜的这个 id 存在」
+        P7_MINE_CODE="$(code "$JAR_P7_C" "$BASE_URL/api/agents/mine/$AGENT_P7_SHARE")"
+        [[ $P7_MINE_CODE == 404 ]] \
+            && pass "别组 C 打 /agents/mine/{id} 得到 404" \
+            || fail "别组 C 打 /agents/mine/{id} 得到 $P7_MINE_CODE，应该是 404"
+
+        # **不止查列表，还要试着用。** 列表过滤对了而提交侧忘了查，
+        # 是最典型的漏洞形状：C 从别处拿到 id 就能引用 A 的提示词
+        THREAD_P7_C="$(new_thread "$JAR_P7_C")"
+        P7_C_SUBMIT="$(code "$JAR_P7_C" -X POST "$BASE_URL/api/threads/$THREAD_P7_C/runs" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg id "$AGENT_P7_SHARE" '{content:"P7 越权引用",agent_config:{agent_id:$id}}')")"
+        P7_C_RUNS="$(p7_run_count "$THREAD_P7_C")"
+        [[ $P7_C_SUBMIT == 422 && $P7_C_RUNS == 0 ]] \
+            && pass "别组 C 拿着 id 提交得到 422，且库里一行 run 都没多出来" \
+            || fail "别组 C 引用别人的 agent：状态码 $P7_C_SUBMIT，库里多出 $P7_C_RUNS 行 run"
+
+        # 撤回之后 B 存着这个引用的会话，下一次提问必须硬失败而不是回退默认
+        THREAD_P7_B="$(new_thread "$JAR_P7_B")"
+        api "$JAR_P7_B" -X PATCH "$BASE_URL/api/threads/$THREAD_P7_B" -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg id "$AGENT_P7_SHARE" '{title:"P7 引用会话",agent_config:{agent_id:$id}}')" \
+            >/dev/null || fail "B 没能把这个引用存进会话默认"
+
+        p7_unshare "$JAR_P7_A" "$AGENT_P7_SHARE" || fail "A 没能把它改回私有"
+
+        p7_available_has "$JAR_P7_B" "$AGENT_P7_SHARE" \
+            && fail "改回私有之后 B 还看得见它 —— 撤回没生效" \
+            || pass "改回私有之后 B 立刻看不见它了"
+
+        P7_B_SUBMIT="$(code "$JAR_P7_B" -X POST "$BASE_URL/api/threads/$THREAD_P7_B/runs" \
+            -H 'Content-Type: application/json' -d '{"content":"P7 撤回后提问"}')"
+        P7_B_RUNS="$(p7_run_count "$THREAD_P7_B")"
+        # **422 不是「回退默认」。** 静默回退跑得完、不报错，唯一的症状是回答变了味 ——
+        # 判据必须把这两者分开，因此同时看状态码与库里有没有多出一行
+        [[ $P7_B_SUBMIT == 422 && $P7_B_RUNS == 0 ]] \
+            && pass "撤回之后 B 的会话提问得到 422，没有静默用默认提示词跑起来" \
+            || fail "撤回之后 B 仍能提交：状态码 $P7_B_SUBMIT，库里多出 $P7_B_RUNS 行 run"
+    fi
+fi
+end
+
+# ------------------------------------------------- P7② 未过审的进不了广场
+begin "P7②" "未过审的进不了广场；拒绝理由回得来；改一版要重审一版"
+
+if (( ! P7_READY )); then
+    fail "前置没就绪（$P7_SETUP_NOTE），审核闸门验不了"
+else
+    AGENT_P7_REVIEW="$(p7_new_agent "$JAR_P7_A" "P7 审核 $P7_TAG" "第一版：每一句都以「喵」开头。")" || AGENT_P7_REVIEW=""
+    if [[ -z $AGENT_P7_REVIEW ]]; then
+        fail "A 没能建出并发布一个待审的 agent"
+    else
+        p7_share "$JAR_P7_A" "$AGENT_P7_REVIEW" "$GROUP_P7_1" || fail "A 没能把待审的这个共享给 G1"
+
+        # 后端也校验责任确认：只靠前端拦的话，直接打接口就绕过了
+        P7_NO_CONFIRM="$(code "$JAR_P7_A" -X POST "$BASE_URL/api/agents/$AGENT_P7_REVIEW/reviews" \
+            -H 'Content-Type: application/json' -d '{"responsibility_confirmed":false}')"
+        [[ $P7_NO_CONFIRM == 422 ]] \
+            && pass "没勾责任确认提审得到 422" \
+            || fail "没勾责任确认竟然提审成功了：$P7_NO_CONFIRM"
+
+        REVIEW_P7_ONE="$(p7_submit_review "$JAR_P7_A" "$AGENT_P7_REVIEW")"
+        [[ -n $REVIEW_P7_ONE ]] || fail "提审没留下一条待审记录"
+
+        p7_catalog_has "$JAR_P7_C" "$AGENT_P7_REVIEW" \
+            && fail "还没审就进了广场" \
+            || pass "提审但没审时，C 在广场上看不到它"
+
+        # 拒绝不填理由要被后端挡下 —— 作者看到的不能是「被拒了，没说为什么」
+        P7_NO_REASON="$(code "$JAR_P7_R" -X POST "$BASE_URL/api/reviews/$REVIEW_P7_ONE" \
+            -H 'Content-Type: application/json' -d '{"approved":false}')"
+        [[ $P7_NO_REASON == 422 ]] \
+            && pass "拒绝不填理由得到 422" \
+            || fail "拒绝不填理由竟然成功了：$P7_NO_REASON"
+
+        P7_REASON="提示词过于宽泛"
+        api "$JAR_P7_R" -X POST "$BASE_URL/api/reviews/$REVIEW_P7_ONE" -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg r "$P7_REASON" '{approved:false,reason:$r}')" >/dev/null \
+            || fail "审核员没能拒绝它"
+
+        p7_catalog_has "$JAR_P7_C" "$AGENT_P7_REVIEW" \
+            && fail "被拒之后仍然在广场上" \
+            || pass "被拒之后 C 在广场上仍然看不到它"
+
+        P7_SEEN_REASON="$(api "$JAR_P7_A" "$BASE_URL/api/agents/mine/$AGENT_P7_REVIEW" |
+            jq -r 'first(.versions[] | select(.review_status == "rejected") | .review_reason) // empty')"
+        [[ $P7_SEEN_REASON == "$P7_REASON" ]] \
+            && pass "作者读得到那句拒绝理由，一字不差" \
+            || fail "作者读到的理由是「${P7_SEEN_REASON:-空}」，应该是「$P7_REASON」"
+
+        # 被拒不影响组内：审核管的是别人能不能看见，不是作者能不能用
+        p7_available_has "$JAR_P7_B" "$AGENT_P7_REVIEW" \
+            && pass "被拒之后同组 B 照常用得到它" \
+            || fail "被拒之后同组 B 也用不了了 —— 审核越权管到了组内"
+
+        P7_V2="$(p7_release_next "$JAR_P7_A" "$AGENT_P7_REVIEW" "第二版：每一句都以「汪」开头。")"
+        REVIEW_P7_TWO="$(p7_submit_review "$JAR_P7_A" "$AGENT_P7_REVIEW")"
+        if [[ -z $REVIEW_P7_TWO ]]; then
+            fail "改后重新提审没留下待审记录"
+        else
+            api "$JAR_P7_R" -X POST "$BASE_URL/api/reviews/$REVIEW_P7_TWO" \
+                -H 'Content-Type: application/json' -d '{"approved":true}' >/dev/null \
+                || fail "审核员没能通过 v$P7_V2"
+            P7_SHOWN="$(p7_catalog_version "$JAR_P7_C" "$AGENT_P7_REVIEW")"
+            [[ $P7_SHOWN == "$P7_V2" ]] \
+                && pass "通过之后 C 在广场上看得见它，展示的是 v$P7_V2" \
+                || fail "广场上展示的是 v${P7_SHOWN:-空}，应该是 v$P7_V2"
+        fi
+
+        # **这一步是这条判据的核心。** 少了它，一个「审一次之后随便改」的实现
+        # 照样全绿 —— 而那等于没有审核
+        P7_V3="$(p7_release_next "$JAR_P7_A" "$AGENT_P7_REVIEW" "第三版：每一句都以「哞」开头。")"
+        p7_submit_review "$JAR_P7_A" "$AGENT_P7_REVIEW" >/dev/null
+        P7_STILL="$(p7_catalog_version "$JAR_P7_C" "$AGENT_P7_REVIEW")"
+        [[ $P7_STILL == "$P7_V2" ]] \
+            && pass "发了 v$P7_V3 但没审，广场上仍是 v$P7_V2 —— 审核拦住了每一次变更" \
+            || fail "没审过的 v$P7_V3 溜进了广场：广场上现在是 v${P7_STILL:-空}"
+    fi
+fi
+end
+
+# ------------------------------------------ P7③ 选与不选同一个 agent，输出不同
+begin "P7③" "选与不选同一个 agent，同一问题的输出可见地不同"
+
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    undone "SKIP_LLM=1，这条要两次便宜的真实分析"
+elif (( ! P7_READY )); then
+    fail "前置没就绪（$P7_SETUP_NOTE），两次真实分析验不了"
+else
+    P7_QUESTION="二加二等于几？请只回答答案，不要调用工具。"
+    AGENT_P7_CAT="$(p7_new_agent "$JAR_P7_A" "P7 喵语老师 $P7_TAG" \
+        "回答任何问题时，正式答复的第一个字符必须是「喵」，在它之前不要输出空格、标点或 Markdown。")" || AGENT_P7_CAT=""
+
+    if [[ -z $AGENT_P7_CAT ]]; then
+        fail "没能建出并发布喵语老师"
+    else
+        # **仍然是两个会话**，不是同一个会话问两次 —— checkpoint 里的历史会污染第二次。
+        # 两边都在提交前填好标题：空标题会另起一次轻量模型调用
+        THREAD_P7_PLAIN="$(new_thread "$JAR_P7_A")"
+        THREAD_P7_AGENT="$(new_thread "$JAR_P7_A")"
+        P7_PLAIN_SET=0
+        P7_AGENT_SET=0
+        api "$JAR_P7_A" -X PATCH "$BASE_URL/api/threads/$THREAD_P7_PLAIN" -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg t "P7 默认 $P7_TAG" '{title:$t}')" >/dev/null 2>&1 && P7_PLAIN_SET=1
+        api "$JAR_P7_A" -X PATCH "$BASE_URL/api/threads/$THREAD_P7_AGENT" -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg t "P7 引用 $P7_TAG" --arg id "$AGENT_P7_CAT" \
+                '{title:$t,agent_config:{agent_id:$id}}')" >/dev/null 2>&1 && P7_AGENT_SET=1
+
+        P7_PLAIN_OK=0
+        P7_AGENT_OK=0
+        P6_QUESTION="$P7_QUESTION"
+        if (( P7_PLAIN_SET )) && p6_analyse "$JAR_P7_A" "$THREAD_P7_PLAIN" p7-plain; then
+            P7_PLAIN_OK=1
+            P7_PLAIN_ANSWER="$P6_LAST_ANSWER"
+            P7_PLAIN_STATUS="$P6_LAST_STATUS"
+        else
+            P7_PLAIN_ANSWER="${P6_LAST_ANSWER:-}"
+            P7_PLAIN_STATUS="${P6_LAST_STATUS:-提交失败}"
+        fi
+        if (( P7_AGENT_SET )) && p6_analyse "$JAR_P7_A" "$THREAD_P7_AGENT" p7-agent; then
+            P7_AGENT_OK=1
+            P7_AGENT_ANSWER="$P6_LAST_ANSWER"
+            P7_AGENT_STATUS="$P6_LAST_STATUS"
+            P7_AGENT_RUN="$P6_LAST_RUN"
+        else
+            P7_AGENT_ANSWER="${P6_LAST_ANSWER:-}"
+            P7_AGENT_STATUS="${P6_LAST_STATUS:-提交失败}"
+            P7_AGENT_RUN="${P6_LAST_RUN:-}"
+        fi
+
+        if (( ! P7_PLAIN_SET || ! P7_AGENT_SET )); then
+            fail "两个会话没都在提交前设好标题与配置"
+        elif (( ! P7_PLAIN_OK || ! P7_AGENT_OK )); then
+            fail "两条 run 没都跑到 succeeded：默认=$P7_PLAIN_STATUS，引用=$P7_AGENT_STATUS"
+        elif [[ $P7_PLAIN_ANSWER == 喵* ]]; then
+            fail "默认会话也以「喵」开头，引用可能串进了全局：$P7_PLAIN_ANSWER"
+        elif [[ $P7_AGENT_ANSWER != 喵* ]]; then
+            fail "引用会话没以「喵」开头，引用没生效：$P7_AGENT_ANSWER"
+        else
+            pass "双向断言成立：不选 agent 不以「喵」开头，选了以「喵」开头"
+        fi
+
+        # **只看输出的话分不清是引用生效了还是模型碰巧这么答的** —— 快照里三样都要有
+        if [[ -n $P7_AGENT_RUN ]]; then
+            P7_SNAPSHOT="$(psql_query "SELECT COALESCE(agent_config->>'agent_id','')
+                || '|' || COALESCE(agent_config->>'agent_version','')
+                || '|' || COALESCE(agent_config->>'system_prompt','')
+                FROM runs WHERE id='$P7_AGENT_RUN';" | tr -d '\r')"
+            P7_WANT_PROMPT="$(api "$JAR_P7_A" "$BASE_URL/api/agents/mine/$AGENT_P7_CAT" |
+                jq -r 'first(.versions[] | select(.status == "released") | .system_prompt) // empty')"
+            [[ $P7_SNAPSHOT == "$AGENT_P7_CAT|1|$P7_WANT_PROMPT" ]] \
+                && pass "快照里 agent_id、agent_version 与那一版的原文都在" \
+                || fail "快照对不上：$P7_SNAPSHOT"
+        else
+            fail "拿不到引用那条 run 的 id，快照验不了"
+        fi
+    fi
+fi
+end
+
+# ------------------------------------------------------- P7④ 版本冻结
+begin "P7④" "版本冻结：作者发了 v2，历史 run 的快照仍是 v1"
+
+if (( ! P7_READY )); then
+    fail "前置没就绪（$P7_SETUP_NOTE），版本冻结验不了"
+else
+    AGENT_P7_FREEZE="$(p7_new_agent "$JAR_P7_A" "P7 冻结 $P7_TAG" "喵：第一版")" || AGENT_P7_FREEZE=""
+    if [[ -z $AGENT_P7_FREEZE ]]; then
+        fail "A 没能建出并发布一个用来冻结的 agent"
+    else
+        THREAD_P7_FREEZE="$(new_thread "$JAR_P7_A")"
+        register_snapshot_thread "$THREAD_P7_FREEZE" "$JAR_P7_A"
+        WORKER_TOUCHED=1
+        P7_STOPPED=""
+        if ! compose stop -t 30 worker >/dev/null 2>&1 \
+            || ! P7_STOPPED="$(worker_ids)" \
+            || [[ -n $P7_STOPPED ]]; then
+            fail "worker 没停干净，不提交本来应该免费的快照 run"
+            if restore_workers; then
+                WORKER_TOUCHED=""
+            else
+                fail "worker 停止失败后也没恢复到 $WORKER_COUNT 个副本，终止后续判据"
+                end
+                exit 1
+            fi
+        else
+            # 提交前把标题填上，免得这条纯查库的判据偷偷起一次标题模型
+            if ! api "$JAR_P7_A" -X PATCH "$BASE_URL/api/threads/$THREAD_P7_FREEZE" \
+                -H 'Content-Type: application/json' \
+                -d "$(jq -nc --arg t "P7 冻结 $P7_TAG" '{title:$t}')" >/dev/null 2>&1; then
+                fail "提交前没能确认标题已保存，不冒险触发标题模型"
+                end
+                exit 1
+            fi
+
+            SNAPSHOT_POST_IN_FLIGHT=1
+            P7_OLD_BODY=""
+            if P7_OLD_BODY="$(curl -fsS --connect-timeout 5 --max-time 20 -b "$JAR_P7_A" \
+                -X POST "$BASE_URL/api/threads/$THREAD_P7_FREEZE/runs" -H 'Content-Type: application/json' \
+                -d "$(jq -nc --arg id "$AGENT_P7_FREEZE" '{content:"P7 冻结 v1",agent_config:{agent_id:$id}}')")"; then
+                SNAPSHOT_POST_IN_FLIGHT=0
+            else
+                fail "第一条冻结 run 的提交结果不确定，worker 保持停止并终止后续判据"
+                end
+                exit 1
+            fi
+            RUN_P7_OLD="$(jq -r '.id // empty' <<<"$P7_OLD_BODY")"
+
+            P7_OLD_BEFORE="$(psql_query "SELECT COALESCE(agent_config->>'agent_version','')
+                || '|' || COALESCE(agent_config->>'system_prompt','')
+                FROM runs WHERE id='$RUN_P7_OLD';" | tr -d '\r')"
+
+            P7_FREEZE_V2="$(p7_release_next "$JAR_P7_A" "$AGENT_P7_FREEZE" "汪：第二版")"
+
+            P7_OLD_AFTER="$(psql_query "SELECT COALESCE(agent_config->>'agent_version','')
+                || '|' || COALESCE(agent_config->>'system_prompt','')
+                FROM runs WHERE id='$RUN_P7_OLD';" | tr -d '\r')"
+
+            SNAPSHOT_POST_IN_FLIGHT=1
+            P7_NEW_BODY=""
+            if P7_NEW_BODY="$(curl -fsS --connect-timeout 5 --max-time 20 -b "$JAR_P7_A" \
+                -X POST "$BASE_URL/api/threads/$THREAD_P7_FREEZE/runs" -H 'Content-Type: application/json' \
+                -d "$(jq -nc --arg id "$AGENT_P7_FREEZE" '{content:"P7 冻结 v2",agent_config:{agent_id:$id}}')")"; then
+                SNAPSHOT_POST_IN_FLIGHT=0
+            else
+                fail "第二条冻结 run 的提交结果不确定，worker 保持停止并终止后续判据"
+                end
+                exit 1
+            fi
+            RUN_P7_NEW="$(jq -r '.id // empty' <<<"$P7_NEW_BODY")"
+            P7_NEW_SNAPSHOT="$(psql_query "SELECT COALESCE(agent_config->>'agent_version','')
+                || '|' || COALESCE(agent_config->>'system_prompt','')
+                FROM runs WHERE id='$RUN_P7_NEW';" | tr -d '\r')"
+
+            [[ -n $RUN_P7_OLD && $P7_OLD_BEFORE == "1|喵：第一版" ]] \
+                && pass "第一条 run 在 queued 时已冻结 v1 与它的原文" \
+                || fail "第一条 run 的快照不是 v1：run=${RUN_P7_OLD:-空} snapshot=$P7_OLD_BEFORE"
+            [[ $P7_FREEZE_V2 == 2 ]] \
+                && pass "作者发布了 v2" \
+                || fail "第二版没发出来：版本号是 ${P7_FREEZE_V2:-空}"
+            [[ $P7_OLD_AFTER == "1|喵：第一版" ]] \
+                && pass "发了 v2 之后，历史 run 的快照仍是 v1 的原文" \
+                || fail "发新版本污染了历史 run：$P7_OLD_AFTER"
+            [[ -n $RUN_P7_NEW && $P7_NEW_SNAPSHOT == "2|汪：第二版" ]] \
+                && pass "之后新提交的 run 冻结的是 v2" \
+                || fail "新 run 没冻结 v2：run=${RUN_P7_NEW:-空} snapshot=$P7_NEW_SNAPSHOT"
+
+            # 这是安全边界，不只是验收的一个 pass：取消失败就不得恢复 worker
+            if cancel_snapshot_runs 1; then
+                pass "两条 queued run 都已取消，现在才恢复 worker"
+                if restore_workers; then
+                    WORKER_TOUCHED=""
+                else
+                    fail "worker 没恢复到 $WORKER_COUNT 个副本，终止后续判据"
+                    end
+                    exit 1
+                fi
+            else
+                fail "两条 queued run 没能全部取消，worker 保持停止"
+                end
+                exit 1
+            fi
+        fi
+    fi
+fi
+end
+
+# ---------------------------------------------------- P7⑤ reviewer 的边界
+begin "P7⑤" "reviewer 的边界：审得了，建不了号"
+
+if (( ! P7_READY )); then
+    fail "前置没就绪（$P7_SETUP_NOTE），角色边界验不了"
+else
+    # **这里给 403 而不是 404**：管理端点存不存在本来就写在 /docs 上，
+    # 「你的角色不够」不泄露任何东西
+    P7_R_QUEUE="$(code "$JAR_P7_R" "$BASE_URL/api/reviews")"
+    P7_R_CREATE="$(code "$JAR_P7_R" -X POST "$BASE_URL/api/admin/users" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "p7-越权-$P7_TAG" '{name:$n,password:"口令-p7-test",role:"teacher"}')")"
+    P7_R_PATCH="$(code "$JAR_P7_R" -X PATCH "$BASE_URL/api/admin/users/$UID_P7_B" \
+        -H 'Content-Type: application/json' -d '{"is_active":false}')"
+    P7_T_QUEUE="$(code "$JAR_P7_A" "$BASE_URL/api/reviews")"
+    P7_ADMIN_QUEUE="$(code "$JAR_P7_ADMIN" "$BASE_URL/api/reviews")"
+
+    [[ $P7_R_QUEUE == 200 ]] && pass "reviewer 打得开审核队列" || fail "reviewer 打审核队列得到 $P7_R_QUEUE"
+    [[ $P7_R_CREATE == 403 ]] && pass "reviewer 建不了账号（403）" || fail "reviewer 建账号得到 $P7_R_CREATE，应该是 403"
+    [[ $P7_R_PATCH == 403 ]] && pass "reviewer 改不了账号（403）" || fail "reviewer 改账号得到 $P7_R_PATCH，应该是 403"
+    [[ $P7_T_QUEUE == 403 ]] && pass "普通教师打不开审核队列（403）" || fail "教师打审核队列得到 $P7_T_QUEUE，应该是 403"
+    [[ $P7_ADMIN_QUEUE == 200 ]] && pass "admin 同时满足 reviewer" || fail "admin 打审核队列得到 $P7_ADMIN_QUEUE"
+
+    # 建号那一下若真的成功了，库里就多了一个越权造出来的账号 —— 顺手核一下
+    P7_LEAKED="$(psql_query "SELECT count(*) FROM users WHERE name = 'p7-越权-$P7_TAG';" | tr -d '[:space:]')"
+    [[ $P7_LEAKED == 0 ]] && pass "库里没有越权造出来的账号" || fail "库里多出了 $P7_LEAKED 个越权造出来的账号"
+fi
+end
+
+# ------------------------------------------------- P7⑥ 浏览器里走一遍可见性
+begin "P7⑥" "浏览器里把可见性主链路走完（playwright）"
+
+# **不进 `make all`。** 那是纯本地门禁，跑它不需要任何服务起着；而这条要六个服务、
+# 真账号、真库。塞进去等于让每一次 git push 都依赖一整套 compose 栈。
+# 缺浏览器二进制时记「未验」，与沙箱镜像缺失同一套规矩
+if (( ! P7_READY )); then
+    fail "前置没就绪（$P7_SETUP_NOTE），浏览器链路验不了"
+elif ! command -v pnpm >/dev/null 2>&1; then
+    undone "没有 pnpm，跑不了 playwright"
+elif [[ ! -d $REPO_ROOT/web/node_modules/@playwright ]]; then
+    undone "web/ 没装 @playwright/test：cd web && pnpm install"
+elif ! (cd "$REPO_ROOT/web" && pnpm exec playwright install --dry-run chromium >/dev/null 2>&1); then
+    undone "查不到 chromium 二进制：cd web && pnpm exec playwright install chromium"
+else
+    P7_E2E_LOG="$WORK_DIR/p7-e2e.log"
+    if (cd "$REPO_ROOT/web" && \
+        E2E_BASE_URL="$BASE_URL" \
+        E2E_PASSWORD="$P7_SECRET" \
+        E2E_AUTHOR="$NAME_P7_A" \
+        E2E_TEAMMATE="$NAME_P7_B" \
+        E2E_OUTSIDER="$NAME_P7_C" \
+        E2E_REVIEWER="$NAME_P7_R" \
+        E2E_GROUP="P7-G1-$P7_TAG" \
+        E2E_TAG="$P7_TAG" \
+        pnpm exec playwright test >"$P7_E2E_LOG" 2>&1); then
+        pass "三个账号在浏览器里走完了建、发布、共享、审核、上广场这条链路"
+    else
+        fail "playwright 未全过，详见 $P7_E2E_LOG"
+        tail -30 "$P7_E2E_LOG" >&2 || true
     fi
 fi
 end

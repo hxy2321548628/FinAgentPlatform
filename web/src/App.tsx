@@ -11,7 +11,7 @@ import { Login } from './pages/Login'
 import { AuthGuard } from './auth/AuthGuard'
 import { WorkspaceLayout } from './workspace/WorkspaceLayout'
 import { WorkspaceRouter } from './workspace/WorkspaceRouter'
-import { AdminGuard } from './workspace/pages/admin/AdminGuard'
+import { AdminGuard, ReviewerGuard } from './workspace/pages/admin/AdminGuard'
 import { AdminLayout } from './workspace/pages/admin/AdminLayout'
 import { AdminUsers } from './workspace/pages/admin/AdminUsers'
 import { AdminAgents } from './workspace/pages/admin/AdminAgents'
@@ -25,11 +25,18 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        {/* **审核与管理是两道准入。** `reviewer` 只进得来 /admin/agents 一页，
+            账号与配额那几页仍然只有 admin 打得开 —— 让它顺手多拿一样，
+            这个角色就退化成 admin 的别名 */}
+        <Route element={<ReviewerGuard />}>
+          <Route path="/admin" element={<AdminLayout />}>
+            <Route path="agents" element={<AdminAgents />} />
+          </Route>
+        </Route>
         <Route element={<AdminGuard />}>
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<AdminUsers />} />
             <Route path="users" element={<AdminUsers />} />
-            <Route path="agents" element={<AdminAgents />} />
             <Route path="scenarios" element={<AdminScenarios />} />
             <Route path="skills" element={<AdminSkills />} />
             <Route path="mcp" element={<AdminMcp />} />

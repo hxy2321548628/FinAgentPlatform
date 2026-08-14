@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { approveRun, cancelRun, getRun, listRuns, runKeys, submitRun } from '../../api/runs'
 import { getThread, threadKeys } from '../../api/threads'
@@ -8,6 +8,7 @@ import { errorMessage } from '../../api/request'
 import type { AgentConfig, Decision, RunHistory, RunStatus } from '../../api/types'
 import { useRunEvents } from '../../hooks/useRunEvents'
 import { describeAgentConfig } from '../config'
+import { takeHandedOffAgent } from '../pickedAgent'
 import { ThreadSidebar } from '../components/ThreadSidebar'
 import { MessageList } from '../components/MessageList'
 import { ChatInput } from '../components/ChatInput'
@@ -48,7 +49,14 @@ function RunTurn({ run, threadId, autoReplay, onContentChange }: { run: RunHisto
       await queryClient.invalidateQueries({ queryKey: runKeys.all })
     },
   })
+  // **引用要说清是谁的哪一版**：只说「使用了一个智能体」的话，作者发了新版本之后，
+  // 历史那几轮到底按哪一版跑的就再也说不清了
   const configuration = describeAgentConfig(run.agent_config)
+  const configurationLabel = run.agent_config?.agent_id
+    ? configuration
+    : configuration === '平台默认配置'
+      ? configuration
+      : '自定义提示词'
 
   useLayoutEffect(() => {
     onContentChange()
@@ -63,7 +71,7 @@ function RunTurn({ run, threadId, autoReplay, onContentChange }: { run: RunHisto
       <div style={{ maxWidth: 620 }}>
         <div style={{ padding: '11px 15px', borderRadius: '12px 12px 2px 12px', background: 'var(--brand)', color: '#fff', fontSize: 14, lineHeight: 1.65 }}>{run.content ?? '（这条历史提问未保留原文）'}</div>
         <details style={{ marginTop: 5, textAlign: 'right', color: 'var(--text-muted)', fontSize: 11 }}>
-          <summary style={{ cursor: 'pointer' }}>本轮配置：{configuration === '平台默认配置' ? configuration : '自定义提示词'}</summary>
+          <summary style={{ cursor: 'pointer' }}>本轮配置：{configurationLabel}</summary>
           <div style={{ marginTop: 5, padding: 8, maxWidth: 500, whiteSpace: 'pre-wrap', textAlign: 'left', border: '1px solid var(--border)', borderRadius: 5, background: 'var(--surface)' }}>{configuration}</div>
         </details>
       </div>
@@ -81,6 +89,9 @@ function RunTurn({ run, threadId, autoReplay, onContentChange }: { run: RunHisto
 
 export function Chat() {
   const { threadId } = useParams()
+  // 广场「用它开始分析」交接过来的那个 agent，配置面板据此预设成引用它。
+  // **要等有会话了才取**：从广场跳过来时多半还没有会话，那时取走就白丢了
+  const [pickedAgentId, setPickedAgentId] = useState<string | undefined>(undefined)
   const queryClient = useQueryClient()
   const [panelVisible, setPanelVisible] = useState(true)
   const scrollRegion = useRef<HTMLDivElement>(null)
@@ -101,6 +112,12 @@ export function Chat() {
   const chronological = (runs.data?.pages.flatMap(page => page.items) ?? []).toReversed()
   const latestLive = chronological.findLast(run => LIVE_STATUS.includes(run.status))
   const autoReplayRun = latestLive ?? chronological.at(-1)
+
+  useEffect(() => {
+    if (!threadId) return
+    const handed = takeHandedOffAgent()
+    if (handed) setPickedAgentId(handed)
+  }, [threadId])
 
   const scrollToLatest = useCallback((force = false) => {
     const element = scrollRegion.current
@@ -159,7 +176,7 @@ export function Chat() {
         {chronological.map(run => <RunTurn key={run.id} run={run} threadId={threadId ?? ''} autoReplay={run.id === autoReplayRun?.id} onContentChange={scrollToLatest} />)}
         {submit.isError && <div role="alert" style={{ padding: '8px 0', color: '#DC2626', fontSize: 12 }}>{errorMessage(submit.error)}</div>}
       </div>
-      <ChatInput disabled={!threadId || submit.isPending} isRunning={Boolean(latestLive)} threadAgentConfig={thread.data?.agent_config} onSend={async (text, agentConfig) => { await submit.mutateAsync({ text, agentConfig }) }} onStop={() => latestLive && cancel.mutate(latestLive.id)} />
+      <ChatInput key={pickedAgentId ?? 'default'} disabled={!threadId || submit.isPending} isRunning={Boolean(latestLive)} threadAgentConfig={thread.data?.agent_config} initialAgentId={pickedAgentId} onSend={async (text, agentConfig) => { await submit.mutateAsync({ text, agentConfig }) }} onStop={() => latestLive && cancel.mutate(latestLive.id)} />
     </div>
     {panelVisible && threadId && <aside style={{ width: 380, flexShrink: 0, borderLeft: '1px solid var(--border)', overflow: 'hidden' }}><WorkspaceFiles threadId={threadId} title={thread.data?.title || '新分析'} compact /></aside>}
   </div>

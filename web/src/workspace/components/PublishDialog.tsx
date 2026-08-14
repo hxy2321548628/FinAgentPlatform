@@ -35,7 +35,7 @@ export function PublishDialog({ kindLabel, initialName, initialDescription, exis
         <div style={headerStyle}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>发布{kindLabel}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>公开名称需全库唯一，提交后进入审核，不会离开当前页面。</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>公开名称在你名下不能重名，提交后进入审核，不会离开当前页面。</div>
           </div>
           <button type="button" onClick={onClose} aria-label="关闭" style={closeStyle}>×</button>
         </div>

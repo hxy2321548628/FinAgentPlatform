@@ -1,213 +1,117 @@
-import { useState, useEffect } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
-import { PublishDialog } from '../components/PublishDialog'
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
+import {
+  agentKeys,
+  deleteAgent,
+  listMine,
+  releaseVersion,
+  setSharing,
+  submitForReview,
+} from '../../api/agents'
+import { groupKeys, listMyGroups } from '../../api/groups'
+import { errorMessage } from '../../api/request'
+import type { MyAgent } from '../../api/types'
+import { AGENT_TABS, AGENT_TAB_EMPTY, AGENT_TAB_LABEL, agentState, visibilityBadges, type AgentTab } from '../agent'
 
-// 状态：已创建（含部署中过渡）→ 待审核（申请发布广场）→ 已发布
-// deploying 不再作为独立状态，用 isDeploying 标记区分
-type AgentStatus = 'created' | 'reviewing' | 'published'
-type AgentType = 'prompt' | 'deployed'
-
-interface MyAgent {
-  id: string
-  name: string
-  description?: string
-  subject: string
-  type: AgentType
-  status: AgentStatus
-  isDeploying?: boolean
-  rejectedReason?: string     // 有值表示被拒绝，内容为拒绝理由
-  calls?: number
-  publishedAt?: string
-  submittedAt?: string
-}
-
-const STATUS_LABEL: Record<AgentStatus, string> = {
-  created:   '已创建',
-  reviewing: '待审核',
-  published: '已发布',
-}
-const STATUS_STYLE: Record<AgentStatus, { bg: string; color: string }> = {
-  created:   { bg: '#EFF6FF', color: '#2563EB' },
-  reviewing: { bg: '#FFFBEB', color: 'var(--status-warn)' },
-  published: { bg: '#ECFDF5', color: 'var(--status-done)' },
-}
-
-const MOCK_MY_AGENTS: MyAgent[] = [
-  // 已发布
-  { id: '1', name: '企业财务异常检测',  subject: '金融学', type: 'prompt',   status: 'published', calls: 96, publishedAt: '2026-07-20' },
-  { id: '2', name: '计量方法鉴别器',    subject: '经济学', type: 'prompt',   status: 'published', calls: 41, publishedAt: '2026-08-01' },
-  // 待审核（正常等待中）
-  { id: '3', name: '创新点对比分析',    subject: '金融学', type: 'prompt',   status: 'reviewing', submittedAt: '2026-08-09 14:22' },
-  // 待审核（独立部署）
-  { id: '4', name: '财报实时爬取 Agent', subject: '会计学', type: 'deployed', status: 'reviewing', submittedAt: '2026-08-09 16:05' },
-  // 待审核（审核被拒绝，显示拒绝理由，可修改后重新提交）
-  { id: '8', name: '宏观政策解读助手', subject: '经济学', type: 'prompt',   status: 'reviewing', submittedAt: '2026-08-07 10:30', rejectedReason: '系统提示词过于宽泛，未明确分析步骤与输出格式，建议细化分析逻辑后重新提交。' },
-  // 已创建（普通 Prompt）
-  { id: '5', name: '股价动量因子筛选',  subject: '金融学', type: 'prompt',   status: 'created' },
-  // 已创建（独立部署，部署中）
-  { id: '6', name: '财报 OCR 解析',    subject: '会计学', type: 'deployed', status: 'created', isDeploying: true },
-  // 已创建（独立部署，已完成）
-  { id: '7', name: '舆情监控 Agent',   subject: '金融学', type: 'deployed', status: 'created', isDeploying: false },
-]
-
-const TABS: AgentStatus[] = ['created', 'reviewing', 'published']
-
+/**
+ * 「我的智能体」：三个页签、拒绝理由、发布、共享、提审。
+ *
+ * **软删掉的不在这里显示。** 行还留在库里（run 快照指着它），但作者已经删过一次，
+ * 再列出来只会让「我删掉的东西怎么还在」变成一通电话。
+ */
 export function MyAgents() {
   const navigate = useNavigate()
-  const location = useLocation()
-  const [activeTab, setActiveTab] = useState<AgentStatus>('created')
-  const [agents, setAgents] = useState(MOCK_MY_AGENTS)
-  const [toast, setToast] = useState<string | null>((location.state as { toast?: string })?.toast ?? null)
-  const [publishingId, setPublishingId] = useState<string | null>(null)
+  const queryClient = useQueryClient()
+  const [tab, setTab] = useState<AgentTab>('published')
+  const [sharingId, setSharingId] = useState<string | null>(null)
+  const [reviewingId, setReviewingId] = useState<string | null>(null)
 
-  // toast 3 秒后自动消失
-  useEffect(() => {
-    if (!toast) return
-    const t = setTimeout(() => setToast(null), 3000)
-    return () => clearTimeout(t)
-  }, [toast])
+  const mine = useQuery({ queryKey: agentKeys.mine(), queryFn: listMine })
+  const agents = (mine.data ?? []).filter(one => !one.is_deleted)
+  const refresh = () => queryClient.invalidateQueries({ queryKey: agentKeys.all })
 
-  const filtered = agents.filter(a => a.status === activeTab)
+  const release = useMutation({ mutationFn: releaseVersion, onSuccess: refresh })
+  const remove = useMutation({ mutationFn: deleteAgent, onSuccess: refresh })
 
-  const handleOffline = (id: string) =>
-    setAgents(prev => prev.map(a => a.id === id ? { ...a, status: 'created' as AgentStatus } : a))
-
-  const submitForReview = (id: string, name: string, description: string) => {
-    setAgents(current => current.map(agent => agent.id === id ? { ...agent, name, description, status: 'reviewing', submittedAt: '刚刚', rejectedReason: undefined } : agent))
-    setPublishingId(null)
-    setActiveTab('reviewing')
-  }
-
-
-  const emptyText: Record<AgentStatus, string> = {
-    created:   '还没有已创建的智能体',
-    reviewing: '没有待审核的智能体',
-    published: '还没有发布到广场的智能体',
-  }
+  const counted = (which: AgentTab) => agents.filter(one => agentState(one).tab === which).length
+  const shown = agents.filter(one => agentState(one).tab === tab)
+  const sharingAgent = agents.find(one => one.id === sharingId) ?? null
+  const reviewingAgent = agents.find(one => one.id === reviewingId) ?? null
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '32px 36px', background: 'var(--bg)' }}>
-      {/* 页头 */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28 }}>
         <div>
-          <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }}>// MY AGENTS</div>
+          <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }}>// MY AGENTS</div>
           <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>我的智能体</h1>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>管理你创建的分析智能体，并申请发布到智能体广场</p>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>发布一版之后组内才看得见；进广场要审核通过</p>
         </div>
-        <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
-          <button
-            onClick={() => navigate('/workspace/my-agents/create')}
-            style={{ padding: '9px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-          >
-            + 创建智能体
-          </button>
-        </div>
+        <button onClick={() => navigate('/workspace/my-agents/create')} style={primaryButton}>+ 创建智能体</button>
       </div>
 
-      {/* Toast 提示 */}
-      {toast && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 10,
-          background: '#ECFDF5', border: '1px solid #A7F3D0',
-          borderRadius: 8, padding: '10px 16px', marginBottom: 20,
-          fontSize: 13, color: '#065F46',
-          animation: 'card-enter 0.3s ease-out',
-        }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-          {toast}
-        </div>
-      )}
+      {mine.isPending && <div style={{ color: 'var(--text-muted)' }}>正在加载…</div>}
+      {mine.isError && <div role="alert" style={{ color: '#DC2626' }}>{errorMessage(mine.error)}</div>}
 
-      {/* Tab */}
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
-        {TABS.map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)} style={{
-            padding: '10px 20px', fontSize: 13, fontWeight: 500,
-            background: 'none', border: 'none',
-            borderBottom: activeTab === tab ? '2px solid var(--action)' : '2px solid transparent',
-            marginBottom: -1, cursor: 'pointer', fontFamily: 'inherit',
-            color: activeTab === tab ? 'var(--action)' : 'var(--text-muted)',
-            transition: 'color 0.15s',
+        {AGENT_TABS.map(one => (
+          <button key={one} onClick={() => setTab(one)} style={{
+            padding: '10px 20px', fontSize: 13, fontWeight: 500, background: 'none', border: 'none',
+            borderBottom: tab === one ? '2px solid var(--action)' : '2px solid transparent', marginBottom: -1,
+            cursor: 'pointer', fontFamily: 'inherit', color: tab === one ? 'var(--action)' : 'var(--text-muted)',
           }}>
-            {STATUS_LABEL[tab]}
-            <span style={{ marginLeft: 6, fontSize: 11, background: 'var(--bg)', padding: '1px 6px', borderRadius: 10, color: 'var(--text-muted)' }}>
-              {agents.filter(a => a.status === tab).length}
-            </span>
+            {AGENT_TAB_LABEL[one]}
+            <span style={{ marginLeft: 6, fontSize: 11, background: 'var(--bg)', padding: '1px 6px', borderRadius: 10, color: 'var(--text-muted)' }}>{counted(one)}</span>
           </button>
         ))}
       </div>
 
-      {/* 列表 */}
-      {filtered.length === 0 ? (
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '48px 20px', textAlign: 'center' as const }}>
-          <div style={{ marginBottom: 12, color: 'var(--action)' }}>
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          </div>
-          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }}>{emptyText[activeTab]}</div>
-          {activeTab !== 'reviewing' && (            <button onClick={() => navigate('/workspace/my-agents/create')} style={{ marginTop: 8, padding: '8px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>+ 创建智能体</button>
-          )}
+      {(release.isError || remove.isError) && (
+        <div role="alert" style={{ marginBottom: 16, color: '#DC2626', fontSize: 13 }}>{errorMessage(release.error ?? remove.error)}</div>
+      )}
+
+      {!mine.isPending && shown.length === 0 ? (
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '48px 20px', textAlign: 'center' }}>
+          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }}>{AGENT_TAB_EMPTY[tab]}</div>
+          <button onClick={() => navigate('/workspace/my-agents/create')} style={{ ...primaryButton, marginTop: 8 }}>+ 创建智能体</button>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
-          {filtered.map(agent => {
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {shown.map(agent => {
+            const state = agentState(agent)
             return (
-              <div key={agent.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+              <div key={agent.id} data-testid="my-agent-row" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' as const }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{agent.name}</span>
-                    {agent.type === 'deployed' && (
-                      <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE' }}>独立部署</span>
-                    )}
-                    {agent.isDeploying && (
-                      <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                        部署中
-                      </span>
-                    )}
-                    {agent.rejectedReason && (
-                      <span style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA' }}>已拒绝</span>
-                    )}
-                    <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: STATUS_STYLE[agent.status].bg, color: STATUS_STYLE[agent.status].color }}>{STATUS_LABEL[agent.status]}</span>
-                    {agent.calls !== undefined && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{agent.calls} 次调用</span>}
+                    {visibilityBadges(agent).map(badge => (
+                      <span key={badge} style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: 'var(--action-light)', color: 'var(--action)', border: '1px solid var(--action-border)' }}>{badge}</span>
+                    ))}
+                    {state.reviewStatus === 'pending' && <span style={badgeStyle('#FFFBEB', 'var(--status-warn)', '#FDE68A')}>待审核</span>}
+                    {state.reviewStatus === 'rejected' && <span style={badgeStyle('#FEF2F2', '#DC2626', '#FECACA')}>已拒绝</span>}
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{agent.call_count} 次调用</span>
                   </div>
-                  {/* 拒绝理由（待审核 Tab 里展示）*/}
-                  {agent.rejectedReason && (
-                    <div style={{ fontSize: 12, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '7px 12px', marginTop: 4 }}>
-                      <span style={{ fontWeight: 600 }}>审核未通过：</span>{agent.rejectedReason}
+                  {state.rejectedReason && (
+                    <div role="alert" style={{ fontSize: 12, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '7px 12px', margin: '4px 0' }}>
+                      <span style={{ fontWeight: 600 }}>审核未通过：</span>{state.rejectedReason}
                     </div>
                   )}
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                    {agent.subject}
-                    {agent.publishedAt && ` · ${agent.publishedAt} 发布`}
-                    {agent.submittedAt && ` · ${agent.submittedAt} 提交审核`}
+                    {agent.subject || '未分类'}
+                    {state.released ? ` · 已发布 v${state.released.version}` : ' · 还没发布过版本'}
+                    {state.draft ? ` · 草稿 v${state.draft.version} 未发布` : ''}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                  {agent.status === 'created' && !agent.isDeploying && (
-                    <>
-                      <button
-                        onClick={() => navigate('/workspace/chat', { state: { agentId: agent.id, agentName: agent.name, agentAuthor: agent.subject, agentDataNeeded: '' } })}
-                        style={{ padding: '6px 14px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                      >直接对话</button>
-                      <button onClick={() => navigate('/workspace/my-agents/create')} style={{ padding: '6px 14px', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>编辑</button>
-                      <button onClick={() => setPublishingId(agent.id)} style={{ padding: '6px 14px', background: 'transparent', color: 'var(--action)', border: '1px solid var(--action-border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>发布到广场</button>
-                    </>
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <button onClick={() => navigate(`/workspace/my-agents/${agent.id}/edit`)} style={ghostButton}>编辑</button>
+                  {state.draft && <button onClick={() => release.mutate(agent.id)} disabled={release.isPending} style={outlineButton}>发布 v{state.draft.version}</button>}
+                  {state.released && <button onClick={() => setSharingId(agent.id)} style={outlineButton}>共享设置</button>}
+                  {state.released && state.reviewStatus !== 'pending' && (
+                    <button onClick={() => setReviewingId(agent.id)} style={outlineButton}>
+                      {state.reviewStatus === 'rejected' ? '改后重新提审' : '提交审核'}
+                    </button>
                   )}
-                  {agent.status === 'created' && agent.isDeploying && (
-                    <span style={{ fontSize: 12, color: '#7C3AED', padding: '6px 0' }}>等待后台部署完成</span>
-                  )}
-                  {agent.status === 'published' && (
-                    <>
-                      <button onClick={() => navigate('/workspace/my-agents/create')} style={{ padding: '6px 14px', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>编辑</button>
-                      <button onClick={() => handleOffline(agent.id)} style={{ padding: '6px 14px', background: 'transparent', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>下线</button>
-                    </>
-                  )}
-                  {agent.status === 'reviewing' && !agent.rejectedReason && (
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>等待审核</span>
-                  )}
-                  {agent.status === 'reviewing' && agent.rejectedReason && (
-                    <button onClick={() => navigate('/workspace/my-agents/create')} style={{ padding: '6px 14px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>修改后重新提交</button>
-                  )}
+                  <button onClick={() => remove.mutate(agent.id)} style={{ ...ghostButton, color: '#DC2626', borderColor: '#FECACA' }}>删除</button>
                 </div>
               </div>
             )
@@ -215,11 +119,123 @@ export function MyAgents() {
         </div>
       )}
 
-      {publishingId && (() => {
-        const agent = agents.find(item => item.id === publishingId)
-        return agent ? <PublishDialog kindLabel="智能体" initialName={agent.name} initialDescription={agent.description ?? `${agent.name}，面向${agent.subject}分析任务提供专业辅助。`} existingNames={[...agents.filter(item => item.status === 'published').map(item => item.name), '公告语义分析', '申请书结构解析', '创新点分析']} onClose={() => setPublishingId(null)} onSubmit={(name, description) => submitForReview(agent.id, name, description)} /> : null
-      })()}
-
+      {sharingAgent && <SharingDialog agent={sharingAgent} onClose={() => setSharingId(null)} onDone={() => { setSharingId(null); void refresh() }} />}
+      {reviewingAgent && <ReviewDialog agent={reviewingAgent} onClose={() => setReviewingId(null)} onDone={() => { setReviewingId(null); setTab('reviewing'); void refresh() }} />}
     </div>
   )
+}
+
+/**
+ * 共享设置：可见性那一档 + 共享给哪些组。
+ *
+ * **只列出自己在里面的组** —— 后端也校验，填别人的组一律 422。前端这一层的职责
+ * 是让那种请求根本发不出去。
+ */
+function SharingDialog({ agent, onClose, onDone }: { agent: MyAgent; onClose: () => void; onDone: () => void }) {
+  const groups = useQuery({ queryKey: groupKeys.mine(), queryFn: listMyGroups })
+  const [selected, setSelected] = useState<string[]>(agent.group_ids)
+  const [shared, setShared] = useState(agent.visibility === 'group')
+  const save = useMutation({
+    mutationFn: () => setSharing(agent.id, shared ? 'group' : 'private', shared ? selected : []),
+    onSuccess: onDone,
+  })
+
+  return (
+    <Dialog title={`共享「${agent.name}」`} onClose={onClose}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 14 }}>
+        <input type="checkbox" checked={shared} onChange={event => setShared(event.target.checked)} />
+        共享给我的课题组
+      </label>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 14 }}>
+        取消勾选即改回私有，组员下一次刷新就看不到它了；他们会话里存着的引用会在下次提问时报错，而不是悄悄换成默认提示词。
+      </p>
+      {groups.isPending && <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>正在加载课题组…</div>}
+      {groups.isError && <div role="alert" style={{ color: '#DC2626', fontSize: 13 }}>{errorMessage(groups.error)}</div>}
+      {(groups.data ?? []).length === 0 && !groups.isPending && (
+        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>你还不属于任何课题组，先加入一个才能共享。</div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+        {(groups.data ?? []).map(group => (
+          <label key={group.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, opacity: shared ? 1 : 0.5 }}>
+            <input
+              type="checkbox"
+              disabled={!shared}
+              checked={selected.includes(group.id)}
+              onChange={event => setSelected(current => event.target.checked ? [...current, group.id] : current.filter(one => one !== group.id))}
+            />
+            {group.name}
+          </label>
+        ))}
+      </div>
+      {save.isError && <div role="alert" style={{ color: '#DC2626', fontSize: 13, marginBottom: 10 }}>{errorMessage(save.error)}</div>}
+      <DialogActions onClose={onClose} onSubmit={() => save.mutate()} pending={save.isPending} label="保存共享设置" />
+    </Dialog>
+  )
+}
+
+/** 提审：**责任确认没勾就发不出去**，后端也拦一道。 */
+function ReviewDialog({ agent, onClose, onDone }: { agent: MyAgent; onClose: () => void; onDone: () => void }) {
+  const [confirmed, setConfirmed] = useState(false)
+  const state = agentState(agent)
+  const submit = useMutation({ mutationFn: () => submitForReview(agent.id, confirmed), onSuccess: onDone })
+
+  return (
+    <Dialog title={`提交「${agent.name}」审核`} onClose={onClose}>
+      <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: 14 }}>
+        提交的是当前已发布的 <strong>v{state.released?.version}</strong>。审核通过之后这一版出现在广场上；
+        之后每改一版都要重新提审 —— 没审过的新版本不会自动上广场。
+      </p>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 14 }}>
+        被拒不影响组内使用：审核管的是别人能不能看见，不是你能不能用。
+      </p>
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13, lineHeight: 1.6, marginBottom: 16 }}>
+        <input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} style={{ marginTop: 3 }} />
+        我确认这段提示词的内容合规，并对它产生的分析结果负责。
+      </label>
+      {submit.isError && <div role="alert" style={{ color: '#DC2626', fontSize: 13, marginBottom: 10 }}>{errorMessage(submit.error)}</div>}
+      <DialogActions onClose={onClose} onSubmit={() => submit.mutate()} pending={submit.isPending} disabled={!confirmed} label="提交审核" />
+    </Dialog>
+  )
+}
+
+function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.35)', zIndex: 200 }} />
+      <div role="dialog" aria-label={title} style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 460, maxWidth: '92vw', background: 'var(--surface)', borderRadius: 12, zIndex: 201, boxShadow: '0 12px 40px rgba(11,46,92,0.2)' }}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>{title}</div>
+        <div style={{ padding: '18px 22px' }}>{children}</div>
+      </div>
+    </>
+  )
+}
+
+function DialogActions({ onClose, onSubmit, pending, disabled = false, label }: { onClose: () => void; onSubmit: () => void; pending: boolean; disabled?: boolean; label: string }) {
+  return (
+    <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+      <button type="button" onClick={onClose} style={ghostButton}>取消</button>
+      <button type="button" onClick={onSubmit} disabled={pending || disabled} style={{ ...primaryButton, opacity: pending || disabled ? 0.5 : 1, cursor: pending || disabled ? 'default' : 'pointer' }}>
+        {pending ? '正在提交…' : label}
+      </button>
+    </div>
+  )
+}
+
+function badgeStyle(background: string, color: string, border: string): React.CSSProperties {
+  return { padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background, color, border: `1px solid ${border}` }
+}
+
+const primaryButton: React.CSSProperties = {
+  padding: '9px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7,
+  fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+}
+
+const ghostButton: React.CSSProperties = {
+  padding: '6px 14px', background: 'transparent', color: 'var(--text-secondary)',
+  border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+}
+
+const outlineButton: React.CSSProperties = {
+  padding: '6px 14px', background: 'transparent', color: 'var(--action)',
+  border: '1px solid var(--action-border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
 }

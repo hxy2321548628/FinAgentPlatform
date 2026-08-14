@@ -31,6 +31,10 @@ PLATFORM_TABLE = (
     "groups",
     "user_groups",
     "group_join_requests",
+    "agents",
+    "agent_versions",
+    "reviews",
+    "resource_groups",
 )
 
 # 建用户模型之前的那一版。已有的 runs 行就是在这一版上写下的
@@ -41,6 +45,9 @@ BEFORE_RUN_THREAD_FOREIGN_KEY = "0003_user_thread"
 
 # 给 runs 补当次配置快照之前的那一版
 BEFORE_RUN_AGENT_CONFIG = "0009_drop_artifacts"
+
+# 建智能体目录四张表之前的那一版
+BEFORE_AGENT_CATALOG = "0010_run_agent_config"
 
 
 @pytest.fixture
@@ -317,6 +324,216 @@ def test_a_rejected_applicant_can_apply_again(scratch: str) -> None:
         ).fetchone()
     assert found is not None
     assert found[0] == 2
+
+
+def _insert_agent(
+    connection: psycopg.Connection[tuple[object, ...]],
+    agent_id: str,
+    owner_id: str,
+    *,
+    name: str | None = None,
+    is_deleted: bool = False,
+) -> None:
+    now = datetime.now(UTC)
+    connection.execute(
+        "INSERT INTO agents (id, owner_id, name, description, subject, visibility,"
+        " call_count, is_deleted, created_at, updated_at)"
+        " VALUES (%s, %s, %s, '', '', 'private', 0, %s, %s, %s)",
+        (agent_id, owner_id, name or f"a-{agent_id[:8]}", is_deleted, now, now),
+    )
+
+
+def _insert_version(
+    connection: psycopg.Connection[tuple[object, ...]],
+    version_id: str,
+    agent_id: str,
+    *,
+    version: int = 1,
+    status: str = "draft",
+) -> None:
+    connection.execute(
+        "INSERT INTO agent_versions (id, agent_id, version, status, system_prompt, created_at)"
+        " VALUES (%s, %s, %s, %s, '', %s)",
+        (version_id, agent_id, version, status, datetime.now(UTC)),
+    )
+
+
+def _insert_review(
+    connection: psycopg.Connection[tuple[object, ...]],
+    target_id: str,
+    submitter: str,
+    *,
+    status: str = "pending",
+) -> None:
+    connection.execute(
+        "INSERT INTO reviews (id, target_kind, target_id, status, responsibility_confirmed,"
+        " submitted_by, created_at)"
+        " VALUES (%s, 'agent', %s, %s, true, %s, %s)",
+        (uuid4().hex, target_id, status, submitter, datetime.now(UTC)),
+    )
+
+
+def test_agent_catalog_tables_are_created_without_touching_existing_rows(scratch: str) -> None:
+    """0011 只建表。这一版之前写下的 run 与会话必须原样还在。"""
+    _upgrade(scratch, BEFORE_AGENT_CATALOG)
+    user_id, thread_id, run_id = uuid4().hex, uuid4().hex, uuid4().hex
+    with _connect(scratch) as connection:
+        _insert_user(connection, user_id)
+        _insert_thread(connection, thread_id, user_id)
+        _insert_run(connection, run_id, thread_id)
+
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        assert connection.execute("SELECT 1 FROM runs WHERE id = %s", (run_id,)).fetchone() is not None
+
+    _downgrade(scratch, BEFORE_AGENT_CATALOG)
+
+    assert not {"agents", "agent_versions", "reviews", "resource_groups"} & _table(scratch)
+    with _connect(scratch) as connection:
+        assert connection.execute("SELECT 1 FROM runs WHERE id = %s", (run_id,)).fetchone() is not None
+
+
+def test_one_author_cannot_use_the_same_agent_name_twice(scratch: str) -> None:
+    """同一作者名下唯一。广场卡片带着作者名，因此重名只在一个人名下才碍事。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner = uuid4().hex
+        _insert_user(connection, owner)
+        _insert_agent(connection, uuid4().hex, owner, name="喵语老师")
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _insert_agent(connection, uuid4().hex, owner, name="喵语老师")
+
+
+def test_two_authors_can_use_the_same_agent_name(scratch: str) -> None:
+    """全库唯一意味着谁先占了名字别人就不能用 —— 这条断言就是那个定案的守门人。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        first, second = uuid4().hex, uuid4().hex
+        _insert_user(connection, first)
+        _insert_user(connection, second)
+        _insert_agent(connection, uuid4().hex, first, name="波动率助手")
+
+        _insert_agent(connection, uuid4().hex, second, name="波动率助手")
+
+        found = connection.execute("SELECT count(*) FROM agents WHERE name = '波动率助手'").fetchone()
+    assert found is not None
+    assert found[0] == 2
+
+
+def test_deleting_an_agent_frees_its_name(scratch: str) -> None:
+    """唯一索引只盖没删掉的那些。全表唯一的话，删一次名字就永久占着。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner = uuid4().hex
+        _insert_user(connection, owner)
+        _insert_agent(connection, uuid4().hex, owner, name="重名", is_deleted=True)
+
+        _insert_agent(connection, uuid4().hex, owner, name="重名")
+
+        found = connection.execute("SELECT count(*) FROM agents WHERE name = '重名'").fetchone()
+    assert found is not None
+    assert found[0] == 2
+
+
+def test_an_agent_cannot_have_two_drafts(scratch: str) -> None:
+    """两个草稿意味着「我在改的是哪一份」没有答案。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, agent = uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_agent(connection, agent, owner)
+        _insert_version(connection, uuid4().hex, agent, version=1)
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _insert_version(connection, uuid4().hex, agent, version=2)
+
+
+def test_an_agent_keeps_every_released_version(scratch: str) -> None:
+    """已发布的版本永远留着：落进 run 快照的引用要照常读得回来。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, agent = uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_agent(connection, agent, owner)
+        _insert_version(connection, uuid4().hex, agent, version=1, status="released")
+        _insert_version(connection, uuid4().hex, agent, version=2, status="released")
+        _insert_version(connection, uuid4().hex, agent, version=3)
+
+        found = connection.execute("SELECT count(*) FROM agent_versions WHERE agent_id = %s", (agent,)).fetchone()
+    assert found is not None
+    assert found[0] == 3
+
+
+def test_a_version_number_cannot_repeat_within_one_agent(scratch: str) -> None:
+    """版本号是 run 快照里那半个引用（`agent_id@version`），重号等于快照指不准。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, agent = uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_agent(connection, agent, owner)
+        _insert_version(connection, uuid4().hex, agent, version=1, status="released")
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _insert_version(connection, uuid4().hex, agent, version=1, status="released")
+
+
+def test_a_version_cannot_have_two_pending_reviews(scratch: str) -> None:
+    """连点两次提审只该在 reviewer 的队列里留下一条。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, agent, version = uuid4().hex, uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_agent(connection, agent, owner)
+        _insert_version(connection, version, agent, status="released")
+        _insert_review(connection, version, owner)
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _insert_review(connection, version, owner)
+
+
+def test_a_rejected_version_can_be_submitted_again(scratch: str) -> None:
+    """唯一约束只盖 pending 那一段：被拒之后改了再提是常态，不是异常。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, agent, version = uuid4().hex, uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_agent(connection, agent, owner)
+        _insert_version(connection, version, agent, status="released")
+        _insert_review(connection, version, owner, status="rejected")
+
+        _insert_review(connection, version, owner)
+
+        found = connection.execute("SELECT count(*) FROM reviews WHERE target_id = %s", (version,)).fetchone()
+    assert found is not None
+    assert found[0] == 2
+
+
+def test_one_agent_can_be_shared_with_several_groups(scratch: str) -> None:
+    """共享是关联表而不是 `agents` 上的一列 —— 一个资源可以同时给多个组。"""
+    _upgrade(scratch, "head")
+
+    with _connect(scratch) as connection:
+        owner, agent, first, second = uuid4().hex, uuid4().hex, uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_agent(connection, agent, owner)
+        _insert_group(connection, first, owner, code="AAAA")
+        _insert_group(connection, second, owner, code="BBBB")
+        for group in (first, second):
+            connection.execute(
+                "INSERT INTO resource_groups (resource_kind, resource_id, group_id) VALUES ('agent', %s, %s)",
+                (agent, group),
+            )
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            connection.execute(
+                "INSERT INTO resource_groups (resource_kind, resource_id, group_id) VALUES ('agent', %s, %s)",
+                (agent, first),
+            )
 
 
 def test_a_run_can_be_written_with_its_owner(scratch: str) -> None:

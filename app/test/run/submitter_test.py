@@ -5,11 +5,9 @@
 表现出来是「run 卡在 queued，事件却一路跑完了」。
 """
 
-from typing import cast
 from uuid import uuid4
 
 import pytest
-from pydantic import ValidationError
 from redis.asyncio import Redis
 
 from agent.config import AgentConfig
@@ -63,7 +61,9 @@ async def test_submit_returns_a_queued_run(queue: TaskQueue) -> None:
     """任务要跑几十分钟，提交必须立刻返回，不能等执行完。"""
     submitter = RunSubmitter(repository=RecordingRepository(queue), queue=queue)
 
-    run = await submitter.submit(thread_id=uuid4().hex, content="算个波动率", user_id=USER_ID)
+    run = await submitter.submit(
+        thread_id=uuid4().hex, content="算个波动率", user_id=USER_ID, agent_config=AgentConfig()
+    )
 
     assert run.status is RunStatus.QUEUED
     assert run.id
@@ -73,8 +73,8 @@ async def test_each_run_gets_its_own_id(queue: TaskQueue) -> None:
     submitter = RunSubmitter(repository=RecordingRepository(queue), queue=queue)
     thread_id = uuid4().hex
 
-    first = await submitter.submit(thread_id=thread_id, content="一", user_id=USER_ID)
-    second = await submitter.submit(thread_id=thread_id, content="二", user_id=USER_ID)
+    first = await submitter.submit(thread_id=thread_id, content="一", user_id=USER_ID, agent_config=AgentConfig())
+    second = await submitter.submit(thread_id=thread_id, content="二", user_id=USER_ID, agent_config=AgentConfig())
 
     assert first.id != second.id
 
@@ -84,7 +84,7 @@ async def test_the_task_carries_everything_the_worker_needs(queue: TaskQueue) ->
     submitter = RunSubmitter(repository=RecordingRepository(queue), queue=queue)
     thread_id = uuid4().hex
 
-    run = await submitter.submit(thread_id=thread_id, content="算个波动率", user_id=USER_ID)
+    run = await submitter.submit(thread_id=thread_id, content="算个波动率", user_id=USER_ID, agent_config=AgentConfig())
 
     delivery = await queue.reserve()
     assert delivery is not None
@@ -99,7 +99,9 @@ async def test_the_question_is_written_down_as_well_as_queued(queue: TaskQueue) 
     repository = RecordingRepository(queue)
     submitter = RunSubmitter(repository=repository, queue=queue)
 
-    await submitter.submit(thread_id=uuid4().hex, content="按行业分组算年化波动率", user_id=USER_ID)
+    await submitter.submit(
+        thread_id=uuid4().hex, content="按行业分组算年化波动率", user_id=USER_ID, agent_config=AgentConfig()
+    )
 
     assert repository.content == ["按行业分组算年化波动率"]
 
@@ -109,88 +111,43 @@ async def test_the_row_is_written_before_the_task_is_published(queue: TaskQueue)
     repository = RecordingRepository(queue)
     submitter = RunSubmitter(repository=repository, queue=queue)
 
-    await submitter.submit(thread_id=uuid4().hex, content="一", user_id=USER_ID)
+    await submitter.submit(thread_id=uuid4().hex, content="一", user_id=USER_ID, agent_config=AgentConfig())
 
     assert repository.queued_when_created == [0]
 
 
-async def test_a_run_inherits_the_thread_default_and_snapshots_it_once(queue: TaskQueue) -> None:
+async def test_the_snapshot_is_exactly_what_the_caller_handed_in(queue: TaskQueue) -> None:
+    """这一层不做任何取舍。
+
+    **会话默认与本轮覆盖怎么合、agent 引用怎么解析，都在端点那一层做完了。**
+    提交侧多一处能改配置的地方，就多一种「快照与实际跑的不是同一份」的失效。
+    """
     repository = RecordingRepository(queue)
     submitter = RunSubmitter(repository=repository, queue=queue)
-    configured: dict[str, object] = {"system_prompt": "每句以喵开头"}
+    resolved = AgentConfig(system_prompt="每句以喵开头", agent_id=uuid4().hex, agent_version=1)
 
     run = await submitter.submit(
         thread_id=uuid4().hex,
         content="一",
         user_id=USER_ID,
-        thread_config=configured,
+        agent_config=resolved,
     )
 
     delivery = await queue.reserve()
     assert delivery is not None
-    assert run.agent_config.model_dump(exclude_none=True) == configured
-    assert repository.agent_config == [configured]
-    assert delivery.task.agent_config.model_dump(exclude_none=True) == configured
+    assert run.agent_config == resolved
+    assert repository.agent_config == [resolved.model_dump(exclude_none=True)]
+    assert delivery.task.agent_config == resolved
 
 
-async def test_a_run_override_replaces_the_whole_thread_default(queue: TaskQueue) -> None:
+async def test_an_unreferenced_run_carries_no_extra_key(queue: TaskQueue) -> None:
+    """不选 agent 时快照里一个键都不多 —— 历史判据断言的正是「快照 == 当时那份配置」。"""
     repository = RecordingRepository(queue)
     submitter = RunSubmitter(repository=repository, queue=queue)
 
-    await submitter.submit(
-        thread_id=uuid4().hex,
-        content="一",
-        user_id=USER_ID,
-        thread_config={"system_prompt": "thread"},
-        agent_config=AgentConfig(system_prompt="run"),
-    )
-
-    assert repository.agent_config == [{"system_prompt": "run"}]
-
-
-async def test_an_explicit_empty_run_config_clears_the_thread_default(queue: TaskQueue) -> None:
-    repository = RecordingRepository(queue)
-    submitter = RunSubmitter(repository=repository, queue=queue)
-
-    await submitter.submit(
-        thread_id=uuid4().hex,
-        content="一",
-        user_id=USER_ID,
-        thread_config={"system_prompt": "thread"},
-        agent_config=AgentConfig(),
-    )
+    await submitter.submit(thread_id=uuid4().hex, content="一", user_id=USER_ID, agent_config=AgentConfig())
 
     assert repository.agent_config == [{}]
-
-
-async def test_a_dirty_legacy_thread_config_is_rejected_before_the_row_is_written(queue: TaskQueue) -> None:
-    repository = RecordingRepository(queue)
-    submitter = RunSubmitter(repository=repository, queue=queue)
-
-    with pytest.raises(ValidationError):
-        await submitter.submit(
-            thread_id=uuid4().hex,
-            content="一",
-            user_id=USER_ID,
-            thread_config={"model": "legacy"},
-        )
-
-    assert repository.created == []
-
-
-async def test_a_falsy_non_object_thread_config_is_not_treated_as_the_default(queue: TaskQueue) -> None:
-    repository = RecordingRepository(queue)
-    submitter = RunSubmitter(repository=repository, queue=queue)
-
-    with pytest.raises(ValidationError):
-        await submitter.submit(
-            thread_id=uuid4().hex,
-            content="一",
-            user_id=USER_ID,
-            thread_config=cast(dict[str, object], []),
-        )
-
-    assert repository.created == []
 
 
 async def test_an_approval_resubmission_carries_the_original_snapshot(queue: TaskQueue) -> None:
@@ -220,7 +177,9 @@ async def test_the_submission_log_carries_the_run_identity(queue: TaskQueue) -> 
     thread_id = uuid4().hex
 
     with json_log(SUBMITTER_LOGGER) as line:
-        run = await submitter.submit(thread_id=thread_id, content="算个波动率", user_id=USER_ID)
+        run = await submitter.submit(
+            thread_id=thread_id, content="算个波动率", user_id=USER_ID, agent_config=AgentConfig()
+        )
 
     assert [(one.get("run_id"), one.get("thread_id"), one.get("user_id")) for one in line] == [
         (run.id, thread_id, USER_ID)

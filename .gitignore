@@ -33,3 +33,7 @@ tmp/
 
 
 tmp/
+
+# playwright 的失败产物（trace / 截图）。它们是排障用的一次性文件，不入库
+web/test-results/
+web/playwright-report/

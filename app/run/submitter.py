@@ -56,28 +56,27 @@ class RunSubmitter:
         thread_id: str,
         content: str,
         user_id: str,
-        thread_config: dict[str, object] | None = None,
-        agent_config: AgentConfig | None = None,
+        agent_config: AgentConfig,
     ) -> Run:
         """接下一次提问并立刻返回，执行由 worker 进行。
 
         **调用方必须先用同一个 `user_id` 查到这个 thread**：`runs.user_id` 与
         `threads.user_id` 的一致性就靠那一步，这里不再重查。
 
+        **配置进来时已经是「这一轮实际生效的那一份」**：会话默认与本轮覆盖的取舍、
+        以及 agent 引用的解析，都在端点那一层做完了。这一层只负责把它原样冻结下来 ——
+        提交侧多一处能改配置的地方，就多一种「快照与实际跑的不是同一份」的失效。
+
         Args:
             thread_id: 提问所属的会话。
             content: 教师的问题。
             user_id: 提交的人。
-            thread_config: 会话的默认配置。
-            agent_config: 这一轮的整块配置覆盖；不传则继承会话。
+            agent_config: 这一轮实际生效的配置，引用已解析。
 
         Returns:
             状态为 `queued` 的 run 记录，`id` 用于订阅事件与查询状态。
         """
-        # `None` 表示这一轮没覆盖，显式的 `{}` 则是整块覆盖为平台默认。
-        # 不能用 `agent_config or thread_config`，那会把这两种语义合并。
-        stored_default = {} if thread_config is None else thread_config
-        effective = agent_config if agent_config is not None else AgentConfig.model_validate(stored_default)
+        effective = agent_config
         snapshot = effective.model_dump(exclude_none=True)
         run = Run(id=uuid4().hex, thread_id=thread_id, status=RunStatus.QUEUED, agent_config=effective)
         # 执行搬到 worker 之后，api 进程里关于一个 run 就只剩这一段。不绑身份的话，

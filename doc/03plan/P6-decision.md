@@ -6,7 +6,7 @@
 | 当前版本 | v0.3 |
 | 作者 | hxy |
 | 日期 | 2026-08-13 |
-| 下游文档 | [P6-plan.md](./P6-plan.md)（2026-08-14 定稿）· P7-plan.md ~ P10-plan.md（按 §9 的 L1 分期，尚未撰写） |
+| 下游文档 | [P6-plan.md](./P6-plan.md)（2026-08-14 定稿）· [P7-plan.md](./P7-plan.md)（2026-08-14 定稿）· P8-plan.md ~ P10-plan.md（按 §9 的 L1 分期，尚未撰写） |
 | 上游文档 | [第三方接入规范](../01design/04extension-integration.md) · [智能体设计](../01design/03agent-design.md) · [数据设计](../01design/06data-design.md) · [P5 实施计划](./P5-plan.md) |
 
 ### 版本历史

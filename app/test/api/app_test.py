@@ -63,6 +63,17 @@ def test_the_openapi_document_is_served(client: TestClient) -> None:
         "/api/runs/{run_id}/events",
         "/api/runs/{run_id}/cancel",
         "/api/runs/{run_id}/approve",
+        "/api/agents",
+        "/api/agents/available",
+        "/api/agents/mine",
+        "/api/agents/mine/{agent_id}",
+        "/api/agents/{agent_id}",
+        "/api/agents/{agent_id}/draft",
+        "/api/agents/{agent_id}/versions",
+        "/api/agents/{agent_id}/sharing",
+        "/api/agents/{agent_id}/reviews",
+        "/api/reviews",
+        "/api/reviews/{review_id}",
     }
 
 

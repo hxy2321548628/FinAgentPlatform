@@ -41,6 +41,8 @@ from config import DEFAULT_UPLOAD_MAX_BYTE
 from event.mapper import StreamChunk
 from event.model import InterruptAction
 from group.repository import Group, GroupRepository, JoinRequestRepository
+from preset.repository import AgentRepository
+from preset.review import ReviewRepository
 from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
 from quota.usage import RunUsage
@@ -287,6 +289,8 @@ def platform(
         user=UserRepository(live_engine),
         group=GroupRepository(live_engine),
         join_request=JoinRequestRepository(live_engine),
+        agent=AgentRepository(live_engine),
+        review=ReviewRepository(live_engine),
         thread=thread,
         title=TitleWriter(model=title_model, repository=thread),
         file_direct_send=file_direct_send,

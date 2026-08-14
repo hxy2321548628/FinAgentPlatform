@@ -8,9 +8,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from agent.config import AgentConfig
+from agent.config import MAX_SYSTEM_PROMPT_LENGTH, AgentConfigRequest
 from event.model import RunErrorCode, RunStatus
 from group.model import JoinRequestStatus
+from preset.model import ResourceKind, ReviewStatus, VersionStatus, Visibility
+from preset.repository import AgentSource
 from run.decision import Decision
 from user.model import UserRole
 
@@ -24,6 +26,20 @@ MAX_NAME_LENGTH = 32
 # 教师手填标题的长度上限。**比自动生成的那个上限宽**（那个是 20 字的硬截断）——
 # 模型要写得下侧边栏一行，人手起的名字则是他自己的事，只要不能拿来灌库
 MAX_THREAD_TITLE_LENGTH = 64
+
+# 智能体的名称、说明、学科的长度上限。名称要写得下广场卡片一行，
+# 说明是卡片上那两行摘要，学科是个标签
+MAX_AGENT_NAME_LENGTH = 32
+MAX_AGENT_DESCRIPTION_LENGTH = 200
+MAX_AGENT_SUBJECT_LENGTH = 32
+
+# 拒绝理由的长度上限。**下限是 1 且后端也校验** —— 只靠前端拦的话，
+# 任何一次直接打接口都能留下一条没有理由的拒绝，而作者看到的是「被拒了，没说为什么」
+MAX_REVIEW_REASON_LENGTH = 500
+
+# 一个作者一次能共享给几个组。学院里一个老师带的组是个位数，
+# 这道闸拦的是「把一个 uuid 列表灌到上万条」
+MAX_SHARED_GROUP = 20
 
 
 class LoginRequest(BaseModel):
@@ -224,7 +240,9 @@ class UpdateThreadRequest(BaseModel):
     """
 
     title: str | None = Field(default=None, max_length=MAX_THREAD_TITLE_LENGTH, description="新标题，不传则不动")
-    agent_config: AgentConfig | None = Field(default=None, description="新配置，**整块替换**而不是合并，不传则不动")
+    agent_config: AgentConfigRequest | None = Field(
+        default=None, description="新配置，**整块替换**而不是合并，不传则不动"
+    )
 
 
 class RunHistoryResponse(BaseModel):
@@ -297,7 +315,7 @@ class RunRequest(BaseModel):
     """提交一次分析。"""
 
     content: str = Field(min_length=1, description="教师的问题")
-    agent_config: AgentConfig | None = Field(
+    agent_config: AgentConfigRequest | None = Field(
         default=None,
         description="这一轮的配置覆盖；不传则继承会话默认，空对象表示改回平台默认",
     )
@@ -310,3 +328,136 @@ class RunResponse(BaseModel):
     thread_id: str = Field(min_length=1, description="所属会话")
     status: RunStatus = Field(description="当前状态")
     agent_config: dict[str, object] = Field(description="这一次 run 实际生效的配置快照")
+
+
+class CreateAgentRequest(BaseModel):
+    """建一个智能体。**连带它的 v1 草稿** —— 没有「只有身份没有内容」的中间态。"""
+
+    name: str = Field(min_length=1, max_length=MAX_AGENT_NAME_LENGTH, description="名称，**同一作者名下唯一**")
+    description: str = Field(default="", max_length=MAX_AGENT_DESCRIPTION_LENGTH, description="一句话说明")
+    subject: str = Field(default="", max_length=MAX_AGENT_SUBJECT_LENGTH, description="学科")
+    system_prompt: str = Field(
+        min_length=1,
+        max_length=MAX_SYSTEM_PROMPT_LENGTH,
+        description="提示词。**本期 agent 的内容只有这一项**，skill / 子智能体 / MCP 由后续期次接",
+    )
+
+
+class UpdateAgentRequest(BaseModel):
+    """改元信息。**不产生新版本** —— 改名与改提示词是两件事。"""
+
+    name: str = Field(min_length=1, max_length=MAX_AGENT_NAME_LENGTH, description="新名称")
+    description: str = Field(default="", max_length=MAX_AGENT_DESCRIPTION_LENGTH, description="新说明")
+    subject: str = Field(default="", max_length=MAX_AGENT_SUBJECT_LENGTH, description="新学科")
+
+
+class UpdateDraftRequest(BaseModel):
+    """改草稿的内容。没有草稿时**追加下一个版本号的新草稿**。"""
+
+    system_prompt: str = Field(min_length=1, max_length=MAX_SYSTEM_PROMPT_LENGTH, description="新的提示词")
+
+
+class SetSharingRequest(BaseModel):
+    """设可见性与共享给哪些组。
+
+    **平台目录不在这里** —— 那一档要 reviewer 点头，不是作者能拨的开关。
+    """
+
+    visibility: Visibility = Field(description="私有还是组内")
+    group_ids: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_SHARED_GROUP,
+        description="共享给哪些组，**整块替换**。只能填自己在里面的组",
+    )
+
+
+class SubmitReviewRequest(BaseModel):
+    """把当前最新的已发布版本提交给审核。"""
+
+    responsibility_confirmed: bool = Field(description="责任确认。**没勾一律 422**，后端也校验 —— 出了事要拿这一列说话")
+
+
+class DecideReviewRequest(BaseModel):
+    """reviewer 的决策。"""
+
+    approved: bool = Field(description="通过还是拒绝")
+    reason: str | None = Field(
+        default=None,
+        max_length=MAX_REVIEW_REASON_LENGTH,
+        description="拒绝理由。**拒绝时必填**，通过时忽略 —— 通过不需要解释，拒绝必须给作者一句能照着改的话",
+    )
+
+
+class AgentVersionResponse(BaseModel):
+    """作者视角的一个版本，连同它的审核状态。"""
+
+    id: str = Field(min_length=1, description="版本行标识，提审时用它")
+    version: int = Field(ge=1, description="版本号")
+    status: VersionStatus = Field(description="作者定没定稿")
+    system_prompt: str = Field(description="这一版的提示词")
+    created_at: datetime = Field(description="建立时间，UTC")
+    released_at: datetime | None = Field(default=None, description="定稿时间，UTC。草稿为空")
+    review_id: str | None = Field(default=None, description="最近一条审核记录；从没提审过则为空")
+    review_status: ReviewStatus | None = Field(default=None, description="最近一条审核的状态")
+    review_reason: str | None = Field(default=None, description="被拒时的理由，一字不差")
+
+
+class MyAgentResponse(BaseModel):
+    """作者视角的一个智能体。
+
+    **五个状态映到三个页签**（草稿 / 待审 / 已发布），映射由前端做 —— 后端给的是事实。
+    """
+
+    id: str = Field(min_length=1, description="智能体标识")
+    name: str = Field(min_length=1, description="名称")
+    description: str = Field(description="一句话说明")
+    subject: str = Field(description="学科")
+    visibility: Visibility = Field(description="私有还是组内")
+    call_count: int = Field(ge=0, description="被引用过几次。**不去重、不实时**")
+    is_deleted: bool = Field(description="删过了没有。删掉的只有作者自己看得到")
+    in_catalog: bool = Field(description="有没有一个版本在平台目录里")
+    group_ids: list[str] = Field(description="共享给了哪些组")
+    versions: list[AgentVersionResponse] = Field(description="全部版本，按版本号从小到大")
+    created_at: datetime = Field(description="建立时间，UTC")
+    updated_at: datetime = Field(description="最后改动时间，UTC")
+
+
+class AgentListingResponse(BaseModel):
+    """广场与「我能引用的」共用的一行。
+
+    **提示词全文在里面**：看不到内容就判断不了一个 agent 值不值得用，
+    而「共享出去的东西别人看得见内容」本来就是共享的含义。
+    """
+
+    id: str = Field(min_length=1, description="智能体标识，引用时把它填进 agent_config")
+    owner_id: str = Field(min_length=1, description="作者标识")
+    owner_name: str = Field(min_length=1, description="作者姓名 —— 广场上重名靠它区分")
+    name: str = Field(min_length=1, description="名称")
+    description: str = Field(description="一句话说明")
+    subject: str = Field(description="学科")
+    visibility: Visibility = Field(description="作者拨的那一档")
+    call_count: int = Field(ge=0, description="被引用过几次")
+    version: int = Field(ge=1, description="**这一档下展示的是哪一版**。广场看最新过审版，组内看最新已发布版")
+    system_prompt: str = Field(description="那一版的提示词全文")
+    source: AgentSource = Field(description="凭哪一条进到这个列表：我自己的 / 组内共享 / 平台目录")
+    updated_at: datetime = Field(description="最后改动时间，UTC")
+
+
+class ReviewResponse(BaseModel):
+    """审核队列里的一条，带 reviewer 判断需要的全部信息。"""
+
+    id: str = Field(min_length=1, description="审核标识，决策时用它")
+    target_kind: ResourceKind = Field(description="审的是什么资源。**本期只有 agent**")
+    target_id: str = Field(min_length=1, description="被审的版本行标识")
+    status: ReviewStatus = Field(description="待审 / 通过 / 拒绝")
+    responsibility_confirmed: bool = Field(description="作者勾没勾责任确认")
+    reason: str | None = Field(default=None, description="拒绝理由")
+    created_at: datetime = Field(description="提审时间，UTC")
+    decided_at: datetime | None = Field(default=None, description="决策时间，UTC。待审为空")
+    agent_id: str = Field(min_length=1, description="所属智能体")
+    agent_name: str = Field(min_length=1, description="智能体名称")
+    owner_name: str = Field(min_length=1, description="作者姓名")
+    description: str = Field(description="一句话说明")
+    subject: str = Field(description="学科")
+    version: int = Field(ge=1, description="被审的是第几版")
+    system_prompt: str = Field(description="被审的提示词全文 —— reviewer 要审的正是这段文字")

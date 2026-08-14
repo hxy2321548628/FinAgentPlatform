@@ -20,6 +20,7 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from pydantic import ValidationError
 
+from agent.config import effective_config
 from api.error import concurrency_limit, invalid, not_found, quota_exceeded, unauthenticated
 from api.platform import Platform, get_platform
 from api.schema import (
@@ -34,6 +35,7 @@ from api.schema import (
 )
 from api.security import UNAUTHENTICATED_MESSAGE, CurrentUser
 from cursor import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, CursorError, Page
+from preset.reference import ReferenceUnavailableError, resolve_reference
 from quota.usage import next_reset
 from run.approval import DEFAULT_PENDING_LIMIT, pending_count
 from sandbox.remote import BrokerError
@@ -188,17 +190,27 @@ async def submit_run(
     await _require_quota(platform, current.user_id)
 
     try:
-        run = await platform.submitter.submit(
-            thread_id=thread_id,
-            content=request.content,
-            user_id=current.user_id,
-            thread_config=thread.agent_config,
-            agent_config=request.agent_config,
-        )
+        effective = effective_config(thread_config=thread.agent_config, override=request.agent_config)
     except ValidationError as exc:
         # P6 之前 thread 接口允许任意 JSON，历史行可能带着已不支持的键。
         # 读会话仍原样返回，但提交不能静默忽略它，更不能漏成无上下文的 500。
         raise invalid(f"会话默认的 agent 配置无效，请重新保存配置：{exc}") from exc
+
+    try:
+        # **引用在这一刻被解析掉，之后再没人碰它。** 到 worker 领到任务之间可能隔几分钟，
+        # 那期间作者随时可能撤回共享或发新版本 —— 在执行侧解析，同一次提交的结果就取决于
+        # worker 什么时候有空
+        resolved = await resolve_reference(effective, user_id=current.user_id, resolver=platform.agent)
+    except ReferenceUnavailableError as exc:
+        # **不静默回退默认提示词。** 回退跑得完、不报错，唯一的症状是回答变了味
+        raise invalid(str(exc)) from exc
+
+    run = await platform.submitter.submit(
+        thread_id=thread_id,
+        content=request.content,
+        user_id=current.user_id,
+        agent_config=resolved,
+    )
     # 列表按最后活动排序，靠的就是这一下。不推的话，一个用了半年的会话仍旧沉在底下
     await platform.thread.touch(thread_id, user_id=current.user_id)
 
