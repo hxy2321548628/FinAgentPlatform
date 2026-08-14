@@ -3,9 +3,10 @@
 # `make` 一条命令跑完 lint / 类型 / 测试，未全绿不得提交。
 # 门禁目标只读不改文件，将来接 CI 时可原样复用；要自动改代码用 `make fix`。
 #
-# Python 工程在 app/，所有配置都在 app/pyproject.toml，因此 recipe 一律先 cd 进去。
+# Python 工程在 app/，web 工程在 web/；recipe 先进各自目录，不在根目录复制配置。
 
 APP := app
+WEB := web
 UV  := uv run
 
 .DEFAULT_GOAL := all
@@ -28,10 +29,12 @@ fmt:
 lint:
 	@cd $(APP) && $(UV) ruff format --check .
 	@cd $(APP) && $(UV) ruff check .
+	@cd $(WEB) && pnpm lint
 
 ## type: 静态类型检查
 type:
 	@cd $(APP) && $(UV) mypy
+	@cd $(WEB) && pnpm typecheck
 
 ## test: 跑测试
 test:
@@ -43,18 +46,22 @@ test:
 		exit 0; \
 	fi; \
 	exit $$status
+	@cd $(WEB) && pnpm test
 
 ## cov: 跑测试并检查覆盖率下限（80%）
 cov:
 	@cd $(APP) && $(UV) pytest --cov=. --cov-report=term-missing
+	@cd $(WEB) && pnpm coverage
 
-## sync: 按 uv.lock 重建虚拟环境
+## sync: 按两侧锁文件重建依赖
 sync:
 	@cd $(APP) && uv sync
+	@cd $(WEB) && pnpm install
 
-## sync-locked: 同上但禁止改动 uv.lock（CI 用；锁文件与 pyproject 不一致即失败）
+## sync-locked: 同上但禁止改动锁文件（CI 用；声明与锁文件不一致即失败）
 sync-locked:
 	@cd $(APP) && uv sync --locked
+	@cd $(WEB) && pnpm install --frozen-lockfile
 
 ## hooks: 启用仓库内的 git hooks（新克隆的仓库需手动跑一次）
 hooks:
@@ -65,6 +72,7 @@ hooks:
 clean:
 	@find $(APP) -type d -name __pycache__ -not -path '*/.venv/*' -exec rm -rf {} + 2>/dev/null || true
 	@rm -rf $(APP)/.ruff_cache $(APP)/.mypy_cache $(APP)/.pytest_cache $(APP)/.coverage
+	@rm -rf $(WEB)/coverage
 	@echo "✅ 已清理"
 
 ## help: 列出所有目标

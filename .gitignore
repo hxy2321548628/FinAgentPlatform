@@ -18,6 +18,7 @@ __pycache__/
 node_modules/
 dist/
 .vite/
+web/coverage/
 
 # ---- 运行时数据 ----
 # 沙箱 workspace 的宿主机侧挂载点（架构文档 §5.5）
