@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 平台回归验收：P0–P5 的 26 条判据，一个文件跑完。
+# 平台回归验收：P0–P6 的 29 条判据，一个文件跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
@@ -10,15 +10,16 @@
 # 常用跑法：
 #
 #   bash deploy/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
-#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 18 条，约 25 分钟
+#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 20 条，约 25 分钟
 #
 # **默认全跑，不分 phase，也没有挑某一期跑的参数** —— P6 决策 §L2 的定案。
 # 保留的是 `SKIP_LLM` / `SKIP_HOSTILE` 两个开关：它们分的是**成本**（要不要花钱、
 # 要不要 root），不是期次。按期挑着跑，等于把刚拆掉的那层级联结构又装回来，
 # 还多一条「以为全验了其实只验了一期」的路。
 #
-# 26 条里 **8 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
-# P2① 与 P3① 各要一次真实分析、P1① 那四条破坏性测试要 root。其余 18 条全免费。
+# 29 条里 **9 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
+# P2① 与 P3① 各要一次真实分析、P6① 要两次便宜的真实分析、P1① 那四条
+# 破坏性测试要 root。其余 20 条全免费。
 #
 # ---------------------------------------------------------------------------
 # **P5 那一组是 2026-08-14 补的**（P6 开工前的最后一件事）。P5 期是唯一一期没留下
@@ -654,13 +655,66 @@ WORK_DIR="$(mktemp -d)"
 WORKER_COUNT="$(worker_ids | wc -l)"
 LOG_SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+# P6③ 停着 worker 提交的两条 run 必须先取消、再恢复 worker。这个函数既走正常路径，
+# 也走 EXIT trap：脚本在两步之间被打断时，不能让清理动作反而把付费分析跑起来。
+cancel_p6_snapshot_runs() {
+    local require_cancelled="${1:-0}"
+    local run_id response status discovered="" run_ids="${P6_SNAPSHOT_RUNS:-}" failed=0
+
+    # 不能只信 POST 响应里的 id：服务端可能已经落库、客户端却在收到响应前断了。
+    # 按这条判据专用的 thread 回查，才能保证恢复 worker 前没有漏网的付费任务。
+    if [[ -n ${THREAD_P6_SNAPSHOT:-} ]]; then
+        discovered="$(psql_query "SELECT id FROM runs
+            WHERE thread_id='$THREAD_P6_SNAPSHOT'
+              AND status IN ('queued', 'running', 'waiting_approval');")" || return 1
+        run_ids="${run_ids:+$run_ids }$discovered"
+    fi
+    [[ -z $run_ids ]] && { P6_SNAPSHOT_RUNS=""; THREAD_P6_SNAPSHOT=""; return 0; }
+    [[ -n ${JAR_P6:-} ]] || return 1
+
+    for run_id in $run_ids; do
+        if ! response="$(curl -sS --connect-timeout 5 --max-time 20 -b "$JAR_P6" \
+            -X POST "$BASE_URL/api/runs/$run_id/cancel")"; then
+            failed=1
+            continue
+        fi
+        status="$(jq -r '.status // empty' <<<"$response" 2>/dev/null)"
+        case "$status" in
+            cancelled) ;;
+            succeeded|failed) (( require_cancelled == 0 )) || failed=1 ;;
+            *) failed=1 ;;
+        esac
+    done
+    (( failed == 0 )) || return 1
+    P6_SNAPSHOT_RUNS=""
+    THREAD_P6_SNAPSHOT=""
+    return 0
+}
+
+restore_p6_workers() {
+    compose up -d --no-recreate worker >/dev/null 2>&1 || return 1
+    wait_worker "$WORKER_COUNT"
+}
+
 # 收尾。**worker 与 broker 都要还原**：P1④⑤ 会把沙箱名额压到 1，
-# P3⑤⑥ 会把 worker 停掉 —— 中途失败时不还原的话，这台机器上此后每一次跑法
-# 都在一个说不清的状态里起步，而症状不指向上一轮验收
+# P3⑤⑥ 与 P6③ 会把 worker 停掉 —— 中途失败时不还原的话，这台机器上此后每一次
+# 跑法都在一个说不清的状态里起步，而症状不指向上一轮验收
 cleanup() {
+    local p6_uncertain_thread="${THREAD_P6_SNAPSHOT:-未知}"
     [[ -n ${THREAD_HELD:-} ]] && docker rm -f "$(sandbox_of "$THREAD_HELD")" >/dev/null 2>&1
     [[ -n ${BROKER_OVERRIDDEN:-} ]] && compose up -d --no-deps --force-recreate broker >/dev/null 2>&1
-    [[ -n ${WORKER_TOUCHED:-} ]] && compose up -d --no-recreate worker >/dev/null 2>&1
+    if [[ -n ${WORKER_TOUCHED:-} ]]; then
+        # 客户端超时/被中断时，服务端可能仍在提交；一次“查不到”不能证明稍后不会入队。
+        if (( ${P6_POST_IN_FLIGHT:-0} )); then
+            cancel_p6_snapshot_runs || true
+            echo "P6③ 的 POST 结果不确定，worker 保持停止；thread=$p6_uncertain_thread，请人工确认后再启动" >&2
+        elif cancel_p6_snapshot_runs; then
+            restore_p6_workers \
+                || echo "worker 清理后仍未恢复到 $WORKER_COUNT 个副本，请人工检查" >&2
+        else
+            echo "P6③ 的 queued run 没能全部取消，worker 保持停止；请人工取消后再启动" >&2
+        fi
+    fi
     for thread_id in ${THREAD_HELD:-} ${THREAD_QUEUED:-}; do
         rm -rf "${WORKSPACE_ROOT:?}/$thread_id"
     done
@@ -1053,6 +1107,36 @@ end
 session_for p2 || { echo "P2 造不出账号，①② 验不了" >&2; exit 1; }
 JAR_P2="$SESSION_JAR"; UID_P2="$SESSION_UID"
 p2_status() { curl -fsS -b "$JAR_P2" "$BASE_URL/api/runs/$1" 2>/dev/null | jq -r .status; }
+p2_consumer() {
+    local run_id="$1"
+    in_api_python "
+import asyncio
+from config import get_settings
+from store import redis as store_redis
+from task.queue import CONSUMER_GROUP, PAYLOAD_FIELD, TASK_STREAM, RunTask
+
+async def main():
+    client = store_redis.create_client(get_settings().redis_url)
+    try:
+        pending = await client.xpending_range(
+            TASK_STREAM, CONSUMER_GROUP, min='-', max='+', count=10_000
+        )
+        for one in pending:
+            entry = await client.xrange(
+                TASK_STREAM, min=one['message_id'], max=one['message_id'], count=1
+            )
+            if not entry:
+                continue
+            task = RunTask.model_validate_json(entry[0][1][PAYLOAD_FIELD])
+            if task.run_id == '$run_id':
+                print(one['consumer'])
+                return
+    finally:
+        await client.aclose()
+
+asyncio.run(main())
+"
+}
 
 # ---------------------------------------------------------- P2② 三进程重启
 # 「会话历史能接上追问」那一半要真实模型，并进 ① 一起验；这里验免费的两样：
@@ -1128,41 +1212,67 @@ else
         sleep 2
     done
 
+    # pending owner 就是当前执行这个 run 的 worker。consumer 名由
+    # worker.runtime.consumer_name() 生成，形状为「容器短 id-pid」，可以无歧义映射回
+    # compose 的两个副本。先在等 checkpoint 之前定位，避免 tool_result 出现后再扫日志
+    # 的那一两秒里 run 已经收尾，最后退化成随机砍一个副本。
+    P2_CONSUMER=""
+    for _ in $(seq 10); do
+        P2_CONSUMER="$(p2_consumer "$RUN_P2" 2>/dev/null)"
+        [[ -n $P2_CONSUMER ]] && break
+        sleep 1
+    done
+    VICTIM=""
+    for candidate in $(worker_ids); do
+        [[ $P2_CONSUMER == "${candidate:0:12}"-* ]] || continue
+        VICTIM="$candidate"
+        break
+    done
+
     # **等第一条 tool_result 出现再动手，不用固定 sleep。** 这一刻两个条件同时成立：
     # 至少有一个 checkpoint 可以续，而 run 还没跑完 —— 刀正好落在中间。
     #
     # 固定 sleep 赌不赢：这道题在 prompt 缓存热的时候十几秒就跑完了，2026-08-08
     # 实测等满 20 秒与等满 10 秒各有一次砍空。**砍空不会报错**，它只会让这条验收
     # 什么都没验着，而判据若不识别这种情况就会把它记成通过
-    timeout "$KILL_WINDOW" curl -fsS -b "$JAR_P2" -N "$BASE_URL/api/runs/$RUN_P2/events" 2>/dev/null \
-        | grep -q -m1 '^event: tool_result'
-
-    # **要砍到真正在跑它的那个副本。** 有两个副本，砍「第一个」是在赌五成 ——
-    # 2026-08-09 实测赌输一次：刀落在闲着的那个身上，run 在另一个副本上一路跑完，
-    # 判据只能记「未验」。结构化日志里带 run_id，按它挑就不必赌
-    VICTIM=""
-    for candidate in $(worker_ids); do
-        if docker logs --since 10m "$candidate" 2>&1 | grep -q "$RUN_P2"; then
-            VICTIM="$candidate"
-            break
-        fi
-    done
-    if [[ -z $VICTIM ]]; then
-        VICTIM="$(worker_ids | head -1)"
-        info "日志里认不出哪个副本在跑它，退回砍第一个 —— 这一轮可能砍空"
+    CHECKPOINT_READY=0
+    if timeout "$KILL_WINDOW" curl -fsS -b "$JAR_P2" -N \
+        "$BASE_URL/api/runs/$RUN_P2/events" 2>/dev/null \
+        | grep -q -m1 '^event: tool_result'; then
+        CHECKPOINT_READY=1
     fi
-    WORKER_TOUCHED=1
-    docker kill -s KILL "$VICTIM" >/dev/null 2>&1
-    info "已 kill -9 worker $VICTIM，等另一个副本认领（阈值 60 秒）"
 
-    deadline=$((SECONDS + RECOVER_WINDOW))
-    final=""
-    while (( SECONDS < deadline )); do
+    if [[ -z $VICTIM ]]; then
+        fail "队列 pending owner 无法映射到 worker：${P2_CONSUMER:-查不到 consumer}"
+        curl -s --connect-timeout 5 --max-time 20 -b "$JAR_P2" -X POST \
+            "$BASE_URL/api/runs/$RUN_P2/cancel" >/dev/null 2>&1
+    elif (( ! CHECKPOINT_READY )); then
         final="$(p2_status "$RUN_P2")"
-        [[ $final == succeeded || $final == failed ]] && break
-        sleep 5
-    done
-    [[ $final == succeeded ]] && pass "崩溃后 run 仍跑到 succeeded" || fail "崩溃后 run 没跑完：${final:-无状态}"
+        if [[ $final == failed ]]; then
+            fail "第一条 tool_result 出现前 run 已失败，造不出可续跑的 checkpoint"
+        else
+            undone "等待 ${KILL_WINDOW}s 未观察到 tool_result，无法验证 checkpoint 续跑"
+        fi
+        [[ $final == running || $final == queued ]] &&
+            curl -s --connect-timeout 5 --max-time 20 -b "$JAR_P2" -X POST \
+                "$BASE_URL/api/runs/$RUN_P2/cancel" >/dev/null 2>&1
+    else
+        info "队列确认 run 由 consumer $P2_CONSUMER 执行"
+        WORKER_TOUCHED=1
+        docker kill -s KILL "$VICTIM" >/dev/null 2>&1
+        info "已 kill -9 worker $VICTIM，等另一个副本认领（阈值 60 秒）"
+    fi
+
+    if (( CHECKPOINT_READY )) && [[ -n $VICTIM ]]; then
+        deadline=$((SECONDS + RECOVER_WINDOW))
+        final=""
+        while (( SECONDS < deadline )); do
+            final="$(p2_status "$RUN_P2")"
+            [[ $final == succeeded || $final == failed ]] && break
+            sleep 5
+        done
+        [[ $final == succeeded ]] && pass "崩溃后 run 仍跑到 succeeded" || fail "崩溃后 run 没跑完：${final:-无状态}"
+    fi
 
     EVENTS="$(curl -fsS -b "$JAR_P2" -N "$BASE_URL/api/runs/$RUN_P2/events" 2>/dev/null \
         | grep '^data: ' | sed 's/^data: //')"
@@ -1215,7 +1325,9 @@ else
     # **砍空记「未验」而不是「未过」。** 与「跳过的条目记未验」是同一条规矩的另一半：
     # 没触发到要测的场景，既算不上失败，更算不上通过 —— 记成失败会让人去查一个
     # 并不存在的 bug，记成通过则等于这条门禁不存在
-    if (( starts < 2 )); then
+    if (( ! CHECKPOINT_READY )) || [[ -z $VICTIM ]]; then
+        : # 上面已经记过未验或失败，不能再用未发生的恢复过程定性
+    elif (( starts < 2 )); then
         info "这一次 kill 没砍到：run 在它生效前就跑完了（run.started 只有 $starts 条）"
         undone "这轮 kill 没砍到，重跑一次即可"
     elif (( repeated == 0 )); then
@@ -1991,6 +2103,278 @@ end
 
 
 # ===========================================================================
+# P6：真前端底座与自定义智能体（两条免费，一条要 LLM）
+# ===========================================================================
+#
+# ① 用两个没有 checkpoint 交叉影响的会话跑同一句便宜问题，做双向断言。
+# ② 直接查 prompt 拼接，不跑模型。③ 停着 worker 查 run 级快照，两条
+# queued run 在恢复 worker 之前必须都取消，不然一条“免费验收”会在收尾时变成付费分析。
+
+P6_TAG="$$-$(date +%s%N | tail -c 5)"
+P6_JAR_READY=0
+P6_SNAPSHOT_RUNS=""
+if session_for p6; then
+    JAR_P6="$SESSION_JAR"
+    P6_JAR_READY=1
+fi
+
+# 跑一句简单分析并从 SSE 里拼回主 agent 的正式答复。结果放在
+# P6_LAST_* 里，不用 command substitution：答复可能有换行，拿制表符之类的分隔符
+# 来回传会把“以喵开头”这条判据自己改掉。
+p6_analyse() {
+    local jar="$1" thread_id="$2" stem="$3" run_body
+    P6_LAST_RUN=""
+    P6_LAST_STATUS=""
+    P6_LAST_ANSWER=""
+
+    run_body="$(body "$jar" -X POST "$BASE_URL/api/threads/$thread_id/runs" \
+        -H 'Content-Type: application/json' -d "$(jq -nc --arg c "$P6_QUESTION" '{content:$c}')")"
+    P6_LAST_RUN="$(jq -r '.id // empty' <<<"$run_body")"
+    [[ -n $P6_LAST_RUN ]] || return 1
+
+    if ! timeout "$RUN_WINDOW" curl -fsS -b "$jar" -N \
+        "$BASE_URL/api/runs/$P6_LAST_RUN/events" > "$WORK_DIR/$stem.sse"; then
+        curl -s --connect-timeout 5 --max-time 20 -b "$jar" -X POST \
+            "$BASE_URL/api/runs/$P6_LAST_RUN/cancel" >/dev/null 2>&1
+        P6_LAST_STATUS="$(run_status "$jar" "$P6_LAST_RUN" 2>/dev/null)"
+        return 1
+    fi
+    if ! grep '^data:' "$WORK_DIR/$stem.sse" | sed 's/^data: *//' |
+        jq -c . > "$WORK_DIR/$stem.json" 2>/dev/null; then
+        return 1
+    fi
+
+    P6_LAST_STATUS="$(run_status "$jar" "$P6_LAST_RUN" 2>/dev/null)"
+    [[ $P6_LAST_STATUS == succeeded ]] || return 1
+    P6_LAST_ANSWER="$(jq -rs \
+        '[.[] | select(.type == "token" and (.path | length == 0)) | .data.text] | join("")' \
+        "$WORK_DIR/$stem.json")"
+    [[ -n $P6_LAST_ANSWER ]]
+}
+
+# ---------------------------------------------- P6① 配与不配，输出可见地不同
+begin "P6①" "配与不配自定义提示词，同一问题的输出可见地不同"
+
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    undone "SKIP_LLM=1，这条要两次便宜的真实分析"
+elif (( ! P6_JAR_READY )); then
+    fail "造不出账号，两次真实分析验不了"
+else
+    THREAD_P6_PLAIN="$(new_thread "$JAR_P6")"
+    THREAD_P6_CAT="$(new_thread "$JAR_P6")"
+    P6_CAT_PROMPT="回答任何问题时，正式答复的第一个字符必须是「喵」，在它之前不要输出空格、标点或 Markdown。"
+    P6_QUESTION="二加二等于几？请只回答答案，不要调用工具。"
+
+    # 先填标题再 POST run：空标题会另起一次轻量模型调用，不仅多花钱，
+    # 还会让“两次真实分析”的调用数不再是两次。
+    P6_PLAIN_PATCHED=0
+    P6_CAT_PATCHED=0
+    api "$JAR_P6" -X PATCH "$BASE_URL/api/threads/$THREAD_P6_PLAIN" \
+        -H 'Content-Type: application/json' -d "$(jq -nc --arg t "P6 默认 $P6_TAG" '{title:$t}')" \
+        >/dev/null 2>&1 && P6_PLAIN_PATCHED=1
+    api "$JAR_P6" -X PATCH "$BASE_URL/api/threads/$THREAD_P6_CAT" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg t "P6 自定义 $P6_TAG" --arg p "$P6_CAT_PROMPT" \
+            '{title:$t,agent_config:{system_prompt:$p}}')" >/dev/null 2>&1 && P6_CAT_PATCHED=1
+
+    P6_PLAIN_OK=0
+    P6_CAT_OK=0
+    if (( P6_PLAIN_PATCHED )) && p6_analyse "$JAR_P6" "$THREAD_P6_PLAIN" p6-plain; then
+        P6_PLAIN_OK=1
+        P6_PLAIN_ANSWER="$P6_LAST_ANSWER"
+        P6_PLAIN_STATUS="$P6_LAST_STATUS"
+    else
+        P6_PLAIN_ANSWER="${P6_LAST_ANSWER:-}"
+        P6_PLAIN_STATUS="${P6_LAST_STATUS:-提交失败}"
+    fi
+    if (( P6_CAT_PATCHED )) && p6_analyse "$JAR_P6" "$THREAD_P6_CAT" p6-cat; then
+        P6_CAT_OK=1
+        P6_CAT_ANSWER="$P6_LAST_ANSWER"
+        P6_CAT_STATUS="$P6_LAST_STATUS"
+    else
+        P6_CAT_ANSWER="${P6_LAST_ANSWER:-}"
+        P6_CAT_STATUS="${P6_LAST_STATUS:-提交失败}"
+    fi
+
+    if (( ! P6_PLAIN_PATCHED || ! P6_CAT_PATCHED )); then
+        fail "两个会话没都在提交前设好标题与配置"
+    elif (( ! P6_PLAIN_OK || ! P6_CAT_OK )); then
+        fail "两条 run 没都跑到 succeeded：默认=$P6_PLAIN_STATUS，自定义=$P6_CAT_STATUS"
+    elif [[ $P6_PLAIN_ANSWER == 喵* ]]; then
+        fail "默认会话也以「喵」开头，配置可能串进了全局：$P6_PLAIN_ANSWER"
+    elif [[ $P6_CAT_ANSWER != 喵* ]]; then
+        fail "自定义会话没以「喵」开头，配置没生效：$P6_CAT_ANSWER"
+    else
+        pass "双向断言成立：默认不以「喵」开头，自定义以「喵」开头"
+    fi
+fi
+end
+
+# ------------------------------------------------ P6② 用户覆盖不了环境契约
+begin "P6②" "平台的环境契约排在最末，且用户覆盖不掉"
+
+P6_PROMPT_CHECK="$(in_api_python "
+import json
+from agent.config import AgentConfig
+from agent.prompt import ANALYSIS_SEGMENT, ENVIRONMENT_SEGMENT, OUTPUT_PATH, compose_prompt
+
+custom = '把图保存到当前目录'
+prompt = compose_prompt(AgentConfig(system_prompt=custom))
+checks = {
+    'user': custom in prompt,
+    'workdir': '/workspace' in ENVIRONMENT_SEGMENT,
+    'write_execute': all(part in ENVIRONMENT_SEGMENT for part in ('write_file', 'execute')),
+    'output': OUTPUT_PATH in ENVIRONMENT_SEGMENT,
+    'offline_pip': all(part in ENVIRONMENT_SEGMENT for part in ('公网', 'pip')),
+    'font': all(part in ENVIRONMENT_SEGMENT for part in ('字体', 'rcParams')),
+    'order': prompt.index(custom) < prompt.index(ANALYSIS_SEGMENT) < prompt.index(ENVIRONMENT_SEGMENT),
+    'suffix': prompt.endswith(ENVIRONMENT_SEGMENT),
+}
+print(json.dumps(checks, ensure_ascii=False))
+" 2>/dev/null)" || P6_PROMPT_CHECK=""
+
+if jq -e '
+    .user and .workdir and .write_execute and .output and .offline_pip and .font and .order and .suffix
+' >/dev/null 2>&1 <<<"$P6_PROMPT_CHECK"; then
+    pass "用户句保留，五条环境契约全在，顺序为用户 → 分析 → 环境且环境整段收尾"
+else
+    fail "prompt 拼接契约不完整：${P6_PROMPT_CHECK:-拼接函数调用失败}"
+fi
+end
+
+# ---------------------------------------------- P6③ thread 改动不改历史快照
+begin "P6③" "run 级快照：thread 默认改了，历史 run 仍记着当时那份"
+
+if (( ! P6_JAR_READY )); then
+    fail "造不出账号，快照链路验不了"
+else
+    THREAD_P6_SNAPSHOT="$(new_thread "$JAR_P6")"
+    P6_CONFIG_A="P6-snapshot-A-$P6_TAG"
+    P6_CONFIG_B="P6-snapshot-B-$P6_TAG"
+    WORKER_TOUCHED=1
+    P6_STOPPED_WORKERS=""
+    if ! compose stop -t 30 worker >/dev/null 2>&1 \
+        || ! P6_STOPPED_WORKERS="$(worker_ids)" \
+        || [[ -n $P6_STOPPED_WORKERS ]]; then
+        fail "worker 没停干净，不提交本来应该免费的快照 run"
+        if restore_p6_workers; then
+            WORKER_TOUCHED=""
+        else
+            fail "worker 停止失败后也没恢复到 $WORKER_COUNT 个副本，终止后续判据"
+            end
+            exit 1
+        fi
+    else
+
+    # A 与 B 都在提交前把标题填上，免得这条纯查库的判据偷偷起一次标题模型。
+    P6_SNAPSHOT_TITLE="P6 快照 $P6_TAG"
+    P6_PATCH_RESPONSE_A=""
+    if ! P6_PATCH_RESPONSE_A="$(curl -fsS --connect-timeout 5 --max-time 20 -b "$JAR_P6" \
+        -X PATCH "$BASE_URL/api/threads/$THREAD_P6_SNAPSHOT" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg t "$P6_SNAPSHOT_TITLE" --arg p "$P6_CONFIG_A" \
+            '{title:$t,agent_config:{system_prompt:$p}}')")" \
+        || ! jq -e --arg t "$P6_SNAPSHOT_TITLE" --arg p "$P6_CONFIG_A" \
+            '.title == $t and .agent_config.system_prompt == $p' \
+            >/dev/null 2>&1 <<<"$P6_PATCH_RESPONSE_A"; then
+        fail "提交前没能确认标题与配置 A 已保存，不冒险触发标题模型"
+        end
+        exit 1
+    fi
+    P6_POST_IN_FLIGHT=1
+    P6_POST_RESPONSE_A=""
+    if P6_POST_RESPONSE_A="$(curl -fsS --connect-timeout 5 --max-time 20 -b "$JAR_P6" \
+        -X POST "$BASE_URL/api/threads/$THREAD_P6_SNAPSHOT/runs" \
+        -H 'Content-Type: application/json' -d '{"content":"P6 快照 A"}')"; then
+        P6_POST_IN_FLIGHT=0
+    else
+        fail "第一条快照 run 的提交结果不确定，worker 保持停止并终止后续判据"
+        end
+        exit 1
+    fi
+    RUN_P6_SNAPSHOT_A="$(jq -r '.id // empty' <<<"$P6_POST_RESPONSE_A")"
+    [[ -z $RUN_P6_SNAPSHOT_A ]] || P6_SNAPSHOT_RUNS="$RUN_P6_SNAPSHOT_A"
+    P6_OLD_INITIAL=""
+    if [[ -n $RUN_P6_SNAPSHOT_A ]]; then
+        P6_OLD_INITIAL="$(psql_query \
+            "SELECT COALESCE(agent_config->>'system_prompt', '') FROM runs WHERE id='$RUN_P6_SNAPSHOT_A';" | tr -d '\r\n')"
+    fi
+
+    P6_PATCH_RESPONSE_B=""
+    if ! P6_PATCH_RESPONSE_B="$(curl -fsS --connect-timeout 5 --max-time 20 -b "$JAR_P6" \
+        -X PATCH "$BASE_URL/api/threads/$THREAD_P6_SNAPSHOT" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg p "$P6_CONFIG_B" '{agent_config:{system_prompt:$p}}')")" \
+        || ! jq -e --arg t "$P6_SNAPSHOT_TITLE" --arg p "$P6_CONFIG_B" \
+            '.title == $t and .agent_config.system_prompt == $p' \
+            >/dev/null 2>&1 <<<"$P6_PATCH_RESPONSE_B"; then
+        fail "没能确认配置 B 已保存，不提交一条已知会让快照判据失败的 run"
+        end
+        exit 1
+    fi
+    P6_OLD_AFTER_PATCH=""
+    if [[ -n $RUN_P6_SNAPSHOT_A ]]; then
+        P6_OLD_AFTER_PATCH="$(psql_query \
+            "SELECT COALESCE(agent_config->>'system_prompt', '') FROM runs WHERE id='$RUN_P6_SNAPSHOT_A';" | tr -d '\r\n')"
+    fi
+
+    P6_POST_IN_FLIGHT=1
+    P6_POST_RESPONSE_B=""
+    if P6_POST_RESPONSE_B="$(curl -fsS --connect-timeout 5 --max-time 20 -b "$JAR_P6" \
+        -X POST "$BASE_URL/api/threads/$THREAD_P6_SNAPSHOT/runs" \
+        -H 'Content-Type: application/json' -d '{"content":"P6 快照 B"}')"; then
+        P6_POST_IN_FLIGHT=0
+    else
+        fail "第二条快照 run 的提交结果不确定，worker 保持停止并终止后续判据"
+        end
+        exit 1
+    fi
+    RUN_P6_SNAPSHOT_B="$(jq -r '.id // empty' <<<"$P6_POST_RESPONSE_B")"
+    [[ -z $RUN_P6_SNAPSHOT_B ]] || P6_SNAPSHOT_RUNS="${P6_SNAPSHOT_RUNS:+$P6_SNAPSHOT_RUNS }$RUN_P6_SNAPSHOT_B"
+    P6_NEW_SNAPSHOT=""
+    if [[ -n $RUN_P6_SNAPSHOT_B ]]; then
+        P6_NEW_SNAPSHOT="$(psql_query \
+            "SELECT COALESCE(agent_config->>'system_prompt', '') FROM runs WHERE id='$RUN_P6_SNAPSHOT_B';" | tr -d '\r\n')"
+    fi
+
+    [[ -n $RUN_P6_SNAPSHOT_A && $P6_OLD_INITIAL == "$P6_CONFIG_A" ]] \
+        && pass "第一条 run 在 queued 时已快照 A" \
+        || fail "第一条 run 没快照 A：run=${RUN_P6_SNAPSHOT_A:-空} snapshot=$P6_OLD_INITIAL"
+    [[ $P6_OLD_AFTER_PATCH == "$P6_CONFIG_A" ]] \
+        && pass "thread 改成 B 后，老 run 仍是 A" \
+        || fail "thread 改动污染了老 run：$P6_OLD_AFTER_PATCH"
+    [[ -n $RUN_P6_SNAPSHOT_B && $P6_NEW_SNAPSHOT == "$P6_CONFIG_B" ]] \
+        && pass "改动后新提交的 run 快照 B" \
+        || fail "新 run 没快照 B：run=${RUN_P6_SNAPSHOT_B:-空} snapshot=$P6_NEW_SNAPSHOT"
+
+    # 这是安全边界，不只是验收的一个 pass：取消失败就不得恢复 worker。
+    # EXIT trap 会再试一次；仍失败则保持 worker 停止，留给人工处理。
+    P6_SUBMITTED_BOTH=0
+    [[ -n $RUN_P6_SNAPSHOT_A && -n $RUN_P6_SNAPSHOT_B ]] && P6_SUBMITTED_BOTH=1
+    if cancel_p6_snapshot_runs 1; then
+        if (( P6_SUBMITTED_BOTH )); then
+            pass "两条 queued run 都已取消，现在才恢复 worker"
+        else
+            fail "没有成功提交两条 run；已取消实际提交的那些，现在才恢复 worker"
+        fi
+        if restore_p6_workers; then
+            WORKER_TOUCHED=""
+        else
+            fail "worker 没恢复到 $WORKER_COUNT 个副本，终止后续判据"
+            end
+            exit 1
+        fi
+    else
+        fail "两条 queued run 没能全部取消，worker 保持停止"
+        end
+        exit 1
+    fi
+    fi
+fi
+end
+
+
+# ===========================================================================
 # P0：一次完整的真实分析（要 LLM，有费用）
 # ===========================================================================
 #
@@ -2007,7 +2391,7 @@ if [[ ${SKIP_LLM:-0} == 1 ]]; then
     P0_BLOCKED="SKIP_LLM=1，这一组要真实调用 DeepSeek"
 elif [[ ! -f $SAMPLE_CSV ]]; then
     # **`tmp/` 不入库**，新克隆的仓库里没有这个文件。整组记未验而不是让验收退出 ——
-    # 另外十七条与它无关，没有理由陪着一起不跑
+    # 另外二十四条与它无关，没有理由陪着一起不跑
     P0_BLOCKED="缺样例数据 $SAMPLE_CSV（放一份持仓 csv 过去，或 SAMPLE_CSV=... 指到别处）"
 elif ! session_for p0; then
     P0_BLOCKED="造不出账号"
