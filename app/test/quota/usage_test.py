@@ -7,12 +7,13 @@
 
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from event.model import RunStatus, TokenUsage
-from quota.usage import RunUsage, day_start, next_reset
+from quota.usage import DEFAULT_RESET_TIMEZONE, RunUsage, day_start, next_reset
 from run.repository import RunRepository
 from thread.repository import Thread
 from user.repository import User
@@ -143,14 +144,48 @@ async def test_another_users_runs_do_not_fill_my_slots(
 
 
 # ------------------------------------------------------------------ 重置时刻
-def test_the_day_starts_at_midnight() -> None:
+BEIJING = ZoneInfo("Asia/Shanghai")
+
+
+def test_the_day_starts_at_midnight_in_the_configured_zone() -> None:
+    """15:30 UTC 已经是北京时间第二天 23:30，那一天的起点是北京的 8 月 8 日零点。"""
     moment = datetime(2026, 8, 8, 15, 30, tzinfo=UTC)
 
-    assert day_start(moment) == datetime(2026, 8, 8, tzinfo=UTC)
+    assert day_start(moment, zone=BEIJING) == datetime(2026, 8, 8, tzinfo=BEIJING)
+
+
+def test_the_day_boundary_is_not_utc_midnight() -> None:
+    """**这一条就是那个 bug 的守门人。**
+
+    按 UTC 切的话，北京时间 8 月 9 日凌晨 1 点会被算成「还是 8 月 8 日」——
+    教师那边日历已经翻页，配额却要再等 8 小时才重置，而提示语印出来的是「00:00」。
+    """
+    just_after_midnight = datetime(2026, 8, 9, 1, 0, tzinfo=BEIJING)
+
+    assert day_start(just_after_midnight, zone=BEIJING) == datetime(2026, 8, 9, tzinfo=BEIJING)
+    assert day_start(just_after_midnight, zone=UTC) == datetime(2026, 8, 8, tzinfo=UTC)
 
 
 def test_the_next_reset_is_tomorrow_midnight() -> None:
     """提示语里那个时刻要与真正的重置对得上，否则教师会在还没重置时白来一趟。"""
     moment = datetime(2026, 8, 8, 15, 30, tzinfo=UTC)
 
-    assert next_reset(moment) == datetime(2026, 8, 9, tzinfo=UTC)
+    assert next_reset(moment, zone=BEIJING) == datetime(2026, 8, 9, tzinfo=BEIJING)
+
+
+def test_the_reset_hint_reads_as_midnight_not_as_the_process_timezone() -> None:
+    """**提示语不能再 `astimezone()` 一次。**
+
+    容器里 `TZ` 是 UTC，那一步什么都不转，于是「00:00 重置」实际是北京时间早上八点。
+    从这一层拿到的时刻必须已经在该显示的那个时区上，直接 `strftime` 就对。
+    """
+    moment = datetime(2026, 8, 8, 15, 30, tzinfo=UTC)
+
+    shown = next_reset(moment, zone=BEIJING).strftime("%m-%d %H:%M")
+
+    assert shown == "08-09 00:00"
+
+
+def test_the_default_zone_is_the_one_the_teachers_live_in() -> None:
+    """「每天 0 点重置」这句话是说给教师听的，它必须在教师的钟上成立。"""
+    assert DEFAULT_RESET_TIMEZONE == "Asia/Shanghai"

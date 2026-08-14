@@ -14,7 +14,6 @@
 
 import logging
 from collections.abc import Awaitable
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
@@ -36,7 +35,6 @@ from api.schema import (
 from api.security import UNAUTHENTICATED_MESSAGE, CurrentUser
 from cursor import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, CursorError, Page
 from preset.reference import ReferenceUnavailableError, resolve_reference
-from quota.usage import next_reset
 from run.approval import DEFAULT_PENDING_LIMIT, pending_count
 from sandbox.remote import BrokerError
 from thread.repository import Thread
@@ -307,11 +305,16 @@ async def _require_quota(platform: Platform, user_id: str) -> None:
         concurrent_run=user.quota_concurrent_runs,
     )
 
-    used = await platform.usage.token_today(user_id)
-    if used >= allowance.token_daily:
-        reset = next_reset(datetime.now(UTC)).astimezone().strftime("%m-%d %H:%M")
-        logger.info("配额耗尽，拒绝提交：user_id=%s used=%d limit=%d", user_id, used, allowance.token_daily)
-        raise quota_exceeded(f"今日 token 配额已用尽（{used}/{allowance.token_daily}），{reset} 重置")
+    # **`None` 是「不限」，不是「上限为 0」** —— 当前只有 admin 这一档，
+    # 它是平台的运维出口，被自己的闸门挡住时连「查为什么」也一起做不了了
+    if allowance.token_daily is not None:
+        used = await platform.usage.token_today(user_id)
+        if used >= allowance.token_daily:
+            # **不再 `astimezone()` 一次**：那一步转的是进程时区，容器里就是 UTC，
+            # 于是印出来的「00:00 重置」实际是北京时间早上八点
+            reset = platform.usage.next_reset().strftime("%m-%d %H:%M")
+            logger.info("配额耗尽，拒绝提交：user_id=%s used=%d limit=%d", user_id, used, allowance.token_daily)
+            raise quota_exceeded(f"今日 token 配额已用尽（{used}/{allowance.token_daily}），{reset} 重置")
 
     active = await platform.usage.active_run(user_id)
     if active >= allowance.concurrent_run:

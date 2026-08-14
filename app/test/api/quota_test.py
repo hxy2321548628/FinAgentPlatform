@@ -13,19 +13,23 @@
 """
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from functools import partial
-from uuid import uuid4
+from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 from redis.asyncio import Redis
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from api.platform import Platform
 from auth.password import PasswordHasher
 from event.model import TokenUsage
 from quota.policy import QuotaPolicy
 from quota.rate import RateLimiter
-from test.api.conftest import TEST_RATE_WINDOW_SECOND, signup
-from user.model import UserRole
+from quota.usage import DEFAULT_RESET_TIMEZONE, next_reset
+from test.api.conftest import TEST_RATE_WINDOW_SECOND, login, signup
+from user.model import UserRecord, UserRole
 
 # 一次「预置用量」的大小。取一个明显超过任何角色档位的数，
 # 免得将来改档位时这个文件要跟着一起改
@@ -47,6 +51,16 @@ def _tighten_concurrency(client: TestClient, *, limit: int) -> None:
 
 def _relax_concurrency(client: TestClient) -> None:
     _swap(client, policy=QuotaPolicy())
+
+
+async def _cap(platform: Platform, user_id: str, limit: int) -> None:
+    """给某个用户单独按一个日配额上限（`users.quota_tokens_daily`）。"""
+    async with AsyncSession(platform.engine) as session:
+        record = await session.get(UserRecord, UUID(user_id))
+        assert record is not None
+        record.quota_tokens_daily = limit
+        session.add(record)
+        await session.commit()
 
 
 async def _preset(platform: Platform, user_id: str, thread_id: str, tokens: TokenUsage) -> None:
@@ -84,6 +98,58 @@ def test_the_quota_message_says_when_it_resets(client: TestClient, platform: Pla
     assert isinstance(error, dict)
 
     assert "重置" in str(error["message"])
+
+
+def test_the_reset_hint_is_in_the_configured_zone_not_the_process_zone(
+    client: TestClient, platform: Platform, thread_id: str
+) -> None:
+    """**容器里 `TZ` 是 UTC。**
+
+    提示语若再 `astimezone()` 一次，「00:00 重置」印出来的其实是北京时间早上八点 ——
+    教师照着它等到零点，会发现还是提交不了，再等八小时。
+    """
+    _burn(client, platform, thread_id, TokenUsage(input_uncached=PRESET_TOKEN))
+
+    error = _submit(client, thread_id)["error"]
+    assert isinstance(error, dict)
+
+    expected = next_reset(datetime.now(UTC), zone=ZoneInfo(DEFAULT_RESET_TIMEZONE)).strftime("%m-%d %H:%M")
+    assert expected in str(error["message"])
+
+
+def test_an_admin_is_never_stopped_by_the_daily_token_quota(
+    client: TestClient, platform: Platform, hasher: PasswordHasher, thread_id: str
+) -> None:
+    """`admin` 是平台的运维出口 —— 被自己的闸门挡住时，连「查为什么」也一起做不了了。
+
+    **不是「档位很高」而是「不设档」**：拿一个很大的数字表示不限，那个数字迟早
+    会被人当成真的上限去读。
+    """
+    boss = signup(client, platform, hasher, name=f"admin-{uuid4().hex[:8]}", role=UserRole.ADMIN)
+    client.cookies.clear()
+    login(client, boss.name)
+    owned = client.post("/api/threads").json()["id"]
+    _burn(client, platform, owned, TokenUsage(input_uncached=PRESET_TOKEN))
+
+    response = client.post(f"/api/threads/{owned}/runs", json={"content": "管理员照常提交"})
+
+    assert response.status_code == 202
+
+
+def test_an_override_still_holds_an_admin_back(client: TestClient, platform: Platform, hasher: PasswordHasher) -> None:
+    """不限是角色那一档给的，**逐个用户按住的那条路仍然要通** —— 否则管理员之间没法互相约束。"""
+    boss = signup(client, platform, hasher, name=f"admin-{uuid4().hex[:8]}", role=UserRole.ADMIN)
+    assert client.portal is not None
+    client.portal.call(partial(_cap, platform, boss.id, 1))
+    client.cookies.clear()
+    login(client, boss.name)
+    owned = client.post("/api/threads").json()["id"]
+    _burn(client, platform, owned, TokenUsage(input_uncached=PRESET_TOKEN))
+
+    response = client.post(f"/api/threads/{owned}/runs", json={"content": "这一次该被按住"})
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "QUOTA_EXCEEDED"
 
 
 def test_cache_hits_do_not_push_a_user_over_the_quota(client: TestClient, platform: Platform, thread_id: str) -> None:

@@ -18,6 +18,7 @@ from quota.policy import (
     DEFAULT_RATE_WINDOW_SECOND,
     DEFAULT_TOKEN_DAILY,
 )
+from quota.usage import DEFAULT_RESET_TIMEZONE
 from sandbox.container import (
     DEFAULT_CPUS,
     DEFAULT_IMAGE,
@@ -200,13 +201,19 @@ class Settings(StoreSettings):
 
     # 三道闸的档位。**默认值全部是从一个样本外推出来的初值**，外推方式写在
     # quota/policy.py 的常量旁边 —— 拿到真实使用数据之后回那里校准，不要凭感觉改这里
-    quota_token_daily: dict[UserRole, int] = Field(
+    quota_token_daily: dict[UserRole, int | None] = Field(
         default_factory=lambda: dict(DEFAULT_TOKEN_DAILY),
-        description="各角色的 token 日配额，按未命中部分计。JSON 对象，键是角色名",
+        description="各角色的 token 日配额，按未命中部分计。JSON 对象，键是角色名；"
+        "**值为 null 表示不限**（默认只有 admin 是），0 则是「一次都不许跑」",
     )
     quota_concurrent_run: dict[UserRole, int] = Field(
         default_factory=lambda: dict(DEFAULT_CONCURRENT_RUN),
         description="各角色同时在跑的 run 上限。JSON 对象，键是角色名",
+    )
+    quota_reset_timezone: str = Field(
+        default=DEFAULT_RESET_TIMEZONE,
+        description="配额按哪个时区的零点重置。**统计窗口与「几点重置」的提示语共用它** —— "
+        "各拿各的时区算，两边会差出整整一个时差，而那种错读起来像「配额没重置」",
     )
     quota_output_weight: int = Field(
         default=DEFAULT_OUTPUT_WEIGHT,

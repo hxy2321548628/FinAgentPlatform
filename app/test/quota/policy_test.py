@@ -43,16 +43,46 @@ def test_students_get_less_than_teachers() -> None:
     student = policy.allow(role=UserRole.STUDENT, token_daily=None, concurrent_run=None)
     teacher = policy.allow(role=UserRole.TEACHER, token_daily=None, concurrent_run=None)
 
+    assert student.token_daily is not None
+    assert teacher.token_daily is not None
     assert student.token_daily < teacher.token_daily
     assert student.concurrent_run <= teacher.concurrent_run
 
 
 def test_every_role_has_a_tier() -> None:
-    """漏一个角色的话，那个角色的人一提交就 KeyError —— 500 而不是 429。"""
+    """漏一个角色的话，那个角色的人一提交就 KeyError —— 500 而不是 429。
+
+    **`None` 是查得到的答案（不限），不是查不到。** 这条要能把两者分开，
+    否则「漏了一个角色」会伪装成「那个角色不限」，而那是 fail-open。
+    """
     policy = QuotaPolicy()
 
     for role in UserRole:
-        assert policy.allow(role=role, token_daily=None, concurrent_run=None).token_daily > 0
+        allowance = policy.allow(role=role, token_daily=None, concurrent_run=None)
+        assert allowance.token_daily is None or allowance.token_daily > 0
+        assert allowance.concurrent_run > 0
+
+
+def test_only_the_admin_tier_is_unlimited() -> None:
+    """**成本闸门只剩教师与学生两档，别的角色不许悄悄跟着松掉。**
+
+    `reviewer` 特别容易被顺手划到 admin 那一边 —— 它多的只是审平台目录的能力，
+    跑分析时就是个普通老师。
+    """
+    policy = QuotaPolicy()
+
+    unlimited = {
+        role for role in UserRole if policy.allow(role=role, token_daily=None, concurrent_run=None).token_daily is None
+    }
+
+    assert unlimited == {UserRole.ADMIN}
+
+
+def test_an_override_can_only_tighten_an_unlimited_tier() -> None:
+    """管理员要把某个人（包括另一个管理员）按住时，那条路必须是通的。"""
+    allowance = QuotaPolicy().allow(role=UserRole.ADMIN, token_daily=1000, concurrent_run=None)
+
+    assert allowance.token_daily == 1000
 
 
 def test_the_concurrency_tier_stays_below_the_sandbox_pool() -> None:

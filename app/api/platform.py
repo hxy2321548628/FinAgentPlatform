@@ -12,6 +12,7 @@ broker 那边，这里只有到它的一条 HTTP 连接。
 """
 
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 from fastapi import Request
 from redis.asyncio import Redis
@@ -140,7 +141,13 @@ async def build_platform(settings: Settings) -> Platform:
         file_direct_send=settings.file_direct_send,
         policy=policy,
         cancel=CancelFlag(cache),
-        usage=RunUsage(engine, output_weight=policy.output_weight),
+        # **时区名解析不了就在这里炸**，与连不上 Postgres 同一条规矩：
+        # 撑到第一次配额提示才发现的话，症状是「重置时间显示成了别的地方」
+        usage=RunUsage(
+            engine,
+            output_weight=policy.output_weight,
+            reset_zone=ZoneInfo(settings.quota_reset_timezone),
+        ),
         rate=RateLimiter(cache, limit=settings.rate_limit, window_second=settings.rate_limit_window_second),
         session=SessionStore(cache, ttl_second=settings.session_ttl_second),
         upload_max_byte=settings.upload_max_byte,

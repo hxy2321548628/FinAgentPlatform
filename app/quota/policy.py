@@ -30,13 +30,21 @@ DEFAULT_OUTPUT_WEIGHT = 1
 #
 # **教师与学生的权限完全相同，配额是二者唯一的实质差别**，也是控制成本的唯一手段 ——
 # 学生人数通常远多于教师，配额若相同，成本结构会由学生侧主导。
-# admin 与 teacher 同档：管理员的会话与教师同权，它多的只是管账号的能力。
-# reviewer 同理 —— 它多的只是审平台目录的能力，跑分析时就是个普通老师。
+# reviewer 与 teacher 同档 —— 它多的只是审平台目录的能力，跑分析时就是个普通老师。
+#
+# **`admin` 不受日配额约束**（`None`，2026-08-14 改）：它是平台的运维出口 ——
+# 排障、跑验收、给老师复现问题都从这个账号走，而那几件恰恰最容易把额度烧光。
+# 被自己的闸门挡在门外时，**第一件该做的事（查清楚为什么）也一起做不了了**。
+# 成本闸门因此只剩教师与学生那两档，而管理员是个位数的人，不会主导成本结构。
+#
+# **`None` 是「不限」，`0` 是「一次都不许跑」**，两者不能混：后者是显式的禁用档，
+# 逐个用户覆盖时用得上。
+#
 # **每个角色都要在这两张表里有一行**：查不到时是 KeyError 而不是「按最严的档算」，
 # 症状是那个角色的人一提交就 500
 DEFAULT_TOKEN_DAILY = MappingProxyType(
     {
-        UserRole.ADMIN: 1_000_000,
+        UserRole.ADMIN: None,
         UserRole.REVIEWER: 1_000_000,
         UserRole.TEACHER: 1_000_000,
         UserRole.STUDENT: 400_000,
@@ -65,9 +73,14 @@ DEFAULT_RATE_WINDOW_SECOND = 60
 
 @dataclass(frozen=True)
 class Allowance:
-    """一个用户此刻的三个上限。"""
+    """一个用户此刻的两个上限。
 
-    token_daily: int
+    `token_daily` 为 `None` 表示**不限**（当前只有 `admin` 这一档）。
+    **不能拿一个很大的数字来表示不限** —— 那个数字迟早会被人当成真的上限去读，
+    而「为什么是这个数」谁也答不上来。
+    """
+
+    token_daily: int | None
     concurrent_run: int
 
 
@@ -87,7 +100,7 @@ class QuotaPolicy:
     def __init__(
         self,
         *,
-        token_daily: dict[UserRole, int] | None = None,
+        token_daily: dict[UserRole, int | None] | None = None,
         concurrent_run: dict[UserRole, int] | None = None,
         output_weight: int = DEFAULT_OUTPUT_WEIGHT,
     ) -> None:
@@ -105,11 +118,12 @@ class QuotaPolicy:
 
         Args:
             role: 角色。
-            token_daily: 该用户的 token 配额覆盖，留空则跟角色的档。
+            token_daily: 该用户的 token 配额覆盖，留空则跟角色的档。**覆盖只能收紧不能放开**
+                —— 它表达不了「不限」，那一档只由角色给。
             concurrent_run: 该用户的并发覆盖，留空则跟角色的档。
 
         Returns:
-            这个用户的三个上限。
+            这个用户的两个上限；`token_daily` 为 `None` 表示不限。
         """
         return Allowance(
             token_daily=token_daily if token_daily is not None else self._token_daily[role],
