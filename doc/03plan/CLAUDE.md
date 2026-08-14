@@ -30,13 +30,15 @@
 
 > **整合已于 2026-08-13 提前做掉**（在 P6 开工之前），落地为 [`deploy/test/verify.sh`](../../deploy/test/verify.sh)，22 条判据。
 >
-> **「必须原样重跑一遍」这条只完成了一半**：
+> **「必须原样重跑一遍」已完成**（2026-08-14，XFS prjquota 正常挂载、DeepSeek 充值之后，一次全量跑）：
 >
-> - ✅ **免费的 14 条已在真机上全过**（2026-08-14，XFS prjquota 正常挂载下）：P1③④⑤⑥、P2②③⑥、P3②③④⑤⑥、P4②⑦。
-> - ⛔ **要花钱的 7 条跑不了**（P0①–⑤、P2①、P3①）：上游返回 `HTTP 402 Insufficient Balance`，**DeepSeek 账户余额不足**。这是外部原因，不是判据红 —— 按 [P4 §8.14](./P4-plan.md) 那条规矩，**记「未验」而不是「通过」，也不因为「外部原因」改判绿**。充值后重跑即可关闭。
-> - ⛔ **要 root 的 1 条未跑**（P1①）：要 XFS 挂载 + 交互式 sudo。
+> - ✅ **20 条全过**：P0①–⑤、P1③④⑤⑥、P2②③⑥、P3①②③④⑤⑥、P4②⑦。含一次完整的真实分析（`input_cache_read=52480 / input_uncached=117464 / output=6036`，产物 `industry_annualized_volatility.png` 57858 字节）与四种审批决策各走一遍。
+> - ⚠️ **P2① 未验**：run 跑到 succeeded，但那一刀**没砍到**（`run.started` 只有 1 条，即 kill 生效前 run 已跑完）。**没触发到要测的场景，既不记通过也不记失败** —— 这正是 [P2 §8.4](./P2-plan.md) 立的规矩。重跑一次即可。
+> - ⚠️ **P1① 未验**：破坏性四条要交互式 sudo，跑不进无 tty 的会话。
 >
-> **在这 8 条补跑之前，不能说整合没打穿。** P5 欠的四条判据仍未补，见 [P5 §4](./P5-plan.md)。
+> **整合本身没打穿任何东西。** 跑的过程中另抓到两个与整合无关的问题：`SANDBOX_QUOTA_DEVICE` 在重建 broker 时丢失（从 P1 起就在，见 [P6 §L2](./P6-decision.md)）、以及 `compose stop worker` 不给 `-t` 会静默干等 30 分钟。
+>
+> P5 欠的四条判据仍未补，见 [P5 §4](./P5-plan.md)。
 
 **上游文档修订（2026-08-13 同日完成）**：[接入规范](../01design/04extension-integration.md)（形式 C 改为外网、13 项交付物缩为 4 项、§6/§7 全部关闭）、[ADR-0010](../01design/adr/0010-self-hosted-accounts-rbac.md)（新增 `reviewer`）、[安全设计 §7.2.1](../01design/07security-design.md)（角色表 + 三档可见性）、[智能体设计](../01design/03agent-design.md)（子 agent / skill / MCP 的能力开关与期次）、[风险登记 §10.2.1](../01design/09risk-register.md)（主动接受的四条风险）、[总体架构 §7](../01design/01architecture.md)（重估条件已触发）、[数据设计](../01design/06data-design.md)（`agent_config` 与组内共享）。
 

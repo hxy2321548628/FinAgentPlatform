@@ -60,6 +60,9 @@
 #     （标题由第一次提问之后的一次轻量模型调用填上）—— 那个字段一直在空转。
 #   - P3 的三道闸与取消两节会 `compose stop worker`，中途失败就把 worker 留在停止
 #     状态，**污染之后每一次跑法**。现在收尾统一把它拉回来。
+#   - **同两节的 `compose stop worker` 不给 `-t`，会静默干等最多 30 分钟**：
+#     worker 的 `stop_grace_period` 是 30m（生产滚动重启不该掐断在跑的分析），
+#     而这两节要的是「立刻别跑」。实测卡了 18 分钟，期间脚本一行输出都没有。
 #
 # ---------------------------------------------------------------------------
 # **判据编号沿用各期计划 §4 的编号**（`P1③`、`P2①`…），好让结果表与计划文档对得上。
@@ -1290,7 +1293,14 @@ begin "P3⑤" "三道闸都关得上，且三个 429 可区分"
 # worker 在跑的话它就是一次真实分析 —— 既花钱，又让紧接着那条「waiting_approval
 # 不占并发」数到一个 running。这一节不需要 worker
 WORKER_TOUCHED=1
-compose stop worker >/dev/null 2>&1
+# **必须给 `-t`。** compose.yml 给 worker 设了 `stop_grace_period: 30m`，那是为**生产
+# 滚动重启**留的 —— 一次分析几十分钟，掐掉等于把烧过的 token 扔了，`WorkerLoop.stop()`
+# 因此会 `await` 所有在跑的 run 再退出。
+#
+# 而这里要的恰恰相反：让 worker **立刻别跑任何东西**。手上只要还有一个 run，
+# 不给 `-t` 就会干等最多 30 分钟，**期间脚本一行输出都没有，看起来就是死了**
+# （2026-08-14 实测卡了 18 分钟才被人发现，而 P3⑤ 与 P3⑥ 各停一次，最坏一小时）。
+compose stop -t 30 worker >/dev/null 2>&1
 THREAD_B="$(new_thread "$JAR_B")"
 
 # token 配额：**预置用量**，不靠真烧。烧满一个真实日配额又慢又贵，
@@ -1351,7 +1361,14 @@ begin "P3⑥" "主动取消停得下来，且 checkpoint 保住"
 # **先停 worker 再提交**：让 run 停在 queued，这条就不必烧一次真实分析。
 # 「跑到一半取消」由 test/run/executor_test.py 精确覆盖（定点在 step 边界上）
 WORKER_TOUCHED=1
-compose stop worker >/dev/null 2>&1
+# **必须给 `-t`。** compose.yml 给 worker 设了 `stop_grace_period: 30m`，那是为**生产
+# 滚动重启**留的 —— 一次分析几十分钟，掐掉等于把烧过的 token 扔了，`WorkerLoop.stop()`
+# 因此会 `await` 所有在跑的 run 再退出。
+#
+# 而这里要的恰恰相反：让 worker **立刻别跑任何东西**。手上只要还有一个 run，
+# 不给 `-t` 就会干等最多 30 分钟，**期间脚本一行输出都没有，看起来就是死了**
+# （2026-08-14 实测卡了 18 分钟才被人发现，而 P3⑤ 与 P3⑥ 各停一次，最坏一小时）。
+compose stop -t 30 worker >/dev/null 2>&1
 THREAD_C="$(new_thread "$JAR_A")"
 RUN_C="$(api "$JAR_A" -X POST "$BASE_URL/api/threads/$THREAD_C/runs" -H 'Content-Type: application/json' \
     -d '{"content":"取消验收：worker 已停，这一条停在 queued"}' | jq -r .id)"
