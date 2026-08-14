@@ -11,6 +11,7 @@ import asyncio
 import socket
 import threading
 import time
+from base64 import b64encode
 from collections.abc import Iterator
 from pathlib import Path
 from uuid import uuid4
@@ -22,6 +23,7 @@ from deepagents.backends.protocol import ExecuteResponse, LsResult
 
 from broker.app import create_app
 from broker.runtime import AbsentContainer, Broker
+from broker.skill import SkillStore
 from sandbox.container import CommandResult
 from sandbox.path import PathEscapeError
 from sandbox.pool import QueuePositionCallback, SandboxQueueTimeoutError
@@ -103,10 +105,10 @@ def space(tmp_path: Path) -> Workspace:
 
 
 @pytest.fixture
-def broker_url(space: Workspace, pool: FakePool) -> Iterator[str]:
+def broker_url(space: Workspace, pool: FakePool, tmp_path: Path) -> Iterator[str]:
     """在一个空闲端口上把 broker 真的跑起来。"""
     port = _free_port()
-    app = create_app(Broker(workspace=space, pool=pool))  # type: ignore[arg-type]
+    app = create_app(Broker(workspace=space, pool=pool, skills=SkillStore(tmp_path / "skill")))  # type: ignore[arg-type]
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -134,6 +136,40 @@ def backend(broker_url: str, space: Workspace) -> RemoteSandboxBackend:
 def connection(broker_url: str) -> Iterator[BrokerConnection]:
     opened = BrokerConnection(base_url=broker_url)
     yield opened
+
+
+# ------------------------------------------------------------------ Skill 仓库与物化
+async def test_skill_storage_and_full_alignment_cross_the_http_boundary(
+    connection: BrokerConnection, space: Workspace
+) -> None:
+    skill_id = "11111111-1111-1111-1111-111111111111"
+    name = "annualized-naming"
+    original = b"---\nname: annualized-naming\ndescription: annualized naming\n---\n"
+    await connection.call(
+        "POST",
+        f"/skill/{skill_id}/versions/1",
+        json={
+            "files": [
+                {"path": "SKILL.md", "content": b64encode(original).decode()},
+                {"path": "notes/rule.txt", "content": b64encode(b"252 days").decode()},
+            ]
+        },
+    )
+    thread_id = await RemoteWorkspace(connection).create(uuid4().hex)
+    payload = {"skills": [{"skill_id": skill_id, "version": 1, "name": name}]}
+
+    await connection.call("POST", f"/threads/{thread_id}/skill/align", json=payload)
+    skill_root = space.path(thread_id) / "skill"
+    target = skill_root / name / "SKILL.md"
+    target.write_bytes(b"broken")
+    extra = skill_root / "invented" / "nested" / "extra.txt"
+    extra.parent.mkdir(parents=True)
+    extra.write_bytes(b"extra")
+    await connection.call("POST", f"/threads/{thread_id}/skill/align", json=payload)
+
+    assert target.read_bytes() == original
+    assert (skill_root / name / "notes" / "rule.txt").read_bytes() == b"252 days"
+    assert not (skill_root / "invented").exists()
 
 
 # ------------------------------------------------------------------ 八个工具

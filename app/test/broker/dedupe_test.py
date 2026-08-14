@@ -14,6 +14,7 @@ from redis.asyncio import Redis
 from broker.app import create_app
 from broker.cache import ToolCache
 from broker.runtime import Broker
+from broker.skill import SkillStore
 from sandbox.container import CommandResult
 from sandbox.workspace import Workspace
 
@@ -60,8 +61,13 @@ def space(tmp_path: Path) -> Workspace:
 
 
 @pytest.fixture
-def client(space: Workspace, container: CountingContainer, live_cache: Redis) -> httpx.AsyncClient:
-    broker = Broker(workspace=space, pool=CountingPool(container), cache=ToolCache(live_cache))  # type: ignore[arg-type]
+def client(space: Workspace, container: CountingContainer, live_cache: Redis, tmp_path: Path) -> httpx.AsyncClient:
+    broker = Broker(
+        workspace=space,
+        pool=CountingPool(container),  # type: ignore[arg-type]
+        skills=SkillStore(tmp_path / "skill"),
+        cache=ToolCache(live_cache),
+    )
     app = create_app(broker)
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BROKER_URL)
 
@@ -180,9 +186,17 @@ async def test_read_only_tools_are_not_deduplicated(
     assert "内容一" not in str(after)
 
 
-async def test_a_broker_without_a_cache_still_works(space: Workspace, container: CountingContainer) -> None:
+async def test_a_broker_without_a_cache_still_works(
+    space: Workspace, container: CountingContainer, tmp_path: Path
+) -> None:
     """没配 Redis 时去重整个关掉 —— 那只是回到没有它的从前，不该让 broker 起不来。"""
-    app = create_app(Broker(workspace=space, pool=CountingPool(container)))  # type: ignore[arg-type]
+    app = create_app(
+        Broker(
+            workspace=space,
+            pool=CountingPool(container),  # type: ignore[arg-type]
+            skills=SkillStore(tmp_path / "skill"),
+        )
+    )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BROKER_URL) as bare:
         await _call(bare, "execute", {"command": "echo 一", "checkpoint_ns": NS})
         await _call(bare, "execute", {"command": "echo 一", "checkpoint_ns": NS})

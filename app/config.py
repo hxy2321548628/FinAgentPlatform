@@ -256,6 +256,10 @@ class Settings(StoreSettings):
         default=REPO_ROOT / "data" / "sandbox",
         description="各会话 workspace 的宿主机根目录",
     )
+    skill_root: Path = Field(
+        default=REPO_ROOT / "data" / "skill",
+        description="Broker 持有的 Skill 版本仓库根目录",
+    )
     sandbox_max_container: int = Field(
         default=DEFAULT_MAX_CONTAINER,
         gt=0,

@@ -54,6 +54,15 @@ def test_env_file_resolves_to_repo_root_not_app_dir() -> None:
     assert Settings.model_config["env_file"] == repo_root / ".env"
 
 
+def test_skill_root_defaults_next_to_the_workspace_root(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-for-test")
+    repo_root = Path(__file__).resolve().parent.parent.parent
+
+    settings = Settings(_env_file=None)
+
+    assert settings.skill_root == repo_root / "data" / "skill"
+
+
 def test_get_settings_returns_the_same_instance(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-for-test")
     get_settings.cache_clear()

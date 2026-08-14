@@ -145,6 +145,33 @@ class AcquireRequest(BaseModel):
     )
 
 
+class StoreSkillFile(BaseModel):
+    """一版 Skill 中的一个已校验文件。"""
+
+    path: str = Field(min_length=1, description="相对于 Skill 根目录的 POSIX 路径")
+    content: Base64Bytes = Field(description="文件内容")
+
+
+class StoreSkillVersionRequest(BaseModel):
+    """把一版 Skill 持久化到宿主机仓库。"""
+
+    files: list[StoreSkillFile] = Field(min_length=1, description="已通过上传校验的文件清单")
+
+
+class AlignSkillReference(BaseModel):
+    """run 快照里冻结的一版 Skill。"""
+
+    skill_id: str = Field(min_length=1, description="Skill 标识")
+    version: int = Field(ge=1, description="版本号")
+    name: str = Field(min_length=1, description="物化目录名")
+
+
+class AlignSkillsRequest(BaseModel):
+    """一次 run 开跑前需要物化的完整 Skill 清单。"""
+
+    skills: list[AlignSkillReference] = Field(description="完整清单，清单外内容会删除")
+
+
 class CreateThreadRequest(BaseModel):
     """给一个已经落表的会话建目录。"""
 

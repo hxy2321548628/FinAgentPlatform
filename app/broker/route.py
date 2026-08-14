@@ -34,6 +34,7 @@ from broker.runtime import Broker, BrokerDep
 from broker.schema import (
     AcquireErrorData,
     AcquireRequest,
+    AlignSkillsRequest,
     CreateThreadRequest,
     DeleteRequest,
     DownloadItem,
@@ -52,6 +53,7 @@ from broker.schema import (
     ReadRequest,
     SaveRequest,
     SaveResponse,
+    StoreSkillVersionRequest,
     ThreadResponse,
     ToolRequest,
     TreeEntryItem,
@@ -60,6 +62,8 @@ from broker.schema import (
     UploadResponse,
     WriteRequest,
 )
+from broker.skill import SkillFile as StoredSkillFile
+from broker.skill import SkillReference
 from event.model import RunErrorCode
 from sandbox.browse import DEFAULT_PREVIEW_LINE, MAX_ENTRY, guess_mime, preview, tree
 from sandbox.path import PathEscapeError
@@ -71,8 +75,42 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/threads", tags=["broker"])
+skill_router = APIRouter(prefix="/skill", tags=["broker-skill"])
 
 SSE_MEDIA_TYPE = "text/event-stream"
+
+
+# ------------------------------------------------------------------ Skill 仓库与物化
+@skill_router.post("/{skill_id}/versions/{version}", status_code=status.HTTP_201_CREATED)
+async def save_skill_version(
+    skill_id: str,
+    version: int,
+    request: StoreSkillVersionRequest,
+    broker: BrokerDep,
+) -> None:
+    """把 API 已校验的一版 Skill 文件清单落到宿主机仓库。"""
+    files = tuple(StoredSkillFile(path=one.path, content=one.content) for one in request.files)
+    try:
+        await asyncio.to_thread(broker.skills.save_version, skill_id, version, files)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{thread_id}/skill/align", status_code=status.HTTP_204_NO_CONTENT)
+async def align_skills(thread_id: str, request: AlignSkillsRequest, broker: BrokerDep) -> None:
+    """按 run 快照把 Skill 全量对齐到明文 ``workspace/skill``。"""
+    references = tuple(
+        SkillReference(skill_id=one.skill_id, version=one.version, name=one.name) for one in request.skills
+    )
+    try:
+        workspace = broker.workspace.path(thread_id)
+        await asyncio.to_thread(broker.skills.align, workspace, references)
+    except PathEscapeError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 # ------------------------------------------------------------------ 会话目录

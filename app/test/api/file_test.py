@@ -215,6 +215,17 @@ def test_a_file_can_go_into_an_existing_subdirectory(client: TestClient, thread_
     assert (space.path(thread_id) / "data" / "holdings.csv").exists()
 
 
+def test_uploading_into_the_reserved_skill_directory_is_rejected(
+    client: TestClient, thread_id: str, space: Workspace
+) -> None:
+    (space.path(thread_id) / "skill").mkdir()
+
+    response = upload(client, thread_id, "holdings.csv", directory="skill")
+
+    assert response.status_code == 404  # type: ignore[attr-defined]
+    assert not (space.path(thread_id) / "skill" / "holdings.csv").exists()
+
+
 def test_the_landed_path_is_not_just_directory_plus_filename(
     client: TestClient, thread_id: str, space: Workspace
 ) -> None:

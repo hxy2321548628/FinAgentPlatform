@@ -136,6 +136,15 @@ def test_uploading_into_a_file_instead_of_a_directory_is_rejected(space: Workspa
         space.save(thread_id, "holdings.csv", b"x", directory="data.csv")
 
 
+@pytest.mark.parametrize("directory", ["skill", "skill/nested", "data/../skill"])
+def test_uploading_into_the_reserved_skill_directory_is_rejected(space: Workspace, directory: str) -> None:
+    thread_id = space.create(uuid4().hex)
+    (space.path(thread_id) / "skill" / "nested").mkdir(parents=True)
+
+    with pytest.raises(PathEscapeError, match="保留目录"):
+        space.save(thread_id, "holdings.csv", b"x", directory=directory)
+
+
 @pytest.mark.parametrize("directory", ["..", "../elsewhere", "/etc"])
 def test_an_upload_directory_that_escapes_the_workspace_is_rejected(space: Workspace, directory: str) -> None:
     thread_id = space.create(uuid4().hex)

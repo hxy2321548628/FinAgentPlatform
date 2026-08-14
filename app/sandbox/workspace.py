@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from shutil import rmtree
 
-from sandbox.path import PathEscapeError, thread_workspace
+from sandbox.path import SKILL_DIR, PathEscapeError, thread_workspace
 from sandbox.quota import NoQuota, QuotaProtocol
 
 logger = logging.getLogger(__name__)
@@ -163,7 +163,13 @@ class Workspace:
             message = f"文件名不可用：{filename!r}"
             raise PathEscapeError(message)
 
-        parent = self.resolve(thread_id, directory) if directory else self.path(thread_id)
+        workspace = self.path(thread_id).resolve()
+        parent = self.resolve(thread_id, directory) if directory else workspace
+        relative_parent = parent.relative_to(workspace)
+        if relative_parent.parts and relative_parent.parts[0] == SKILL_DIR:
+            message = f"不能上传到平台保留目录：{directory!r}"
+            raise PathEscapeError(message)
+
         if not parent.is_dir():
             message = f"目标目录不存在：{directory!r}"
             raise PathEscapeError(message)

@@ -20,6 +20,9 @@ VIRTUAL_ROOT = "/"
 # 因此定义在这里而不是其中任何一方
 OUTPUT_DIR = "outputs"
 
+# 平台物化 Skill 的保留目录，用户上传不能写入；对齐流程仍允许 agent 在运行中修改。
+SKILL_DIR = "skill"
+
 
 class PathEscapeError(ValueError):
     """路径不在 `/workspace` 下。

@@ -37,6 +37,7 @@ from auth.password import PasswordHasher
 from auth.session import DEFAULT_TTL_SECOND, SessionStore
 from broker.app import create_app as create_broker_app
 from broker.runtime import Broker
+from broker.skill import SkillStore
 from config import DEFAULT_UPLOAD_MAX_BYTE
 from event.mapper import StreamChunk
 from event.model import InterruptAction
@@ -213,8 +214,8 @@ def file_direct_send() -> bool:
 
 
 @pytest.fixture
-def broker_app(space: Workspace, pool: FakePool) -> FastAPI:
-    return create_broker_app(Broker(workspace=space, pool=pool))  # type: ignore[arg-type]
+def broker_app(space: Workspace, pool: FakePool, tmp_path: Path) -> FastAPI:
+    return create_broker_app(Broker(workspace=space, pool=pool, skills=SkillStore(tmp_path / "skill")))  # type: ignore[arg-type]
 
 
 @pytest.fixture

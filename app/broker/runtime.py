@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from broker.cache import ToolCache
+from broker.skill import SkillStore
 from config import Settings
 from sandbox.backend import SandboxBackend
 from sandbox.container import CommandResult, ContainerError
@@ -57,6 +58,7 @@ class Broker:
 
     workspace: Workspace
     pool: SandboxPool
+    skills: SkillStore
     # 写操作的去重表。**可以没有** —— 没配 Redis 时去重整个关掉，
     # 那只是回到没有它的从前，而不是让 broker 起不来
     cache: ToolCache | None = None
@@ -107,6 +109,7 @@ def build_broker(settings: Settings) -> Broker:
     return Broker(
         workspace=workspace,
         pool=pool,
+        skills=SkillStore(settings.skill_root),
         cache=ToolCache(redis.create_client(settings.redis_url)),
     )
 

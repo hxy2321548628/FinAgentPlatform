@@ -173,6 +173,8 @@ services:
       # Docker 守护进程，那个路径是在**宿主机**上解析的。两边不一致的话，
       # docker run -v 传过去的是 broker 容器内的路径，宿主机上根本不存在
       SANDBOX_WORKSPACE_ROOT: ${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}
+      # 与 workspace 同理，broker 容器内外必须看到同一个绝对路径。
+      SKILL_ROOT: ${SKILL_ROOT:-/data/skill}
       # 容器内是 root，xfs_quota 不必再套 sudo
       SANDBOX_QUOTA_COMMAND: xfs_quota
       # broker 容器内当前进程是 root，不显式指定的话沙箱会以 root 跑，
@@ -186,6 +188,7 @@ services:
       # 来自 agent 的东西 —— 它只认「哪个会话、做什么操作」
       - /var/run/docker.sock:/var/run/docker.sock
       - ${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}:${SANDBOX_WORKSPACE_ROOT:-/data/sandbox}
+      - ${SKILL_ROOT:-/data/skill}:${SKILL_ROOT:-/data/skill}
     # 设 project quota 要 CAP_SYS_ADMIN
     cap_add:
       - SYS_ADMIN
