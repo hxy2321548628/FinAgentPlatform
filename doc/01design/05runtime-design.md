@@ -84,9 +84,9 @@ worker ──XADD──▶ stream:run:{run_id} ──XREAD──▶ 网关 ─�
                   Postgres run_events
 ```
 
-前端 SSE 天然携带 `Last-Event-ID` 请求头，断线重连时从上次的 event id 继续读，中间产生的事件全部补齐。Stream 设 `MAXLEN` 或 TTL 控制内存，同时异步归档到 Postgres 做长期存储。
+前端用 `@microsoft/fetch-event-source` 自行维护续读位置。同页断线时，它保留最后一条已成功处理的事件 id 与当前 UI，重连请求把该 id 放进 `Last-Event-ID` header，中间事件由 Stream 补齐。后端**只从该 header 读游标**，不接受 query 参数退路。
 
-> 前端侧的实现约束（原生 `EventSource` 不支持自定义 header，需改用 `@microsoft/fetch-event-source` 自行维护 `Last-Event-ID`）详见[前端技术选型 §3.3](./02frontend-selection.md)。
+整页刷新是另一种语义：新页不复用旧页的游标或 UI，而是从 Stream 起点重放到空 reducer，重建完整对话。**绝不只持久化游标**；否则空 UI 会缺少游标之前的所有内容。Stream 设 `MAXLEN` 或 TTL 控制内存，同时异步归档到 Postgres 做长期存储。前端约束详见[前端技术选型 §3.3](./02frontend-selection.md)。
 
 ### 事件契约
 
@@ -125,9 +125,9 @@ worker ──XADD──▶ stream:run:{run_id} ──XREAD──▶ 网关 ─�
 | type | `data` | 触发时机 |
 |---|---|---|
 | `run.started` | `{ thread_id, resumed }` | worker 领取任务。**`resumed` 的含义是「这不是第一次开跑」**，审批续跑与崩溃重投都为 `true` —— 两者对前端是同一件事：别把已经显示的对话重置（P4 步骤三定案） |
-| `run.finished` | `{ status: "succeeded", tokens: { input_cache_read, input_uncached, output }, artifacts }` | 正常完成。`tokens` 按 §6.4 的口径拆分，**刻意不给总数**。`artifacts` 是产物标识：进了对象存储的是 `artifacts` 表主键，没进去的仍是旧形状 `{thread_id}/{相对路径}`（[P4 §2.2](../03plan/P4-plan.md) 的兼容期） |
+| `run.finished` | `{ status: "succeeded", tokens: { input_cache_read, input_uncached, output } }` | 正常完成。`tokens` 按 §6.4 的口径拆分，**刻意不给总数** |
 | `run.failed` | `{ code, message, retryable }` | 异常终止。`retryable` 由 §5.4 的错误分类决定 |
-| `run.cancelled` | `{}` | 教师取消或审批超时 |
+| `run.cancelled` | `{ tokens: { input_cache_read, input_uncached, output } }` | 教师取消或审批超时。worker 在 step 边界发现取消时带上本程已观测用量；api 直接取消与审批超时当前填零（这两条路径拿不到 worker 尚未落库的在途用量） |
 | `sandbox.queued` | `{ position }` | 沙箱排队中。**排位每次变化都推**（§8.1） |
 | `sandbox.ready` | `{}` | 拿到沙箱，排队结束 |
 | `error` | `{ code, message }` | 不终止 run 的非致命错误（如单次工具调用失败但 agent 会重试） |
@@ -373,14 +373,12 @@ stateDiagram-v2
     无沙箱 --> 创建中: 下次需要时重建
 ```
 
-**文件持久化** —— 让容器可以随时销毁重建，状态留在卷里：
+**文件持久化** —— 让容器可以随时销毁重建，状态留在 workspace 卷里：
 
 ```
 沙箱容器 /workspace
     ↕ bind mount
 宿主机 /data/sandbox/{thread_id}/
-    ↕ 异步同步
-MinIO tenant/{user_id}/thread/{thread_id}/
 ```
 
 DeepAgents 的文件工具由自实现的 `SandboxBackend` 接到这个 workspace 上：**文件操作由 broker 直接读写宿主机的 bind-mount 目录，只有 `execute` 进容器**（[ADR-0016](./adr/0016-sandbox-filesystem-backend.md)、[智能体设计 §4](./03agent-design.md)）。因此容器是无状态可抛弃的，且上图的回收不影响文件读写。
@@ -446,14 +444,12 @@ worker ──POST /sandbox/{op} { tool_call_id, ... } ──▶ broker
 | **GET** | **`/runs/{id}/events`** | **SSE 事件流，见 §5.2** | **200 `text/event-stream`** |
 | POST | `/runs/{id}/cancel` | 主动取消（§5.3） | 202 |
 | POST | `/runs/{id}/approve` | HITL 审批回传，见下 | 202 |
-| GET | `/artifacts/{id}` | 产物下载 | 302 → MinIO 预签名 URL |
 | GET | `/admin/users` | 用户列表（仅 `admin`） | 200 |
 | PATCH | `/admin/users/{id}` | 改角色 / 配额 / 启禁用 | 200 |
-| GET | `/admin/usage` | 用量与成本聚合（§8.3） | 200 |
 
-产物走 **302 跳预签名 URL**，不由网关代理二进制流 —— 否则大文件下载会长时间占住网关的 worker，而网关还要同时扛所有 SSE 长连接。（P4 实现时改成了 `X-Accel-Redirect` 由 nginx 直发，原意不变，理由见 `app/api/route/artifact.py`。）
+**工作目录是文件与产物的唯一存储路径。** 教师上传的数据、agent 写的脚本与交付的图表都在会话的 workspace 里，统一经 `/threads/{id}/files/*` 列出、预览、下载与删除；不再有 `artifacts` 表或对象存储上的第二份身份。
 
-**工作目录里的文件与产物是两条路，不是重复。** 产物是「某次 run 认领过的东西」，身份长在 `artifacts` 表上、字节在对象存储里；`/threads/{id}/files/*` 说的是「工作目录此刻长什么样」，含教师上传的数据与 agent 写的 `.py`，字节只在宿主机的 workspace 里。后者因此**只能经 api 一段段转出去**（边收边发，内存占用与文件大小无关），没有对象存储可签、也没有 nginx 能直读的路径。同一张图两条路都取得到，那是它确实既是文件也是产物。
+`/threads/{id}/files/raw` 由 api 完成鉴权与路径解析，然后回 `X-Accel-Redirect`，由 nginx 从挂载的 workspace 直发字节；nginx 的目标 location 是 `internal`，外部不能绕过 api 直读。开发机直跑 uvicorn、没有 nginx 时才退回经 broker 边收边发，内存占用与文件大小无关。
 
 `path` 一律走**查询参数**而不是路径段：文件名里带 `/`、`#`、`?` 与中文都是常事，塞进路径段要在两侧各写一遍转义，错一次就是一个打不开的文件。
 
@@ -461,7 +457,7 @@ worker ──POST /sandbox/{op} { tool_call_id, ... } ──▶ broker
 
 请求体上限由 `UPLOAD_MAX_BYTE` 与 nginx 的 `client_max_body_size` 两侧对齐（都是 64 MiB），两边不一致时大的那一侧形同虚设。**超限时答话的是 nginx，而它的 413 正文是一段 HTML，不是平台的 `{"error":{code,message}}`** —— 2026-08-11 实测确认。前端处理这一条只能认状态码，不能去解正文；api 那道闸只在没有 nginx 时（开发机直跑 uvicorn）才会答话。
 
-**上传这条路上字节是整块进内存的**（`UploadFile.read()` 之后还要 base64 一次交给 broker），实测 60 MiB 的一次上传让 api 进程涨了约 78 MiB。上限就是这块内存的上限，因此它不能随手调大。**下载那条路相反** —— 边收边发，实测 300 MiB 的文件下载全程只涨了 1.6 MiB。
+**上传这条路上字节是整块进内存的**（`UploadFile.read()` 之后还要 base64 一次交给 broker），实测 60 MiB 的一次上传让 api 进程涨了约 78 MiB。上限就是这块内存的上限，因此它不能随手调大。**下载那条路相反** —— 有 nginx 时 api 不经手字节，直跑 uvicorn 时的退路也是边收边发，实测 300 MiB 的文件下载全程只涨了 1.6 MiB。
 
 ### 审批接口的 payload
 

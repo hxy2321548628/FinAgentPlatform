@@ -56,9 +56,14 @@ DSD 已经把色彩（`--action: #1749C4`）、圆角（6/8/10px 三档）、字
 
 ### 3.3 SSE 客户端不能用原生 `EventSource`
 
-平台是多租户带鉴权的，而原生 `EventSource` 不支持自定义请求头，无法携带 Authorization。改用 `@microsoft/fetch-event-source`，基于 fetch 实现，可带 header、可 POST、可自定义重连退避。
+平台的续读契约只读 `Last-Event-ID` 请求头，原生 `EventSource` 不能让应用显式设置与更新该 header。改用 `@microsoft/fetch-event-source`，基于 fetch 实现，可携带 header、控制重连退避和用 `AbortSignal` 结束订阅。鉴权不靠 `Authorization` 头，而是 Cookie Session；SSE 请求必须显式配 `credentials: 'include'`，不依赖 fetch 默认值。
 
-代价是 `Last-Event-ID` 的维护由浏览器转到应用侧：需要自己记录最后一条事件 id，重连时放进请求头，对接架构文档 §3 的 per-run Redis Stream 重放机制。这部分要封成一个 `useRunStream` hook 统一处理，不散落在组件里。
+代价是应用侧要维护续读状态，由 `api/runEventTransport.ts` 与 `hooks/useRunEvents.ts` 统一处理，不散落在组件里：
+
+- **同页断线**：在内存里保留最后一条已成功处理的事件 id 和 reducer/UI，重连时把 id 放进 `Last-Event-ID` header，只重放断线期事件。
+- **整页刷新**：不持久化游标或 UI，新页从头重放到空 reducer。**绝不只持久化游标**，因为那会让空 UI 丢掉游标之前的内容。若未来需要跨刷新续读，必须把“事件投影 + 游标”原子持久化。
+
+服务端继续只接受 `Last-Event-ID` header，不为原生 `EventSource` 增加 query 参数兼容层。
 
 ### 3.4 对话 UI 自研，不用 assistant-ui
 
@@ -173,15 +178,15 @@ Logo 采用「学院塔形图标 + FinAgentPlatform 文字」的组合（DSD §6
 ```
 src/
 ├─ styles/theme.css          # DSD token 映射，全站唯一颜色来源
-├─ lib/
-│  ├─ sse.ts                 # fetch-event-source 封装 + Last-Event-ID 维护
-│  ├─ events.ts              # Zod schema，SSE 事件类型定义
-│  └─ api.ts                 # REST 客户端
+├─ api/
+│  ├─ runEventTransport.ts   # fetch-event-source 封装 + Last-Event-ID 维护
+│  ├─ events.ts              # 强类型 SSE 事件契约与校验
+│  └─ request.ts             # REST 客户端
 ├─ components/ui/            # shadcn 改造后的基础件（Button/Dialog/Table…）
 ├─ features/
 │  ├─ chat/                  # 消息流、工具调用块、审批卡片、输入区
 │  └─ admin/                 # 用户、配额、run 历史（RBAC 定义后展开）
-├─ hooks/useRunStream.ts     # 订阅 run 事件流，含断线重放
+├─ hooks/useRunEvents.ts     # 订阅 run 事件流，含断线重放
 └─ routes/
 ```
 

@@ -19,7 +19,7 @@
 ```
 zuel-platform/
 ├── app/            # Python 后端（uv 工程，虚拟环境在 app/.venv）。三个入口：api.app:app、broker.app:app、worker.main
-├── frontend/       # React 前端（未开始）
+├── web/            # React 前端（P6 之前是 mock，P6 起接入真实 API / SSE）
 ├── deploy/         # 部署配置：compose.yml（nginx+api+broker+postgres+redis）、两个 Dockerfile、nginx.conf、环境搭建与验收脚本
 ├── doc/            # 设计文档，见上方文档地图
 ├── .claude/        # 技术章程与风格指南
@@ -126,16 +126,17 @@ docker compose -f deploy/compose.yml up -d --build
 # 排障入口是日志，不再有看板。三个进程都打 JSON 行，一条 run 的全过程这样捞：
 docker compose -f deploy/compose.yml logs worker | jq -c 'select(.run_id == "…")'
 
-# P0–P5 的回归验收，**26 条判据一个脚本跑完**。2026-08-13 由 p1/p2/p3/p4 +
+# P0–P6 的回归验收，**29 条判据一个脚本跑完**。2026-08-13 由 p1/p2/p3/p4 +
 # acceptance + hostile + session 七个合并而来，理由与一并修掉的漂移写在文件头；
-# P5 那四条是 2026-08-14 补的（P5 期是唯一一期没留下验收脚本的）
+# P5 那四条是 2026-08-14 补的（P5 期是唯一一期没留下验收脚本的），
+# P6 的三条跟在它们后面
 bash deploy/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
-SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 18 条，约 25 分钟
+SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 20 条，约 25 分钟
 ```
 
 **默认全跑，没有「只跑某一期」的参数**（P6 决策 §L2 定案）。两个开关分的是**成本**
-不是期次：26 条里 8 条要花钱或要 root（P0 五条 + P2① + P3① 各要一次真实分析，
-P1① 那四条破坏性测试要 root），其余 18 条免费。
+不是期次：29 条里 9 条要花钱或要 root（P0 五条 + P2① + P3① 各要一次真实分析，
+P6① 要两次便宜的真实分析，P1① 那四条破坏性测试要 root），其余 20 条免费。
 
 **退出码分三档**：`0` 全过；`1` 有未过；**`2` 已验的都过了但有条目未验** —— 跳过的
 条目一律记「未验」而不是「通过」，静默跳过的门禁等于没有门禁。判据编号沿用各期计划

@@ -24,26 +24,28 @@
 SSE 的具体优势：
 
 1. **协议简单**，就是一个长连接的 HTTP 响应，不需要握手升级
-2. **自带断线重连与 `Last-Event-ID`**，与 [ADR-0006](./0006-event-channel-streams-not-pubsub.md) 的 Stream 重放机制天然咬合 —— 这一点是决定性的
+2. **有标准的事件 id 与 `Last-Event-ID` 续读契约**，可与 [ADR-0006](./0006-event-channel-streams-not-pubsub.md) 的 Stream 重放位置直接对接 —— 这一点是决定性的
 3. **走标准 HTTP**，对 Nginx 与校园网代理友好。WebSocket 的 Upgrade 请求在某些校园网设备上会被拦或超时，内网环境下这是真实风险
 
 ## 被放弃的备选
 
 | 备选 | 放弃理由 |
 |---|---|
-| **WebSocket** | 全双工能力在本场景 95% 用不上；需要自建重连与消息补发机制（SSE 白送）；对代理不友好 |
+| **WebSocket** | 全双工能力在本场景 95% 用不上；需要另定事件 id、重连游标与消息补发协议；对代理不友好 |
 | **HTTP 轮询 / 长轮询** | token 级别的增量推送用轮询延迟太高，体验明显劣化 |
 
 ## 后果
 
 **正面**：
-- 断线重连与事件补齐几乎零成本，直接对接 Redis Stream 的 `Last-Event-ID` 重放
+- 断线重连与事件补齐共用 SSE 的 id/header 契约，能直接对接 Redis Stream 的重放位置
 - 运维简单，标准 HTTP 链路，排障可以直接用 `curl`
 - 控制通道与事件通道分离，鉴权逻辑集中在 REST 侧，事件流只读
 
 **代价**：
 - **Nginx 必须改配置**，否则流式输出会被缓冲到响应结束才吐出（见主文档 §8.4）：`proxy_buffering off` + `proxy_read_timeout 3600s`。这是一个不改就完全不工作、改了就好的坑
-- **前端不能用原生 `EventSource`**。断线重连时需要自行控制 `Last-Event-ID` 的续读位置，而原生 `EventSource` 不暴露这个能力。需改用 `@microsoft/fetch-event-source`（详见[前端技术选型 §3.3](../02frontend-selection.md)）。**由此引出一个坑**：该库默认不携带 cookie，而认证走 Cookie Session（[ADR-0011](./0011-cookie-session-not-oauth2.md)），必须显式配置 `credentials: 'include'`，否则 SSE 请求会 401
+- **前端不能用原生 `EventSource`**。同页断线时需要由应用在内存中保留游标与 UI，并在重连请求中显式发 `Last-Event-ID` header；原生 `EventSource` 不暴露这个控制能力。需改用 `@microsoft/fetch-event-source`（详见[前端技术选型 §3.3](../02frontend-selection.md)）。认证走 Cookie Session（[ADR-0011](./0011-cookie-session-not-oauth2.md)），请求必须显式配置 `credentials: 'include'`，不依赖 fetch 默认值
+- **整页刷新不续用内存游标**，而是将游标与 UI 一起重置，从头重放到空 reducer。**绝不只持久化游标**；若未来需要跨刷新续读，必须原子持久化“事件投影 + 游标”
+- **后端只从 `Last-Event-ID` header 读游标**，不增加 query 参数兼容层
 - 每个 SSE 连接占用一个 HTTP 连接与网关侧一个 `XREAD` 循环，需关注连接数上限
 - 若将来出现高频双向交互需求，需要重新评估
 
