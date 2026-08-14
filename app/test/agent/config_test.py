@@ -8,6 +8,7 @@ from agent.config import (
     MAX_SYSTEM_PROMPT_LENGTH,
     AgentConfig,
     AgentConfigRequest,
+    SkillReference,
     effective_config,
 )
 
@@ -29,7 +30,32 @@ def test_a_prompt_over_the_limit_is_rejected() -> None:
 
 def test_an_unknown_field_is_rejected() -> None:
     with pytest.raises(ValidationError):
-        AgentConfig.model_validate({"skills": ["not-yet-supported"]})
+        AgentConfig.model_validate({"not_supported": True})
+
+
+def test_a_request_accepts_skill_identifiers() -> None:
+    skill_ids = [uuid4().hex, uuid4().hex]
+
+    request = AgentConfigRequest(skills=skill_ids)
+
+    assert request.skills == skill_ids
+
+
+def test_a_snapshot_freezes_skill_identity_version_and_name() -> None:
+    reference = SkillReference(skill_id=uuid4().hex, version=2, name="annualized-naming")
+
+    snapshot = AgentConfig(skills=[reference])
+
+    assert snapshot.model_dump(exclude_none=True) == {
+        "skills": [{"skill_id": reference.skill_id, "version": 2, "name": "annualized-naming"}]
+    }
+
+
+def test_an_old_snapshot_has_no_skill_key() -> None:
+    snapshot = AgentConfig.model_validate({"system_prompt": "旧队列消息"})
+
+    assert snapshot.skills is None
+    assert snapshot.model_dump(exclude_none=True) == {"system_prompt": "旧队列消息"}
 
 
 def test_a_snapshot_carries_the_reference_and_the_prompt_it_resolved_to() -> None:
@@ -92,7 +118,7 @@ def test_a_thread_default_may_hold_an_agent_reference() -> None:
     effective = effective_config(thread_config={"agent_id": agent_id}, override=None)
 
     assert effective.agent_id == agent_id
-    assert effective.agent_version is None
+    assert effective.model_dump(exclude_none=True) == {"agent_id": agent_id}
 
 
 def test_a_dirty_legacy_thread_config_is_rejected_rather_than_ignored() -> None:

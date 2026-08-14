@@ -23,6 +23,7 @@ from langgraph.types import Command
 
 from agent.config import AgentConfig
 from agent.prompt import compose_prompt
+from agent.skill import ReloadingSkillsMiddleware
 from agent.trace import attribution
 from config import Settings
 from event.mapper import StreamChunk
@@ -207,6 +208,12 @@ class Agent:
                 backend=backend,
                 system_prompt=compose_prompt(agent_config),
                 checkpointer=self._checkpointer,
+                middleware=[
+                    ReloadingSkillsMiddleware(
+                        backend=backend,
+                        sources=[("/workspace/skill/", "平台")],
+                    )
+                ],
                 # `MappingProxyType` 是为了不构成可变全局状态，交出去时复制一份
                 interrupt_on=dict(INTERRUPT_ON),
             ),

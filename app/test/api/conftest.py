@@ -335,6 +335,7 @@ def worker(
         agent=agent,
         repository=RunRepository(live_engine),
         cancel=CancelFlag(live_cache),
+        skill_aligner=RemoteSkillStore(connection),
         backend_factory=backend_factory,
     )
     return Worker(queue=queue, executor=executor)

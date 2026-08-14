@@ -8,7 +8,7 @@
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from io import StringIO
 from uuid import uuid4
 
@@ -17,7 +17,7 @@ from deepagents.backends.protocol import BackendProtocol
 from langchain_core.messages import AIMessage, AIMessageChunk
 from redis.asyncio import Redis
 
-from agent.config import AgentConfig
+from agent.config import AgentConfig, SkillReference
 from event.mapper import StreamChunk
 from event.model import (
     EventType,
@@ -140,6 +140,22 @@ class FakeCancelFlag:
         self.raised.add(run_id)
 
 
+class FakeSkillAligner:
+    """记录开跑前的 Skill 全量对齐。"""
+
+    def __init__(self, order: list[str] | None = None) -> None:
+        self.calls: list[tuple[str, list[SkillReference]]] = []
+        self.fail_with: Exception | None = None
+        self._order = order
+
+    async def align(self, thread_id: str, references: Sequence[SkillReference]) -> None:
+        if self._order is not None:
+            self._order.append("align")
+        if self.fail_with is not None:
+            raise self.fail_with
+        self.calls.append((thread_id, list(references)))
+
+
 class FakeAgent:
     """按给定的 chunk 流回放，并能在流结束后报告一个待确认的调用。"""
 
@@ -231,9 +247,21 @@ def log(live_cache: Redis) -> EventLog:
     return EventLog(live_cache)
 
 
-def a_task(thread_id: str = THREAD, content: str = "一", user_id: str | None = USER) -> RunTask:
+def a_task(
+    thread_id: str = THREAD,
+    content: str = "一",
+    user_id: str | None = USER,
+    *,
+    skills: list[SkillReference] | None = None,
+) -> RunTask:
     """一条队列里领到的任务。真实的 run id 就是 uuid4().hex。"""
-    return RunTask(run_id=uuid4().hex, thread_id=thread_id, content=content, user_id=user_id)
+    return RunTask(
+        run_id=uuid4().hex,
+        thread_id=thread_id,
+        content=content,
+        user_id=user_id,
+        agent_config=AgentConfig(skills=skills),
+    )
 
 
 def make_executor(pool: FakePool, log: EventLog, *chunk: StreamChunk) -> tuple[RunExecutor, FakeRepository]:
@@ -249,6 +277,7 @@ def make_executor_with(
     runner: AgentRunner,
     cancel: FakeCancelFlag | None = None,
     agent: FakeAgent | None = None,
+    skill_aligner: FakeSkillAligner | None = None,
 ) -> tuple[RunExecutor, FakeRepository]:
     repository = FakeRepository()
     executor = RunExecutor(
@@ -257,6 +286,7 @@ def make_executor_with(
         agent=agent or FakeAgent(runner),
         repository=repository,
         cancel=cancel or FakeCancelFlag(),
+        skill_aligner=skill_aligner or FakeSkillAligner(),
     )
     return executor, repository
 
@@ -902,3 +932,67 @@ async def test_the_sandbox_is_held_in_the_name_of_the_run(pool: FakePool, log: E
     await executor.execute(run)
 
     assert pool.holder == [run.run_id]
+
+
+# ------------------------------------------------------------------ Skill 对齐
+async def test_skills_are_aligned_after_sandbox_ready_and_before_agent_stream(pool: FakePool, log: EventLog) -> None:
+    order: list[str] = []
+    aligner = FakeSkillAligner(order)
+    reference = SkillReference(skill_id=uuid4().hex, version=2, name="annualized-naming")
+
+    def runner(backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+        order.append("agent")
+        return chunk_stream()
+
+    executor, _ = make_executor_with(pool, log, runner, skill_aligner=aligner)
+    run = a_task(skills=[reference])
+
+    await executor.execute(run)
+
+    assert pool.acquired == [THREAD]
+    assert order == ["align", "agent"]
+    assert aligner.calls == [(THREAD, [reference])]
+
+
+async def test_a_run_without_skills_does_not_call_the_broker_aligner(pool: FakePool, log: EventLog) -> None:
+    aligner = FakeSkillAligner()
+    executor, _ = make_executor_with(pool, log, lambda *_: chunk_stream(), skill_aligner=aligner)
+
+    await executor.execute(a_task())
+
+    assert aligner.calls == []
+
+
+async def test_an_alignment_error_fails_the_run_without_starting_the_agent(pool: FakePool, log: EventLog) -> None:
+    aligner = FakeSkillAligner()
+    aligner.fail_with = RuntimeError("Skill 版本字节不存在")
+    started: list[str] = []
+
+    def runner(backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+        started.append(content)
+        return chunk_stream()
+
+    executor, repository = make_executor_with(pool, log, runner, skill_aligner=aligner)
+    run = a_task(skills=[SkillReference(skill_id=uuid4().hex, version=1, name="missing")])
+
+    await executor.execute(run)
+
+    assert started == []
+    assert repository.status[run.run_id] is RunStatus.FAILED
+    assert await types_of(log, run.run_id) == ["run.started", "sandbox.ready", "run.failed"]
+
+
+async def test_an_approval_resume_realigns_the_frozen_skill_snapshot(pool: FakePool, log: EventLog) -> None:
+    aligner = FakeSkillAligner()
+    agent = FakeAgent(lambda *_: chunk_stream())
+    executor, repository = make_executor_with(pool, log, lambda *_: chunk_stream(), agent=agent, skill_aligner=aligner)
+    reference = SkillReference(skill_id=uuid4().hex, version=3, name="annualized-naming")
+    first = a_task(skills=[reference])
+    agent.interrupt = [InterruptAction(index=0, tool_name="delete", args={}, allowed_decisions=["approve"])]
+
+    await executor.execute(first)
+    repository.status[first.run_id] = RunStatus.QUEUED
+    resumed = first.model_copy(update={"decisions": [Decision(index=0, type=DecisionType.APPROVE)]})
+    await executor.execute(resumed)
+
+    assert aligner.calls == [(THREAD, [reference]), (THREAD, [reference])]

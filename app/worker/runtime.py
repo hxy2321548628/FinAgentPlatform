@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from agent.factory import Agent, create_model
 from agent.trace import create_callback
 from config import Settings
+from preset.skill_remote import RemoteSkillStore
 from run.archive import EventArchive
 from run.cancel import CancelFlag
 from run.executor import RunExecutor
@@ -95,6 +96,7 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
         ),
         repository=RunRepository(engine),
         cancel=CancelFlag(cache),
+        skill_aligner=RemoteSkillStore(connection),
         backend_factory=backend_factory,
     )
     queue = TaskQueue(

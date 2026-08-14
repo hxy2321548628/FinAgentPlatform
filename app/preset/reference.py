@@ -12,7 +12,7 @@ worker 什么时候有空。冻结在提交那一刻，历史 run 的快照因�
 import logging
 from typing import Protocol
 
-from agent.config import AgentConfig
+from agent.config import AgentConfig, AgentConfigRequest
 from preset.repository import ResolvedAgent
 
 logger = logging.getLogger(__name__)
@@ -21,14 +21,10 @@ UNAVAILABLE_MESSAGE = "这个智能体现在用不了：可能作者已经收回
 
 
 class AgentResolverProtocol(Protocol):
-    """引用解析对目录层的全部要求：查一次、记一次调用。"""
+    """引用解析对目录层的全部要求：按提交者身份查一次。"""
 
     async def resolve(self, agent_id: str, *, user_id: str) -> ResolvedAgent | None:
         """解析一次引用。"""
-        ...
-
-    async def count_call(self, agent_id: str) -> None:
-        """给调用计数 +1。"""
         ...
 
 
@@ -41,7 +37,7 @@ class ReferenceUnavailableError(Exception):
 
 
 async def resolve_reference(
-    config: AgentConfig,
+    config: AgentConfigRequest,
     *,
     user_id: str,
     resolver: AgentResolverProtocol,
@@ -63,15 +59,16 @@ async def resolve_reference(
         ReferenceUnavailableError: 引用此刻解析不出来。
     """
     if config.agent_id is None:
-        return config
+        return AgentConfig(system_prompt=config.system_prompt)
 
     resolved = await resolver.resolve(config.agent_id, user_id=user_id)
     if resolved is None:
         logger.info("引用解析失败：agent_id=%s user_id=%s", config.agent_id, user_id)
         raise ReferenceUnavailableError(UNAVAILABLE_MESSAGE)
 
-    # **计数在解析成功之后**：解析失败的那些不是调用，记进去会让「哪些资源值得收编」
-    # 这一问混进一批根本没跑起来的提交
-    await resolver.count_call(resolved.agent_id)
     logger.info("引用已解析：agent_id=%s version=%s", resolved.agent_id, resolved.version)
-    return config.model_copy(update={"agent_version": resolved.version, "system_prompt": resolved.system_prompt})
+    return AgentConfig(
+        agent_id=resolved.agent_id,
+        agent_version=resolved.version,
+        system_prompt=resolved.system_prompt,
+    )

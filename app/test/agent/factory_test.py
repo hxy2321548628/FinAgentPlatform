@@ -17,6 +17,7 @@ from pydantic import SecretStr
 from agent.config import AgentConfig
 from agent.factory import ALLOWED_DECISION, DELETE_TOOL, INTERRUPT_ON, RECURSION_LIMIT, STREAM_MODE, Agent, create_model
 from agent.prompt import SYSTEM_PROMPT, compose_prompt
+from agent.skill import ReloadingSkillsMiddleware
 from agent.trace import SESSION_KEY, USER_KEY
 from config import Settings
 from event.mapper import StreamChunk
@@ -211,6 +212,21 @@ async def test_the_checkpointer_is_shared_across_runs(recorded: tuple[RecordingA
 
     assert first is checkpointer
     assert built["checkpointer"] is checkpointer
+
+
+async def test_platform_skills_are_loaded_by_the_reloading_middleware(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+
+    middleware = built["middleware"]
+    assert len(middleware) == 1
+    assert isinstance(middleware[0], ReloadingSkillsMiddleware)
+    assert middleware[0].sources == ["/workspace/skill/"]
+    assert middleware[0].source_labels == ["平台"]
 
 
 @pytest.fixture

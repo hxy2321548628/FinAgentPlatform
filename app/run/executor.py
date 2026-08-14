@@ -12,12 +12,12 @@
 """
 
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Protocol
 
 from deepagents.backends.protocol import BackendProtocol
 
-from agent.config import AgentConfig
+from agent.config import AgentConfig, SkillReference
 from event.mapper import StreamChunk, map_chunk
 from event.model import (
     Event,
@@ -157,6 +157,14 @@ class CancelFlagProtocol(Protocol):
         ...
 
 
+class SkillAlignerProtocol(Protocol):
+    """执行器对 Skill 存储层的全部要求：按快照全量对齐。"""
+
+    async def align(self, thread_id: str, references: Sequence[SkillReference]) -> None:
+        """把指定版本物化进会话 workspace。"""
+        ...
+
+
 class RunCancelledError(Exception):
     """教师取消了这个 run。
 
@@ -185,6 +193,7 @@ class RunExecutor:
         agent: AgentProtocol,
         repository: RunRepositoryProtocol,
         cancel: CancelFlagProtocol,
+        skill_aligner: SkillAlignerProtocol,
         backend_factory: BackendFactory | None = None,
     ) -> None:
         self._pool = pool
@@ -193,6 +202,7 @@ class RunExecutor:
         self._agent = agent
         self._repository = repository
         self._cancel = cancel
+        self._skill_aligner = skill_aligner
 
     async def execute(self, task: RunTask) -> None:
         """跑完一条已经领到手的任务，或者把它停在「等人确认」上。
@@ -251,6 +261,7 @@ class RunExecutor:
                 return
 
             try:
+                await self._align_skills(run, task.agent_config)
                 await self._consume(run, task)
             except RunCancelledError:
                 # 取消不是失败。沙箱在 finally 里归还，已经写入的 checkpoint 原样留着 ——
@@ -263,6 +274,12 @@ class RunExecutor:
                 await self._fail(run, RunErrorCode.INTERNAL, str(exc), retryable=False)
             finally:
                 await self._pool.release(run.thread_id, holder=run.id)
+
+    async def _align_skills(self, run: Run, config: AgentConfig) -> None:
+        """有 Skill 时按冻结快照对齐；空配置不增加 Broker 往返。"""
+        if not config.skills:
+            return
+        await self._skill_aligner.align(run.thread_id, config.skills)
 
     async def _acquire(self, run: Run) -> bool:
         """申请沙箱，把排队过程写成事件。失败时结束 run 并返回 False。"""

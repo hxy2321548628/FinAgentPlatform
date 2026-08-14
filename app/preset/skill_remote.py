@@ -2,19 +2,10 @@
 
 import base64
 from collections.abc import Sequence
-from dataclasses import dataclass
 
+from agent.config import SkillReference
 from preset.skill_package import SkillFile
 from sandbox.remote import BrokerConnection
-
-
-@dataclass(frozen=True)
-class SkillReference:
-    """需要物化进会话的一版 Skill。"""
-
-    skill_id: str
-    version: int
-    name: str
 
 
 class RemoteSkillStore:

@@ -260,3 +260,89 @@ def test_reviews_table_can_hold_agent_and_skill_targets_together(client: TestCli
 
     assert client.portal is not None
     assert {ResourceKind.AGENT, ResourceKind.SKILL} <= client.portal.call(target_kinds)
+
+
+def test_a_run_freezes_visible_skill_references_and_counts_the_call(client: TestClient, thread_id: str) -> None:
+    created = create_skill(client)
+    skill_id = str(created["id"])
+    release(client, skill_id)
+
+    response = client.post(
+        f"/api/threads/{thread_id}/runs",
+        json={"content": "按能力库规则分析", "agent_config": {"skills": [skill_id]}},
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["agent_config"]["skills"] == [{"skill_id": skill_id, "version": 1, "name": created["name"]}]
+    assert listed(client, f"{SKILL_PATH}/mine")[skill_id]["call_count"] == 1
+
+
+def test_an_invisible_skill_reference_is_422_and_creates_no_run(client: TestClient, outsider: User) -> None:
+    created = create_skill(client)
+    skill_id = str(created["id"])
+    release(client, skill_id)
+    as_user(client, outsider)
+    thread_id = str(client.post("/api/threads").json()["id"])
+
+    response = client.post(
+        f"/api/threads/{thread_id}/runs",
+        json={"content": "越权引用", "agent_config": {"skills": [skill_id]}},
+    )
+
+    assert response.status_code == 422
+    assert "Skill" in response.json()["error"]["message"]
+    assert client.get(f"/api/threads/{thread_id}/runs").json()["items"] == []
+
+
+def test_duplicate_visible_skill_names_are_rejected_before_any_call_is_counted(
+    client: TestClient,
+    group: Group,
+    teammate: User,
+) -> None:
+    name = f"same-name-{uuid4().hex[:8]}"
+    first = create_skill(client, name)
+    first_id = str(first["id"])
+    release(client, first_id)
+    assert (
+        client.put(
+            f"{SKILL_PATH}/{first_id}/sharing",
+            json={"visibility": "group", "group_ids": [group.id]},
+        ).status_code
+        == 200
+    )
+
+    as_user(client, teammate)
+    second = create_skill(client, name)
+    second_id = str(second["id"])
+    release(client, second_id)
+    assert (
+        client.put(
+            f"{SKILL_PATH}/{second_id}/sharing",
+            json={"visibility": "group", "group_ids": [group.id]},
+        ).status_code
+        == 200
+    )
+    thread_id = str(client.post("/api/threads").json()["id"])
+
+    response = client.post(
+        f"/api/threads/{thread_id}/runs",
+        json={"content": "名字撞车", "agent_config": {"skills": [first_id, second_id]}},
+    )
+
+    assert response.status_code == 422
+    assert name in response.json()["error"]["message"]
+    available = listed(client, f"{SKILL_PATH}/available")
+    assert available[first_id]["call_count"] == 0
+    assert available[second_id]["call_count"] == 0
+    assert client.get(f"/api/threads/{thread_id}/runs").json()["items"] == []
+
+
+def test_more_than_ten_skills_are_rejected_before_resolution(client: TestClient, thread_id: str) -> None:
+    response = client.post(
+        f"/api/threads/{thread_id}/runs",
+        json={"content": "太多能力", "agent_config": {"skills": [uuid4().hex for _ in range(11)]}},
+    )
+
+    assert response.status_code == 422
+    assert "10" in response.json()["error"]["message"]
+    assert client.get(f"/api/threads/{thread_id}/runs").json()["items"] == []

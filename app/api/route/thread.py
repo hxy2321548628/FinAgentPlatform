@@ -35,6 +35,7 @@ from api.schema import (
 from api.security import UNAUTHENTICATED_MESSAGE, CurrentUser
 from cursor import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, CursorError, Page
 from preset.reference import ReferenceUnavailableError, resolve_reference
+from preset.skill_reference import SkillReferenceError, resolve_skill_references
 from run.approval import DEFAULT_PENDING_LIMIT, pending_count
 from sandbox.remote import BrokerError
 from thread.repository import Thread
@@ -198,10 +199,23 @@ async def submit_run(
         # **引用在这一刻被解析掉，之后再没人碰它。** 到 worker 领到任务之间可能隔几分钟，
         # 那期间作者随时可能撤回共享或发新版本 —— 在执行侧解析，同一次提交的结果就取决于
         # worker 什么时候有空
-        resolved = await resolve_reference(effective, user_id=current.user_id, resolver=platform.agent)
-    except ReferenceUnavailableError as exc:
+        resolved_agent = await resolve_reference(effective, user_id=current.user_id, resolver=platform.agent)
+        resolved = await resolve_skill_references(
+            resolved_agent,
+            skill_ids=effective.skills,
+            user_id=current.user_id,
+            resolver=platform.skill,
+        )
+    except (ReferenceUnavailableError, SkillReferenceError) as exc:
         # **不静默回退默认提示词。** 回退跑得完、不报错，唯一的症状是回答变了味
         raise invalid(str(exc)) from exc
+
+    # 两类引用都完整解析并通过撞名/数量校验之后才记调用，避免一个坏 Skill 让前面的
+    # 引用计数增长，而这次 run 实际上一行都没有创建。
+    if resolved.agent_id is not None:
+        await platform.agent.count_call(resolved.agent_id)
+    for skill in resolved.skills or []:
+        await platform.skill.count_call(skill.skill_id)
 
     run = await platform.submitter.submit(
         thread_id=thread_id,
