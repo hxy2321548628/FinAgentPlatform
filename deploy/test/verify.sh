@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 平台回归验收：P0–P4 的 22 条判据，一个文件跑完。
+# 平台回归验收：P0–P5 的 26 条判据，一个文件跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
@@ -10,15 +10,21 @@
 # 常用跑法：
 #
 #   bash deploy/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
-#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 14 条，约 12 分钟
+#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 18 条，约 25 分钟
 #
 # **默认全跑，不分 phase，也没有挑某一期跑的参数** —— P6 决策 §L2 的定案。
 # 保留的是 `SKIP_LLM` / `SKIP_HOSTILE` 两个开关：它们分的是**成本**（要不要花钱、
 # 要不要 root），不是期次。按期挑着跑，等于把刚拆掉的那层级联结构又装回来，
 # 还多一条「以为全验了其实只验了一期」的路。
 #
-# 22 条里 **8 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
-# P2① 与 P3① 各要一次真实分析、P1① 那四条破坏性测试要 root。其余 14 条全免费。
+# 26 条里 **8 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
+# P2① 与 P3① 各要一次真实分析、P1① 那四条破坏性测试要 root。其余 18 条全免费。
+#
+# ---------------------------------------------------------------------------
+# **P5 那一组是 2026-08-14 补的**（P6 开工前的最后一件事）。P5 期是唯一一期没留下
+# 验收脚本的（P5 计划 §4），而它改了 `UploadResponse` 的形状、给 `/threads` 加了
+# 一条单段路由、动了事件流的收尾条件 —— 每一条都有打穿历史脚本的形状。四条判据
+# 一次跑过，且**没打穿任何一条历史判据**（同一轮里旧的 16 条免费判据全过）。
 #
 # ---------------------------------------------------------------------------
 # **为什么合成一个文件**（2026-08-13，取代 p1/p2/p3/p4 + acceptance + hostile + session
@@ -1641,6 +1647,346 @@ PY
 [[ $RESUMED_OK == True ]] \
     && pass "queued 起跑报 FIRST，重投报 RESUMED，终态之后报 REFUSED" \
     || fail "resumed 的三态对不上（实得：$RESUMED_OK）"
+end
+
+
+# ===========================================================================
+# P5：账号与课题组、工作目录、会话与历史（四条全免费）
+# ===========================================================================
+#
+# **这四条是 P5 期欠下的债。** 前四期每期都留了一条能跑的验收，唯独 P5 没有
+# （P5 计划 §4）—— 而那一期改了 `UploadResponse` 的形状、给 `/threads` 加了一条
+# 单段路由、动了事件流的收尾条件，**每一条都有打穿历史脚本的形状**，却没有任何
+# 一次跨期重跑证明它们没有。
+#
+# **补法在 2026-08-13 的合并之后变了，债本身没变**：不再新写一个 `p5.sh` 逐级转调，
+# 而是在这里加一组，判据编号跟在 p4 后面。
+#
+# **一次模型调用都不花，因此不挂 SKIP_LLM。** P5 改的全是接口层，与模型无关。
+# P5③ 要一条真 run 才有历史可读，但它提交完立刻取消，且**提交前先把标题填上** ——
+# 标题为空时 `POST /runs` 会挂一个后台任务去调轻量模型起名（route/thread.py 的
+# submit_run），填过就不挂了。
+
+P5_TAG="$$-$(date +%s%N | tail -c 5)"
+P5_SECRET="zuel-secret-$$"
+P5_JAR_READY=0
+if session_for p5; then
+    JAR_P5="$SESSION_JAR"
+    UID_P5="$SESSION_UID"
+    P5_JAR_READY=1
+fi
+
+# ------------------------------------------------------ P5① 注册、入组、审批
+begin "P5①" "自助注册与入组审批走得通，且邀请码不跟着公开列表外泄"
+
+JAR_P5_ADMIN="$WORK_DIR/cookie-p5-admin"
+JAR_P5_OWNER="$WORK_DIR/cookie-p5-owner"
+JAR_P5_STUDENT="$WORK_DIR/cookie-p5-student"
+# **用户名上限 32 字符**（schema.MAX_NAME_LENGTH），前缀因此要短
+P5_ADMIN="zuel-p5-adm-$P5_TAG"
+P5_OWNER="zuel-p5-own-$P5_TAG"
+P5_STUDENT="zuel-p5-stu-$P5_TAG"
+P5_LONER="zuel-p5-lon-$P5_TAG"
+
+# 建组是管理员的事，组主是教师。**另造一个管理员而不是用 .env 里那个首个管理员** ——
+# 与 P3④ 同一条理由：那个号的口令在真部署上是被改过的
+if ! { make_user "$P5_ADMIN" "$P5_SECRET" admin && login "$P5_ADMIN" "$P5_SECRET" "$JAR_P5_ADMIN" &&
+    make_user "$P5_OWNER" "$P5_SECRET" teacher && login "$P5_OWNER" "$P5_SECRET" "$JAR_P5_OWNER"; }; then
+    fail "造不出管理员或组主，这一条整条验不了"
+else
+    OWNER_UID="$(api "$JAR_P5_OWNER" "$BASE_URL/api/auth/me" | jq -r '.id // empty')"
+
+    # **建两个组**：一个用来验「凭邀请码注册直接进组」，另一个用来验「申请 → 审批」。
+    # 一个组做不了两件事 —— 学生凭码进了组之后，再申请同一个组会被「你已经在里面了」挡掉
+    GROUP_ONE_BODY="$(body "$JAR_P5_ADMIN" -X POST "$BASE_URL/api/admin/groups" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "zuel-p5-码组-$P5_TAG" --arg o "$OWNER_UID" '{name:$n,owner_id:$o}')")"
+    GROUP_TWO_BODY="$(body "$JAR_P5_ADMIN" -X POST "$BASE_URL/api/admin/groups" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "zuel-p5-审组-$P5_TAG" --arg o "$OWNER_UID" '{name:$n,owner_id:$o}')")"
+    GROUP_ONE="$(jq -r '.id // empty' <<<"$GROUP_ONE_BODY")"
+    GROUP_TWO="$(jq -r '.id // empty' <<<"$GROUP_TWO_BODY")"
+    INVITE_ONE="$(jq -r '.invite_code // empty' <<<"$GROUP_ONE_BODY")"
+    [[ -n $GROUP_ONE && -n $GROUP_TWO && -n $INVITE_ONE ]] \
+        && pass "管理员建出两个组，响应里带着邀请码" \
+        || fail "建组没成：$GROUP_ONE_BODY ｜ $GROUP_TWO_BODY"
+
+    # 凭码注册：账号当场可用，且回话里说得出进了哪个组 —— `is_active` 决定使用者
+    # 接下来该去登录还是该去等管理员，说错一句就是一通电话
+    REG_JOINED="$(curl -s -X POST "$BASE_URL/api/auth/register" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "$P5_STUDENT" --arg p "$P5_SECRET" --arg c "$INVITE_ONE" \
+            '{name:$n,password:$p,invite_code:$c}')")"
+    [[ $(jq -r .is_active <<<"$REG_JOINED") == true && $(jq -r '.group_name // empty' <<<"$REG_JOINED") == "zuel-p5-码组-$P5_TAG" ]] \
+        && pass "凭邀请码注册：账号当场可用，且带出了进的那个组" \
+        || fail "凭码注册的结果不对：$REG_JOINED"
+    # **注册出来的一律是学生** —— 能自选角色等于能自选配额档
+    [[ $(jq -r .role <<<"$REG_JOINED") == student ]] \
+        && pass "注册出来的角色是 student（配额档不可自选）" \
+        || fail "注册出来的角色是 $(jq -r .role <<<"$REG_JOINED")"
+
+    # 不填码注册：账号先停用，而「停用」要真的登不上 —— 只看字段的话，
+    # 一个把 is_active 当摆设的实现照样绿
+    REG_LONER="$(curl -s -X POST "$BASE_URL/api/auth/register" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "$P5_LONER" --arg p "$P5_SECRET" '{name:$n,password:$p}')")"
+    LONER_LOGIN="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/auth/login" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "$P5_LONER" --arg p "$P5_SECRET" '{name:$n,password:$p}')")"
+    [[ $(jq -r .is_active <<<"$REG_LONER") == false && $LONER_LOGIN == 401 ]] \
+        && pass "不填码注册：账号先停用，且真的登不上（401）" \
+        || fail "不填码那条路不对：is_active=$(jq -r .is_active <<<"$REG_LONER") 登录=$LONER_LOGIN"
+    # 填错码不是「当没填」：那会留下一个自己登不上、管理员也不认识的账号
+    BAD_INVITE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/auth/register" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "zuel-p5-bad-$P5_TAG" --arg p "$P5_SECRET" '{name:$n,password:$p,invite_code:"这不是一个码"}')")"
+    [[ $BAD_INVITE == 422 ]] && pass "邀请码填错 → 422，号根本不建" || fail "填错码得到 $BAD_INVITE"
+
+    if ! login "$P5_STUDENT" "$P5_SECRET" "$JAR_P5_STUDENT"; then
+        fail "凭码注册的学生登不进来，后面半条验不了"
+    else
+        STUDENT_UID="$(api "$JAR_P5_STUDENT" "$BASE_URL/api/auth/me" | jq -r '.id // empty')"
+
+        # **邀请码是准入凭证**：浏览列表对所有登录用户开放，码跟着它发出去就等于没有准入。
+        # 在整份响应文本里搜一次而不是只看字段名 —— 换个字段名照样是泄露
+        BROWSE="$(api "$JAR_P5_STUDENT" "$BASE_URL/api/groups")"
+        grep -qF "$INVITE_ONE" <<<"$BROWSE" \
+            && fail "邀请码跟着公开的组列表发出去了 —— 任何登录用户都能把自己塞进任何组" \
+            || pass "公开的组列表里搜不到邀请码"
+
+        # 同一个端点、同一个组，组主看得到码而组员看不到 —— 这是这条判据里
+        # 唯一「可见地不同」的地方，只验其中一半等于没验
+        OWNER_CODE="$(api "$JAR_P5_OWNER" "$BASE_URL/api/groups/mine" | jq -r --arg g "$GROUP_ONE" '.[] | select(.id == $g) | .invite_code')"
+        MEMBER_CODE="$(api "$JAR_P5_STUDENT" "$BASE_URL/api/groups/mine" | jq -r --arg g "$GROUP_ONE" '.[] | select(.id == $g) | .invite_code')"
+        [[ $OWNER_CODE == "$INVITE_ONE" && $MEMBER_CODE == null ]] \
+            && pass "/groups/mine：组主拿得到码，同组的组员拿到的是空" \
+            || fail "码的可见范围不对：组主看到 $OWNER_CODE，组员看到 $MEMBER_CODE"
+
+        # 申请 → 审批。**判据是名册在批准前后可见地不同**，不是端点回了 204
+        APPLY="$(body "$JAR_P5_STUDENT" -X POST "$BASE_URL/api/groups/$GROUP_TWO/requests")"
+        REQUEST_ID="$(jq -r '.id // empty' <<<"$APPLY")"
+        member_count() {
+            api "$JAR_P5_OWNER" "$BASE_URL/api/groups/$GROUP_TWO/members" |
+                jq -r --arg u "$STUDENT_UID" 'map(select(.user_id == $u)) | length'
+        }
+        PENDING="$(api "$JAR_P5_OWNER" "$BASE_URL/api/groups/$GROUP_TWO/requests" | jq -r --arg r "$REQUEST_ID" 'map(select(.id == $r)) | length')"
+        [[ -n $REQUEST_ID && $PENDING == 1 && $(member_count) == 0 ]] \
+            && pass "申请挂进了组主的待办，而人还没进名册" \
+            || fail "申请那一步不对：request_id=$REQUEST_ID 待办里 $PENDING 条，名册里已有 $(member_count) 人"
+
+        DECIDED="$(code "$JAR_P5_OWNER" -X POST "$BASE_URL/api/groups/$GROUP_TWO/requests/$REQUEST_ID" \
+            -H 'Content-Type: application/json' -d '{"approved":true}')"
+        [[ $DECIDED == 204 && $(member_count) == 1 ]] \
+            && pass "批准之后当场进名册（同一个端点，前 0 人后 1 人）" \
+            || fail "批准没生效：返回 $DECIDED，名册里 $(member_count) 人"
+
+        # **两个标签页各点一次**：第二次该是「已经处理过了」，而不是把批准改成否决。
+        # 状态是条件 UPDATE 而不是「先读再写」，这一条验的就是那个条件
+        REDECIDE="$(body "$JAR_P5_OWNER" -X POST "$BASE_URL/api/groups/$GROUP_TWO/requests/$REQUEST_ID" \
+            -H 'Content-Type: application/json' -d '{"approved":false}')"
+        [[ $(jq -r '.error.code // empty' <<<"$REDECIDE") == VALIDATION_ERROR && $(member_count) == 1 ]] \
+            && pass "同一条申请处理两次：第二次被挡住，名册没被改回去" \
+            || fail "重复审批没挡住：$REDECIDE ｜ 名册里 $(member_count) 人"
+
+        # 非组主碰管理动作一律 404 —— 403 等于确认了「你猜的这个组是我的」
+        INTRUDE="$(code "$JAR_P5_STUDENT" "$BASE_URL/api/groups/$GROUP_TWO/members")"
+        [[ $INTRUDE == 404 ]] && pass "组员看名册 → 404（不是 403）" || fail "组员看名册得到 $INTRUDE"
+    fi
+fi
+end
+
+# ------------------------------------------------------------ P5② 工作目录
+begin "P5②" "工作目录五个端点走得通，符号链接与越界路径都进不来"
+
+if (( ! P5_JAR_READY )); then
+    fail "造不出账号，这一条验不了"
+else
+    THREAD_P5="$(new_thread "$JAR_P5")"
+    # **文件名带中文**：`path` 一律走查询参数正是为它 —— 塞进路径段要两侧各转义一遍，
+    # 错一次就是一个打不开的文件
+    P5_FILE="持仓-$P5_TAG.csv"
+    printf '代码,市值\n600000,1200\n000001,3400\n' > "$WORK_DIR/$P5_FILE"
+
+    UPLOADED="$(body "$JAR_P5" -X POST "$BASE_URL/api/threads/$THREAD_P5/files" -F "file=@$WORK_DIR/$P5_FILE")"
+    UP_PATH="$(jq -r '.path // empty' <<<"$UPLOADED")"
+    # **要守的不是「取哪个文件」而是「响应里的 path 与磁盘对得上」** —— 调用方拿它去
+    # 预览与下载，说的那个必须就是落盘的那个
+    if [[ -n $UP_PATH ]] && compose exec -T broker test -f "$WORKSPACE_ROOT/$THREAD_P5/$UP_PATH"; then
+        pass "传：响应给的 path（$UP_PATH）与磁盘上的文件对得上"
+    else
+        fail "上传响应里的 path 与磁盘对不上：$UPLOADED"
+    fi
+
+    TREE="$(api "$JAR_P5" "$BASE_URL/api/threads/$THREAD_P5/files")"
+    [[ $(jq -r --arg p "$UP_PATH" '.entries | map(select(.path == $p and .is_dir == false and .size > 0)) | length' <<<"$TREE") == 1 ]] \
+        && pass "列：目录树里有它，is_dir 为假、size 不为零" \
+        || fail "目录树里找不到 $UP_PATH：$TREE"
+
+    # 读的是**按行分页**那条路，不是整个文件发过来
+    CONTENT="$(api "$JAR_P5" --get --data-urlencode "path=$UP_PATH" "$BASE_URL/api/threads/$THREAD_P5/files/content")"
+    [[ $(jq -r .total_line <<<"$CONTENT") == 3 && $(jq -r .is_binary <<<"$CONTENT") == false ]] \
+        && pass "读：三行中文文本按行取回，没被当成二进制" \
+        || fail "读回来的不对：$CONTENT"
+
+    DOWNLOADED="$(api "$JAR_P5" --get --data-urlencode "path=$UP_PATH" "$BASE_URL/api/threads/$THREAD_P5/files/raw")"
+    [[ $DOWNLOADED == "$(cat "$WORK_DIR/$P5_FILE")" ]] \
+        && pass "下：取回的字节与传上去的一模一样" \
+        || fail "取回的字节对不上：$DOWNLOADED"
+
+    # **符号链接一个都不列，也不走进去**：agent 在沙箱里建得出链接，列进树里就等于
+    # 把宿主文件摆上货架，而下一步就是可下载的
+    compose exec -T broker ln -s /etc/passwd "$WORKSPACE_ROOT/$THREAD_P5/passwd.txt" >/dev/null 2>&1
+    if compose exec -T broker test -L "$WORKSPACE_ROOT/$THREAD_P5/passwd.txt"; then
+        [[ $(api "$JAR_P5" "$BASE_URL/api/threads/$THREAD_P5/files" | jq -r '.entries | map(select(.path == "passwd.txt")) | length') == 0 ]] \
+            && pass "符号链接建得出来，但一条都不进目录树" \
+            || fail "符号链接被列进了目录树 —— 宿主文件摆上了货架"
+    else
+        # 链接没建成的话，上面那条断言会因为「本来就没有」而通过 —— 那是假绿
+        fail "链接没建成，「符号链接不列」这半条没触发到要测的场景"
+    fi
+
+    # 越界与不存在给同一个回答，否则这个端点就成了探测宿主机文件的工具
+    ESCAPED="$(code "$JAR_P5" --get --data-urlencode "path=../../etc/passwd" "$BASE_URL/api/threads/$THREAD_P5/files/content")"
+    [[ $ESCAPED == 404 ]] && pass "路径越界 → 404（与「不存在」同一个回答）" || fail "越界得到 $ESCAPED"
+
+    # 指向目录则不必伪装成 404 —— 目录在树里本来就看得见
+    compose exec -T broker mkdir -p "$WORKSPACE_ROOT/$THREAD_P5/outputs" >/dev/null 2>&1
+    ON_DIR="$(code "$JAR_P5" --get --data-urlencode "path=outputs" "$BASE_URL/api/threads/$THREAD_P5/files/content")"
+    [[ $ON_DIR == 422 ]] && pass "读一个目录 → 422（不伪装成 404）" || fail "读目录得到 $ON_DIR"
+
+    # DELETE 带查询参数不能用 `--get`（它会把方法改回 GET），路径自己编一次
+    ENCODED_PATH="$(jq -rn --arg s "$UP_PATH" '$s|@uri')"
+    DELETED="$(code "$JAR_P5" -X DELETE "$BASE_URL/api/threads/$THREAD_P5/files?path=$ENCODED_PATH")"
+    STILL="$(api "$JAR_P5" "$BASE_URL/api/threads/$THREAD_P5/files" | jq -r --arg p "$UP_PATH" '.entries | map(select(.path == $p)) | length')"
+    [[ $DELETED == 204 && $STILL == 0 ]] \
+        && pass "删：204，且文件从目录树里消失" \
+        || fail "删没生效：返回 $DELETED，树里还有 $STILL 条"
+
+    # 目录删不了 —— 那会连着里面的东西一起没，而侧边栏上的一下点击看不出这个后果
+    DEL_DIR="$(code "$JAR_P5" -X DELETE "$BASE_URL/api/threads/$THREAD_P5/files?path=outputs")"
+    [[ $DEL_DIR == 422 ]] && pass "删一个目录 → 422（挡住了）" || fail "删目录得到 $DEL_DIR"
+fi
+end
+
+# --------------------------------------------------------- P5③ 会话与历史
+begin "P5③" "会话增删改查与聊天历史走得通，提问原文一字不差地读得回来"
+
+if (( ! P5_JAR_READY )); then
+    fail "造不出账号，这一条验不了"
+else
+    THREAD_P5C="$(new_thread "$JAR_P5")"
+    IN_LIST="$(api "$JAR_P5" "$BASE_URL/api/threads" | jq -r --arg t "$THREAD_P5C" '.items | map(select(.id == $t)) | length')"
+    [[ -n $THREAD_P5C && $IN_LIST == 1 ]] \
+        && pass "开会话：新建的那个当场出现在列表里" \
+        || fail "新建的会话不在列表里：thread=$THREAD_P5C 命中 $IN_LIST 条"
+
+    # 改。**标题这一改还有第二个作用**：填过之后 `POST /runs` 不再挂那个起标题的
+    # 后台模型调用 —— 这一条因此一次模型往返都不花
+    P5_TITLE="P5 回归 $P5_TAG"
+    api "$JAR_P5" -X PATCH "$BASE_URL/api/threads/$THREAD_P5C" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg t "$P5_TITLE" '{title:$t,agent_config:{system_prompt:"回归占位"}}')" >/dev/null
+    DETAIL="$(api "$JAR_P5" "$BASE_URL/api/threads/$THREAD_P5C")"
+    # **这里只验存取，不验它对 agent 有没有用。** `agent_config` 从 0003 起就写得进、
+    # 读得出、有测试覆盖，而装配层从来没读过它一次 —— 「配与不配，输出可见地不同」
+    # 是 P6 的判据，不是这一条的。写在这里是为了别把这条绿当成那件事已经成立
+    [[ $(jq -r .title <<<"$DETAIL") == "$P5_TITLE" && $(jq -r '.agent_config.system_prompt // empty' <<<"$DETAIL") == "回归占位" ]] \
+        && pass "改：标题与 agent_config 都改得进、读得出（只验存取）" \
+        || fail "改完读回来的不对：$DETAIL"
+
+    # **两个字段各自可选**：只传标题时配置要原样留着 —— 一次改名把 agent 配置清空，
+    # 是那种改完当时没事、下次跑分析才发现的故障
+    api "$JAR_P5" -X PATCH "$BASE_URL/api/threads/$THREAD_P5C" -H 'Content-Type: application/json' \
+        -d '{"title":"只改名"}' >/dev/null
+    KEPT_CONFIG="$(api "$JAR_P5" "$BASE_URL/api/threads/$THREAD_P5C" | jq -r '.agent_config.system_prompt // empty')"
+    [[ $KEPT_CONFIG == "回归占位" ]] \
+        && pass "只改标题不动配置（改名没把 agent_config 清空）" \
+        || fail "改名把配置带走了：agent_config.system_prompt=$KEPT_CONFIG"
+
+    # 提交一条真 run，立刻取消。**判据是提问原文读得回来** —— P5 挖得最深的一处
+    # 正是「教师的提问原文根本没落过库」，那时聊天历史打开就是空的
+    P5_QUESTION="这条只为验历史，提交完立刻取消"
+    RUN_P5="$(body "$JAR_P5" -X POST "$BASE_URL/api/threads/$THREAD_P5C/runs" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg c "$P5_QUESTION" '{content:$c}')" | jq -r '.id // empty')"
+    if [[ -z $RUN_P5 ]]; then
+        fail "提交不成，历史这半条验不了"
+    else
+        # **立刻取消**：worker 领到消息的第一件事就是看取消标志（executor 的入口处），
+        # 因此这一条最多花掉一次尚未开始的领取，不是一次分析
+        api "$JAR_P5" -X POST "$BASE_URL/api/runs/$RUN_P5/cancel" >/dev/null 2>&1
+
+        # 再补一条更早的，用来验倒序与游标分页。**这条直接写库** —— 为了翻页
+        # 而烧第二次分析不值当，与 P3④ 造 run 是同一条理由
+        OLD_RUN="$(tr -d - < /proc/sys/kernel/random/uuid)"
+        psql_query "INSERT INTO runs (id, thread_id, user_id, status, content, tokens_cache_read, tokens_uncached, tokens_output, started_at)
+            VALUES ('$OLD_RUN', '$THREAD_P5C', '$UID_P5', 'succeeded', '更早的那一轮', 0,0,0, now() - interval '1 hour');" >/dev/null
+
+        HISTORY="$(api "$JAR_P5" "$BASE_URL/api/threads/$THREAD_P5C/runs")"
+        [[ $(jq -r '.items[0].content // empty' <<<"$HISTORY") == "$P5_QUESTION" ]] \
+            && pass "历史：最近一轮排在最前，提问原文一字不差地读得回来" \
+            || fail "历史里读不到提问原文：$(jq -c '.items' <<<"$HISTORY")"
+        [[ $(jq -r '.items | length' <<<"$HISTORY") == 2 && $(jq -r '.items[1].content // empty' <<<"$HISTORY") == "更早的那一轮" ]] \
+            && pass "历史：两轮都在，且按开跑时间倒序" \
+            || fail "历史的条数或顺序不对：$(jq -c '[.items[].content]' <<<"$HISTORY")"
+
+        # 游标是不透明的 (时间, 标识) 复合值。只用时间的话，同一微秒提交的两条会在
+        # 翻页边界上互相顶掉 —— 这里验的是两页各一条、接得上、不重不漏
+        PAGE_ONE="$(api "$JAR_P5" "$BASE_URL/api/threads/$THREAD_P5C/runs?limit=1")"
+        P5_CURSOR="$(jq -r '.next_cursor // empty' <<<"$PAGE_ONE")"
+        PAGE_TWO="$(api "$JAR_P5" --get --data-urlencode "cursor=$P5_CURSOR" \
+            "$BASE_URL/api/threads/$THREAD_P5C/runs?limit=1")"
+        [[ $(jq -r '.items[0].id // empty' <<<"$PAGE_ONE") == "$RUN_P5" && $(jq -r '.items[0].id // empty' <<<"$PAGE_TWO") == "$OLD_RUN" ]] \
+            && pass "游标分页：两页各一条，接得上且不重不漏" \
+            || fail "翻页对不上：第一页 $(jq -r '.items[0].id' <<<"$PAGE_ONE")，第二页 $(jq -r '.items[0].id' <<<"$PAGE_TWO")"
+
+        # **解析不了的游标一律 422，不当成「从头开始」** —— 那会让客户端收到一整页
+        # 重复数据，而它看不出发生了什么
+        BAD_CURSOR="$(code "$JAR_P5" --get --data-urlencode "cursor=这不是一个游标" \
+            "$BASE_URL/api/threads/$THREAD_P5C/runs")"
+        [[ $BAD_CURSOR == 422 ]] && pass "解析不了的游标 → 422（不静默从头开始）" || fail "坏游标得到 $BAD_CURSOR"
+    fi
+fi
+end
+
+# ----------------------------------------------------------- P5④ 删会话
+begin "P5④" "删会话之后工作目录真的没了，而 runs 那几行留着"
+
+if (( ! P5_JAR_READY )); then
+    fail "造不出账号，这一条验不了"
+else
+    THREAD_P5D="$(new_thread "$JAR_P5")"
+    api "$JAR_P5" -X POST "$BASE_URL/api/threads/$THREAD_P5D/files" -F "file=@$WORK_DIR/$P5_FILE" >/dev/null 2>&1
+    # **删之前先确认目录真的在**：不确认的话，一个从来没建出目录的会话删完也「没了」，
+    # 这条判据会以假绿收场
+    compose exec -T broker test -d "$WORKSPACE_ROOT/$THREAD_P5D" \
+        && pass "删之前：工作目录在磁盘上" \
+        || fail "会话的工作目录压根没建出来，这一条没触发到要测的场景"
+
+    # runs 是成本账本，删会话不该往历史里挖洞
+    KEPT_RUN="$(tr -d - < /proc/sys/kernel/random/uuid)"
+    psql_query "INSERT INTO runs (id, thread_id, user_id, status, content, tokens_cache_read, tokens_uncached, tokens_output, started_at)
+        VALUES ('$KEPT_RUN', '$THREAD_P5D', '$UID_P5', 'succeeded', '删会话之前的一轮', 0, 4321, 0, now());" >/dev/null
+
+    DELETED_THREAD="$(code "$JAR_P5" -X DELETE "$BASE_URL/api/threads/$THREAD_P5D")"
+    [[ $DELETED_THREAD == 204 ]] && pass "删会话 → 204" || fail "删会话得到 $DELETED_THREAD"
+
+    AFTER_LIST="$(api "$JAR_P5" "$BASE_URL/api/threads" | jq -r --arg t "$THREAD_P5D" '.items | map(select(.id == $t)) | length')"
+    AFTER_GET="$(code "$JAR_P5" "$BASE_URL/api/threads/$THREAD_P5D")"
+    [[ $AFTER_LIST == 0 && $AFTER_GET == 404 ]] \
+        && pass "删之后：列表里没有了，再读是 404" \
+        || fail "删完还在：列表命中 $AFTER_LIST 条，详情返回 $AFTER_GET"
+
+    # **判据不是「列表里消失」而是「磁盘上真的没了」** —— 教师要的两件事里，
+    # 「别再占磁盘」这件只有这里验得到。销毁失败时端点照样答 204（那是有意的），
+    # 因此光看状态码永远看不出孤儿目录
+    if compose exec -T broker test -d "$WORKSPACE_ROOT/$THREAD_P5D"; then
+        fail "会话删了而工作目录还在（$WORKSPACE_ROOT/$THREAD_P5D）—— 磁盘没释放，且端点答的是 204"
+    else
+        pass "删之后：工作目录真的从磁盘上没了"
+    fi
+
+    KEPT_COUNT="$(psql_query "SELECT count(*) FROM runs WHERE id='$KEPT_RUN';" | tr -d '[:space:]')"
+    [[ $KEPT_COUNT == 1 ]] \
+        && pass "runs 那一行留着：成本账本没被删会话挖出洞" \
+        || fail "删会话把 runs 的历史也带走了（剩 ${KEPT_COUNT:-?} 行）"
+fi
 end
 
 
