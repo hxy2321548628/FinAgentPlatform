@@ -241,10 +241,12 @@ astream() 正常消费  →  中断使执行暂停，流自然结束
 **中断的数据结构**（DeepAgents 侧）：
 
 ```python
-Interrupt(value={
-    'action_requests': [{'name': 'execute', 'args': {...}}],
-    'review_configs':  [{'action_name': ..., 'allowed_decisions': [...]}]
-})
+Interrupt(
+    value={
+        "action_requests": [{"name": "execute", "args": {...}}],
+        "review_configs": [{"action_name": ..., "allowed_decisions": [...]}],
+    }
+)
 ```
 
 **恢复**用 `Command(resume={"decisions": [...]})`，四种决策：

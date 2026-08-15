@@ -25,10 +25,12 @@ import pytest
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import StructuredTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.interceptors import MCPToolCallRequest, MCPToolCallResult
 from langchain_mcp_adapters.sessions import StreamableHttpConnection
 
+from agent.circuit import McpCircuit
 from agent.config import McpReference
-from agent.mcp import RESERVED_TOOL_NAME, McpTarget, load_mcp_tools
+from agent.mcp import RESERVED_TOOL_NAME, McpTarget, _CallGuard, load_mcp_tools, probe_mcp_server
 
 FIXTURE_SCRIPT = Path(__file__).resolve().parents[3] / "deploy" / "test" / "mcp" / "server.py"
 
@@ -387,3 +389,110 @@ async def test_a_slow_call_comes_back_as_an_error_result_instead_of_raising(
     assert isinstance(result, ToolMessage)
     assert result.status == "error"
     assert "调用超时" in str(result.content)
+
+
+class FakeRedis:
+    """够 `McpCircuit` 用的最小计数器。真 Redis 那一侧由 `circuit_test.py` 覆盖。"""
+
+    def __init__(self) -> None:
+        self.values: dict[str, int] = {}
+
+    def pipeline(self) -> "FakeRedis":
+        self._queued: list[str] = []
+        return self
+
+    def incr(self, key: str) -> None:
+        self.values[key] = self.values.get(key, 0) + 1
+        self._queued.append(key)
+
+    def expire(self, key: str, second: int) -> None:
+        return None
+
+    async def execute(self) -> list[int]:
+        return [self.values[key] for key in self._queued] + [1]
+
+    async def delete(self, key: str) -> None:
+        self.values.pop(key, None)
+
+    async def get(self, key: str) -> int | None:
+        return self.values.get(key)
+
+
+class Disabler:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def disable_for_failure(self, server_id: str, *, reason: str) -> bool:
+        self.calls.append((server_id, reason))
+        return True
+
+
+def circuit_over(disabler: Disabler) -> McpCircuit:
+    return McpCircuit(FakeRedis(), disabler, threshold=THREE_WAY_THRESHOLD)  # type: ignore[arg-type]
+
+
+# 三条路各出一点，正好凑够它 —— 取 5 是为了与真实阈值同形
+THREE_WAY_THRESHOLD = 5
+
+
+async def test_all_three_entry_points_feed_the_same_counter(dead_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """§4.4：装配、单次调用、管理员探活必须共用一个计数器。
+
+    **这一条堵的是判据自己会骗人的地方。** `P10⑤` 走的是探活那条路（免费且确定），
+    而真实场景里失败大多来自装配与工具调用 —— 不共用的话，判据验的是一条没人走的路，
+    **而它照样绿**。
+
+    因此断言的不是「三处都调了同名函数」，而是**三处的失败累加到同一个数上**：
+    两次装配 + 两次探活 + 一次调用超时，第五次才触发那一次停用。
+    """
+    monkeypatch.setattr("agent.mcp.MCP_CALL_TIMEOUT", PROBE_TIMEOUT_SECOND)
+    dead = target(dead_url, name="dead")
+    disabler = Disabler()
+    circuit = circuit_over(disabler)
+
+    # 入口一：装配
+    await load_mcp_tools([reference(dead)], loader=Loader(dead), recorder=circuit)
+    await load_mcp_tools([reference(dead)], loader=Loader(dead), recorder=circuit)
+    # 入口二：管理员探活
+    assert await probe_mcp_server(dead, recorder=circuit) is None
+    assert await probe_mcp_server(dead, recorder=circuit) is None
+    assert disabler.calls == [], "四次还不到阈值就停用，说明计数被谁多加了一次"
+
+    # 入口三：单次工具调用超时。**记的是同一个 server_id**，因此这一次正好凑满
+    result = await _CallGuard(server_id=dead.server_id, recorder=circuit)(
+        MCPToolCallRequest(name="slow_query", args={"keyword": "沪深300"}, server_name="dead"),
+        _never_answers,
+    )
+
+    assert isinstance(result, ToolMessage)
+    assert result.status == "error"
+    assert [server_id for server_id, _ in disabler.calls] == [dead.server_id]
+    assert f"连续失败 {THREE_WAY_THRESHOLD} 次" in disabler.calls[0][1]
+
+
+async def _never_answers(request: MCPToolCallRequest) -> MCPToolCallResult:
+    """一个永远不回话的 handler，让守卫真的跑一次超时而不是伪造它。"""
+    await asyncio.sleep(PROBE_TIMEOUT_SECOND * 10)
+    raise AssertionError("不该跑到这里")
+
+
+async def test_a_disabled_server_can_still_be_probed(fixture_url: str) -> None:
+    """探活正是管理员判断「它回来没有」的手段，对已停用的服务尤其要能连。"""
+    one = target(fixture_url, enabled=False, disabled_reason="连续失败 5 次")
+
+    found = await probe_mcp_server(one)
+
+    assert found is not None
+    assert set(found) == FIXTURE_TOOL_NAME
+
+
+async def test_a_successful_probe_clears_the_count(fixture_url: str) -> None:
+    """成功一次即清零 —— 一台恢复了的服务不该带着旧账继续走向停用。"""
+    one = target(fixture_url)
+    circuit = circuit_over(Disabler())
+    for _ in range(THREE_WAY_THRESHOLD - 1):
+        await circuit.record_failure(one.server_id, reason="连接失败")
+
+    await probe_mcp_server(one, recorder=circuit)
+
+    assert await circuit.failure_count(one.server_id) == 0

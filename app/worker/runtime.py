@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from agent.circuit import McpCircuit
 from agent.factory import Agent, create_model
 from agent.trace import create_callback
 from config import Settings
@@ -84,6 +85,7 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
     await redis.check(cache)
     checkpoint = await open_checkpoint(settings.postgres_conninfo())
 
+    mcp_catalog = McpRepository(engine)
     connection = BrokerConnection(base_url=settings.broker_url)
     backend_factory = RemoteBackendFactory(base_url=settings.broker_url)
     executor = RunExecutor(
@@ -96,7 +98,9 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
             # 没配 Langfuse 时是 None，图上一个回调都不挂
             callback=create_callback(settings),
             subagent_loader=AgentRepository(engine),
-            mcp_loader=McpTargetLoader(McpRepository(engine), settings.mcp_credentials),
+            mcp_loader=McpTargetLoader(mcp_catalog, settings.mcp_credentials),
+            # 计数在 Redis：两个 worker 实例，进程内计数各算各的会把阈值乘一遍
+            mcp_recorder=McpCircuit(cache, mcp_catalog),
         ),
         repository=RunRepository(engine),
         cancel=CancelFlag(cache),

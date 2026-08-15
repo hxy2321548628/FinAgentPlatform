@@ -142,11 +142,31 @@ async def load_mcp_tools(
     return collected
 
 
+async def probe_mcp_server(
+    target: McpTarget, *, recorder: McpFailureRecorderProtocol | None = None
+) -> list[str] | None:
+    """管理员的「测试连接」：连一次，拿到工具名就算通。
+
+    **走的是装配同一条路、同一个计数器。** 另写一份的话，验收判据（它走的正是这条）
+    验的就是一条没人走的路 —— 而它照样绿。
+
+    Args:
+        target: 目录记录，**这里不看 `enabled`** —— 探活正是管理员判断「它回来没有」
+            的手段，对一个已停用的服务尤其要能连。
+        recorder: 熔断计数器。
+
+    Returns:
+        实际拿到的工具名；连不上则 None。
+    """
+    tools = await _load_one(target, recorder=recorder)
+    return None if tools is None else [one.name for one in tools]
+
+
 async def _load_one(target: McpTarget, *, recorder: McpFailureRecorderProtocol | None) -> list[BaseTool] | None:
     """要一个 server 的工具清单；连不上返回 None 而不是抛。"""
     client = MultiServerMCPClient(
         {target.name: _connection(target)},
-        tool_interceptors=[_cut_a_slow_call_short],
+        tool_interceptors=[_CallGuard(server_id=target.server_id, recorder=recorder)],
     )
     try:
         async with asyncio.timeout(MCP_CONNECT_TIMEOUT):
@@ -195,21 +215,39 @@ def _connection(target: McpTarget) -> Connection:
     )
 
 
-async def _cut_a_slow_call_short(
-    request: MCPToolCallRequest,
-    handler: Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]],
-) -> MCPToolCallResult:
-    """给单次工具调用压一道超时，**超了返回错误结果而不是抛异常**。
+@dataclass(frozen=True)
+class _CallGuard:
+    """给单次工具调用压一道超时，并把结果记进同一个熔断计数器。
 
-    抛出去的话，一次慢调用会掀掉整次分析（实测）。返回一条人话，模型看到它会自己
-    决定换个方法或者如实告诉教师 —— 与子智能体失败只返回错误文本是同一条规矩。
+    **超时返回错误结果而不是抛异常**：抛出去的话，一次慢调用会掀掉整次分析（实测），
+    而那次分析可能已经跑了二十分钟。返回一条人话，模型看到它会自己决定换个方法或者
+    如实告诉教师 —— 与子智能体失败只返回错误文本是同一条规矩。
+
+    **工具自己报错不算失败。** 那条路走的是正常返回（服务答话了），只有超时才计数。
     """
-    try:
-        async with asyncio.timeout(MCP_CALL_TIMEOUT):
-            return await handler(request)
-    except TimeoutError:
-        logger.warning("MCP 工具调用超时：server=%s tool=%s", request.server_name, request.name)
-        return ToolMessage(content=CALL_TIMEOUT_MESSAGE, tool_call_id="", status="error")
+
+    server_id: str
+    recorder: McpFailureRecorderProtocol | None
+
+    async def __call__(
+        self,
+        request: MCPToolCallRequest,
+        handler: Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]],
+    ) -> MCPToolCallResult:
+        """拦一次工具调用。"""
+        try:
+            async with asyncio.timeout(MCP_CALL_TIMEOUT):
+                result = await handler(request)
+        except TimeoutError:
+            logger.warning("MCP 工具调用超时：server=%s tool=%s", request.server_name, request.name)
+            if self.recorder is not None:
+                await self.recorder.record_failure(
+                    self.server_id, reason=f"工具调用超时（{MCP_CALL_TIMEOUT:.0f} 秒）：{request.name}"
+                )
+            return ToolMessage(content=CALL_TIMEOUT_MESSAGE, tool_call_id="", status="error")
+        if self.recorder is not None:
+            await self.recorder.record_success(self.server_id)
+        return result
 
 
 def _warn_on_drift(target: McpTarget, actual: list[str]) -> None:
