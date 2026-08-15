@@ -325,6 +325,7 @@ def test_destroying_an_escaping_identifier_is_refused(space: Workspace) -> None:
     with pytest.raises(PathEscapeError):
         space.destroy("../../etc")
 
+
 # ------------------------------------------------------------------ 侧边栏编辑与创建
 def test_a_workspace_file_can_be_overwritten(space: Workspace) -> None:
     thread_id = space.create(uuid4().hex)
