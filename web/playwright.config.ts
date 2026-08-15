@@ -3,7 +3,7 @@ import { defineConfig, devices } from '@playwright/test'
 /**
  * 端到端走查配置：三档可见性（P7⑥）与 Skill 上传校验（P8⑥）。
  *
- * **不进 `make all`。** 那是纯本地门禁，跑它不需要任何服务起着；而这两条要六个
+ * **不进 `make all`。** 那是纯本地门禁，跑它不需要任何服务起着；而这些走查要六个
  * 服务、真账号、真库。塞进去等于让每一次 `git push` 都依赖一整套 compose 栈起着 ——
  * 那道门禁会在第一次没起服务的机器上变成一条永远红的判据。它进的是
  * `deploy/test/verify.sh` 的 `P7⑥`，缺浏览器二进制时记「未验」。
