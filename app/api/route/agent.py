@@ -342,6 +342,7 @@ def _to_my_agent(detail: AgentDetail, latest: dict[str, Review], approved: set[s
             status=one.status,
             system_prompt=one.system_prompt,
             skill_refs=one.skill_refs,
+            subagent_refs=one.subagent_refs,
             created_at=one.created_at,
             released_at=one.released_at,
             review_id=None if one.id not in latest else latest[one.id].id,
@@ -379,6 +380,7 @@ def _to_listing(listing: AgentListing) -> AgentListingResponse:
         version=listing.version,
         system_prompt=listing.system_prompt,
         skill_refs=listing.skill_refs,
+        subagent_refs=listing.subagent_refs,
         source=listing.source,
         updated_at=listing.updated_at,
     )

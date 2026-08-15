@@ -54,6 +54,9 @@ BEFORE_AGENT_CATALOG = "0010_run_agent_config"
 # 建 skill 目录两张表、给 agent 版本补 skill 引用之前的那一版
 BEFORE_SKILL_CATALOG = "0011_agent_catalog"
 
+# 给 agent 版本补子智能体引用之前的那一版
+BEFORE_AGENT_SUBAGENTS = "0012_skill_catalog"
+
 
 @pytest.fixture
 def scratch() -> Iterator[str]:
@@ -702,3 +705,24 @@ def test_shared_and_reviewed_resources_accept_skill_kind(scratch: str) -> None:
         ).fetchone()
     assert shared == (1,)
     assert reviewed == (1,)
+
+
+def test_agent_subagent_reference_migration_is_additive_and_reversible(scratch: str) -> None:
+    """0013 只加一列；历史行保留 NULL，降级后列消失。"""
+    _upgrade(scratch, BEFORE_AGENT_SUBAGENTS)
+    with _connect(scratch) as connection:
+        owner, agent, version = uuid4().hex, uuid4().hex, uuid4().hex
+        _insert_user(connection, owner)
+        _insert_agent(connection, agent, owner)
+        _insert_version(connection, version, agent)
+
+    _upgrade(scratch, "head")
+
+    assert "subagent_refs" in _column(scratch, "agent_versions")
+    with _connect(scratch) as connection:
+        found = connection.execute("SELECT subagent_refs FROM agent_versions WHERE id = %s", (version,)).fetchone()
+    assert found == (None,)
+
+    _downgrade(scratch, BEFORE_AGENT_SUBAGENTS)
+
+    assert "subagent_refs" not in _column(scratch, "agent_versions")

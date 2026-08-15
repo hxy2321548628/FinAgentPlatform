@@ -35,7 +35,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from agent.config import SkillReference
+from agent.config import SkillReference, SubagentReference
 from group.model import GroupMemberRecord
 from preset.model import (
     FIRST_VERSION,
@@ -52,9 +52,17 @@ from user.model import UserRecord
 
 logger = logging.getLogger(__name__)
 
-# 「每个 agent 最新的那一版」那两条子查询取回来的六列。写全类型是为了在插列时
+# 「每个 agent 最新的那一版」那两条子查询取回来的七列。写全类型是为了在插列时
 # 当场查得出错 —— 位置一旦错开，症状是提示词栏里显示的是版本号
-VersionRow = tuple[UUID, UUID, int, str, list[dict[str, object]] | None, datetime | None]
+VersionRow = tuple[
+    UUID,
+    UUID,
+    int,
+    str,
+    list[dict[str, object]] | None,
+    list[dict[str, object]] | None,
+    datetime | None,
+]
 
 
 class AgentSource(StrEnum):
@@ -77,6 +85,7 @@ class AgentVersion:
     status: VersionStatus
     system_prompt: str
     skill_refs: list[SkillReference] | None
+    subagent_refs: list[SubagentReference] | None
     created_at: datetime
     released_at: datetime | None
 
@@ -133,6 +142,7 @@ class AgentListing:
     version: int
     system_prompt: str
     skill_refs: list[SkillReference] | None
+    subagent_refs: list[SubagentReference] | None
     source: AgentSource
     updated_at: datetime
 
@@ -146,6 +156,7 @@ class ResolvedAgent:
     version: int
     system_prompt: str
     skill_refs: list[SkillReference] | None
+    subagent_refs: list[SubagentReference] | None
 
 
 class AgentRepository:
@@ -167,6 +178,7 @@ class AgentRepository:
         subject: str,
         system_prompt: str,
         skill_refs: list[SkillReference] | None = None,
+        subagent_refs: list[SubagentReference] | None = None,
     ) -> Agent | None:
         """建一个智能体，**连带它的 v1 草稿**。
 
@@ -179,6 +191,7 @@ class AgentRepository:
             subject: 学科。
             system_prompt: v1 草稿的提示词。
             skill_refs: v1 草稿自带的 Skill 版本引用。
+            subagent_refs: v1 草稿自带的子智能体版本引用。
 
         Returns:
             建出来的身份行；**名称在这个作者名下已被占用时返回 None** ——
@@ -201,7 +214,8 @@ class AgentRepository:
             version=FIRST_VERSION,
             status=VersionStatus.DRAFT,
             system_prompt=system_prompt,
-            skill_refs=_dump_skill_refs(skill_refs),
+            skill_refs=_dump_refs(skill_refs),
+            subagent_refs=_dump_refs(subagent_refs),
             created_at=now,
         )
         async with AsyncSession(self._engine, expire_on_commit=False) as session:
@@ -305,6 +319,7 @@ class AgentRepository:
         owner_id: str,
         system_prompt: str,
         skill_refs: list[SkillReference] | None = None,
+        subagent_refs: list[SubagentReference] | None = None,
     ) -> AgentVersion | None:
         """改草稿的内容；**没有草稿时追加下一个版本号的新草稿**。
 
@@ -316,6 +331,7 @@ class AgentRepository:
             owner_id: 当前用户。
             system_prompt: 新的提示词。
             skill_refs: 新草稿自带的 Skill 版本引用，整块替换。
+            subagent_refs: 新草稿自带的子智能体版本引用，整块替换。
 
         Returns:
             改完（或新建）的那个草稿；不是我的、不存在或已删则 None。
@@ -347,12 +363,14 @@ class AgentRepository:
                     version=(highest.one() or 0) + 1,
                     status=VersionStatus.DRAFT,
                     system_prompt=system_prompt,
-                    skill_refs=_dump_skill_refs(skill_refs),
+                    skill_refs=_dump_refs(skill_refs),
+                    subagent_refs=_dump_refs(subagent_refs),
                     created_at=datetime.now(UTC),
                 )
             else:
                 draft.system_prompt = system_prompt
-                draft.skill_refs = _dump_skill_refs(skill_refs)
+                draft.skill_refs = _dump_refs(skill_refs)
+                draft.subagent_refs = _dump_refs(subagent_refs)
             agent.updated_at = datetime.now(UTC)
             session.add(draft)
             session.add(agent)
@@ -397,6 +415,7 @@ class AgentRepository:
                 col(AgentVersionRecord.version),
                 col(AgentVersionRecord.system_prompt),
                 col(AgentVersionRecord.skill_refs),
+                col(AgentVersionRecord.subagent_refs),
                 col(AgentVersionRecord.created_at),
             )
         )
@@ -414,7 +433,8 @@ class AgentRepository:
             status=VersionStatus.RELEASED,
             system_prompt=released[2],
             skill_refs=_load_skill_refs(released[3]),
-            created_at=released[4],
+            subagent_refs=_load_subagent_refs(released[4]),
+            created_at=released[5],
             released_at=now,
         )
 
@@ -523,6 +543,7 @@ class AgentRepository:
                 version=approved.c.version,
                 system_prompt=approved.c.system_prompt,
                 skill_refs=approved.c.skill_refs,
+                subagent_refs=approved.c.subagent_refs,
                 source=literal(AgentSource.CATALOG.value),
             )
             .join(UserRecord, onclause=col(UserRecord.id) == col(AgentRecord.owner_id))
@@ -639,6 +660,7 @@ class AgentRepository:
             version=found["version"],
             system_prompt=found["system_prompt"],
             skill_refs=_load_skill_refs(found["skill_refs"]),
+            subagent_refs=_load_subagent_refs(found["subagent_refs"]),
         )
 
     async def count_call(self, agent_id: str) -> None:
@@ -680,6 +702,7 @@ class AgentRepository:
                 version=case((first_hand, released.c.version), else_=approved.c.version),
                 system_prompt=case((first_hand, released.c.system_prompt), else_=approved.c.system_prompt),
                 skill_refs=case((first_hand, released.c.skill_refs), else_=approved.c.skill_refs),
+                subagent_refs=case((first_hand, released.c.subagent_refs), else_=approved.c.subagent_refs),
                 source=case(
                     (mine, AgentSource.OWNED.value),
                     (group_shared, AgentSource.GROUP.value),
@@ -708,6 +731,7 @@ class AgentRepository:
                 version=row["version"],
                 system_prompt=row["system_prompt"],
                 skill_refs=_load_skill_refs(row["skill_refs"]),
+                subagent_refs=_load_subagent_refs(row["subagent_refs"]),
                 source=AgentSource(row["source"]),
                 updated_at=row["updated_at"],
             )
@@ -720,11 +744,12 @@ def _listing_select(
     version: ColumnElement[int],
     system_prompt: ColumnElement[str],
     skill_refs: ColumnElement[list[dict[str, object]] | None],
+    subagent_refs: ColumnElement[list[dict[str, object]] | None],
     source: ColumnElement[str],
 ) -> Select[tuple[object, ...]]:
-    """列表行的那十三列。
+    """列表行的那十四列。
 
-    **按标签取值而不是按位置**：十三列的位置索引会在某次插列时整体错位一格，
+    **按标签取值而不是按位置**：十四列的位置索引会在某次插列时整体错位一格，
     而错位的症状是「说明栏里显示的是学科」，没有任何一处报错。
     """
     return sa_select(
@@ -739,19 +764,21 @@ def _listing_select(
         version.label("version"),
         system_prompt.label("system_prompt"),
         skill_refs.label("skill_refs"),
+        subagent_refs.label("subagent_refs"),
         source.label("source"),
         col(AgentRecord.updated_at).label("updated_at"),
     )
 
 
 def _version_select() -> Select[VersionRow]:
-    """版本行上被上面几条查询用到的那六列。"""
+    """版本行上被上面几条查询用到的那七列。"""
     return sa_select(
         col(AgentVersionRecord.agent_id).label("agent_id"),
         col(AgentVersionRecord.id).label("version_id"),
         col(AgentVersionRecord.version).label("version"),
         col(AgentVersionRecord.system_prompt).label("system_prompt"),
         col(AgentVersionRecord.skill_refs).label("skill_refs"),
+        col(AgentVersionRecord.subagent_refs).label("subagent_refs"),
         col(AgentVersionRecord.released_at).label("released_at"),
     )
 
@@ -829,12 +856,15 @@ def _to_version(record: AgentVersionRecord) -> AgentVersion:
         status=record.status,
         system_prompt=record.system_prompt,
         skill_refs=_load_skill_refs(record.skill_refs),
+        subagent_refs=_load_subagent_refs(record.subagent_refs),
         created_at=record.created_at,
         released_at=record.released_at,
     )
 
 
-def _dump_skill_refs(references: list[SkillReference] | None) -> list[dict[str, object]] | None:
+def _dump_refs(
+    references: list[SkillReference] | list[SubagentReference] | None,
+) -> list[dict[str, object]] | None:
     """把结构化引用写成 JSONB 能直接接收的值。"""
     if not references:
         return None
@@ -846,6 +876,13 @@ def _load_skill_refs(raw: list[dict[str, object]] | None) -> list[SkillReference
     if not raw:
         return None
     return [SkillReference.model_validate(one) for one in raw]
+
+
+def _load_subagent_refs(raw: list[dict[str, object]] | None) -> list[SubagentReference] | None:
+    """把 JSONB 与历史 NULL 还原成结构化子智能体引用。"""
+    if not raw:
+        return None
+    return [SubagentReference.model_validate(one) for one in raw]
 
 
 def _parse(identifier: str) -> UUID | None:

@@ -147,7 +147,7 @@ class AgentRecord(SQLModel, table=True):
 class AgentVersionRecord(SQLModel, table=True):
     """`agent_versions` 表的一行：一个版本的内容。
 
-    提示词与 skill 引用在发布时一起冻结；子智能体与 MCP 引用等对应目录存在后再加。
+    提示词、Skill 与子智能体引用在发布时一起冻结；MCP 引用等对应目录存在后再加。
     """
 
     __tablename__ = VERSION_TABLE_NAME
@@ -167,6 +167,7 @@ class AgentVersionRecord(SQLModel, table=True):
     status: VersionStatus = Field(sa_column=_value_enum(VersionStatus))
     system_prompt: str = Field(default="")
     skill_refs: list[dict[str, object]] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    subagent_refs: list[dict[str, object]] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     created_at: datetime
     # 发布那一刻。草稿为空 —— 广场按它排序，而没定稿的东西根本进不了广场
     released_at: datetime | None = Field(default=None)

@@ -9,6 +9,7 @@ from agent.config import (
     AgentConfig,
     AgentConfigRequest,
     SkillReference,
+    SubagentReference,
     effective_config,
 )
 
@@ -56,6 +57,24 @@ def test_an_old_snapshot_has_no_skill_key() -> None:
 
     assert snapshot.skills is None
     assert snapshot.model_dump(exclude_none=True) == {"system_prompt": "旧队列消息"}
+
+
+def test_a_request_accepts_subagent_identifiers() -> None:
+    agent_ids = [uuid4().hex, uuid4().hex]
+
+    request = AgentConfigRequest(subagents=agent_ids)
+
+    assert request.subagents == agent_ids
+
+
+def test_a_snapshot_freezes_subagent_identity_version_and_name() -> None:
+    reference = SubagentReference(agent_id=uuid4().hex, version=2, name="volatility-expert")
+
+    snapshot = AgentConfig(subagents=[reference])
+
+    assert snapshot.model_dump(exclude_none=True) == {
+        "subagents": [{"agent_id": reference.agent_id, "version": 2, "name": "volatility-expert"}]
+    }
 
 
 def test_a_snapshot_carries_the_reference_and_the_prompt_it_resolved_to() -> None:

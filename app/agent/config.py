@@ -29,6 +29,16 @@ class SkillReference(BaseModel):
     name: str = Field(min_length=1, description="物化到 workspace 时使用的目录名")
 
 
+class SubagentReference(BaseModel):
+    """一次 run 快照里冻结的一版子智能体。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    agent_id: str = Field(min_length=1, description="子智能体的稳定标识")
+    version: int = Field(ge=1, description="提交时解析出的已发布版本")
+    name: str = Field(min_length=1, description="交给 task 工具的子智能体名称")
+
+
 class AgentConfig(BaseModel):
     """一次 run 的配置快照。
 
@@ -58,6 +68,11 @@ class AgentConfig(BaseModel):
         default=None,
         description="提交时解析并冻结的 Skill 版本；为空表示这一轮没有挂 Skill",
     )
+    subagents: list[SubagentReference] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+        description="提交时解析并冻结的子智能体版本",
+    )
 
 
 class AgentConfigRequest(BaseModel):
@@ -81,6 +96,11 @@ class AgentConfigRequest(BaseModel):
     skills: list[str] | None = Field(
         default=None,
         description="这一轮要挂的 Skill 标识；提交时按当前用户可见性解析",
+    )
+    subagents: list[str] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+        description="这一轮要挂的子智能体标识；提交时按当前用户可见性解析",
     )
 
     @field_validator("skills", mode="after")

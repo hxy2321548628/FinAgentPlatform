@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from agent.config import SkillReference
+from agent.config import SkillReference, SubagentReference
 from group.repository import Group, GroupRepository
 from preset.model import Visibility
 from preset.repository import AgentRepository, AgentSource
@@ -152,6 +152,36 @@ async def test_releasing_freezes_the_drafts_skill_references(agents: AgentReposi
     detail = await agents.detail(created.id, owner_id=owner.id)
     assert detail is not None
     assert [one.skill_refs for one in detail.versions] == [[first], [second]]
+
+
+async def test_releasing_freezes_the_drafts_subagent_references(agents: AgentRepository, owner: User) -> None:
+    first = SubagentReference(agent_id=uuid4().hex, version=1, name="volatility-expert")
+    second = SubagentReference(agent_id=uuid4().hex, version=2, name="event-study-expert")
+    created = await agents.create(
+        owner_id=owner.id,
+        name=f"场景智能体-{uuid4().hex[:8]}",
+        description="",
+        subject="金融学",
+        system_prompt="按场景调度",
+        subagent_refs=[first],
+    )
+    assert created is not None
+
+    released = await agents.release(created.id, owner_id=owner.id)
+    appended = await agents.write_draft(
+        created.id,
+        owner_id=owner.id,
+        system_prompt="换一套场景",
+        subagent_refs=[second],
+    )
+
+    assert released is not None
+    assert released.subagent_refs == [first]
+    assert appended is not None
+    assert appended.subagent_refs == [second]
+    detail = await agents.detail(created.id, owner_id=owner.id)
+    assert detail is not None
+    assert [one.subagent_refs for one in detail.versions] == [[first], [second]]
 
 
 async def test_a_second_release_without_a_draft_changes_nothing(agents: AgentRepository, owner: User) -> None:

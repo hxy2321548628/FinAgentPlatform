@@ -8,7 +8,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from agent.config import MAX_SYSTEM_PROMPT_LENGTH, AgentConfigRequest, SkillReference
+from agent.config import MAX_SYSTEM_PROMPT_LENGTH, AgentConfigRequest, SkillReference, SubagentReference
 from event.model import RunErrorCode, RunStatus
 from group.model import JoinRequestStatus
 from preset.model import ResourceKind, ReviewStatus, VersionStatus, Visibility
@@ -399,6 +399,7 @@ class AgentVersionResponse(BaseModel):
     status: VersionStatus = Field(description="作者定没定稿")
     system_prompt: str = Field(description="这一版的提示词")
     skill_refs: list[SkillReference] | None = Field(default=None, description="这一版冻结的 Skill 引用")
+    subagent_refs: list[SubagentReference] | None = Field(default=None, description="这一版冻结的子智能体引用")
     created_at: datetime = Field(description="建立时间，UTC")
     released_at: datetime | None = Field(default=None, description="定稿时间，UTC。草稿为空")
     review_id: str | None = Field(default=None, description="最近一条审核记录；从没提审过则为空")
@@ -444,6 +445,7 @@ class AgentListingResponse(BaseModel):
     version: int = Field(ge=1, description="**这一档下展示的是哪一版**。广场看最新过审版，组内看最新已发布版")
     system_prompt: str = Field(description="那一版的提示词全文")
     skill_refs: list[SkillReference] | None = Field(default=None, description="这一版自带的 Skill")
+    subagent_refs: list[SubagentReference] | None = Field(default=None, description="这一版自带的子智能体")
     source: AgentSource = Field(description="凭哪一条进到这个列表：我自己的 / 组内共享 / 平台目录")
     updated_at: datetime = Field(description="最后改动时间，UTC")
 
