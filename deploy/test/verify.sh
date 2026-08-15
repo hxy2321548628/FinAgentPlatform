@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 平台回归验收：P0–P9 当前 47 条判据，一个文件跑完。
+# 平台回归验收：P0–P10 当前 54 条判据，一个文件跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
@@ -10,24 +10,35 @@
 # 常用跑法：
 #
 #   bash deploy/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
-#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 32 条，约 25 分钟
+#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 37 条，约 30 分钟
 #
 # **默认全跑，不分 phase，也没有挑某一期跑的参数** —— P6 决策 §L2 的定案。
 # 保留的是 `SKIP_LLM` / `SKIP_HOSTILE` 两个开关：它们分的是**成本**（要不要花钱、
 # 要不要 root），不是期次。按期挑着跑，等于把刚拆掉的那层级联结构又装回来，
 # 还多一条「以为全验了其实只验了一期」的路。
 #
-# 47 条里 **15 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
+# 54 条里 **17 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
 # P2① 与 P3① 各要一次真实分析，P6①、P7③、P8① 与 P8③ 各要两次真实分析，
-# P9①与 P9② 共用两次真实分析，P9⑤另要一次便宜分析，P1① 那四条破坏性测试要 root。其余 32 条全免费。
+# P9①与 P9② 共用两次真实分析，P9⑤另要一次便宜分析，P10① 要两次、P10⑦ 要一次，
+# P1① 那四条破坏性测试要 root。其余 37 条全免费。
 #
 # ---------------------------------------------------------------------------
 # **P7 那一组是 2026-08-14 随本期开发一起加的**，六条：三档可见性、审核闸门、
 # 引用真的改变行为、版本冻结、`reviewer` 的边界，以及一条 playwright 走查。
 #
-# **P7⑥、P8⑥ 与 P9⑥ 是三条要浏览器的判据**，缺 chromium 二进制时记「未验」——
+# **P7⑥、P8⑥、P9⑥ 与 P10⑥ 是四条要浏览器的判据**，缺 chromium 二进制时记「未验」——
 # 与沙箱镜像缺失同一套规矩。它们不进 `make all`：那是纯本地门禁，跑它不需要任何服务
-# 起着，而这两条要六个服务、真账号、真库。
+# 起着，而这四条要六个服务、真账号、真库。
+#
+# ---------------------------------------------------------------------------
+# **P10 那一组是 2026-08-16 随本期开发一起加的**，七条。它需要一样前九期都不需要的
+# 东西：**一台在跑的 MCP server**。夹具跑在宿主机上（`deploy/test/mcp/server.py`，
+# 由本脚本自己起停），api 与 worker 两个容器靠 `host.docker.internal` 够着它 ——
+# 真实的 MCP 全在校外用不上那一行，用得上它的是验收。
+#
+# **`P10⑦` 会因为对方（mcp.deepwiki.com）下线而红，那是它的功能不是缺陷。** 红的
+# 时候先确认是不是对方挂了 —— 装配探针连不上就记「未验」而不是「未过」，与「没触发
+# 到要测的场景」同一条规矩。
 #
 # ---------------------------------------------------------------------------
 # **P5 那一组是 2026-08-14 补的**（P6 开工前的最后一件事）。P5 期是唯一一期没留下
@@ -742,6 +753,9 @@ cleanup() {
             echo "停 worker 期间的 queued run 没能全部取消，worker 保持停止；请人工取消后再启动" >&2
         fi
     fi
+    # 夹具 MCP server 跑在宿主机上，中途失败时不停掉的话它会一直占着端口，
+    # 而下一轮验收起它时报的是「Address already in use」——那条错不指向上一轮
+    [[ -n ${P10_FIXTURE_PID:-} ]] && kill "$P10_FIXTURE_PID" >/dev/null 2>&1
     for thread_id in ${THREAD_HELD:-} ${THREAD_QUEUED:-}; do
         rm -rf "${WORKSPACE_ROOT:?}/$thread_id"
     done
@@ -3866,6 +3880,599 @@ else
     else
         fail "子智能体 playwright 未全过，详见 $P9_E2E_LOG"
         tail -30 "$P9_E2E_LOG" >&2 || true
+    fi
+fi
+end
+
+
+# ===========================================================================
+# P10：外网 MCP —— 目录、超时、撞名、熔断与外发标注
+# ===========================================================================
+#
+# **这一期第一次出现「一次分析的成败取决于一台校外机器」。** 因此这一组里有三条
+# 判据要的是**真的连一次**，不是断言我们传了什么参数：框架换一种连接实现之后，
+# 那种单测照样绿。
+#
+# 夹具 MCP server 跑在**宿主机**上（`deploy/test/mcp/server.py`），api 与 worker
+# 两个容器都靠 `host.docker.internal` 够着它 —— 真实的 MCP 全在校外，用不上那一行，
+# 用得上它的是验收。它默认只听回环，这里显式让它听所有网卡，否则容器连不上。
+
+P10_FIXTURE_PORT="${P10_FIXTURE_PORT:-8931}"
+P10_FIXTURE_URL="http://host.docker.internal:$P10_FIXTURE_PORT/mcp"
+P10_FIXTURE_SCRIPT="$REPO_ROOT/deploy/test/mcp/server.py"
+P10_VENV_PYTHON="$REPO_ROOT/app/.venv/bin/python"
+P10_FIXTURE_PID=""
+P10_READY=0
+P10_SETUP_NOTE="未开始"
+SERVER_P10=""
+AGENT_P10_SCENE=""
+P10_MCP_NAME="p10-paper-$P7_TAG"
+P10_SCENE_NAME="p10-scene-$P7_TAG"
+
+# 起夹具。**用 venv 里的 python 而不是 `uv run`** —— 后者是父进程套子进程，
+# kill 父的留下子的，端口一直占着，而下一轮报的是「Address already in use」。
+#
+# **起之前先确认那个端口上没有别人。** 开发时留下的一个夹具进程会让这里彻底跑偏：
+# 我们自己那个绑不上端口当场退出，而就绪探测探到的是**别人那一个**，于是一路绿到
+# `P10⑤` —— 那条要把夹具停掉，而 kill 我们那个早就死了的 PID 什么也不会发生，
+# 探活照常连得上，判据红在「没自动停用」上，**没有一处指向端口被占**。实测踩过一次
+p10_start_fixture() {
+    [[ -x $P10_VENV_PYTHON ]] || return 1
+    p10_port_free || return 1
+    env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy -u HTTPS_PROXY -u https_proxy \
+        MCP_FIXTURE_HOST=0.0.0.0 MCP_FIXTURE_PORT="$P10_FIXTURE_PORT" \
+        "$P10_VENV_PYTHON" "$P10_FIXTURE_SCRIPT" >>"$WORK_DIR/p10-fixture.log" 2>&1 &
+    P10_FIXTURE_PID=$!
+    p10_wait_fixture || return 1
+    # 起来了还要确认那个 405 是**我们这个进程**答的，不是端口上别的什么东西
+    kill -0 "$P10_FIXTURE_PID" 2>/dev/null
+}
+
+# 端口上此刻没有人应答。空着时 curl 连不上，`%{http_code}` 是 000
+p10_port_free() {
+    local code
+    code="$(curl -s --noproxy '*' --connect-timeout 2 -o /dev/null -w '%{http_code}' -I \
+        "http://127.0.0.1:$P10_FIXTURE_PORT/mcp" 2>/dev/null)"
+    [[ $code == 000 ]]
+}
+
+# 405 就够了：它说明端口上跑着的确实是这个应用，而不是随便一个监听者
+p10_wait_fixture() {
+    local deadline=$((SECONDS + 30)) code
+    while (( SECONDS < deadline )); do
+        code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -I \
+            "http://127.0.0.1:$P10_FIXTURE_PORT/mcp" 2>/dev/null)"
+        [[ $code == 405 ]] && return 0
+        sleep 0.5
+    done
+    return 1
+}
+
+# 停夹具，**并等到端口真的空出来**：紧接着 `P10⑤` 还要把它起回来，
+# 而端口还没释放时新进程绑不上，症状会落在「一次都不连」那条断言上
+p10_stop_fixture() {
+    local deadline
+    [[ -n $P10_FIXTURE_PID ]] || return 0
+    kill "$P10_FIXTURE_PID" >/dev/null 2>&1
+    wait "$P10_FIXTURE_PID" 2>/dev/null
+    P10_FIXTURE_PID=""
+    deadline=$((SECONDS + 15))
+    while (( SECONDS < deadline )); do
+        p10_port_free && return 0
+        sleep 0.5
+    done
+    return 1
+}
+
+# 一条目录记录的当前状态与停用原因，直接读库 —— 端点回的是同一份，但库是真相
+p10_status() {
+    psql_query "SELECT status || '|' || COALESCE(disabled_reason, '') FROM mcp_servers WHERE id = '$1';" |
+        tr -d '\r'
+}
+
+p10_apply() {
+    local jar="$1" name="$2" url="$3" write="${4:-false}"
+    api "$jar" -X POST "$BASE_URL/api/mcp" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "$name" --arg u "$url" --argjson w "$write" '{
+            name: $n,
+            description: "验收夹具：按关键词检索论文",
+            url: $u,
+            transport: "streamable_http",
+            tool_names: ["search_paper", "slow_query", "boom"],
+            latency_note: "典型 40 毫秒",
+            stores_user_data: false,
+            sends_data_out: true,
+            has_write_operation: $w
+        }')" | jq -r '.id // empty'
+}
+
+# 目录里有没有它
+p10_catalog_has() {
+    api "$1" "$BASE_URL/api/mcp" | jq -e --arg id "$2" 'any(.[]; .id == $id)' >/dev/null 2>&1
+}
+
+# 提交一条挂了这些 MCP 的 run，返回 HTTP 状态码
+p10_submit_code() {
+    local jar="$1" thread_id="$2" ids="$3"
+    curl -s -o /dev/null -w '%{http_code}' -b "$jar" \
+        -X POST "$BASE_URL/api/threads/$thread_id/runs" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg c "查一篇随机波动率的论文" --argjson m "$ids" '{content:$c, agent_config:{mcps:$m}}')"
+}
+
+if (( ! P7_READY )); then
+    P10_SETUP_NOTE="P7 账号前置没就绪（$P7_SETUP_NOTE）"
+elif [[ ! -f $P10_FIXTURE_SCRIPT ]]; then
+    P10_SETUP_NOTE="缺夹具 $P10_FIXTURE_SCRIPT"
+elif [[ ! -x $P10_VENV_PYTHON ]]; then
+    P10_SETUP_NOTE="缺 app/.venv（cd app && uv sync），起不了夹具 MCP server"
+elif ! p10_port_free; then
+    P10_SETUP_NOTE=":$P10_FIXTURE_PORT 上已经有人在应答 —— 先停掉它（开发时手工起的夹具最常见），或换 P10_FIXTURE_PORT"
+elif ! p10_start_fixture; then
+    P10_SETUP_NOTE="夹具 MCP server 没起来，详见 $WORK_DIR/p10-fixture.log"
+elif ! SERVER_P10="$(p10_apply "$JAR_P7_A" "$P10_MCP_NAME" "$P10_FIXTURE_URL")" || [[ -z $SERVER_P10 ]]; then
+    P10_SETUP_NOTE="MCP 申请没提上去"
+else
+    P10_READY=1
+    P10_SETUP_NOTE="夹具在 :$P10_FIXTURE_PORT，申请 server_id=$SERVER_P10 待审"
+fi
+log "P10 前置：$P10_SETUP_NOTE"
+
+# ------------------------------------------ P10② 申请流程的两道关
+begin "P10②" "申请 → 管理员放行 → 目录里出现、勾得上；未放行的两道关都拦住"
+
+if (( ! P10_READY )); then
+    fail "前置没就绪（$P10_SETUP_NOTE），申请流程验不了"
+else
+    THREAD_P10_GATE="$(new_thread "$JAR_P7_A")"
+
+    # 第一道关：目录列表里看不到它
+    P10_HIDDEN=0
+    p10_catalog_has "$JAR_P7_A" "$SERVER_P10" || P10_HIDDEN=1
+    # 第二道关：提交侧也解析不出来，且**一行 run 都不许多出来**
+    P10_BEFORE="$(p7_run_count "$THREAD_P10_GATE")"
+    P10_PENDING_CODE="$(p10_submit_code "$JAR_P7_A" "$THREAD_P10_GATE" "$(jq -nc --arg id "$SERVER_P10" '[$id]')")"
+    P10_AFTER="$(p7_run_count "$THREAD_P10_GATE")"
+    if (( P10_HIDDEN )) && [[ $P10_PENDING_CODE == 422 ]] && [[ $P10_BEFORE == "$P10_AFTER" ]]; then
+        pass "未放行的两道关都拦住：目录里没有它，提交 422 且没多出 run"
+    else
+        fail "未放行的没拦住：目录隐藏=$P10_HIDDEN 提交=$P10_PENDING_CODE run $P10_BEFORE→$P10_AFTER"
+    fi
+
+    # reviewer 批不了 —— 放行一个外网地址是安全边界决定，不是内容合规判断
+    P10_REVIEWER_CODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR_P7_R" \
+        -X POST "$BASE_URL/api/mcp/admin/$SERVER_P10/decision" \
+        -H 'Content-Type: application/json' -d '{"approved":true}')"
+    if [[ $P10_REVIEWER_CODE == 403 ]]; then
+        pass "reviewer 批不了 MCP（403）：内容合规与安全边界不是同一批人的判断"
+    else
+        fail "reviewer 居然能批 MCP：HTTP $P10_REVIEWER_CODE"
+    fi
+
+    # 声明有写操作的一律不批。**这是本期唯一一条「不能靠人记住」的规则**
+    P10_WRITE_ID="$(p10_apply "$JAR_P7_A" "$P10_MCP_NAME-write" "$P10_FIXTURE_URL" true)"
+    if [[ -n $P10_WRITE_ID ]]; then
+        P10_WRITE_CODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR_P7_ADMIN" \
+            -X POST "$BASE_URL/api/mcp/admin/$P10_WRITE_ID/decision" \
+            -H 'Content-Type: application/json' -d '{"approved":true}')"
+        P10_WRITE_STATUS="$(p10_status "$P10_WRITE_ID")"
+        if [[ $P10_WRITE_CODE == 422 && $P10_WRITE_STATUS == pending\|* ]]; then
+            pass "声明有写操作的管理员也批不了（422），且状态仍是 pending"
+        else
+            fail "写操作硬闸门没生效：HTTP $P10_WRITE_CODE 状态=$P10_WRITE_STATUS"
+        fi
+    else
+        fail "带写操作声明的申请没提上去，硬闸门验不了"
+    fi
+
+    # 管理员放行之后两道关都要开
+    P10_APPROVE_CODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR_P7_ADMIN" \
+        -X POST "$BASE_URL/api/mcp/admin/$SERVER_P10/decision" \
+        -H 'Content-Type: application/json' -d '{"approved":true}')"
+    P10_VISIBLE=0
+    p10_catalog_has "$JAR_P7_A" "$SERVER_P10" && P10_VISIBLE=1
+    P10_OK_CODE="$(p10_submit_code "$JAR_P7_A" "$THREAD_P10_GATE" "$(jq -nc --arg id "$SERVER_P10" '[$id]')")"
+    if [[ $P10_APPROVE_CODE == 202 ]] && (( P10_VISIBLE )) && [[ $P10_OK_CODE == 202 ]]; then
+        pass "放行之后两道关都开：目录里出现，提交也过（202）"
+    else
+        fail "放行之后没都开：审批=$P10_APPROVE_CODE 目录可见=$P10_VISIBLE 提交=$P10_OK_CODE"
+    fi
+
+    # 一次挂 4 个 —— MAX_MCP_SERVER 是闸门不是提示
+    P10_EXTRA=()
+    for slot in 2 3 4; do
+        one="$(p10_apply "$JAR_P7_A" "$P10_MCP_NAME-$slot" "$P10_FIXTURE_URL")"
+        [[ -n $one ]] || continue
+        curl -s -o /dev/null -b "$JAR_P7_ADMIN" -X POST "$BASE_URL/api/mcp/admin/$one/decision" \
+            -H 'Content-Type: application/json' -d '{"approved":true}'
+        P10_EXTRA+=("$one")
+    done
+    if (( ${#P10_EXTRA[@]} == 3 )); then
+        P10_FOUR="$(jq -nc --args '$ARGS.positional' "$SERVER_P10" "${P10_EXTRA[@]}")"
+        P10_FOUR_CODE="$(p10_submit_code "$JAR_P7_A" "$THREAD_P10_GATE" "$P10_FOUR")"
+        if [[ $P10_FOUR_CODE == 422 ]]; then
+            pass "一次挂 4 个当场 422：MAX_MCP_SERVER 是闸门不是提示"
+        else
+            fail "挂 4 个居然过了：HTTP $P10_FOUR_CODE"
+        fi
+    else
+        fail "凑不齐 4 条已放行的 MCP，数量闸门验不了"
+    fi
+fi
+end
+
+# ------------------------------------------ P10③ 一台卡住的服务掀不掉一次装配
+begin "P10③" "hang 住的服务在平台设的秒数上被掐断，且不拖垮同一次装配里别的服务"
+
+if (( ! P10_READY )); then
+    fail "前置没就绪（$P10_SETUP_NOTE），超时降级验不了"
+else
+    # **在 api 容器里跑，用它真正在用的那份运行时。** 断言的是**真实耗时**，
+    # 不是「我们给 asyncio.timeout 传了 30」—— 后者验的是意图，框架换一种连接
+    # 实现之后照样绿。黑洞端口只 listen 不 accept：握手由内核完成，请求发得出去，
+    # 然后一直等，正是「服务卡住了」那种最难查的形态
+    P10_HANG_OUT="$(in_api_python "
+import asyncio, json, socket, time
+from agent.mcp import MCP_CONNECT_TIMEOUT, McpTarget, load_mcp_tools
+from agent.config import McpReference
+
+listener = socket.socket()
+listener.bind(('127.0.0.1', 0))
+listener.listen(1)
+hang_port = listener.getsockname()[1]
+
+
+def target(server_id, url):
+    return McpTarget(
+        server_id=server_id, name=server_id, url=url, transport='streamable_http',
+        credential=None, declared_tool_name=['search_paper'], enabled=True, disabled_reason=None,
+    )
+
+
+targets = {
+    'hang': target('hang', f'http://127.0.0.1:{hang_port}/mcp'),
+    'good': target('good', '$P10_FIXTURE_URL'),
+}
+
+
+class Loader:
+    async def load_mcp_target(self, server_id):
+        return targets.get(server_id)
+
+
+async def main():
+    started = time.monotonic()
+    tools = await load_mcp_tools(
+        [McpReference(server_id='hang', name='hang'), McpReference(server_id='good', name='good')],
+        loader=Loader(),
+    )
+    elapsed = time.monotonic() - started
+    again = await load_mcp_tools([McpReference(server_id='good', name='good')], loader=Loader())
+    print(json.dumps({
+        'elapsed': round(elapsed, 2),
+        'budget': MCP_CONNECT_TIMEOUT,
+        'tools': sorted(one.name for one in tools),
+        'after': sorted(one.name for one in again),
+    }))
+
+asyncio.run(main())
+" 2>"$WORK_DIR/p10-hang.err")"
+
+    if [[ -z $P10_HANG_OUT ]]; then
+        fail "装配探针没跑起来，详见 $WORK_DIR/p10-hang.err"
+        tail -20 "$WORK_DIR/p10-hang.err" >&2 || true
+    else
+        P10_ELAPSED="$(jq -r '.elapsed' <<<"$P10_HANG_OUT")"
+        P10_BUDGET="$(jq -r '.budget' <<<"$P10_HANG_OUT")"
+        # 掐在平台设的那个数上，而不是 sse_read_timeout 的 300 秒。
+        # 下界一并断言：秒数远小于预算说明它是当场失败而不是被我们掐断的
+        if jq -e '.elapsed >= (.budget * 0.5) and .elapsed <= (.budget + 20)' <<<"$P10_HANG_OUT" >/dev/null; then
+            pass "在平台设的 ${P10_BUDGET} 秒上被掐断（实测 ${P10_ELAPSED} 秒），不是框架默认的 300 秒"
+        else
+            fail "掐断的秒数不对：实测 ${P10_ELAPSED} 秒，平台预算 ${P10_BUDGET} 秒"
+        fi
+        if jq -e '(.tools | index("search_paper")) != null and (.tools | index("read_file")) == null' \
+            <<<"$P10_HANG_OUT" >/dev/null; then
+            pass "一个坏服务不拖垮同一次装配里的好服务：夹具的工具照常拿到"
+        else
+            fail "好服务被拖下水了：拿到的工具 $(jq -c .tools <<<"$P10_HANG_OUT")"
+        fi
+        if jq -e '(.after | index("search_paper")) != null' <<<"$P10_HANG_OUT" >/dev/null; then
+            pass "掐断没弄脏进程：同一个事件循环里后续连接照常成功"
+        else
+            fail "掐断之后连不上夹具了：$(jq -c .after <<<"$P10_HANG_OUT")"
+        fi
+    fi
+fi
+end
+
+# ------------------------------------------ P10④ 外部工具顶不掉内置的
+begin "P10④" "外部工具顶不掉平台内置的 read_file"
+
+if (( ! P10_READY )); then
+    fail "前置没就绪（$P10_SETUP_NOTE），撞名剔除验不了"
+else
+    # 夹具**故意**提供一个叫 read_file 的工具。实测里外部那个会静默顶掉内置的，
+    # 内置那个从工具列表里消失 —— 于是 agent 以为在读沙箱，实际把路径与后续内容
+    # 发去了校外。**断言的是真的连了一次之后拿到的那份列表**
+    P10_CLASH_OUT="$(in_api_python "
+import asyncio, json
+from agent.mcp import RESERVED_TOOL_NAME, McpTarget, load_mcp_tools
+from agent.config import McpReference
+
+
+class Loader:
+    async def load_mcp_target(self, server_id):
+        return McpTarget(
+            server_id='fixture', name='fixture', url='$P10_FIXTURE_URL', transport='streamable_http',
+            credential=None, declared_tool_name=['search_paper'], enabled=True, disabled_reason=None,
+        )
+
+
+async def main():
+    tools = await load_mcp_tools([McpReference(server_id='fixture', name='fixture')], loader=Loader())
+    print(json.dumps({
+        'tools': sorted(one.name for one in tools),
+        'reserved': sorted(RESERVED_TOOL_NAME),
+    }))
+
+asyncio.run(main())
+" 2>"$WORK_DIR/p10-clash.err")"
+
+    if [[ -z $P10_CLASH_OUT ]]; then
+        fail "撞名探针没跑起来，详见 $WORK_DIR/p10-clash.err"
+        tail -20 "$WORK_DIR/p10-clash.err" >&2 || true
+    elif jq -e '
+        (.tools | index("read_file")) == null
+        and (.tools | index("search_paper")) != null
+        and (.reserved | index("read_file")) != null
+    ' <<<"$P10_CLASH_OUT" >/dev/null; then
+        pass "夹具的 read_file 被剔除，search_paper 照常拿到：内置工具顶不掉"
+        info "这一次拿到的外部工具：$(jq -c .tools <<<"$P10_CLASH_OUT")"
+    else
+        fail "撞名剔除没生效：$(jq -c .tools <<<"$P10_CLASH_OUT")"
+    fi
+fi
+end
+
+# ------------------------------------------ P10⑤ 连续失败 5 次真的自动停用
+begin "P10⑤" "连续 5 次传输失败自动停用，之后装配一次都不再连它"
+
+if (( ! P10_READY )); then
+    fail "前置没就绪（$P10_SETUP_NOTE），熔断验不了"
+else
+    # **走探活这条路**：它是真实场景（管理员点「测试连接」），不是为测试造的后门；
+    # 免费且确定 —— 跑 5 次真实分析既贵又不受控（模型这次会不会调那个工具是运气）。
+    # 三条路共用同一个计数器这件事由 `make all` 里那条单测钉住，见 P10 计划 §4.4
+    P10_THRESHOLD="$(in_api_python 'from agent.circuit import MCP_FAILURE_THRESHOLD; print(MCP_FAILURE_THRESHOLD)' | tr -d '[:space:]')"
+    p10_stop_fixture
+    P10_PROBE_LAST=""
+    for _ in $(seq 1 "${P10_THRESHOLD:-5}"); do
+        P10_PROBE_LAST="$(api "$JAR_P7_ADMIN" -X POST "$BASE_URL/api/mcp/admin/$SERVER_P10/probe" 2>/dev/null)"
+    done
+    P10_DISABLED="$(p10_status "$SERVER_P10")"
+
+    if [[ $P10_DISABLED == disabled\|*连续失败* && $P10_DISABLED == *"$P10_THRESHOLD"* ]]; then
+        pass "连续 $P10_THRESHOLD 次失败之后自动停用，原因写进了库：${P10_DISABLED#disabled|}"
+    else
+        fail "没自动停用或原因不完整：$P10_DISABLED"
+    fi
+
+    if compose logs --since 10m api 2>/dev/null | grep -q '"level": "WARNING".*MCP 达到失败阈值'; then
+        pass "日志里有那条 WARNING：管理员唯一的知情渠道还在"
+    else
+        fail "日志里找不到自动停用的 WARNING"
+    fi
+
+    # **把夹具重新起回来再验「一次都不连」** —— 服务停着的时候「没连上」证明不了
+    # 任何事。起回来之后装配仍然拿到空列表，才说明它真的一次连接都没发起
+    if p10_start_fixture; then
+        P10_SKIP_OUT="$(in_api_python "
+import asyncio, json
+from agent.config import McpReference
+from agent.mcp import load_mcp_tools
+from config import Settings
+from preset.mcp import McpRepository, McpTargetLoader
+from store import postgres
+
+async def main():
+    engine = postgres.create_engine(Settings().postgres_dsn())
+    loader = McpTargetLoader(McpRepository(engine), {})
+    target = await loader.load_mcp_target('$SERVER_P10')
+    tools = await load_mcp_tools([McpReference(server_id='$SERVER_P10', name='p10')], loader=loader)
+    await engine.dispose()
+    print(json.dumps({'enabled': target.enabled, 'tools': sorted(one.name for one in tools)}))
+
+asyncio.run(main())
+" 2>"$WORK_DIR/p10-skip.err")"
+        if [[ -n $P10_SKIP_OUT ]] && jq -e '.enabled == false and (.tools | length) == 0' <<<"$P10_SKIP_OUT" >/dev/null; then
+            pass "夹具已经起回来了，装配仍然一个工具都不要：停用的服务一次都不连"
+        else
+            fail "停用之后仍然连了它：$P10_SKIP_OUT"
+            tail -20 "$WORK_DIR/p10-skip.err" >&2 || true
+        fi
+    else
+        fail "夹具没能重新起来，「一次都不连」验不了"
+    fi
+
+    # 管理员手动恢复：状态回 enabled，计数清零
+    P10_RESTORE="$(api "$JAR_P7_ADMIN" -X POST "$BASE_URL/api/mcp/admin/$SERVER_P10/enabled" \
+        -H 'Content-Type: application/json' -d '{"enabled":true}' 2>/dev/null)"
+    P10_RESTORED="$(p10_status "$SERVER_P10")"
+    if [[ $P10_RESTORED == "enabled|" ]] && jq -e '.failure_count == 0' <<<"$P10_RESTORE" >/dev/null; then
+        pass "管理员手动恢复：状态回 enabled，失败计数清零"
+    else
+        fail "手动恢复不干净：状态=$P10_RESTORED 计数=$(jq -r '.failure_count // "?"' <<<"$P10_RESTORE")"
+    fi
+    info "停用前最后一次探活：$(jq -c '{reachable, failure_count}' <<<"${P10_PROBE_LAST:-null}" 2>/dev/null || echo 未取到)"
+fi
+end
+
+# ------------------------------------------ P10⑥ 浏览器里两条路径都看得见外发标注
+begin "P10⑥" "浏览器里两条路径都看得见外发标注（直接勾、以及场景自带）"
+
+if (( ! P10_READY )); then
+    undone "前置没就绪（$P10_SETUP_NOTE），浏览器链路没有可用的 MCP"
+elif ! command -v pnpm >/dev/null 2>&1; then
+    undone "没有 pnpm，跑不了 playwright"
+elif [[ ! -d $REPO_ROOT/web/node_modules/@playwright ]]; then
+    undone "web/ 没装 @playwright/test：cd web && pnpm install"
+elif ! (cd "$REPO_ROOT/web" && pnpm exec playwright install --dry-run chromium >/dev/null 2>&1); then
+    undone "查不到 chromium 二进制：cd web && pnpm exec playwright install chromium"
+else
+    # 场景要在这里现建：它自带那条 MCP，而第二条链路验的正是「一个都没勾也看得见」
+    AGENT_P10_SCENE="$(api "$JAR_P7_A" -X POST "$BASE_URL/api/agents" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "$P10_SCENE_NAME" --arg id "$SERVER_P10" '{
+            name: $n, description: "会连校外论文库的场景", subject: "金融学",
+            system_prompt: "你在需要检索论文时使用外部检索工具。", mcps: [$id]}')" | jq -r '.id // empty')"
+    if [[ -n $AGENT_P10_SCENE ]]; then
+        api "$JAR_P7_A" -X POST "$BASE_URL/api/agents/$AGENT_P10_SCENE/versions" >/dev/null 2>&1
+    fi
+    P10_E2E_LOG="$WORK_DIR/p10-e2e.log"
+    if [[ -z $AGENT_P10_SCENE ]]; then
+        fail "自带 MCP 的场景没建出来，第二条链路验不了"
+    elif (cd "$REPO_ROOT/web" && \
+        E2E_API_TARGET="$BASE_URL" \
+        E2E_PASSWORD="$P7_SECRET" \
+        E2E_AUTHOR="$NAME_P7_A" \
+        E2E_MCP_NAME="$P10_MCP_NAME" \
+        E2E_MCP_SCENE_NAME="$P10_SCENE_NAME" \
+        pnpm exec playwright test e2e/mcp-outbound.spec.ts >"$P10_E2E_LOG" 2>&1); then
+        pass "两条路径都看得见外发标注：直接勾一个 MCP，以及只选一个自带 MCP 的场景"
+    else
+        fail "外发标注 playwright 未全过，详见 $P10_E2E_LOG"
+        tail -30 "$P10_E2E_LOG" >&2 || true
+    fi
+fi
+end
+
+# ------------------------------------------ P10① 主判据：外网工具真被调用
+begin "P10①" "挂与不挂同一个 MCP，事件流与产物里看得出差别"
+
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    undone "SKIP_LLM=1，这条要两次真实分析"
+elif (( ! P10_READY )); then
+    fail "前置没就绪（$P10_SETUP_NOTE），主判据验不了"
+else
+    THREAD_P10_PLAIN="$(new_thread "$JAR_P7_A")"
+    THREAD_P10_MCP="$(new_thread "$JAR_P7_A")"
+    # **两个会话，不是同一个会话问两次** —— checkpoint 里的历史会污染第二次
+    api "$JAR_P7_A" -X PATCH "$BASE_URL/api/threads/$THREAD_P10_MCP" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg id "$SERVER_P10" '{agent_config:{mcps:[$id]}}')" >/dev/null 2>&1
+
+    P6_QUESTION='请检索关键词「随机波动率」的论文，并把检索工具原样返回的那一行结果写进 outputs/paper.txt。不要自己编造论文标题；如果没有可用的检索工具，就在文件里写 NO-TOOL。做完只回一句话。'
+    P10_PLAIN_OK=0
+    P10_MCP_OK=0
+    if p6_analyse "$JAR_P7_A" "$THREAD_P10_PLAIN" p10-plain "$RUN_TIMEOUT"; then
+        P10_PLAIN_OK=1
+        RUN_P10_PLAIN="$P6_LAST_RUN"
+    else
+        RUN_P10_PLAIN="${P6_LAST_RUN:-}"
+        STATUS_P10_PLAIN="${P6_LAST_STATUS:-提交失败}"
+    fi
+    if p6_analyse "$JAR_P7_A" "$THREAD_P10_MCP" p10-mcp "$RUN_TIMEOUT"; then
+        P10_MCP_OK=1
+        RUN_P10_MCP="$P6_LAST_RUN"
+    else
+        RUN_P10_MCP="${P6_LAST_RUN:-}"
+        STATUS_P10_MCP="${P6_LAST_STATUS:-提交失败}"
+    fi
+
+    if (( ! P10_PLAIN_OK || ! P10_MCP_OK )); then
+        fail "两条 run 没都跑到 succeeded：不挂=${STATUS_P10_PLAIN:-succeeded}，挂上=${STATUS_P10_MCP:-succeeded}"
+    else
+        # **断言的是 tool_call 事件里的工具名，不只是回答文本** —— 模型完全可以
+        # 照着工具描述编一句 PAPER-HIT 出来
+        P10_PLAIN_CALLS="$(jq -s '[.[] | select(.type == "tool_call") | .data.name] | unique' "$WORK_DIR/p10-plain.json")"
+        P10_MCP_CALLS="$(jq -s '[.[] | select(.type == "tool_call") | .data.name] | unique' "$WORK_DIR/p10-mcp.json")"
+        if jq -e 'index("search_paper") == null' <<<"$P10_PLAIN_CALLS" >/dev/null &&
+            jq -e 'index("search_paper") != null' <<<"$P10_MCP_CALLS" >/dev/null; then
+            pass "双向断言成立：不挂时没有 search_paper，挂上后事件流里真有它的 tool_call"
+        else
+            fail "工具调用不符合双向断言：不挂=$P10_PLAIN_CALLS 挂上=$P10_MCP_CALLS"
+        fi
+
+        P10_PLAIN_TEXT="$(api "$JAR_P7_A" --get --data-urlencode 'path=outputs/paper.txt' \
+            "$BASE_URL/api/threads/$THREAD_P10_PLAIN/files/raw" 2>/dev/null || true)"
+        P10_MCP_TEXT="$(api "$JAR_P7_A" --get --data-urlencode 'path=outputs/paper.txt' \
+            "$BASE_URL/api/threads/$THREAD_P10_MCP/files/raw" 2>/dev/null || true)"
+        if [[ $P10_PLAIN_TEXT != *PAPER-HIT* && $P10_MCP_TEXT == *PAPER-HIT* ]]; then
+            pass "产物里看得出差别：不挂时没有 PAPER-HIT，挂上后有"
+        else
+            fail "产物不符合双向断言：不挂=$(head -c 80 <<<"$P10_PLAIN_TEXT") 挂上=$(head -c 80 <<<"$P10_MCP_TEXT")"
+        fi
+
+        P10_SNAPSHOT="$(psql_query "SELECT COALESCE(agent_config->'mcps', '[]'::jsonb)::text
+            FROM runs WHERE id='$RUN_P10_MCP';" | tr -d '\r')"
+        if jq -e --arg id "$SERVER_P10" --arg name "$P10_MCP_NAME" \
+            'length == 1 and .[0].server_id == $id and .[0].name == $name' <<<"$P10_SNAPSHOT" >/dev/null; then
+            pass "run 快照冻结了 server_id 与 name"
+        else
+            fail "MCP 快照不完整：$P10_SNAPSHOT"
+        fi
+
+        # 三个观察项（P10 计划 §4.2 第 5 条）
+        P10_IS_ERROR="$(jq -s '[.[] | select(.type == "tool_result" and .data.status == "error")] | length' "$WORK_DIR/p10-mcp.json")"
+        info "观察项 1：挂 MCP 那次 tool_result 里 status=error 出现 $P10_IS_ERROR 次（长期为 0 说明熔断口径可以收紧）"
+        TOKENS_P10_PLAIN="$(psql_query "SELECT COALESCE(tokens_cache_read,0) || '|' || COALESCE(tokens_uncached,0) || '|' || COALESCE(tokens_output,0)
+            FROM runs WHERE id='$RUN_P10_PLAIN';" | tr -d '[:space:]')"
+        TOKENS_P10_MCP="$(psql_query "SELECT COALESCE(tokens_cache_read,0) || '|' || COALESCE(tokens_uncached,0) || '|' || COALESCE(tokens_output,0)
+            FROM runs WHERE id='$RUN_P10_MCP';" | tr -d '[:space:]')"
+        info "第 19 个 token 样本（P10① 不挂 MCP，cache|uncached|output）：$TOKENS_P10_PLAIN；run=$RUN_P10_PLAIN"
+        info "第 20 个 token 样本（P10① 挂 MCP，cache|uncached|output）：$TOKENS_P10_MCP；run=$RUN_P10_MCP"
+    fi
+fi
+end
+
+# ------------------------------------------ P10⑦ 真外网服务的工具被真调用一次
+begin "P10⑦" "真外网 MCP（mcp.deepwiki.com）的工具被真调用一次"
+
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    undone "SKIP_LLM=1，这条要一次真实分析"
+elif (( ! P7_READY )); then
+    fail "前置没就绪（$P7_SETUP_NOTE），真外网判据验不了"
+else
+    # **这条与 P10① 的分工**：P10① 验平台的机制（挂与不挂有差别），用本地夹具，
+    # 快、可控、可造故障；这一条验的是 F3「全外网」这个前提本身 —— 出网、DNS、TLS、
+    # 真实延迟、真实的 MCP 实现而不是我们自己写的夹具。
+    #
+    # **它会因为对方下线而红，那是它的功能不是缺陷。** 红的时候先确认是不是对方挂了：
+    # 装配探针连不上就记「未验」而不是「未过」，与「没触发到要测的场景」同一条规矩
+    P10_REMOTE_NAME="p10-deepwiki-$P7_TAG"
+    P10_REMOTE_ID="$(api "$JAR_P7_A" -X POST "$BASE_URL/api/mcp" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "$P10_REMOTE_NAME" '{
+            name: $n, description: "DeepWiki：开源项目文档问答", url: "https://mcp.deepwiki.com/mcp",
+            transport: "streamable_http", tool_names: ["read_wiki_structure", "read_wiki_contents", "ask_question"],
+            latency_note: "实测 3.3 秒", stores_user_data: false, sends_data_out: true, has_write_operation: false
+        }')" | jq -r '.id // empty')"
+    if [[ -z $P10_REMOTE_ID ]]; then
+        fail "真外网那条目录记录没提上去"
+    else
+        curl -s -o /dev/null -b "$JAR_P7_ADMIN" -X POST "$BASE_URL/api/mcp/admin/$P10_REMOTE_ID/decision" \
+            -H 'Content-Type: application/json' -d '{"approved":true}'
+        P10_REMOTE_PROBE="$(api "$JAR_P7_ADMIN" -X POST "$BASE_URL/api/mcp/admin/$P10_REMOTE_ID/probe" 2>/dev/null)"
+        if ! jq -e '.reachable == true' <<<"${P10_REMOTE_PROBE:-null}" >/dev/null 2>&1; then
+            undone "连不上 mcp.deepwiki.com（对方下线或本机不能出网）—— 记未验而不是未过"
+        else
+            THREAD_P10_REMOTE="$(new_thread "$JAR_P7_A")"
+            api "$JAR_P7_A" -X PATCH "$BASE_URL/api/threads/$THREAD_P10_REMOTE" -H 'Content-Type: application/json' \
+                -d "$(jq -nc --arg id "$P10_REMOTE_ID" '{agent_config:{mcps:[$id]}}')" >/dev/null 2>&1
+            # 提问必须是「非查不可」的：一个平台自己答不出的开源项目细节
+            P6_QUESTION='用你手上的外部文档工具查一下 GitHub 仓库 modelcontextprotocol/python-sdk 的仓库结构，把工具返回的内容原样写进 outputs/deepwiki.txt。必须调用外部工具，不要凭记忆作答。做完只回一句话。'
+            if p6_analyse "$JAR_P7_A" "$THREAD_P10_REMOTE" p10-remote "$RUN_TIMEOUT"; then
+                P10_REMOTE_TOOLS="$(jq -s '[.[] | select(.type == "tool_result")
+                    | select(.data.name | test("wiki|ask_question"))
+                    | {name: .data.name, status: .data.status, length: (.data.content | tostring | length)}]' \
+                    "$WORK_DIR/p10-remote.json")"
+                if jq -e 'any(.[]; .status == "success" and .length > 0)' <<<"$P10_REMOTE_TOOLS" >/dev/null; then
+                    pass "真外网服务的工具被真调用一次：$(jq -c '[.[] | .name] | unique' <<<"$P10_REMOTE_TOOLS")"
+                    info "tool_result 概览：$(jq -c . <<<"$P10_REMOTE_TOOLS")"
+                else
+                    fail "没有一次成功且非空的外部工具返回：$P10_REMOTE_TOOLS"
+                fi
+            else
+                fail "真外网那条分析没跑到 succeeded：${P6_LAST_STATUS:-提交失败}"
+            fi
+        fi
     fi
 fi
 end
