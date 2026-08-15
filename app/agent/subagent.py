@@ -12,6 +12,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.human_in_the_loop import HumanInTheLoopMiddleware
 from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import BaseTool
 
 from agent.config import SubagentReference
 from agent.prompt import ENVIRONMENT_SEGMENT
@@ -48,12 +49,21 @@ async def compile_subagents(
     loader: SubagentLoaderProtocol,
     model: BaseChatModel,
     backend: BackendProtocol,
+    tools: list[BaseTool] | None = None,
 ) -> list[CompiledSubAgent]:
     """按快照顺序编译子智能体。
 
     `CompiledSubAgent` 不会获得声明式 spec 的自动工具继承，因此文件工具、摘要、
     工具调用修补与 HITL 都在这里显式装配。名称取冻结快照，避免作者改名后历史 run
     的 `task` 名称发生变化；提示词则按冻结版本读取。
+
+    Args:
+        references: 快照里冻结的子智能体。
+        loader: 读取冻结版本的仓储。
+        model: 主模型，子智能体与主图共用。
+        backend: 会话的沙箱 backend，主图与子图共享同一个工作目录。
+        tools: 外部工具（MCP）。子智能体与主图拿到的是同一批 —— 一次分析勾了哪些
+            外部服务是一次 run 的属性，不是某一层 agent 的属性。
     """
     compiled: list[CompiledSubAgent] = []
     for reference in references:
@@ -73,7 +83,7 @@ async def compile_subagents(
         ]
         runnable = create_agent(
             model,
-            tools=[],
+            tools=list(tools or []),
             system_prompt=prompt,
             middleware=middleware,
             name=reference.name,

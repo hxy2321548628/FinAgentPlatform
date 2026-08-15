@@ -178,6 +178,16 @@ class Settings(StoreSettings):
         description="sandbox-broker 的地址。它是唯一持有 docker.sock 的进程，只在内网监听",
     )
 
+    # **凭据不进库、不进日志、不进事件流。** `mcp_servers` 里只存键名，值在这里 ——
+    # 于是「谁能读库」与「谁能读凭据」是两件事，而那张表要被前端读（目录卡片）。
+    # 所有教师共用一把 key，用量分不开：外部服务按调用计费时，「哪个课题组吃光了额度」
+    # 平台答不上来，这是主动接受的代价
+    mcp_credentials: dict[str, str] = Field(
+        default_factory=dict,
+        description="MCP 凭据表。JSON 对象，键是 mcp_servers.credential_key，"
+        "值是整个 Authorization 头的内容（形如 `Bearer xxx`）",
+    )
+
     # 空库时用一次，之后再启动都不看它 —— 否则运维改过口令，一次重启就改回去了
     admin_name: str = Field(
         default="",

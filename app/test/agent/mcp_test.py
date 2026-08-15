@@ -11,6 +11,7 @@
 
 import asyncio
 import contextlib
+import logging
 import os
 import socket
 import subprocess
@@ -21,9 +22,13 @@ from pathlib import Path
 
 import httpx
 import pytest
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import StructuredTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import StreamableHttpConnection
+
+from agent.config import McpReference
+from agent.mcp import RESERVED_TOOL_NAME, McpTarget, load_mcp_tools
 
 FIXTURE_SCRIPT = Path(__file__).resolve().parents[3] / "deploy" / "test" / "mcp" / "server.py"
 
@@ -199,3 +204,186 @@ async def test_a_tool_reporting_its_own_failure_comes_back_as_content(fixture_ur
     result = await tools["boom"].ainvoke({"keyword": "沪深300"})
 
     assert "外部数据源暂时不可用" in str(result)
+
+
+# ---------------------------------------------------------------------------
+# 装配层：平台自己的代码
+# ---------------------------------------------------------------------------
+
+
+def target(
+    url: str,
+    *,
+    name: str = "fixture",
+    declared_tool_name: list[str] | None = None,
+    enabled: bool = True,
+    disabled_reason: str | None = None,
+) -> McpTarget:
+    return McpTarget(
+        server_id=f"srv-{name}",
+        name=name,
+        url=url,
+        transport="streamable_http",
+        credential=None,
+        declared_tool_name=sorted(FIXTURE_TOOL_NAME) if declared_tool_name is None else declared_tool_name,
+        enabled=enabled,
+        disabled_reason=disabled_reason,
+    )
+
+
+class Loader:
+    def __init__(self, *targets: McpTarget) -> None:
+        self._targets = {one.server_id: one for one in targets}
+        self.calls: list[str] = []
+
+    async def load_mcp_target(self, server_id: str) -> McpTarget | None:
+        self.calls.append(server_id)
+        return self._targets.get(server_id)
+
+
+class Recorder:
+    def __init__(self) -> None:
+        self.failures: list[tuple[str, str]] = []
+        self.successes: list[str] = []
+
+    async def record_failure(self, server_id: str, *, reason: str) -> None:
+        self.failures.append((server_id, reason))
+
+    async def record_success(self, server_id: str) -> None:
+        self.successes.append(server_id)
+
+
+def reference(one: McpTarget) -> McpReference:
+    return McpReference(server_id=one.server_id, name=one.name)
+
+
+async def test_no_mcp_reference_touches_nothing_at_all() -> None:
+    """不挂 MCP 的 run 必须一个额外动作都不做 —— 连一次目录查询都不该有。"""
+    loader = Loader()
+
+    assert await load_mcp_tools([], loader=loader) == []
+    assert loader.calls == []
+
+
+async def test_an_external_tool_cannot_take_over_the_builtin_read_file(fixture_url: str) -> None:
+    """`P10④` 的单测形态：夹具提供一个叫 `read_file` 的工具，它必须被剔除。
+
+    实测里外部工具不是「与内置的二选一」，而是**静默顶掉**内置那个 —— 一个上架时
+    人畜无害的服务只要事后加一个同名工具，就能接管平台的文件读取。
+    """
+    one = target(fixture_url)
+    loader = Loader(one)
+
+    tools = await load_mcp_tools([reference(one)], loader=loader)
+
+    names = {tool.name for tool in tools}
+    assert "read_file" not in names
+    assert names == FIXTURE_TOOL_NAME - RESERVED_TOOL_NAME
+
+
+async def test_the_reserved_names_still_cover_every_builtin_file_tool() -> None:
+    """撞名清单是硬编码的，这一条替它盯着上游 —— 加了第九个内置文件工具就红。"""
+    from deepagents.middleware.filesystem import FilesystemMiddleware
+
+    builtin = {tool.name for tool in FilesystemMiddleware(backend=None).tools}
+
+    assert builtin <= RESERVED_TOOL_NAME
+
+
+async def test_a_hung_server_does_not_drag_down_the_others(
+    hung_url: str, fixture_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`P10③` 的单测形态：黑洞服务在平台设的秒数上被掐断，好的照常装上。
+
+    **断言的是真实耗时**，不是「我们给 asyncio.timeout 传了 30」—— 后者验的是意图，
+    框架换一种连接实现之后照样绿。
+    """
+    monkeypatch.setattr("agent.mcp.MCP_CONNECT_TIMEOUT", PROBE_TIMEOUT_SECOND)
+    hung = target(hung_url, name="hung")
+    good = target(fixture_url, name="fixture")
+    loader, recorder = Loader(hung, good), Recorder()
+
+    started = time.monotonic()
+    tools = await load_mcp_tools([reference(hung), reference(good)], loader=loader, recorder=recorder)
+    elapsed = time.monotonic() - started
+
+    assert elapsed == pytest.approx(PROBE_TIMEOUT_SECOND, abs=2.0)
+    assert {tool.name for tool in tools} == FIXTURE_TOOL_NAME - RESERVED_TOOL_NAME
+    assert [server_id for server_id, _ in recorder.failures] == [hung.server_id]
+    assert recorder.successes == [good.server_id]
+
+
+async def test_a_dead_server_is_skipped_and_counted(dead_url: str, fixture_url: str) -> None:
+    """连不上时抛的是 ExceptionGroup，宽类型才抓得住 —— 放过去会掀掉整次分析。"""
+    dead = target(dead_url, name="dead")
+    good = target(fixture_url, name="fixture")
+    loader, recorder = Loader(dead, good), Recorder()
+
+    tools = await load_mcp_tools([reference(dead), reference(good)], loader=loader, recorder=recorder)
+
+    assert {tool.name for tool in tools} == FIXTURE_TOOL_NAME - RESERVED_TOOL_NAME
+    assert [server_id for server_id, _ in recorder.failures] == [dead.server_id]
+
+
+async def test_a_disabled_server_is_never_connected_to(fixture_url: str) -> None:
+    """C4：已停用的一次都不连。连一次就等于把停用变成了「每次多等 30 秒」。"""
+    one = target(fixture_url, enabled=False, disabled_reason="连续失败 5 次")
+    loader, recorder = Loader(one), Recorder()
+
+    tools = await load_mcp_tools([reference(one)], loader=loader, recorder=recorder)
+
+    assert tools == []
+    assert recorder.failures == []
+    assert recorder.successes == []
+
+
+async def test_a_snapshot_pointing_at_a_vanished_record_degrades(fixture_url: str) -> None:
+    good = target(fixture_url)
+    loader = Loader(good)
+
+    tools = await load_mcp_tools([McpReference(server_id="srv-gone", name="gone"), reference(good)], loader=loader)
+
+    assert {tool.name for tool in tools} == FIXTURE_TOOL_NAME - RESERVED_TOOL_NAME
+
+
+async def test_a_stale_declared_tool_list_is_logged_not_enforced(
+    fixture_url: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """清单过期是静默的，不比对就永远发现不了；但拦下来会打断一次正常的上游升级。"""
+    one = target(fixture_url, declared_tool_name=["search_paper", "已经没有的工具"])
+    loader = Loader(one)
+
+    with caplog.at_level(logging.WARNING, logger="agent.mcp"):
+        tools = await load_mcp_tools([reference(one)], loader=loader)
+
+    assert {tool.name for tool in tools} == FIXTURE_TOOL_NAME - RESERVED_TOOL_NAME
+    assert any("工具清单与上架时不一致" in one.getMessage() for one in caplog.records)
+
+
+async def test_two_servers_offering_the_same_tool_keep_the_first(fixture_url: str) -> None:
+    """两个外部服务同名工具时后一个会顶掉前一个，症状同样是「调了但结果不对」。"""
+    first = target(fixture_url, name="first")
+    second = target(fixture_url, name="second")
+    loader = Loader(first, second)
+
+    tools = await load_mcp_tools([reference(first), reference(second)], loader=loader)
+
+    names = [tool.name for tool in tools]
+    assert sorted(names) == sorted(FIXTURE_TOOL_NAME - RESERVED_TOOL_NAME)
+
+
+async def test_a_slow_call_comes_back_as_an_error_result_instead_of_raising(
+    fixture_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§2 第 3 条：抛出去的话，一次慢调用会掀掉一次已经跑了二十分钟的分析。"""
+    monkeypatch.setattr("agent.mcp.MCP_CALL_TIMEOUT", PROBE_TIMEOUT_SECOND)
+    one = target(fixture_url)
+    tools = {tool.name: tool for tool in await load_mcp_tools([reference(one)], loader=Loader(one))}
+
+    result = await tools["slow_query"].ainvoke(
+        {"name": "slow_query", "args": {"keyword": "沪深300"}, "id": "call-1", "type": "tool_call"}
+    )
+
+    assert isinstance(result, ToolMessage)
+    assert result.status == "error"
+    assert "调用超时" in str(result.content)

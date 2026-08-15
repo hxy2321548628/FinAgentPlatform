@@ -17,11 +17,13 @@ from deepagents.backends.protocol import BackendProtocol
 from langchain.agents.middleware.human_in_the_loop import DecisionType, InterruptOnConfig
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import BaseTool
 from langchain_deepseek import ChatDeepSeek
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
 from agent.config import AgentConfig
+from agent.mcp import McpFailureRecorderProtocol, McpTargetLoaderProtocol, load_mcp_tools
 from agent.prompt import compose_prompt
 from agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
 from agent.subagent import SubagentLoaderProtocol, compile_subagents
@@ -120,11 +122,15 @@ class Agent:
         checkpointer: BaseCheckpointSaver[str],
         callback: BaseCallbackHandler | None = None,
         subagent_loader: SubagentLoaderProtocol | None = None,
+        mcp_loader: McpTargetLoaderProtocol | None = None,
+        mcp_recorder: McpFailureRecorderProtocol | None = None,
     ) -> None:
         self._model = model
         self._checkpointer = checkpointer
         self._callback = callback
         self._subagent_loader = subagent_loader
+        self._mcp_loader = mcp_loader
+        self._mcp_recorder = mcp_recorder
 
     def stream(
         self,
@@ -209,6 +215,9 @@ class Agent:
         # LangGraph 的 astream 按 stream_mode 的字面量类型分重载，表达不了
         # 「传 list 且 subgraphs=True 时逐个吐 (ns, mode, payload) 三元组」这个组合，
         # 于是收窄成本模块自己的 Protocol。三元组的形状由入库的真实 chunk 钉住。
+        # **不挂 MCP 的 run 一个额外动作都不做。** 绝大多数分析走的是这条路，
+        # 而「平台好像变慢了」不会有任何日志指向外网往返
+        mcp_tools = await self._mcp_tools(agent_config)
         subagents = None
         if agent_config is not None and agent_config.subagents:
             if self._subagent_loader is None:
@@ -218,11 +227,13 @@ class Agent:
                 loader=self._subagent_loader,
                 model=self._model,
                 backend=backend,
+                tools=mcp_tools,
             )
         return cast(
             SupportsAgent,
             create_deep_agent(
                 model=self._model,
+                tools=mcp_tools,
                 backend=backend,
                 system_prompt=compose_prompt(agent_config),
                 checkpointer=self._checkpointer,
@@ -237,6 +248,17 @@ class Agent:
                 # `MappingProxyType` 是为了不构成可变全局状态，交出去时复制一份
                 interrupt_on=dict(INTERRUPT_ON),
             ),
+        )
+
+    async def _mcp_tools(self, agent_config: AgentConfig | None) -> list[BaseTool]:
+        if agent_config is None or not agent_config.mcps:
+            return []
+        if self._mcp_loader is None:
+            raise RuntimeError("运行快照包含 MCP 引用，但 worker 未配置 MCP 目录仓储")
+        return await load_mcp_tools(
+            agent_config.mcps,
+            loader=self._mcp_loader,
+            recorder=self._mcp_recorder,
         )
 
     def _config(self, thread_id: str, *, user_id: str | None = None) -> dict[str, object]:

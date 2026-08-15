@@ -15,6 +15,7 @@
 """
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -28,6 +29,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import Column, Field, SQLModel, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from agent.mcp import McpTarget
 from preset.model import _value_enum
 
 TABLE_NAME = "mcp_servers"
@@ -278,6 +280,50 @@ class McpRepository:
         async with AsyncSession(self._engine) as session:
             found = await session.exec(statement)
             return [_to_server(one) for one in found.all()]
+
+
+class McpTargetLoader:
+    """把目录记录与 `.env` 里的凭据拼成装配层要的那份 `McpTarget`。
+
+    **凭据的翻译只发生在这里。** 库里存键名、Settings 里存值，两边在 worker 进程内
+    合起来 —— api 侧读同一张表时既拿不到也不需要凭据。
+
+    Args:
+        repository: MCP 目录层。
+        credentials: 键名到 Authorization 头内容的映射，来自 Settings。
+    """
+
+    def __init__(self, repository: McpRepository, credentials: Mapping[str, str]) -> None:
+        self._repository = repository
+        self._credentials = dict(credentials)
+
+    async def load_mcp_target(self, server_id: str) -> McpTarget | None:
+        """按快照里的稳定标识读一条记录，连同它此刻的状态与凭据。
+
+        **不重新判断可见性**：提交侧已经解析并冻结过，worker 晚几分钟执行时不该因为
+        管理员刚好改了什么而变成另一次分析。**状态是例外** —— 停用是个安全闸门，
+        它必须当场生效。
+        """
+        record = await self._repository.get(server_id)
+        if record is None:
+            return None
+        credential = None if record.credential_key is None else self._credentials.get(record.credential_key)
+        if record.credential_key is not None and credential is None:
+            logger.warning(
+                "MCP 凭据键在 .env 里没有对应的值：server_id=%s key=%s",
+                record.id,
+                record.credential_key,
+            )
+        return McpTarget(
+            server_id=record.id,
+            name=record.name,
+            url=record.url,
+            transport=record.transport.value,
+            credential=credential,
+            declared_tool_name=list(record.tool_names),
+            enabled=record.status is McpStatus.ENABLED,
+            disabled_reason=record.disabled_reason,
+        )
 
 
 def _parse(value: str) -> UUID | None:

@@ -403,3 +403,72 @@ async def test_a_compiled_subagent_list_reaches_deepagents(
     await drain(runner.stream(FakeBackend(), "thread-1", "一", config))  # type: ignore[arg-type]
 
     assert built["subagents"] is expected
+
+
+async def test_an_empty_mcp_snapshot_does_not_touch_the_catalog(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    """不挂 MCP 的 run 一个额外动作都不做 —— 绝大多数分析走的是这条路。
+
+    症状会是「平台好像变慢了」，而没有任何日志指向多出来的那次外网往返。
+    """
+
+    class Loader:
+        async def load_mcp_target(self, server_id: str) -> None:
+            raise AssertionError("空快照不应访问 MCP 目录")
+
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver(), mcp_loader=Loader())
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一", AgentConfig()))  # type: ignore[arg-type]
+
+    assert built["tools"] == []
+
+
+async def test_external_tools_reach_both_the_main_graph_and_the_subagents(
+    recorded: tuple[RecordingAgent, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """一次分析勾了哪些外部服务是 run 的属性，不是某一层 agent 的属性。"""
+    from agent.config import McpReference, SubagentReference
+
+    external: list[Any] = [SimpleNamespace(name="search_paper")]
+    handed: dict[str, Any] = {}
+
+    async def fake_load(*argument: Any, **keyword: Any) -> list[Any]:  # noqa: ANN401 - 替身照单全收
+        return external
+
+    async def fake_compile(*argument: Any, **keyword: Any) -> list[Any]:  # noqa: ANN401 - 替身照单全收
+        handed.update(keyword)
+        return [{"name": "volatility-expert"}]
+
+    monkeypatch.setattr("agent.factory.load_mcp_tools", fake_load)
+    monkeypatch.setattr("agent.factory.compile_subagents", fake_compile)
+    _, built = recorded
+    runner = Agent(
+        model=DummyModel(),
+        checkpointer=InMemorySaver(),
+        subagent_loader=object(),  # type: ignore[arg-type]
+        mcp_loader=object(),  # type: ignore[arg-type]
+    )
+    config = AgentConfig(
+        mcps=[McpReference(server_id="srv-1", name="paper-search")],
+        subagents=[SubagentReference(agent_id="agent-1", version=1, name="volatility-expert")],
+    )
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一", config))  # type: ignore[arg-type]
+
+    assert built["tools"] is external
+    assert handed["tools"] is external
+
+
+async def test_an_mcp_snapshot_without_a_catalog_fails_loudly(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    """静默跑成「没挂 MCP」的话，教师看到的是「我明明勾了，怎么没用上」。"""
+    from agent.config import McpReference
+
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+    config = AgentConfig(mcps=[McpReference(server_id="srv-1", name="paper-search")])
+
+    with pytest.raises(RuntimeError, match="MCP"):
+        await drain(runner.stream(FakeBackend(), "thread-1", "一", config))  # type: ignore[arg-type]

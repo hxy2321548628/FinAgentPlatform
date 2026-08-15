@@ -1,11 +1,12 @@
 """MCP 目录数据层的测试，连真 Postgres。"""
 
+import logging
 from uuid import uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from preset.mcp import McpApplication, McpRepository, McpStatus, McpTransport
+from preset.mcp import McpApplication, McpRepository, McpStatus, McpTargetLoader, McpTransport
 from user.repository import User
 
 
@@ -144,3 +145,80 @@ async def test_the_administrator_sees_every_status(servers: McpRepository, owner
     everything = {one.id for one in await servers.list_all()}
 
     assert {pending.id, rejected.id} <= everything
+
+
+async def test_the_loader_hands_the_credential_value_not_the_key(servers: McpRepository, owner: User) -> None:
+    """库里存键名、`.env` 里存值，两边只在 worker 进程内合起来。"""
+    created = await servers.apply(
+        McpApplication(
+            name=f"market-{uuid4().hex[:8]}",
+            description="行情",
+            url="https://mcp.example.edu/mcp",
+            transport=McpTransport.STREAMABLE_HTTP,
+            credential_key="market-data",
+            tool_names=["quote"],
+            latency_note="1 秒",
+            stores_user_data=False,
+            sends_data_out=True,
+            has_write_operation=False,
+        ),
+        submitted_by=owner.id,
+    )
+    assert created is not None
+    await servers.decide(created.id, reviewer_id=owner.id, approved=True, reason=None)
+    loader = McpTargetLoader(servers, {"market-data": "Bearer 真的凭据"})
+
+    target = await loader.load_mcp_target(created.id)
+
+    assert target is not None
+    assert target.credential == "Bearer 真的凭据"
+    assert target.enabled is True
+    assert target.declared_tool_name == ["quote"]
+
+
+async def test_a_missing_credential_is_logged_and_still_attempted(
+    servers: McpRepository, owner: User, caplog: pytest.LogCaptureFixture
+) -> None:
+    """键名配了但 `.env` 里没有对应的值，是运维漏了一步 —— 不能静默当成无凭据服务。"""
+    created = await servers.apply(
+        McpApplication(
+            name=f"market-{uuid4().hex[:8]}",
+            description="行情",
+            url="https://mcp.example.edu/mcp",
+            transport=McpTransport.STREAMABLE_HTTP,
+            credential_key="没配的键",
+            tool_names=["quote"],
+            latency_note="1 秒",
+            stores_user_data=False,
+            sends_data_out=True,
+            has_write_operation=False,
+        ),
+        submitted_by=owner.id,
+    )
+    assert created is not None
+    loader = McpTargetLoader(servers, {})
+
+    with caplog.at_level(logging.WARNING, logger="preset.mcp"):
+        target = await loader.load_mcp_target(created.id)
+
+    assert target is not None
+    assert target.credential is None
+    assert any("凭据键" in one.getMessage() for one in caplog.records)
+
+
+async def test_a_disabled_server_reaches_the_assembler_as_disabled(servers: McpRepository, owner: User) -> None:
+    """装配层靠这一位决定「一次都不连」，因此停用必须当场生效。"""
+    created = await servers.apply(application(f"paper-{uuid4().hex[:8]}"), submitted_by=owner.id)
+    assert created is not None
+    await servers.decide(created.id, reviewer_id=owner.id, approved=True, reason=None)
+    await servers.disable_for_failure(created.id, reason="连续失败 5 次")
+
+    target = await McpTargetLoader(servers, {}).load_mcp_target(created.id)
+
+    assert target is not None
+    assert target.enabled is False
+    assert target.disabled_reason == "连续失败 5 次"
+
+
+async def test_a_vanished_record_loads_as_nothing(servers: McpRepository) -> None:
+    assert await McpTargetLoader(servers, {}).load_mcp_target(uuid4().hex) is None

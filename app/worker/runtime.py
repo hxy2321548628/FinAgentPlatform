@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from agent.factory import Agent, create_model
 from agent.trace import create_callback
 from config import Settings
+from preset.mcp import McpRepository, McpTargetLoader
 from preset.repository import AgentRepository
 from preset.skill_remote import RemoteSkillStore
 from run.archive import EventArchive
@@ -95,6 +96,7 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
             # 没配 Langfuse 时是 None，图上一个回调都不挂
             callback=create_callback(settings),
             subagent_loader=AgentRepository(engine),
+            mcp_loader=McpTargetLoader(McpRepository(engine), settings.mcp_credentials),
         ),
         repository=RunRepository(engine),
         cancel=CancelFlag(cache),
