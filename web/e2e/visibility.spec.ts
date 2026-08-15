@@ -41,16 +41,15 @@ async function signIn(page: Page, name: string) {
   await expect(page).toHaveURL(/\/workspace/)
 }
 
-/** 打开「我能引用的」那一档，回到一个稳定的起点。 */
-async function openAvailable(page: Page) {
+/**
+ * 打开智能体广场，回到一个稳定的起点。
+ *
+ * **广场只剩一份列表**（`d0ef3d0` 之前是「平台广场 / 我能用的」两档）：现在一进来
+ * 就是「我此刻能引用的」，卡片上的可见范围标出它是我的、组内共享还是广场可见。
+ * 三档可见性因此改由卡片在不在、标的是哪一档来断言。
+ */
+async function openPlaza(page: Page) {
   await page.goto('/workspace/agents')
-  await page.getByRole('button', { name: '我能用的' }).click()
-  await expect(page.getByRole('heading', { name: '智能体广场' })).toBeVisible()
-}
-
-async function openCatalog(page: Page) {
-  await page.goto('/workspace/agents')
-  await page.getByRole('button', { name: '平台广场' }).click()
   await expect(page.getByRole('heading', { name: '智能体广场' })).toBeVisible()
 }
 
@@ -86,20 +85,18 @@ test('三档可见性：组内看得见、别组看不见，审核通过之后�
 
   // ---- B：同组看得见，且在详情抽屉里读得到提示词全文 ----
   await signIn(page, TEAMMATE)
-  await openAvailable(page)
+  await openPlaza(page)
   await settled(page)
   const card = page.getByRole('article').filter({ hasText: AGENT_NAME })
   await expect(card).toBeVisible()
+  await expect(card.getByText('可见范围：组内共享')).toBeVisible()
   await card.getByRole('button', { name: '查看提示词' }).click()
   await expect(page.getByTestId('agent-prompt')).toHaveText(PROMPT)
   await page.getByRole('button', { name: '关闭' }).click()
 
   // ---- C：别组看不见 ----
   await signIn(page, OUTSIDER)
-  await openAvailable(page)
-  await settled(page)
-  await expect(page.getByRole('article').filter({ hasText: AGENT_NAME })).toHaveCount(0)
-  await openCatalog(page)
+  await openPlaza(page)
   await settled(page)
   await expect(page.getByRole('article').filter({ hasText: AGENT_NAME })).toHaveCount(0)
 
@@ -126,11 +123,11 @@ test('三档可见性：组内看得见、别组看不见，审核通过之后�
 
   // ---- C：现在广场上看得见了 ----
   await signIn(page, OUTSIDER)
-  await openCatalog(page)
+  await openPlaza(page)
   await settled(page)
   const listed = page.getByRole('article').filter({ hasText: AGENT_NAME })
   await expect(listed).toBeVisible()
-  // **断言的是「来源」那一行而不是徽章**：卡片上「平台广场」出现两次，
+  // **断言的是「可见范围」那一行而不是徽章**：卡片上「广场可见」出现两次，
   // 直接找它会撞上 strict mode，而那种失败读起来像「元素不存在」
-  await expect(listed.getByText('来源：平台广场')).toBeVisible()
+  await expect(listed.getByText('可见范围：广场可见')).toBeVisible()
 })

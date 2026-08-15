@@ -35,9 +35,17 @@ test('新会话配置子智能体后，消息流显示可展开的命名嵌套�
   await expect(page).toHaveURL(/\/workspace\/chat\/[^/]+$/)
 
   await page.getByRole('button', { name: /本轮智能体配置/ }).click()
-  const child = page.getByRole('checkbox', { name: SUBAGENT_NAME, exact: true })
+  // **按名字定位会命中两个**：P9③ 让同组的 B 也建了一个叫 volatility-expert 的
+  // 子智能体并共享进同一个组（那条判据验的就是同名闸门），于是候选列表里同名两项。
+  // 用属主那一行钉到作者自己的那一个 —— 挂错人的同名 agent 会跑出另一份提示词。
+  const child = page.locator('label').filter({ hasText: AUTHOR })
+    .getByRole('checkbox', { name: SUBAGENT_NAME, exact: true })
+  await expect(child).toHaveCount(1)
   await expect(child).toBeVisible()
   await child.check()
+  // 配置面板是覆盖整屏的模态框，不关掉它，发送按钮被遮罩挡着点不到
+  await page.getByRole('button', { name: '完成' }).click()
+  await expect(page.getByRole('dialog', { name: '智能体配置' })).toHaveCount(0)
 
   const input = page.getByPlaceholder(/输入分析需求/)
   await input.fill(QUESTION)
