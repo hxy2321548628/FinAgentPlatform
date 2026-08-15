@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { agentKeys, createAgent, getMine, listSubagentCandidates, updateAgent, writeDraft } from '../../api/agents'
+import { listCatalog as listMcpCatalog, mcpKeys } from '../../api/mcp'
 import { errorMessage } from '../../api/request'
 import { listAvailable as listAvailableSkills, skillKeys } from '../../api/skills'
 import { MAX_SYSTEM_PROMPT_LENGTH, systemPromptError } from '../config'
+import { DATA_LEAVES_CAMPUS } from '../mcp'
 
 const MAX_NAME_LENGTH = 32
 const MAX_DESCRIPTION_LENGTH = 200
@@ -13,7 +15,7 @@ const SUBJECTS = ['公司金融', '量化投资', '资产管理', '风险管理'
 /**
  * 建一个智能体，或改一个已有的。
  *
- * Agent 的内容由系统提示词、Skill 与可选子智能体引用组成；MCP 留给后续阶段。
+ * Agent 的内容由系统提示词、Skill、可选子智能体与可选 MCP 引用组成。
  *
  * **改内容与改元信息是两条路**：改名不产生新版本，改提示词会（已经定稿的话，
  * 这一下追加下一个版本号的新草稿）。两者分开写在这里，因为它们打的是两个端点。
@@ -26,6 +28,7 @@ export function CreateAgent() {
 
   const availableSkills = useQuery({ queryKey: skillKeys.available(), queryFn: listAvailableSkills })
   const availableSubagents = useQuery({ queryKey: agentKeys.subagentCandidates(), queryFn: listSubagentCandidates })
+  const availableMcps = useQuery({ queryKey: mcpKeys.catalog(), queryFn: listMcpCatalog })
 
   const existing = useQuery({
     queryKey: agentKeys.detail(agentId ?? ''),
@@ -39,6 +42,7 @@ export function CreateAgent() {
   const [prompt, setPrompt] = useState('')
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([])
   const [selectedSubagentIds, setSelectedSubagentIds] = useState<string[]>([])
+  const [selectedMcpIds, setSelectedMcpIds] = useState<string[]>([])
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
 
@@ -57,14 +61,16 @@ export function CreateAgent() {
     setSelectedSkillIds(refs.map(one => one.skill_id))
     const subagentRefs = draft?.subagent_refs ?? released?.subagent_refs ?? []
     setSelectedSubagentIds(subagentRefs.map(one => one.agent_id))
+    const mcpRefs = draft?.mcp_refs ?? released?.mcp_refs ?? []
+    setSelectedMcpIds(mcpRefs.map(one => one.server_id))
     setLoaded(true)
   }, [existing.data, loaded])
 
   const save = useMutation({
     async mutationFn() {
-      if (!agentId) return createAgent({ name, description, subject, system_prompt: prompt, skills: selectedSkillIds, subagents: selectedSubagentIds })
+      if (!agentId) return createAgent({ name, description, subject, system_prompt: prompt, skills: selectedSkillIds, subagents: selectedSubagentIds, mcps: selectedMcpIds })
       await updateAgent(agentId, { name, description, subject })
-      return writeDraft(agentId, prompt, selectedSkillIds, selectedSubagentIds)
+      return writeDraft(agentId, prompt, selectedSkillIds, selectedSubagentIds, selectedMcpIds)
     },
     async onSuccess() {
       await queryClient.invalidateQueries({ queryKey: agentKeys.all })
@@ -182,6 +188,32 @@ export function CreateAgent() {
             </Field>
           </div>
 
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 24 }}>
+            <Field label="自带 MCP" hint="每次运行都会连一次这些外部服务；引用只冻结目录记录，冻不住那台机器的行为">
+              <div role="note" style={outboundStyle}>{DATA_LEAVES_CAMPUS}</div>
+              {availableMcps.isPending && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>正在加载 MCP 目录…</div>}
+              {availableMcps.isError && <div role="alert" style={{ fontSize: 13, color: '#DC2626' }}>{errorMessage(availableMcps.error)}</div>}
+              {!availableMcps.isPending && (availableMcps.data ?? []).length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>还没有放行的 MCP。</div>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {(availableMcps.data ?? []).map(server => (
+                  <label key={server.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid var(--border)', borderRadius: 7, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      aria-label={server.name}
+                      checked={selectedMcpIds.includes(server.id)}
+                      onChange={event => setSelectedMcpIds(current => event.target.checked ? [...current, server.id] : current.filter(one => one !== server.id))}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{server.name}</span>
+                      <span style={{ display: 'block', marginTop: 3, fontSize: 12, color: 'var(--text-muted)' }}>{server.tool_names.join('、') || '未声明工具'} · {server.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </Field>
+          </div>
+
           {(error || save.isError) && (
             <div role="alert" style={{ marginBottom: 16, padding: '9px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 7, color: '#DC2626', fontSize: 13 }}>
               {error || errorMessage(save.error)}
@@ -211,6 +243,8 @@ function Field({ label, required, hint, children }: { label: string; required?: 
     </div>
   )
 }
+
+const outboundStyle: React.CSSProperties = { marginBottom: 10, padding: '9px 11px', border: '1px solid #FDE68A', borderRadius: 7, background: '#FFFBEB', color: '#92400E', fontSize: 12, lineHeight: 1.6 }
 
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7,

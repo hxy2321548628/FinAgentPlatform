@@ -34,3 +34,48 @@ describe('MessageList 子智能体折叠块', () => {
     expect(details.open).toBe(true)
   })
 })
+
+describe('MessageList 未知工具', () => {
+  it('一个平台从没见过的外部工具照常渲染出名字、参数与结果', () => {
+    // **前端不认识 MCP 工具的名字，也不该认识。** 事件映射一行没改：外部工具的调用
+    // 照常是 tool_call / tool_result，只是 name 是那台校外机器起的。若这里改成按
+    // 已知工具名分支，接进来的第一个 MCP 就会在界面上「什么都不显示」而不报错。
+    const items: RunViewItem[] = [
+      {
+        kind: 'tool',
+        id: 'call-9',
+        name: 'search_paper',
+        args: { keyword: '随机波动率' },
+        content: 'PAPER-HIT::随机波动率::《随机波动率模型的实证》',
+        status: 'success',
+        path: [],
+      },
+    ]
+
+    render(<MessageList items={items} />)
+
+    const toggle = screen.getByRole('button', { name: /search_paper/ })
+    expect(toggle).toBeTruthy()
+    fireEvent.click(toggle)
+    expect(screen.getByText(/随机波动率模型的实证/)).toBeTruthy()
+  })
+
+  it('外部工具超时返回的错误结果标成失败而不是无声吞掉', () => {
+    const items: RunViewItem[] = [
+      {
+        kind: 'tool',
+        id: 'call-10',
+        name: 'slow_query',
+        args: { keyword: '沪深300' },
+        content: '调用超时（30 秒），这个外部服务这次没有响应。',
+        status: 'error',
+        path: [],
+      },
+    ]
+
+    render(<MessageList items={items} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /slow_query/ }))
+    expect(screen.getByText(/调用超时/)).toBeTruthy()
+  })
+})

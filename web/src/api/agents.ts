@@ -41,6 +41,7 @@ export function createAgent(body: {
   system_prompt: string
   skills?: string[]
   subagents?: string[]
+  mcps?: string[]
 }): Promise<MyAgent> {
   return request('/api/agents', { method: 'POST', json: body })
 }
@@ -58,10 +59,11 @@ export function writeDraft(
   systemPrompt: string,
   skills: string[] = [],
   subagents: string[] = [],
+  mcps: string[] = [],
 ): Promise<MyAgent> {
   return request(`/api/agents/${encodeURIComponent(agentId)}/draft`, {
     method: 'PUT',
-    json: { system_prompt: systemPrompt, skills, subagents },
+    json: { system_prompt: systemPrompt, skills, subagents, mcps },
   })
 }
 

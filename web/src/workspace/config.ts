@@ -43,10 +43,12 @@ export function buildRunAgentConfig(
   agentId = '',
   skillIds: string[] = [],
   subagentIds: string[] = [],
+  mcpIds: string[] = [],
 ): AgentConfig | undefined {
   const additions: AgentConfig = {}
   if (skillIds.length > 0) additions.skills = skillIds
   if (subagentIds.length > 0) additions.subagents = subagentIds
+  if (mcpIds.length > 0) additions.mcps = mcpIds
   const hasAdditions = Object.keys(additions).length > 0
   if (mode === 'inherit') return hasAdditions ? additions : undefined
   if (mode === 'default') return additions

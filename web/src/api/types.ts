@@ -32,6 +32,17 @@ export interface SubagentReference {
   name: string
 }
 
+/**
+ * 一次 run 快照里冻结的一条 MCP 目录记录。
+ *
+ * **只有两个字段，因为能冻住的只有这两个。** Skill 与子智能体冻的是内容（版本号 +
+ * 内容在平台手里）；MCP 的内容在校外那台机器上，冻得住的只是「用了哪一条目录记录」。
+ */
+export interface McpReference {
+  server_id: string
+  name: string
+}
+
 export interface AgentConfig {
   system_prompt?: string | null
   agent_id?: string | null
@@ -40,6 +51,53 @@ export interface AgentConfig {
   skills?: string[] | SkillReference[] | null
   /** 请求时是 Agent ID，响应与历史快照里是冻结三元组。 */
   subagents?: string[] | SubagentReference[] | null
+  /** 请求时是 MCP 目录 ID，响应与历史快照里是 {server_id, name}。 */
+  mcps?: string[] | McpReference[] | null
+}
+
+export type McpTransport = 'streamable_http' | 'sse'
+
+export type McpStatus = 'pending' | 'enabled' | 'disabled' | 'rejected'
+
+/**
+ * 目录里的一条 MCP。**不含凭据** —— 库里存的本来就只有键名。
+ *
+ * `sends_data_out` 是申请人对「我会不会把数据再转发给第三方」的声明；它与平台对
+ * **所有** MCP 一律显示的那句外发标注不是一回事 —— 只要服务在校外，勾上它就意味着
+ * 数据出校，这与申请人怎么声明无关。
+ */
+export interface McpServer {
+  id: string
+  name: string
+  description: string
+  url: string
+  transport: McpTransport
+  has_credential: boolean
+  tool_names: string[]
+  latency_note: string
+  stores_user_data: boolean
+  sends_data_out: boolean
+  has_write_operation: boolean
+  status: McpStatus
+  disabled_reason: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** 管理员后台多看到的两样：谁提的，以及此刻连续失败了几次。 */
+export interface AdminMcpServer extends McpServer {
+  submitted_by: string
+  submitter_name: string
+  failure_count: number
+}
+
+/** 一次「测试连接」的结果。 */
+export interface McpProbe {
+  reachable: boolean
+  tool_names: string[]
+  declared_only: string[]
+  undeclared: string[]
+  failure_count: number
 }
 
 export type Visibility = 'private' | 'group'
@@ -58,6 +116,7 @@ export interface AgentVersion {
   system_prompt: string
   skill_refs?: SkillReference[] | null
   subagent_refs?: SubagentReference[] | null
+  mcp_refs?: McpReference[] | null
   created_at: string
   released_at: string | null
   review_id: string | null
@@ -95,6 +154,7 @@ export interface AgentListing {
   system_prompt: string
   skill_refs?: SkillReference[] | null
   subagent_refs?: SubagentReference[] | null
+  mcp_refs?: McpReference[] | null
   source: AgentSource
   updated_at: string
 }

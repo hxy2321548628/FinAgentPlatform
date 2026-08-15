@@ -4,7 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentListing } from '../../api/types'
 import { ChatInput } from './ChatInput'
 
-const mocks = vi.hoisted(() => ({ available: [] as AgentListing[], subagents: [] as AgentListing[], skills: [] as import('../../api/types').SkillListing[] }))
+const mocks = vi.hoisted(() => ({
+  available: [] as AgentListing[],
+  subagents: [] as AgentListing[],
+  skills: [] as import('../../api/types').SkillListing[],
+  mcps: [] as import('../../api/types').McpServer[],
+}))
 
 vi.mock('../../api/agents', async importOriginal => ({
   ...(await importOriginal<typeof import('../../api/agents')>()),
@@ -17,10 +22,16 @@ vi.mock('../../api/skills', async importOriginal => ({
   listAvailable: () => Promise.resolve(mocks.skills),
 }))
 
+vi.mock('../../api/mcp', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../api/mcp')>()),
+  listCatalog: () => Promise.resolve(mocks.mcps),
+}))
+
 afterEach(() => {
   mocks.available = []
   mocks.subagents = []
   mocks.skills = []
+  mocks.mcps = []
   cleanup()
 })
 
@@ -38,6 +49,27 @@ function listing(overrides: Partial<AgentListing> = {}): AgentListing {
     system_prompt: '每句以喵开头',
     source: 'group',
     updated_at: '2026-08-14T00:00:00Z',
+    ...overrides,
+  }
+}
+
+function mcpServer(overrides: Partial<import('../../api/types').McpServer> = {}): import('../../api/types').McpServer {
+  return {
+    id: 'mcp-1',
+    name: '论文检索',
+    description: '按关键词检索论文',
+    url: 'https://mcp.example.edu/mcp',
+    transport: 'streamable_http',
+    has_credential: false,
+    tool_names: ['search_paper'],
+    latency_note: '1 秒',
+    stores_user_data: false,
+    sends_data_out: true,
+    has_write_operation: false,
+    status: 'enabled',
+    disabled_reason: null,
+    created_at: '2026-08-16T00:00:00Z',
+    updated_at: '2026-08-16T00:00:00Z',
     ...overrides,
   }
 }
@@ -174,5 +206,56 @@ describe('ChatInput 子智能体', () => {
       agent_id: 'agent-1',
       subagents: ['child-turn'],
     }))
+  })
+
+  it('直接勾一个 MCP 时看得见外发标注', async () => {
+    mocks.mcps = [mcpServer()]
+    mount({ onSend: vi.fn(async () => {}) })
+    fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: '论文检索' }))
+
+    const notice = await screen.findByTestId('mcp-outbound')
+    expect(notice.textContent).toContain('此服务位于校外，调用时你的数据会发送至外部')
+    expect(notice.textContent).toContain('论文检索')
+  })
+
+  it('选一个自带 MCP 的子智能体时同样看得见，且说清它是谁带来的', async () => {
+    // **F12 的组合风险就在这条路上**：教师一个 MCP 都没勾，而那个场景背后连着
+    // 一台校外机器。漏掉这一条，风险就从「已缓解」退回「敞着」，而界面上看不出异样。
+    mocks.mcps = [mcpServer()]
+    mocks.subagents = [listing({ id: 'sub-1', name: '波动率专家', mcp_refs: [{ server_id: 'mcp-1', name: '论文检索' }] })]
+    mount({ onSend: vi.fn(async () => {}) })
+    fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: '波动率专家' }))
+
+    const notice = await screen.findByTestId('mcp-outbound')
+    expect(notice.textContent).toContain('此服务位于校外，调用时你的数据会发送至外部')
+    expect(notice.textContent).toContain('论文检索（来自 波动率专家）')
+  })
+
+  it('一个 MCP 都没有时不显示外发标注', async () => {
+    mocks.mcps = [mcpServer()]
+    mount({ onSend: vi.fn(async () => {}) })
+    fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
+    await screen.findByRole('checkbox', { name: '论文检索' })
+
+    expect(screen.queryByTestId('mcp-outbound')).toBeNull()
+  })
+
+  it('勾上的 MCP ID 随这一轮提交发出去', async () => {
+    const onSend = vi.fn(async (_text: string, _config: import('../../api/types').AgentConfig | undefined) => {})
+    mocks.mcps = [mcpServer()]
+    mount({ onSend })
+    fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: '论文检索' }))
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
+
+    fireEvent.change(input(), { target: { value: '查一篇论文' } })
+    fireEvent.keyDown(input(), { key: 'Enter' })
+
+    await waitFor(() => expect(onSend).toHaveBeenCalled())
+    expect(onSend.mock.calls[0][1]).toMatchObject({ mcps: ['mcp-1'] })
   })
 })

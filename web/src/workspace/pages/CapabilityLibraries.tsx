@@ -1,38 +1,11 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { applyForMcp, listCatalog as listMcpCatalog, mcpKeys } from '../../api/mcp'
 import { errorMessage } from '../../api/request'
 import { listCatalog, skillKeys } from '../../api/skills'
-import type { SkillListing } from '../../api/types'
+import type { McpServer, SkillListing } from '../../api/types'
 import { CatalogCard, CatalogControls, type CatalogFilter } from '../components/Catalog'
-
-interface McpCapability {
-  name: string
-  description: string
-}
-
-interface CapabilityItem {
-  id: string
-  name: string
-  category: string
-  description: string
-  author: string
-  inputs: string
-  tags: string[]
-  details: string
-  calls: number
-  tools?: McpCapability[]
-  resources?: McpCapability[]
-  prompts?: McpCapability[]
-}
-
-const MCP_FILTERS: CatalogFilter[] = ['全部', '金融数据', '学术资源', '文件服务', '业务系统'].map(key => ({ key, label: key }))
-
-const MCP_SERVERS: CapabilityItem[] = [
-  { id: 'market-data', name: '学院行情数据服务', category: '金融数据', description: '为量化研究与资产定价场景提供经过平台审核的行情数据能力。', author: '金融学院', inputs: '证券代码、日期范围、频率', tags: ['行情', '证券数据', '时间序列'], details: '平台已放行的 MCP Server，调用范围由场景权限和用户数据权限共同决定。', calls: 164, tools: [{ name: 'get_market_bars', description: '查询证券在指定日期范围与频率下的行情序列。' }, { name: 'get_security_profile', description: '读取证券基本资料与交易状态。' }], resources: [{ name: 'market://calendar/{exchange}', description: '交易所交易日历。' }], prompts: [{ name: 'compare_volatility', description: '生成多证券波动率比较任务模板。' }] },
-  { id: 'financial-reports', name: '财报检索服务', category: '金融数据', description: '按公司和报告期检索财务报告及公告元数据。', author: '金融学院', inputs: '公司标识、报告期、文档类型', tags: ['财报', '公告', '公司数据'], details: '平台已审核放行的 MCP Server。使用前应查看其能力清单，并对需要调用的工具显式授权。', calls: 119, tools: [{ name: 'search_reports', description: '按公司、报告期与文档类型检索报告。' }, { name: 'get_report_metadata', description: '读取报告标题、发布日期、来源与页数。' }, { name: 'extract_report_sections', description: '按章节或关键词提取报告内容并保留页码。' }], resources: [{ name: 'report://{company}/{period}/{document_id}', description: '财报文档及其元数据资源。' }], prompts: [{ name: 'financial_report_review', description: '生成财报核查与重点变化分析模板。' }] },
-  { id: 'academic-search', name: '学术文献检索', category: '学术资源', description: '检索论文、作者与引文信息，为研究和综述场景提供资料。', author: '金融学院', inputs: '关键词、作者、年份范围', tags: ['论文检索', '引文', '研究综述'], details: '平台已放行的学术资源 MCP Server，具体数据范围以服务授权为准。', calls: 87, tools: [{ name: 'search_papers', description: '按关键词、作者与年份检索论文。' }, { name: 'get_citations', description: '读取论文的引用与被引关系。' }], resources: [{ name: 'paper://{paper_id}', description: '论文元数据与可访问全文。' }], prompts: [{ name: 'literature_review', description: '生成结构化文献综述任务模板。' }] },
-  { id: 'workspace-files', name: '任务工作目录服务', category: '文件服务', description: '读写当前任务工作目录中的文件，支持场景处理过程产物。', author: '平台能力目录', inputs: '文件路径、内容或上传文件', tags: ['工作目录', '文件读写', '任务隔离'], details: '平台内置 MCP Server，仅允许访问当前分析对话的隔离工作目录。', calls: 256, tools: [{ name: 'read_file', description: '读取工作目录中的文本文件。' }, { name: 'write_file', description: '写入或更新工作目录文件。' }, { name: 'list_directory', description: '列出指定目录内容。' }], resources: [{ name: 'workspace://{path}', description: '当前分析对话内的文件资源。' }], prompts: [] },
-]
+import { DATA_LEAVES_CAMPUS } from '../mcp'
 
 export function SkillsLibrary() {
   const catalog = useQuery({ queryKey: skillKeys.catalog(), queryFn: listCatalog })
@@ -107,29 +80,178 @@ function Info({ label, value }: { label: string; value: string }) {
 }
 
 export function McpLibrary() {
-  const [activeFilter, setActiveFilter] = useState('全部')
+  const catalog = useQuery({ queryKey: mcpKeys.catalog(), queryFn: listMcpCatalog })
   const [search, setSearch] = useState('')
-  const [selected, setSelected] = useState<CapabilityItem | null>(null)
+  const [selected, setSelected] = useState<McpServer | null>(null)
+  const [applying, setApplying] = useState(false)
+  const items = [...(catalog.data ?? [])].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
   const normalized = search.trim().toLocaleLowerCase('zh-CN')
-  const filtered = [...MCP_SERVERS].sort((a, b) => b.calls - a.calls || a.name.localeCompare(b.name, 'zh-CN')).filter(item => {
-    const matchesCategory = activeFilter === '全部' || item.category === activeFilter
-    const haystack = `${item.name} ${item.description} ${item.tags.join(' ')}`.toLocaleLowerCase('zh-CN')
-    return matchesCategory && (!normalized || haystack.includes(normalized))
+  const filtered = items.filter(item => {
+    const haystack = `${item.name} ${item.description} ${item.tool_names.join(' ')}`.toLocaleLowerCase('zh-CN')
+    return !normalized || haystack.includes(normalized)
   })
 
   return (
-    <LibraryPage eyebrow="// MCP LIBRARY" title="MCP 库" description={`浏览平台审核放行的 MCP Server 及其协议能力，共 ${MCP_SERVERS.length} 个目录项`}>
-      <CatalogControls search={search} onSearch={setSearch} placeholder="搜索 MCP Server 名称、描述或标签..." filters={MCP_FILTERS} activeFilter={activeFilter} onFilter={setActiveFilter} />
-      {filtered.length === 0 ? <Notice>{search ? `未找到与「${search}」相关的 MCP Server` : '该分类暂时没有 MCP Server'}</Notice> : (
-        <div style={{ padding: '0 36px 32px' }}>
-          <div style={gridStyle}>
-            {filtered.map(item => <CatalogCard key={item.id} title={item.name} author={item.author} subject={item.category} description={item.description} detail={`${item.tools?.length ?? 0} Tools · ${item.resources?.length ?? 0} Resources · ${item.prompts?.length ?? 0} Prompts`} badges={item.tags} metric={`${item.calls} 次调用`} secondaryAction={{ label: '查看 MCP 能力', onClick: () => setSelected(item) }} />)}
+    <LibraryPage eyebrow="// MCP LIBRARY" title="MCP 库" description={`浏览管理员放行的外部 MCP Server，共 ${items.length} 个目录项`}>
+      <div style={{ padding: '0 36px' }}>
+        <div role="note" style={outboundBannerStyle}>{DATA_LEAVES_CAMPUS}</div>
+      </div>
+      <CatalogControls search={search} onSearch={setSearch} placeholder="搜索 MCP Server 名称、描述或工具名..." filters={[]} activeFilter="" onFilter={() => undefined} />
+      <div style={{ padding: '0 36px 12px' }}>
+        <button type="button" onClick={() => setApplying(true)} style={applyButtonStyle}>申请添加 MCP</button>
+      </div>
+      {catalog.isPending && <Notice>正在加载 MCP 目录…</Notice>}
+      {catalog.isError && <Notice error>{errorMessage(catalog.error)}</Notice>}
+      {!catalog.isPending && !catalog.isError && (filtered.length === 0
+        ? <Notice>{search ? `未找到与「${search}」相关的 MCP Server` : '还没有放行的 MCP Server。可以先提一份申请。'}</Notice>
+        : (
+          <div style={{ padding: '0 36px 32px' }}>
+            <div style={gridStyle}>
+              {filtered.map(item => (
+                <CatalogCard
+                  key={item.id}
+                  title={item.name}
+                  author={item.has_credential ? '平台已配置凭据' : '无需凭据'}
+                  subject="外部服务"
+                  description={item.description}
+                  detail={`${item.tool_names.length} 个工具 · ${item.latency_note || '未声明耗时'}`}
+                  badges={item.tool_names.slice(0, 3)}
+                  metric="校外"
+                  secondaryAction={{ label: '查看 MCP 能力', onClick: () => setSelected(item) }}
+                />
+              ))}
+            </div>
+            <div style={countStyle}>共 {filtered.length} 个目录项</div>
           </div>
-          <div style={countStyle}>共 {filtered.length} 个目录项</div>
-        </div>
-      )}
+        ))}
       {selected && <McpDetail item={selected} onClose={() => setSelected(null)} />}
+      {applying && <McpApplyDialog onClose={() => setApplying(false)} />}
     </LibraryPage>
+  )
+}
+
+function McpDetail({ item, onClose }: { item: McpServer; onClose: () => void }) {
+  return (
+    <>
+      <div onClick={onClose} style={backdropStyle} />
+      <aside role="dialog" aria-label={`${item.name} MCP 能力`} style={drawerStyle}>
+        <div style={drawerHeaderStyle}><div><div style={{ fontSize: 16, fontWeight: 700 }}>{item.name}</div><div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{item.url}</div></div><button type="button" aria-label="关闭" onClick={onClose} style={closeButtonStyle}>×</button></div>
+        <div style={{ overflowY: 'auto', padding: 24 }}>
+          <div role="note" style={{ ...outboundBannerStyle, marginBottom: 20 }}>{DATA_LEAVES_CAMPUS}</div>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.75, marginBottom: 20 }}>{item.description || '（申请人没有写说明）'}</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
+            <Info label="传输方式" value={item.transport === 'sse' ? 'SSE' : 'Streamable HTTP'} />
+            <Info label="耗时声明" value={item.latency_note || '未声明'} />
+            <Info label="是否存储用户数据" value={item.stores_user_data ? '声明会存储' : '声明不存储'} />
+            <Info label="是否再转发数据" value={item.sends_data_out ? '声明会转发给第三方' : '声明不转发'} />
+          </div>
+          <section>
+            <div style={sectionTitle}>Tools（模型可调用的操作）</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {item.tool_names.map(name => <div key={name} style={{ padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 7 }}><code style={{ fontSize: 12, color: 'var(--action)' }}>{name}</code></div>)}
+            </div>
+            <p style={{ ...hintTextStyle, marginTop: 10 }}>
+              这份清单是**上架时**记下的。平台在每次装配时会拿实际拿到的工具名与它比对，
+              不一致只记日志、不拦截 —— 而与平台内置文件工具重名的外部工具一律被剔除。
+            </p>
+          </section>
+        </div>
+      </aside>
+    </>
+  )
+}
+
+const EMPTY_APPLICATION = {
+  name: '',
+  description: '',
+  url: '',
+  toolNames: '',
+  latencyNote: '',
+  credentialKey: '',
+  storesUserData: false,
+  sendsDataOut: true,
+  hasWriteOperation: false,
+}
+
+function McpApplyDialog({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [form, setForm] = useState(EMPTY_APPLICATION)
+  const [error, setError] = useState('')
+  const [done, setDone] = useState(false)
+  const submit = useMutation({
+    mutationFn: () => {
+      const tools = form.toolNames.split(/[\n,，]/).map(one => one.trim()).filter(Boolean)
+      if (!form.name.trim()) throw new Error('请填写服务名')
+      if (!/^https?:\/\//.test(form.url.trim())) throw new Error('地址必须是 http:// 或 https:// 开头的完整 URL')
+      if (tools.length === 0) throw new Error('请至少填一个工具名')
+      return applyForMcp({
+        name: form.name.trim(),
+        description: form.description.trim(),
+        url: form.url.trim(),
+        transport: 'streamable_http',
+        credential_key: form.credentialKey.trim() || null,
+        tool_names: tools,
+        latency_note: form.latencyNote.trim(),
+        stores_user_data: form.storesUserData,
+        sends_data_out: form.sendsDataOut,
+        has_write_operation: form.hasWriteOperation,
+      })
+    },
+    async onSuccess() {
+      setDone(true)
+      setError('')
+      await queryClient.invalidateQueries({ queryKey: mcpKeys.all })
+    },
+    onError(reason) {
+      setError(reason instanceof Error ? reason.message : errorMessage(reason, '提交失败'))
+    },
+  })
+
+  return (
+    <>
+      <div onClick={onClose} style={backdropStyle} />
+      <aside role="dialog" aria-label="申请添加 MCP" style={drawerStyle}>
+        <div style={drawerHeaderStyle}><div style={{ fontSize: 16, fontWeight: 700 }}>申请添加 MCP</div><button type="button" aria-label="关闭" onClick={onClose} style={closeButtonStyle}>×</button></div>
+        <div style={{ overflowY: 'auto', padding: 24 }}>
+          <p style={{ ...hintTextStyle, marginBottom: 16 }}>
+            管理员放行之后全平台都能勾选它。**四项声明请如实填写** —— 声明有写操作的一律不批：
+            平台目前既不拦截审批也不传幂等键，而队列是至少一次投递。
+          </p>
+          <TextField label="服务名" value={form.name} onChange={value => setForm(one => ({ ...one, name: value }))} placeholder="如：校内论文检索" />
+          <TextField label="一句话说明" value={form.description} onChange={value => setForm(one => ({ ...one, description: value }))} placeholder="它能做什么" />
+          <TextField label="地址" value={form.url} onChange={value => setForm(one => ({ ...one, url: value }))} placeholder="https://mcp.example.edu/mcp" />
+          <TextField label="工具清单" value={form.toolNames} onChange={value => setForm(one => ({ ...one, toolNames: value }))} placeholder="一行一个，或用逗号分隔" multiline />
+          <TextField label="耗时声明" value={form.latencyNote} onChange={value => setForm(one => ({ ...one, latencyNote: value }))} placeholder="典型 1 秒，最坏 10 秒" />
+          <TextField label="凭据键名（可选）" value={form.credentialKey} onChange={value => setForm(one => ({ ...one, credentialKey: value }))} placeholder="值由管理员写进 .env，不要填在这里" />
+          <CheckField label="会存储用户数据" checked={form.storesUserData} onChange={value => setForm(one => ({ ...one, storesUserData: value }))} />
+          <CheckField label="会把数据再转发给第三方" checked={form.sendsDataOut} onChange={value => setForm(one => ({ ...one, sendsDataOut: value }))} />
+          <CheckField label="工具里有写操作（写库、发消息、扣费）" checked={form.hasWriteOperation} onChange={value => setForm(one => ({ ...one, hasWriteOperation: value }))} />
+          {error && <div role="alert" style={{ margin: '10px 0', color: '#DC2626', fontSize: 12 }}>{error}</div>}
+          {done && <div role="status" style={{ margin: '10px 0', color: '#059669', fontSize: 12 }}>已提交，等待管理员放行</div>}
+          <button type="button" disabled={submit.isPending || done} onClick={() => submit.mutate()} style={applyButtonStyle}>{submit.isPending ? '提交中…' : '提交申请'}</button>
+        </div>
+      </aside>
+    </>
+  )
+}
+
+function TextField({ label, value, onChange, placeholder, multiline = false }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; multiline?: boolean }) {
+  return (
+    <label style={{ display: 'block', marginBottom: 12 }}>
+      <span style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 5 }}>{label}</span>
+      {multiline
+        ? <textarea value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} style={{ ...fieldStyle, minHeight: 72, resize: 'vertical' }} />
+        : <input value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} style={fieldStyle} />}
+    </label>
+  )
+}
+
+function CheckField({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <label style={{ display: 'flex', gap: 7, alignItems: 'center', marginBottom: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
+      <input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} />
+      {label}
+    </label>
   )
 }
 
@@ -150,28 +272,6 @@ function Notice({ error = false, children }: { error?: boolean; children: React.
   return <div role={error ? 'alert' : undefined} style={{ padding: '60px 36px', textAlign: 'center', color: error ? '#DC2626' : 'var(--text-muted)', fontSize: 14 }}>{children}</div>
 }
 
-function McpDetail({ item, onClose }: { item: CapabilityItem; onClose: () => void }) {
-  return (
-    <>
-      <div onClick={onClose} style={backdropStyle} />
-      <aside role="dialog" aria-label={`${item.name} MCP 能力`} style={drawerStyle}>
-        <div style={drawerHeaderStyle}><div><div style={{ fontSize: 16, fontWeight: 700 }}>{item.name}</div><div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{item.author} · {item.category} · 只读</div></div><button type="button" aria-label="关闭" onClick={onClose} style={closeButtonStyle}>×</button></div>
-        <div style={{ overflowY: 'auto', padding: 24 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.75, marginBottom: 20 }}>{item.details}</p>
-          <McpSection title="Tools" description="模型可调用的操作" items={item.tools ?? []} />
-          <McpSection title="Resources" description="可读取或订阅的数据资源" items={item.resources ?? []} />
-          <McpSection title="Prompts" description="Server 提供的任务模板" items={item.prompts ?? []} />
-        </div>
-      </aside>
-    </>
-  )
-}
-
-function McpSection({ title, description, items }: { title: string; description: string; items: McpCapability[] }) {
-  if (items.length === 0) return null
-  return <section style={{ marginBottom: 22 }}><h3 style={{ fontSize: 14, color: 'var(--text-primary)', marginBottom: 9 }}>{title} <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>{description} · {items.length}</span></h3><div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{items.map(item => <div key={item.name} style={{ padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 7 }}><code style={{ fontSize: 12, color: 'var(--action)' }}>{item.name}</code><div style={{ marginTop: 5, fontSize: 12, color: 'var(--text-secondary)' }}>{item.description}</div></div>)}</div></section>
-}
-
 function sourceLabel(source: SkillListing['source']): string {
   return source === 'owned' ? '我创建的' : source === 'group' ? '组内共享' : '平台目录'
 }
@@ -187,4 +287,8 @@ const countStyle: React.CSSProperties = { padding: '20px 0 0', textAlign: 'cente
 const backdropStyle: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.35)', zIndex: 200 }
 const drawerStyle: React.CSSProperties = { position: 'fixed', top: 0, right: 0, bottom: 0, width: 560, maxWidth: 'calc(100vw - 40px)', background: 'var(--surface)', borderLeft: '1px solid var(--border)', zIndex: 201, boxShadow: '-8px 0 24px rgba(11,46,92,0.12)', display: 'flex', flexDirection: 'column' }
 const drawerHeaderStyle: React.CSSProperties = { padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }
+const outboundBannerStyle: React.CSSProperties = { padding: '10px 12px', border: '1px solid #FDE68A', borderRadius: 7, background: '#FFFBEB', color: '#92400E', fontSize: 12, lineHeight: 1.6 }
+const applyButtonStyle: React.CSSProperties = { padding: '8px 14px', border: '1px solid var(--action-border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--action)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }
+const fieldStyle: React.CSSProperties = { width: '100%', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: '#F7F9FC', color: 'var(--text-primary)', boxSizing: 'border-box' }
+const hintTextStyle: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }
 const closeButtonStyle: React.CSSProperties = { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20 }

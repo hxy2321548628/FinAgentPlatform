@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { agentKeys, createAgent, listAvailable as listAvailableAgents, listSubagentCandidates } from '../../api/agents'
+import { listCatalog as listMcpCatalog, mcpKeys } from '../../api/mcp'
 import { errorMessage } from '../../api/request'
 import { listAvailable as listAvailableSkills, skillKeys } from '../../api/skills'
 import type { AgentConfig, SkillReference } from '../../api/types'
 import { listingCaption } from '../agent'
+import { DATA_LEAVES_CAMPUS, mountedMcps } from '../mcp'
 import {
   AGENT_CONFIG_MODES,
   AGENT_CONFIG_MODE_LABEL,
@@ -34,6 +36,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
   const [agentId, setAgentId] = useState(initialAgentId ?? '')
   const [skillIds, setSkillIds] = useState<string[]>([])
   const [subagentIds, setSubagentIds] = useState<string[]>([])
+  const [mcpIds, setMcpIds] = useState<string[]>([])
   const [configError, setConfigError] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [sceneName, setSceneName] = useState('')
@@ -44,9 +47,15 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
   const agents = useQuery({ queryKey: agentKeys.available(), queryFn: listAvailableAgents, enabled: configOpen })
   const skills = useQuery({ queryKey: skillKeys.available(), queryFn: listAvailableSkills, enabled: configOpen })
   const subagents = useQuery({ queryKey: agentKeys.subagentCandidates(), queryFn: listSubagentCandidates, enabled: configOpen })
+  const mcps = useQuery({ queryKey: mcpKeys.catalog(), queryFn: listMcpCatalog, enabled: configOpen })
   const selectedAgent = (agents.data ?? []).find(one => one.id === agentId)
   const selectedSkills = (skills.data ?? []).filter(one => skillIds.includes(one.id))
   const selectedSubagents = (subagents.data ?? []).filter(one => subagentIds.includes(one.id))
+  const selectedMcps = (mcps.data ?? []).filter(one => mcpIds.includes(one.id))
+  // **两条路径都要算进来**：直接勾的，以及所选智能体自带的。只算前一条的话，
+  // 教师以为自己什么都没勾，而那个场景背后连着一台校外机器
+  const mountedMcpList = mountedMcps([mode === 'agent' ? selectedAgent : undefined, ...selectedSubagents], selectedMcps)
+  const tooManyMcps = mountedMcpList.length > 3
   const mountedSkills = mergedSkillNames(selectedAgent?.skill_refs ?? [], selectedSkills)
   const mountedSubagents = mergedSubagentNames(selectedAgent?.subagent_refs ?? [], selectedSubagents)
   const duplicateName = duplicateSkillName(selectedAgent?.skill_refs ?? [], selectedSkills)
@@ -57,7 +66,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
     mutationFn: () => {
       const name = sceneName.trim()
       if (!name) throw new Error('请输入场景名称')
-      if (duplicateName || tooMany || duplicateSubagent || tooManySubagents) throw new Error('请先修正当前配置后再保存')
+      if (duplicateName || tooMany || duplicateSubagent || tooManySubagents || tooManyMcps) throw new Error('请先修正当前配置后再保存')
       const systemPrompt = mode === 'agent' ? selectedAgent?.system_prompt : mode === 'custom' ? prompt : threadAgentConfig?.system_prompt || '你是一名严谨的金融分析助手。'
       if (!systemPrompt) throw new Error('当前智能体还没有可保存的提示词')
       return createAgent({
@@ -67,6 +76,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
         system_prompt: systemPrompt,
         skills: [...new Set([...(selectedAgent?.skill_refs?.map(one => one.skill_id) ?? []), ...skillIds])],
         subagents: [...new Set([...(selectedAgent?.subagent_refs?.map(one => one.agent_id) ?? []), ...subagentIds])],
+        mcps: [...new Set([...(selectedAgent?.mcp_refs?.map(one => one.server_id) ?? []), ...mcpIds])],
       })
     },
     async onSuccess() {
@@ -85,6 +95,12 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
     setConfigError('')
   }
 
+  const toggleMcp = (serverId: string, checked: boolean) => {
+    setMcpIds(current => checked ? [...current, serverId] : current.filter(one => one !== serverId))
+    if (checked && mode === 'inherit') setMode('default')
+    setConfigError('')
+  }
+
   const toggleSkill = (skillId: string, checked: boolean) => {
     setSkillIds(current => checked ? [...current, skillId] : current.filter(one => one !== skillId))
     if (checked && mode === 'inherit') setMode('default')
@@ -95,15 +111,15 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
     const content = text.trim()
     if (!content || disabled || isRunning || isSending || !onSend) return
     const error = mode === 'custom' ? systemPromptError(prompt) : mode === 'agent' ? agentChoiceError(agentId) : null
-    if (error || duplicateName || tooMany || duplicateSubagent || tooManySubagents) {
-      setConfigError(error ?? (duplicateName ? `Skill 名称冲突：${duplicateName}` : duplicateSubagent ? `子智能体名称冲突：${duplicateSubagent}` : tooManySubagents ? '一次最多挂载 5 个子智能体' : '一次最多挂载 10 个 Skill'))
+    if (error || duplicateName || tooMany || duplicateSubagent || tooManySubagents || tooManyMcps) {
+      setConfigError(error ?? (duplicateName ? `Skill 名称冲突：${duplicateName}` : duplicateSubagent ? `子智能体名称冲突：${duplicateSubagent}` : tooManySubagents ? '一次最多挂载 5 个子智能体' : tooManyMcps ? '一次最多挂载 3 个 MCP' : '一次最多挂载 10 个 Skill'))
       setConfigOpen(true)
       return
     }
     setConfigError('')
     setIsSending(true)
     try {
-      await onSend(content, buildRunAgentConfig(mode, prompt, agentId, skillIds, subagentIds))
+      await onSend(content, buildRunAgentConfig(mode, prompt, agentId, skillIds, subagentIds, mcpIds))
       setText('')
     } catch {
       // mutation 状态负责显示错误；保留输入供用户修改或重试。
@@ -116,7 +132,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
     <div style={{ padding: '12px 24px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg)', flexShrink: 0 }}>
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px 12px', boxShadow: '0 2px 8px rgba(11,46,92,0.06)' }}>
         <button type="button" aria-label="本轮智能体配置" aria-expanded={configOpen} onClick={() => setConfigOpen(open => !open)} style={{ border: 'none', background: 'transparent', color: 'var(--action)', fontSize: 12, padding: '2px 0 8px', cursor: 'pointer', fontFamily: 'inherit' }}>
-          配置智能体 · {AGENT_CONFIG_MODE_LABEL[mode]}{skillIds.length ? ` · ${skillIds.length} 个 Skill` : ''}{subagentIds.length ? ` · ${subagentIds.length} 个子智能体` : ''}
+          配置智能体 · {AGENT_CONFIG_MODE_LABEL[mode]}{skillIds.length ? ` · ${skillIds.length} 个 Skill` : ''}{subagentIds.length ? ` · ${subagentIds.length} 个子智能体` : ''}{mountedMcpList.length ? ` · ${mountedMcpList.length} 个 MCP` : ''}
         </button>
         {configOpen && <><div onClick={() => setConfigOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.35)', zIndex: 300 }} /><div role="dialog" aria-label="智能体配置" style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 620, maxWidth: 'calc(100vw - 32px)', maxHeight: 'calc(100vh - 48px)', overflowY: 'auto', padding: '18px 20px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)', boxShadow: '0 16px 48px rgba(11,46,92,0.22)', zIndex: 301 }}><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}><strong style={{ fontSize: 16, color: 'var(--text-primary)' }}>本轮智能体配置</strong><button type="button" aria-label="关闭配置" onClick={() => setConfigOpen(false)} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer' }}>×</button></div><div style={{ padding: '10px 12px', border: '1px solid var(--action-border)', borderRadius: 7, background: 'var(--action-light)' }}>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: mode === 'inherit' ? 0 : 10 }}>
@@ -173,6 +189,22 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
               </label>)}
             </div>
             {mountedSubagents.length > 0 && <div style={{ ...hintStyle, marginTop: 8 }}>最终挂载：{mountedSubagents.join('、')}</div>}
+          </div>
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--action-border)' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 7 }}>本轮 MCP（可多选，最多 3 个）</div>
+            {mcps.isPending && <div style={hintStyle}>正在加载 MCP 目录…</div>}
+            {mcps.isError && <div role="alert" style={{ ...hintStyle, color: '#DC2626' }}>{errorMessage(mcps.error)}</div>}
+            {!mcps.isPending && !mcps.isError && (mcps.data ?? []).length === 0 && <div style={hintStyle}>还没有放行的 MCP。</div>}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
+              {(mcps.data ?? []).map(one => <label key={one.id} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, color: 'var(--text-secondary)' }}>
+                <input type="checkbox" aria-label={one.name} checked={mcpIds.includes(one.id)} onChange={event => toggleMcp(one.id, event.target.checked)} />
+                <span><strong>{one.name}</strong><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{one.tool_names.length} 个工具 · 校外</span></span>
+              </label>)}
+            </div>
+            {mountedMcpList.length > 0 && <div data-testid="mcp-outbound" style={outboundStyle}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>{DATA_LEAVES_CAMPUS}</div>
+              <div>最终挂载：{mountedMcpList.map(one => one.via ? `${one.name}（来自 ${one.via}）` : one.name).join('、')}</div>
+            </div>}
           </div>
           {configError && <div role="alert" style={{ marginTop: 6, fontSize: 11, color: '#DC2626' }}>{configError}</div>}
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -234,4 +266,5 @@ function duplicateSkillName(agentRefs: readonly SkillReference[], selected: read
 }
 
 const selectStyle: React.CSSProperties = { width: '100%', padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-primary)', boxSizing: 'border-box' }
+const outboundStyle: React.CSSProperties = { marginTop: 8, padding: '8px 10px', border: '1px solid #FDE68A', borderRadius: 6, background: '#FFFBEB', color: '#92400E', fontSize: 11, lineHeight: 1.6 }
 const hintStyle: React.CSSProperties = { marginTop: 6, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }
