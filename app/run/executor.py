@@ -18,7 +18,7 @@ from typing import Protocol
 from deepagents.backends.protocol import BackendProtocol
 
 from agent.config import AgentConfig, SkillReference
-from event.mapper import StreamChunk, map_chunk
+from event.mapper import EventMapper, StreamChunk
 from event.model import (
     Event,
     InterruptAction,
@@ -310,6 +310,7 @@ class RunExecutor:
         """消费智能体的流，逐个 chunk 映射成事件。"""
         backend = self._backend(run.thread_id)
         tokens = TokenUsage()
+        mapper = EventMapper(run.id)
 
         async for ns, mode, payload in self._start(backend, run, task):
             tokens = tokens + _token_usage(mode, payload)
@@ -319,7 +320,7 @@ class RunExecutor:
             if mode == UPDATES_MODE and await self._cancel.is_raised(run.id):
                 await self._stop(run, tokens)
                 raise RunCancelledError
-            for event in map_chunk(ns, mode, payload, run_id=run.id):
+            for event in mapper.map_chunk(ns, mode, payload):
                 await self._log.append(event)
 
         # **流自然结束不等于跑完了**：中断会让执行暂停、流跟着结束，因此要回头查一次

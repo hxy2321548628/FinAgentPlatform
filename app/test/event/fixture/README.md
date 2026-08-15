@@ -44,3 +44,11 @@
 - **顺序有意义。** 这是一条完整未裁剪的流，映射器的「全量回放不漏类型」测试依赖真实时序，不要为省体积抽稀。
 - 入库前已扫描，不含 API key、密钥串与宿主机绝对路径。
 - 重新生成会得到不同的 id 与措辞（LLM 输出不确定），**测试不要断言具体文本**，只断言结构。
+
+## P9 子智能体样本
+
+`subagent_stream_chunk.jsonl` 是 2026-08-15 用步骤二的 `compile_subagents` 与真实
+`create_deep_agent(...).stream(subgraphs=True)` 跑出的两次本地替身模型流。两次 run
+分别调用 `volatility-expert` 与 `returns-expert`，文件保留父图 `task` 更新、子图
+`model` / `tools` 更新及原始 `tools:<uuid>` namespace，用于验证名字登记、uuid 兜底
+和并发 run 隔离；模型是确定性的本地替身，不调用外部 API。

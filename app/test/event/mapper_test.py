@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, ToolMessage
 
-from event.mapper import StreamChunk, map_chunk
+from event.mapper import EventMapper, StreamChunk
 from event.model import (
     Event,
     EventType,
@@ -17,6 +17,7 @@ from event.model import (
 )
 
 FIXTURE = Path(__file__).parent / "fixture" / "stream_chunk.jsonl"
+SUBAGENT_FIXTURE = Path(__file__).parent / "fixture" / "subagent_stream_chunk.jsonl"
 
 RUN_ID = "run-under-test"
 
@@ -25,6 +26,11 @@ MESSAGE_CLASS: dict[str, type[BaseMessage]] = {
     "AIMessageChunk": AIMessageChunk,
     "ToolMessage": ToolMessage,
 }
+
+
+def map_chunk(ns: tuple[str, ...], mode: str, payload: object, *, run_id: str) -> list[Event]:
+    """无状态用例的便捷入口；有状态 path 用例显式复用 EventMapper。"""
+    return EventMapper(run_id).map_chunk(ns, mode, payload)
 
 
 def _revive_message(raw: dict[str, object]) -> BaseMessage:
@@ -54,6 +60,17 @@ def _revive_chunk(line: str) -> StreamChunk:
     if mode == "updates":
         return ns, mode, {node: _revive_update(update) for node, update in payload.items()}
     return ns, mode, payload
+
+
+@pytest.fixture(scope="module")
+def subagent_chunk() -> dict[str, list[StreamChunk]]:
+    """两次真实 DeepAgents 子图运行截取的父 task 与嵌套 updates。"""
+    result: dict[str, list[StreamChunk]] = {}
+    with SUBAGENT_FIXTURE.open(encoding="utf-8") as stream:
+        for line in stream:
+            raw = json.loads(line)
+            result.setdefault(str(raw["run"]), []).append(_revive_chunk(line))
+    return result
 
 
 @pytest.fixture(scope="module")
@@ -301,10 +318,39 @@ def test_path_is_empty_when_the_stream_has_no_subgraph(replay: list[Event]) -> N
     assert {event.path for event in replay} == {()}
 
 
-def test_path_strips_the_random_task_id() -> None:
-    """剥掉 ns 里的随机 task id —— 那是 LangGraph 的内部标识，透出去前端就耦合了它。"""
-    payload: tuple[AIMessageChunk, dict[str, object]] = (AIMessageChunk(content="x"), {})
+def test_path_uses_the_task_subagent_name_from_a_real_stream(
+    subagent_chunk: dict[str, list[StreamChunk]],
+) -> None:
+    mapper = EventMapper(RUN_ID)
 
-    event = _only(map_chunk(("research:9d1f0a2b",), "messages", payload, run_id=RUN_ID))
+    events = [event for chunk in subagent_chunk["first"] for event in mapper.map_chunk(*chunk)]
 
-    assert event.path == ("research",)
+    nested = [event for event in events if event.path]
+    assert nested
+    assert {event.path for event in nested} == {("volatility-expert",)}
+    assert any(isinstance(event, ToolCallEvent) and event.data.name == "write_file" for event in nested)
+
+
+def test_an_unmatched_real_subgraph_uuid_falls_back_to_eight_characters(
+    subagent_chunk: dict[str, list[StreamChunk]],
+) -> None:
+    nested = subagent_chunk["first"][1]
+
+    event = _only(EventMapper(RUN_ID).map_chunk(*nested))
+
+    assert event.path == ("d9ba97e8",)
+
+
+def test_path_mappers_are_isolated_when_two_real_runs_are_interleaved(
+    subagent_chunk: dict[str, list[StreamChunk]],
+) -> None:
+    first = EventMapper("run-first")
+    second = EventMapper("run-second")
+
+    first.map_chunk(*subagent_chunk["first"][0])
+    second.map_chunk(*subagent_chunk["second"][0])
+    second_event = _only(second.map_chunk(*subagent_chunk["second"][1]))
+    first_event = _only(first.map_chunk(*subagent_chunk["first"][1]))
+
+    assert first_event.path == ("volatility-expert",)
+    assert second_event.path == ("returns-expert",)
