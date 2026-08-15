@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 平台回归验收：P0–P9 当前 44 条判据，一个文件跑完。
+# 平台回归验收：P0–P9 当前 47 条判据，一个文件跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
@@ -10,22 +10,22 @@
 # 常用跑法：
 #
 #   bash deploy/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
-#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 29 条，约 25 分钟
+#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 32 条，约 25 分钟
 #
 # **默认全跑，不分 phase，也没有挑某一期跑的参数** —— P6 决策 §L2 的定案。
 # 保留的是 `SKIP_LLM` / `SKIP_HOSTILE` 两个开关：它们分的是**成本**（要不要花钱、
 # 要不要 root），不是期次。按期挑着跑，等于把刚拆掉的那层级联结构又装回来，
 # 还多一条「以为全验了其实只验了一期」的路。
 #
-# 44 条里 **15 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
+# 47 条里 **15 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
 # P2① 与 P3① 各要一次真实分析，P6①、P7③、P8① 与 P8③ 各要两次真实分析，
-# P9①与 P9② 共用两次真实分析，P9⑤另要一次便宜分析，P1① 那四条破坏性测试要 root。其余 29 条全免费。
+# P9①与 P9② 共用两次真实分析，P9⑤另要一次便宜分析，P1① 那四条破坏性测试要 root。其余 32 条全免费。
 #
 # ---------------------------------------------------------------------------
 # **P7 那一组是 2026-08-14 随本期开发一起加的**，六条：三档可见性、审核闸门、
 # 引用真的改变行为、版本冻结、`reviewer` 的边界，以及一条 playwright 走查。
 #
-# **P7⑥ 与 P8⑥ 是两条要浏览器的判据**，缺 chromium 二进制时记「未验」——
+# **P7⑥、P8⑥ 与 P9⑥ 是三条要浏览器的判据**，缺 chromium 二进制时记「未验」——
 # 与沙箱镜像缺失同一套规矩。它们不进 `make all`：那是纯本地门禁，跑它不需要任何服务
 # 起着，而这两条要六个服务、真账号、真库。
 #
@@ -3649,6 +3649,109 @@ else
 fi
 end
 
+# ------------------------------------------ P9③ 一层限制
+begin "P9③" "子智能体候选过滤、嵌套提交、数量与同名闸门全部生效"
+
+if (( ! P7_READY )); then
+    fail "前置没就绪（$P7_SETUP_NOTE），子智能体配置闸门验不了"
+elif (( ! P9_READY )); then
+    fail "前置没就绪（$P9_SETUP_NOTE），子智能体候选验不了"
+else
+    THREAD_P9_GUARD="$(new_thread "$JAR_P7_A")"
+    P9_SCENE_ID=""
+    P9_SCENE_CREATED=0
+    P9_SCENE_RELEASED=0
+    P9_SCENE_RESPONSE="$(api "$JAR_P7_A" -X POST "$BASE_URL/api/agents" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "p9-scene-$P7_TAG" --arg id "$AGENT_P9_VOLATILITY" \
+            '{name:$n,description:"P9 一层限制场景",subject:"金融学",system_prompt:"负责调度子智能体。",subagents:[$id]}')")" && \
+        P9_SCENE_ID="$(jq -r '.id // empty' <<<"$P9_SCENE_RESPONSE")"
+    [[ -n $P9_SCENE_ID ]] && P9_SCENE_CREATED=1
+    if (( P9_SCENE_CREATED )) && api "$JAR_P7_A" -X POST "$BASE_URL/api/agents/$P9_SCENE_ID/versions" >/dev/null 2>&1; then
+        P9_SCENE_RELEASED=1
+    fi
+
+    P9_CANDIDATES="$(api "$JAR_P7_A" "$BASE_URL/api/agents/subagent-candidates" 2>/dev/null || true)"
+    P9_CANDIDATE_CHILD=0
+    P9_CANDIDATE_SCENE=0
+    if [[ -n $P9_CANDIDATES ]]; then
+        jq -e --arg id "$AGENT_P9_VOLATILITY" 'any(.[]; .id == $id)' <<<"$P9_CANDIDATES" >/dev/null 2>&1 && P9_CANDIDATE_CHILD=1
+        (( P9_SCENE_RELEASED )) && jq -e --arg id "$P9_SCENE_ID" 'any(.[]; .id == $id)' <<<"$P9_CANDIDATES" >/dev/null 2>&1 && P9_CANDIDATE_SCENE=1
+    fi
+    if (( P9_CANDIDATE_CHILD && ! P9_CANDIDATE_SCENE )); then
+        pass "候选列表保留无子智能体的 child，过滤掉已挂子智能体的 scene"
+    else
+        fail "候选列表过滤错误：child=$P9_CANDIDATE_CHILD scene_included=$P9_CANDIDATE_SCENE"
+    fi
+
+    P9_GUARD_RUNS_BEFORE="$(p7_run_count "$THREAD_P9_GUARD")"
+    P9_NESTED_CODE=0
+    (( P9_SCENE_RELEASED )) && P9_NESTED_CODE="$(code "$JAR_P7_A" -X POST "$BASE_URL/api/threads/$THREAD_P9_GUARD/runs" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg id "$P9_SCENE_ID" '{content:"P9 嵌套提交",agent_config:{subagents:[$id]}}')")"
+    P9_GUARD_RUNS_AFTER="$(p7_run_count "$THREAD_P9_GUARD")"
+    if [[ $P9_NESTED_CODE == 422 && $P9_GUARD_RUNS_AFTER == "$P9_GUARD_RUNS_BEFORE" ]]; then
+        pass "带 subagent_refs 的 scene 提交返回 422，且未新增 run"
+    else
+        fail "嵌套提交闸门失效：code=$P9_NESTED_CODE runs=$P9_GUARD_RUNS_BEFORE→$P9_GUARD_RUNS_AFTER"
+    fi
+
+    P9_DUPLICATE_ID="$(p7_new_agent "$JAR_P7_B" "volatility-expert" "P9 同名冲突探针")" || P9_DUPLICATE_ID=""
+    P9_DUPLICATE_SHARED=0
+    if [[ -n $P9_DUPLICATE_ID ]] && p7_share "$JAR_P7_B" "$P9_DUPLICATE_ID" "$GROUP_P7_1" >/dev/null 2>&1; then
+        P9_DUPLICATE_SHARED=1
+    fi
+    P9_DUPLICATE_VISIBLE=0
+    (( P9_DUPLICATE_SHARED )) && p7_available_has "$JAR_P7_A" "$P9_DUPLICATE_ID" && P9_DUPLICATE_VISIBLE=1
+    P9_DUPLICATE_RUNS_BEFORE="$(p7_run_count "$THREAD_P9_GUARD")"
+    P9_DUPLICATE_CODE=0
+    (( P9_DUPLICATE_VISIBLE )) && P9_DUPLICATE_CODE="$(code "$JAR_P7_A" -X POST "$BASE_URL/api/threads/$THREAD_P9_GUARD/runs" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg a "$AGENT_P9_VOLATILITY" --arg b "$P9_DUPLICATE_ID" \
+            '{content:"P9 同名提交",agent_config:{subagents:[$a,$b]}}')")"
+    P9_DUPLICATE_RUNS_AFTER="$(p7_run_count "$THREAD_P9_GUARD")"
+    if (( P9_DUPLICATE_VISIBLE )) && [[ $P9_DUPLICATE_CODE == 422 && $P9_DUPLICATE_RUNS_AFTER == "$P9_DUPLICATE_RUNS_BEFORE" ]]; then
+        pass "两个不同 agent 的同名子智能体提交返回 422，且未新增 run"
+    else
+        fail "同名子智能体闸门失效：visible=$P9_DUPLICATE_VISIBLE code=$P9_DUPLICATE_CODE runs=$P9_DUPLICATE_RUNS_BEFORE→$P9_DUPLICATE_RUNS_AFTER"
+    fi
+
+    P9_MANY_IDS=()
+    for P9_INDEX in 1 2 3 4 5 6; do
+        P9_MANY_ID="$(p7_new_agent "$JAR_P7_A" "p9-many-$P9_INDEX-$P7_TAG" "P9 数量上限探针 $P9_INDEX")" || P9_MANY_ID=""
+        [[ -n $P9_MANY_ID ]] && P9_MANY_IDS+=("$P9_MANY_ID")
+    done
+    P9_MANY_RUNS_BEFORE="$(p7_run_count "$THREAD_P9_GUARD")"
+    P9_MANY_CODE=0
+    if (( ${#P9_MANY_IDS[@]} == 6 )); then
+        P9_MANY_JSON="$(printf '%s\n' "${P9_MANY_IDS[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')"
+        P9_MANY_CODE="$(code "$JAR_P7_A" -X POST "$BASE_URL/api/threads/$THREAD_P9_GUARD/runs" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -nc --argjson ids "$P9_MANY_JSON" '{content:"P9 六个子智能体",agent_config:{subagents:$ids}}')")"
+    fi
+    P9_MANY_RUNS_AFTER="$(p7_run_count "$THREAD_P9_GUARD")"
+    if (( ${#P9_MANY_IDS[@]} == 6 )) && [[ $P9_MANY_CODE == 422 && $P9_MANY_RUNS_AFTER == "$P9_MANY_RUNS_BEFORE" ]]; then
+        pass "挂 6 个子智能体返回 422，且未新增 run"
+    else
+        fail "数量上限闸门失效：created=${#P9_MANY_IDS[@]} code=$P9_MANY_CODE runs=$P9_MANY_RUNS_BEFORE→$P9_MANY_RUNS_AFTER"
+    fi
+fi
+end
+
+# ------------------------------------------ P9④ 子图递归上限
+begin "P9④" "循环子智能体在平台递归额度停止，而不是 9999"
+
+P9_RECURSION_LOG="$WORK_DIR/p9-recursion.log"
+if [[ ! -x $REPO_ROOT/app/.venv/bin/pytest ]]; then
+    undone "app/.venv/bin/pytest 不存在，无法运行本地受限子图探针"
+elif (cd "$REPO_ROOT/app" && UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q test/agent/subagent_test.py -k test_the_bound_limit_stops_a_real_looping_subgraph >"$P9_RECURSION_LOG" 2>&1); then
+    pass "真实循环子图按 SUBAGENT_RECURSION_LIMIT 停止；测试未落回 9999"
+else
+    fail "循环子图递归上限探针失败，详见 $P9_RECURSION_LOG"
+    tail -30 "$P9_RECURSION_LOG" >&2 || true
+fi
+end
+
 # ------------------------------------------ P9⑤ 嵌套 HITL
 begin "P9⑤" "子智能体的 delete 能中断，批准后从子图继续并成功"
 
@@ -3735,6 +3838,34 @@ else
                 fi
             fi
         fi
+    fi
+fi
+end
+
+# ------------------------------------------ P9⑥ 浏览器嵌套事件链路
+begin "P9⑥" "浏览器里看得见命名嵌套折叠块并展开工具过程"
+
+if (( ! P9_READY )); then
+    undone "前置没就绪（$P9_SETUP_NOTE），浏览器主链路没有可用子智能体"
+elif ! command -v pnpm >/dev/null 2>&1; then
+    undone "没有 pnpm，跑不了 playwright"
+elif [[ ! -d $REPO_ROOT/web/node_modules/@playwright ]]; then
+    undone "web/ 没装 @playwright/test：cd web && pnpm install"
+elif ! (cd "$REPO_ROOT/web" && pnpm exec playwright install --dry-run chromium >/dev/null 2>&1); then
+    undone "查不到 chromium 二进制：cd web && pnpm exec playwright install chromium"
+else
+    P9_E2E_LOG="$WORK_DIR/p9-e2e.log"
+    if (cd "$REPO_ROOT/web" && \
+        E2E_API_TARGET="$BASE_URL" \
+        E2E_PASSWORD="$P7_SECRET" \
+        E2E_AUTHOR="$NAME_P7_A" \
+        E2E_SUBAGENT_NAME="volatility-expert" \
+        E2E_SUBAGENT_QUESTION="${P6_QUESTION:-只做这一件事：固定收益率数组 [0.01,-0.005,0.008,-0.002,0.006] 的样本标准差是 0.00654217089351845，乘以 sqrt(252) 后年化波动率是 0.10385374331241026。如果存在名为 volatility-expert 的可委派子智能体，必须把整项工作委派给它，只调用一次 write_file，把结果写进 outputs/p9-browser.txt。}" \
+        pnpm exec playwright test e2e/subagent-workspace.spec.ts >"$P9_E2E_LOG" 2>&1); then
+        pass "子智能体浏览器链路通过：选择、真实事件、命名折叠与 write_file 均可见"
+    else
+        fail "子智能体 playwright 未全过，详见 $P9_E2E_LOG"
+        tail -30 "$P9_E2E_LOG" >&2 || true
     fi
 fi
 end
