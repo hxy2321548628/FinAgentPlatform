@@ -38,7 +38,8 @@ export function SkillsLibrary() {
   const catalog = useQuery({ queryKey: skillKeys.catalog(), queryFn: listCatalog })
   const [activeFilter, setActiveFilter] = useState('全部')
   const [search, setSearch] = useState('')
-  const items = catalog.data ?? []
+  const [selected, setSelected] = useState<SkillListing | null>(null)
+  const items = [...(catalog.data ?? [])].sort((a, b) => b.call_count - a.call_count || a.name.localeCompare(b.name, 'zh-CN'))
   const filters: CatalogFilter[] = ['全部', ...new Set(items.map(one => one.subject || '未分类'))].map(key => ({ key, label: key }))
   const normalized = search.trim().toLocaleLowerCase('zh-CN')
   const filtered = items.filter(item => {
@@ -52,12 +53,13 @@ export function SkillsLibrary() {
       <CatalogControls search={search} onSearch={setSearch} placeholder="搜索 Skill 名称、描述或作者..." filters={filters} activeFilter={activeFilter} onFilter={setActiveFilter} />
       {catalog.isPending && <Notice>正在加载 Skills…</Notice>}
       {catalog.isError && <Notice error>{errorMessage(catalog.error)}</Notice>}
-      {!catalog.isPending && !catalog.isError && <SkillCards items={filtered} search={search} />}
+      {!catalog.isPending && !catalog.isError && <SkillCards items={filtered} search={search} onSelect={setSelected} />}
+      {selected && <SkillDetail item={selected} onClose={() => setSelected(null)} />}
     </LibraryPage>
   )
 }
 
-function SkillCards({ items, search }: { items: SkillListing[]; search: string }) {
+function SkillCards({ items, search, onSelect }: { items: SkillListing[]; search: string; onSelect: (item: SkillListing) => void }) {
   if (items.length === 0) return <Notice>{search ? `未找到与「${search}」相关的 Skill` : '该分类暂时没有 Skill'}</Notice>
   return (
     <div style={{ padding: '0 36px 32px' }}>
@@ -73,6 +75,7 @@ function SkillCards({ items, search }: { items: SkillListing[]; search: string }
             detail={`${item.file_count} 个文件 · ${formatBytes(item.total_bytes)}`}
             badges={[sourceLabel(item.source)]}
             metric={`${item.call_count} 次调用`}
+            secondaryAction={{ label: '查看详情', onClick: () => onSelect(item) }}
           />
         ))}
       </div>
@@ -81,12 +84,34 @@ function SkillCards({ items, search }: { items: SkillListing[]; search: string }
   )
 }
 
+function SkillDetail({ item, onClose }: { item: SkillListing; onClose: () => void }) {
+  return (
+    <>
+      <div onClick={onClose} style={backdropStyle} />
+      <aside role="dialog" aria-label={`${item.name} Skill 详情`} style={drawerStyle}>
+        <div style={drawerHeaderStyle}><div><div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{item.name}</div><div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{item.owner_name} · {item.subject || '未分类'} · v{item.version}</div></div><button type="button" aria-label="关闭" onClick={onClose} style={closeButtonStyle}>×</button></div>
+        <div style={{ overflowY: 'auto', padding: 24 }}>
+          <div style={{ marginBottom: 20 }}><div style={sectionTitle}>功能描述</div><p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.75 }}>{item.description || '（作者没有写说明）'}</p></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
+            <Info label="文件数量" value={`${item.file_count} 个`} /><Info label="体积" value={formatBytes(item.total_bytes)} /><Info label="调用次数" value={`${item.call_count} 次`} /><Info label="可见范围" value={item.source === 'catalog' ? '广场可见' : item.source === 'group' ? '组内共享' : '我创建的'} />
+          </div>
+          <div><div style={sectionTitle}>使用说明</div><p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.75 }}>该 Skill 已通过平台审核，可在聊天页的智能体配置中选择。实际可用文件以发布版本为准。</p></div>
+        </div>
+      </aside>
+    </>
+  )
+}
+
+function Info({ label, value }: { label: string; value: string }) {
+  return <div style={{ padding: '12px 14px', border: '1px solid var(--border)', borderRadius: 7 }}><div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>{label}</div><div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{value}</div></div>
+}
+
 export function McpLibrary() {
   const [activeFilter, setActiveFilter] = useState('全部')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<CapabilityItem | null>(null)
   const normalized = search.trim().toLocaleLowerCase('zh-CN')
-  const filtered = MCP_SERVERS.filter(item => {
+  const filtered = [...MCP_SERVERS].sort((a, b) => b.calls - a.calls || a.name.localeCompare(b.name, 'zh-CN')).filter(item => {
     const matchesCategory = activeFilter === '全部' || item.category === activeFilter
     const haystack = `${item.name} ${item.description} ${item.tags.join(' ')}`.toLocaleLowerCase('zh-CN')
     return matchesCategory && (!normalized || haystack.includes(normalized))
@@ -155,6 +180,7 @@ function formatBytes(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`
 }
 
+const sectionTitle: React.CSSProperties = { fontSize: 12, fontWeight: 650, color: 'var(--text-primary)', marginBottom: 8 }
 const eyebrowStyle: React.CSSProperties = { fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }
 const gridStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }
 const countStyle: React.CSSProperties = { padding: '20px 0 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }

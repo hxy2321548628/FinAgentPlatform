@@ -6,6 +6,7 @@ import { CreateAgent } from './pages/CreateAgent'
 import { MyData } from './pages/MyData'
 import { MyAgents } from './pages/MyAgents'
 import { MySkills } from './pages/MySkills'
+import { ScenarioLibrary, MyScenarios } from './pages/Scenarios'
 import { Settings } from '../pages/Settings'
 import { NotFound } from '../components/NotFound'
 import { McpLibrary, SkillsLibrary } from './pages/CapabilityLibraries'
@@ -17,6 +18,8 @@ export function WorkspaceRouter() {
       <Route path="chat" element={<Chat />} />
       <Route path="chat/:threadId" element={<Chat />} />
       <Route path="agents" element={<AgentPlaza />} />
+      <Route path="scenarios" element={<ScenarioLibrary />} />
+      <Route path="my-scenarios" element={<MyScenarios />} />
       <Route path="skills" element={<SkillsLibrary />} />
       <Route path="mcp" element={<McpLibrary />} />
       <Route path="data" element={<MyData />} />

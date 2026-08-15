@@ -12,10 +12,9 @@ interface CatalogControlsProps {
   filters: CatalogFilter[]
   activeFilter: string
   onFilter: (key: string) => void
-  sortLabel?: string | null
 }
 
-export function CatalogControls({ search, onSearch, placeholder, filters, activeFilter, onFilter, sortLabel = '调用次数' }: CatalogControlsProps) {
+export function CatalogControls({ search, onSearch, placeholder, filters, activeFilter, onFilter }: CatalogControlsProps) {
   return (
     <>
       <div style={{ padding: '16px 36px', display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -35,12 +34,7 @@ export function CatalogControls({ search, onSearch, placeholder, filters, active
             <button type="button" aria-label="清除搜索" onClick={() => onSearch('')} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, lineHeight: 1 }}>×</button>
           )}
         </div>
-        {sortLabel && (
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>排序：</span>
-            <span style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid var(--action-border)', background: 'var(--action-light)', color: 'var(--action)', fontSize: 12 }}>{sortLabel}</span>
-          </div>
-        )}
+
       </div>
       <div style={{ padding: '0 36px 20px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {filters.map(({ key, label }) => (

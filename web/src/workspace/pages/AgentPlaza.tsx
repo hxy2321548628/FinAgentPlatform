@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { agentKeys, listAvailable, listCatalog } from '../../api/agents'
+import { agentKeys, listAvailable } from '../../api/agents'
 import { errorMessage } from '../../api/request'
 import type { AgentListing } from '../../api/types'
 import { sourceLabel } from '../agent'
@@ -9,13 +9,6 @@ import { handOffAgent } from '../pickedAgent'
 import { CatalogCard, CatalogControls } from '../components/Catalog'
 
 const SUBJECT_FILTERS = ['全部', '公司金融', '量化投资', '资产管理', '风险管理', '学术科研', '会计审计', '其他']
-
-const SCOPES = [
-  { key: 'catalog', label: '平台广场' },
-  { key: 'available', label: '我能用的' },
-] as const
-
-type Scope = (typeof SCOPES)[number]['key']
 
 /**
  * 智能体广场。
@@ -27,20 +20,17 @@ type Scope = (typeof SCOPES)[number]['key']
  */
 export function AgentPlaza() {
   const navigate = useNavigate()
-  const [scope, setScope] = useState<Scope>('catalog')
   const [subject, setSubject] = useState('全部')
   const [search, setSearch] = useState('')
   const [detail, setDetail] = useState<AgentListing | null>(null)
 
-  const catalog = useQuery({ queryKey: agentKeys.catalog(), queryFn: listCatalog, enabled: scope === 'catalog' })
-  const available = useQuery({ queryKey: agentKeys.available(), queryFn: listAvailable, enabled: scope === 'available' })
-  const current = scope === 'catalog' ? catalog : available
+  const current = useQuery({ queryKey: agentKeys.available(), queryFn: listAvailable })
 
   const shown = (current.data ?? []).filter(one => {
     const bySubject = subject === '全部' || one.subject === subject
     const byText = !search || one.name.includes(search) || one.description.includes(search) || one.owner_name.includes(search)
     return bySubject && byText
-  })
+  }).sort((a, b) => b.call_count - a.call_count || a.name.localeCompare(b.name, 'zh-CN'))
 
   const startAnalysis = (agent: AgentListing) => {
     handOffAgent(agent.id)
@@ -52,20 +42,7 @@ export function AgentPlaza() {
       <div style={{ padding: '28px 36px 0' }}>
         <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }}>// AGENT PLAZA</div>
         <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>智能体广场</h1>
-        <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-          {scope === 'catalog' ? '经过审核、面向全院开放的智能体' : '你此刻能引用的全部：你自己的、共享给你课题组的，以及广场上的'}
-        </p>
-        <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-          {SCOPES.map(one => (
-            <button key={one.key} onClick={() => setScope(one.key)} style={{
-              padding: '6px 16px', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
-              border: '1px solid ' + (scope === one.key ? 'var(--action)' : 'var(--border)'),
-              background: scope === one.key ? 'var(--action)' : 'var(--surface)',
-              color: scope === one.key ? '#fff' : 'var(--text-secondary)',
-              fontWeight: scope === one.key ? 600 : 400,
-            }}>{one.label}</button>
-          ))}
-        </div>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>你此刻能引用的全部智能体，广场可见优先展示审核通过的版本</p>
       </div>
 
       <CatalogControls
@@ -82,7 +59,7 @@ export function AgentPlaza() {
         {current.isError && <div role="alert" style={{ padding: '60px 0', textAlign: 'center', color: '#DC2626' }}>{errorMessage(current.error)}</div>}
         {!current.isPending && shown.length === 0 && (
           <div style={{ padding: '60px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 14 }}>
-            {search ? `未找到与「${search}」相关的智能体` : scope === 'catalog' ? '广场上还没有审核通过的智能体' : '还没有你能引用的智能体'}
+            {search ? `未找到与「${search}」相关的智能体` : '还没有你能引用的智能体'}
           </div>
         )}
         {shown.length > 0 && (
@@ -95,8 +72,8 @@ export function AgentPlaza() {
                 author={agent.owner_name}
                 subject={agent.subject || '未分类'}
                 description={agent.description || '（作者没有写说明）'}
-                detail={`来源：${sourceLabel(agent.source)}`}
-                badges={[sourceLabel(agent.source)]}
+                detail={`可见范围：${agent.source === 'catalog' ? '广场可见' : agent.source === 'group' ? '组内共享' : '仅自己可用'}`}
+                badges={[agent.source === 'catalog' ? '广场可见' : agent.source === 'group' ? '组内共享' : '我的智能体']}
                 metric={`${agent.call_count} 次调用`}
                 secondaryAction={{ label: '查看提示词', onClick: () => setDetail(agent) }}
                 primaryAction={{ label: '用它开始分析', onClick: () => startAnalysis(agent) }}

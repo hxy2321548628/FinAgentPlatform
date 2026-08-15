@@ -567,7 +567,7 @@ class AgentRepository:
         owner = _parse(user_id)
         if owner is None:
             return []
-        statement = self._available_statement(owner).order_by(col(AgentRecord.name))
+        statement = self._available_statement(owner).order_by(col(AgentRecord.call_count).desc(), col(AgentRecord.name))
         return await self._listing(statement)
 
     async def list_subagent_candidates(self, user_id: str) -> list[AgentListing]:
@@ -730,16 +730,19 @@ class AgentRepository:
         # 连作者自己也不该在会话里引用到它
         first_hand = (mine | group_shared) & released.c.version_id.is_not(None)
         in_catalog = approved.c.version_id.is_not(None)
+        # 同一个 agent 同时满足多条可见性时，广场版本优先，其次组内共享，最后才是作者自己的版本。
+        # 这样用户在广场看到的永远是审核过的那一版，而不是被自己的未提审版本遮住。
+        use_first_hand = first_hand & ~in_catalog
         return (
             _listing_select(
-                version=case((first_hand, released.c.version), else_=approved.c.version),
-                system_prompt=case((first_hand, released.c.system_prompt), else_=approved.c.system_prompt),
-                skill_refs=case((first_hand, released.c.skill_refs), else_=approved.c.skill_refs),
-                subagent_refs=case((first_hand, released.c.subagent_refs), else_=approved.c.subagent_refs),
+                version=case((use_first_hand, released.c.version), else_=approved.c.version),
+                system_prompt=case((use_first_hand, released.c.system_prompt), else_=approved.c.system_prompt),
+                skill_refs=case((use_first_hand, released.c.skill_refs), else_=approved.c.skill_refs),
+                subagent_refs=case((use_first_hand, released.c.subagent_refs), else_=approved.c.subagent_refs),
                 source=case(
-                    (mine, AgentSource.OWNED.value),
+                    (in_catalog, AgentSource.CATALOG.value),
                     (group_shared, AgentSource.GROUP.value),
-                    else_=AgentSource.CATALOG.value,
+                    else_=AgentSource.OWNED.value,
                 ),
             )
             .join(UserRecord, onclause=col(UserRecord.id) == col(AgentRecord.owner_id))
