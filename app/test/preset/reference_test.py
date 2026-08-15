@@ -24,6 +24,7 @@ async def test_a_main_agent_carries_its_frozen_subagents_into_the_run_config() -
         system_prompt="调度风险分析",
         skill_refs=None,
         subagent_refs=[child],
+        mcp_refs=None,
     )
 
     config = await resolve_reference(

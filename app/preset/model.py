@@ -81,10 +81,20 @@ class ResourceKind(StrEnum):
     """能被共享与被审核的资源种类。
 
     Skill 与智能体复用同一套共享与审核流程；表结构不因资源种类增加而变化。
+
+    **MCP 只复用审核那一半。** 它不进 `resource_groups` —— 目录是平台级的，管理员
+    放行了就人人可勾，没有三档可见性；它的审核也不进 reviewer 的队列，见
+    `REVIEWABLE_KIND`。
     """
 
     AGENT = "agent"
     SKILL = "skill"
+    MCP = "mcp"
+
+
+# reviewer 队列里出现的那些。**MCP 不在其中，这不是遗漏**：reviewer 审的是内容合规
+# （这段提示词能不能进广场），而放行一个外网地址是安全边界决定，只有管理员能做。
+REVIEWABLE_KIND: tuple[ResourceKind, ...] = (ResourceKind.AGENT, ResourceKind.SKILL)
 
 
 def _value_enum(enum: type[StrEnum], *, primary_key: bool = False) -> Column[Enum]:
@@ -147,7 +157,9 @@ class AgentRecord(SQLModel, table=True):
 class AgentVersionRecord(SQLModel, table=True):
     """`agent_versions` 表的一行：一个版本的内容。
 
-    提示词、Skill 与子智能体引用在发布时一起冻结；MCP 引用等对应目录存在后再加。
+    提示词、Skill、子智能体与 MCP 引用在发布时一起冻结。**四者冻得住的东西不一样**：
+    前三者冻的是内容（版本号 + 内容在平台手里），MCP 冻的只是 `{server_id, name}` ——
+    那台校外机器明天返回什么，平台今天不知道。
     """
 
     __tablename__ = VERSION_TABLE_NAME
@@ -168,6 +180,7 @@ class AgentVersionRecord(SQLModel, table=True):
     system_prompt: str = Field(default="")
     skill_refs: list[dict[str, object]] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     subagent_refs: list[dict[str, object]] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    mcp_refs: list[dict[str, object]] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     created_at: datetime
     # 发布那一刻。草稿为空 —— 广场按它排序，而没定稿的东西根本进不了广场
     released_at: datetime | None = Field(default=None)

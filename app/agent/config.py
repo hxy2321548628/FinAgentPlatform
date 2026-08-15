@@ -39,6 +39,21 @@ class SubagentReference(BaseModel):
     name: str = Field(min_length=1, description="交给 task 工具的子智能体名称")
 
 
+class McpReference(BaseModel):
+    """一次 run 快照里冻结的一条 MCP 目录记录。
+
+    **只有两个字段，因为能冻住的只有这两个。** Skill 与子智能体的引用冻结的是内容
+    （版本号 + 内容在平台手里）；MCP 的内容在校外那台机器上，平台冻得住的只是
+    「这次用了哪一条目录记录」。那次调用真的拿到了什么，只有事件流里的 `tool_result`
+    答得出来。
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    server_id: str = Field(min_length=1, description="MCP 目录记录的稳定标识")
+    name: str = Field(min_length=1, description="提交时目录里的服务名，用于回看与前端展示")
+
+
 class AgentConfig(BaseModel):
     """一次 run 的配置快照。
 
@@ -73,6 +88,11 @@ class AgentConfig(BaseModel):
         exclude_if=lambda value: not value,
         description="提交时解析并冻结的子智能体版本",
     )
+    mcps: list[McpReference] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+        description="提交时解析并冻结的 MCP 目录记录",
+    )
 
 
 class AgentConfigRequest(BaseModel):
@@ -101,6 +121,11 @@ class AgentConfigRequest(BaseModel):
         default_factory=list,
         exclude_if=lambda value: not value,
         description="这一轮要挂的子智能体标识；提交时按当前用户可见性解析",
+    )
+    mcps: list[str] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+        description="这一轮要挂的 MCP 目录标识；提交时解析成快照，没放行或已停用一律 422",
     )
 
     @field_validator("skills", mode="after")

@@ -5,9 +5,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from preset.model import ReviewStatus
+from preset.model import ResourceKind, ReviewStatus
 from preset.repository import AgentRepository
-from preset.review import ReviewRepository
+from preset.review import ReviewRepository, _item_select
 from test.conftest import FAKE_HASH
 from user.model import UserRole
 from user.repository import User, UserRepository
@@ -162,3 +162,39 @@ async def test_a_malformed_identifier_is_a_miss_not_a_crash(reviews: ReviewRepos
     assert await reviews.get("不是-uuid") is None
     assert await reviews.submit(target_id="不是-uuid", submitted_by=owner.id, responsibility_confirmed=True) is None
     assert await reviews.decide("不是-uuid", reviewer_id=owner.id, approved=True, reason=None) is False
+
+
+async def test_an_mcp_review_does_not_duplicate_the_skill_queue(
+    agents: AgentRepository, reviews: ReviewRepository, owner: User
+) -> None:
+    """P10 §6 第 5 条：加进 `ResourceKind.MCP` 之后队列里每条记录仍只出现一次。
+
+    原来的 `_item_select` 是「AGENT 走一支、其余都走 skill 那一支」，`_for_status`
+    则 `for kind in ResourceKind` 逐个拼查询 —— 多一个 kind 就把 skill 的待审记录
+    查两遍，第二遍还标成 MCP。**这个错不报任何异常**，症状只是审核队列里每条申请
+    出现两次。
+    """
+    version_id = await _released_version(agents, owner)
+    submitted = await reviews.submit(target_id=version_id, submitted_by=owner.id, responsibility_confirmed=True)
+    assert submitted is not None
+    mcp = await reviews.submit(
+        target_id=uuid4().hex,
+        submitted_by=owner.id,
+        responsibility_confirmed=True,
+        target_kind=ResourceKind.MCP,
+    )
+    assert mcp is not None
+
+    queue = await reviews.list_pending()
+
+    identifiers = [one.review.id for one in queue]
+    assert identifiers.count(submitted.id) == 1
+    # MCP 的审批是安全边界决定，只有管理员能做 —— 它不进 reviewer 的队列
+    assert mcp.id not in identifiers
+    assert all(one.review.target_kind is not ResourceKind.MCP for one in queue)
+
+
+def test_the_reviewer_queue_refuses_to_guess_at_an_unhandled_kind() -> None:
+    """缺一种 kind 就抛，不留兜底的 else —— 兜底的那一支正是上一条测的那个 bug。"""
+    with pytest.raises(ValueError, match="MCP"):
+        _item_select(ResourceKind.MCP)

@@ -15,6 +15,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from preset.model import (
+    REVIEWABLE_KIND,
     AgentRecord,
     AgentVersionRecord,
     ResourceKind,
@@ -150,7 +151,7 @@ class ReviewRepository:
         if limit <= 0:
             return []
         items: list[ReviewItem] = []
-        for kind in ResourceKind:
+        for kind in REVIEWABLE_KIND:
             statement = (
                 _item_select(kind)
                 .where(col(ReviewRecord.status) != ReviewStatus.PENDING)
@@ -187,7 +188,7 @@ class ReviewRepository:
 
     async def _for_status(self, status: ReviewStatus) -> list[ReviewItem]:
         items: list[ReviewItem] = []
-        for kind in ResourceKind:
+        for kind in REVIEWABLE_KIND:
             statement = _item_select(kind).where(col(ReviewRecord.status) == status)
             items.extend(await self._items(statement, kind))
         return items
@@ -199,6 +200,15 @@ class ReviewRepository:
 
 
 def _item_select(kind: ResourceKind) -> Select[tuple[object, ...]]:
+    """按资源种类拼一条带内容详情的查询。
+
+    **三种 kind 各自显式分支，没有兜底的 `else`。** 原来是「AGENT 走一支、其余都走
+    skill 那一支」，加进 `ResourceKind.MCP` 之后它会把 skill 的待审记录查两遍、
+    第二遍还标成 MCP —— 审核队列里每条 skill 申请出现两次，而这个错不报任何异常。
+
+    Raises:
+        ValueError: MCP 的审核不走 reviewer 队列，它也没有版本行可 join。
+    """
     common: tuple[ColumnElement[object], ...] = (
         col(ReviewRecord.id).label("id"),
         col(ReviewRecord.target_id).label("target_id"),
@@ -227,6 +237,8 @@ def _item_select(kind: ResourceKind) -> Select[tuple[object, ...]]:
             .join(UserRecord, onclause=col(UserRecord.id) == col(AgentRecord.owner_id))
             .where(col(ReviewRecord.target_kind) == ResourceKind.AGENT)
         )
+    if kind is ResourceKind.MCP:
+        raise ValueError("MCP 的审核由管理员在 MCP 后台处理，不进 reviewer 队列")
     return (
         sa_select(
             *common,
@@ -274,6 +286,8 @@ def _to_item(row: object, kind: ResourceKind) -> ReviewItem:
             agent_name=values["resource_name"],  # type: ignore[index]
             system_prompt=values["system_prompt"],  # type: ignore[index]
         )
+    if kind is ResourceKind.MCP:
+        raise ValueError("MCP 的审核由管理员在 MCP 后台处理，不进 reviewer 队列")
     return ReviewItem(
         **common,
         skill_id=values["resource_id"].hex,  # type: ignore[index]

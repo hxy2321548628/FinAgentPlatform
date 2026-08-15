@@ -31,6 +31,7 @@ def resolved(name: str, *, subagents: list[SubagentReference] | None = None) -> 
         system_prompt=f"{name} prompt",
         skill_refs=None,
         subagent_refs=subagents,
+        mcp_refs=None,
     )
 
 
