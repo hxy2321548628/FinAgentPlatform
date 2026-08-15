@@ -6,6 +6,7 @@ session、日志与响应体。把它放进公共的那个形状里，迟早会�
 """
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -114,6 +115,26 @@ class UserRepository:
         async with AsyncSession(self._engine) as session:
             record = await session.get(UserRecord, identifier)
         return None if record is None else _to_user(record)
+
+    async def names(self, user_ids: Sequence[str]) -> dict[str, str]:
+        """一批标识对应的姓名，**一次查询取回**。
+
+        列表里逐个查是 N 次往返，而那种慢法在开发机上量不出来。
+
+        Args:
+            user_ids: 用户标识，允许重复与非法值。
+
+        Returns:
+            标识到姓名的映射；查不到的键不出现。
+        """
+        wanted = {parsed for parsed in (_parse(one) for one in user_ids) if parsed is not None}
+        if not wanted:
+            return {}
+        async with AsyncSession(self._engine) as session:
+            found = await session.exec(
+                select(col(UserRecord.id), col(UserRecord.name)).where(col(UserRecord.id).in_(wanted))
+            )
+            return {identifier.hex: name for identifier, name in found.all()}
 
     async def list_all(self) -> list[User]:
         """全部账号，**最近建的排在前面**。

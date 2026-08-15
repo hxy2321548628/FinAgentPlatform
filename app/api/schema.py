@@ -8,9 +8,16 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from agent.config import MAX_SYSTEM_PROMPT_LENGTH, AgentConfigRequest, SkillReference, SubagentReference
+from agent.config import (
+    MAX_SYSTEM_PROMPT_LENGTH,
+    AgentConfigRequest,
+    McpReference,
+    SkillReference,
+    SubagentReference,
+)
 from event.model import RunErrorCode, RunStatus
 from group.model import JoinRequestStatus
+from preset.mcp import McpStatus, McpTransport
 from preset.model import ResourceKind, ReviewStatus, VersionStatus, Visibility
 from preset.repository import AgentSource
 from preset.skill import SkillSource
@@ -33,6 +40,12 @@ MAX_THREAD_TITLE_LENGTH = 64
 MAX_AGENT_NAME_LENGTH = 32
 MAX_AGENT_DESCRIPTION_LENGTH = 200
 MAX_AGENT_SUBJECT_LENGTH = 32
+
+# MCP 的服务名、地址与工具数上限。名字要写得下目录卡片一行；地址是一条 URL；
+# 工具数取 32 —— 一个服务带三四个工具是常态，三十个已经是「它其实是个平台」了
+MAX_MCP_NAME_LENGTH = 64
+MAX_MCP_URL_LENGTH = 500
+MAX_MCP_TOOL = 32
 
 # 拒绝理由的长度上限。**下限是 1 且后端也校验** —— 只靠前端拦的话，
 # 任何一次直接打接口都能留下一条没有理由的拒绝，而作者看到的是「被拒了，没说为什么」
@@ -357,6 +370,7 @@ class CreateAgentRequest(BaseModel):
     )
     skills: list[str] | None = Field(default=None, description="这个草稿自带的 Skill 标识")
     subagents: list[str] | None = Field(default=None, description="这个草稿自带的子智能体标识")
+    mcps: list[str] | None = Field(default=None, description="这个草稿自带的 MCP 标识")
 
 
 class UpdateAgentRequest(BaseModel):
@@ -373,6 +387,7 @@ class UpdateDraftRequest(BaseModel):
     system_prompt: str = Field(min_length=1, max_length=MAX_SYSTEM_PROMPT_LENGTH, description="新的提示词")
     skills: list[str] | None = Field(default=None, description="这个草稿自带的 Skill 标识；整块替换")
     subagents: list[str] | None = Field(default=None, description="这个草稿自带的子智能体标识；整块替换")
+    mcps: list[str] | None = Field(default=None, description="这个草稿自带的 MCP 标识；整块替换")
 
 
 class SetSharingRequest(BaseModel):
@@ -415,6 +430,7 @@ class AgentVersionResponse(BaseModel):
     system_prompt: str = Field(description="这一版的提示词")
     skill_refs: list[SkillReference] | None = Field(default=None, description="这一版冻结的 Skill 引用")
     subagent_refs: list[SubagentReference] | None = Field(default=None, description="这一版冻结的子智能体引用")
+    mcp_refs: list[McpReference] | None = Field(default=None, description="这一版冻结的 MCP 引用")
     created_at: datetime = Field(description="建立时间，UTC")
     released_at: datetime | None = Field(default=None, description="定稿时间，UTC。草稿为空")
     review_id: str | None = Field(default=None, description="最近一条审核记录；从没提审过则为空")
@@ -461,6 +477,7 @@ class AgentListingResponse(BaseModel):
     system_prompt: str = Field(description="那一版的提示词全文")
     skill_refs: list[SkillReference] | None = Field(default=None, description="这一版自带的 Skill")
     subagent_refs: list[SubagentReference] | None = Field(default=None, description="这一版自带的子智能体")
+    mcp_refs: list[McpReference] | None = Field(default=None, description="这一版自带的 MCP")
     source: AgentSource = Field(description="凭哪一条进到这个列表：我自己的 / 组内共享 / 平台目录")
     updated_at: datetime = Field(description="最后改动时间，UTC")
 
@@ -544,3 +561,107 @@ class ReviewResponse(BaseModel):
     skill_name: str | None = Field(default=None, description="Skill 名称；Agent 审核时为空")
     file_count: int | None = Field(default=None, ge=1, description="Skill 文件数")
     total_bytes: int | None = Field(default=None, ge=0, description="Skill 文件总字节数")
+
+
+class McpServerResponse(BaseModel):
+    """目录里的一条 MCP。**不含凭据** —— 库里存的本来就只有键名。
+
+    **`sends_data_out` 与「外发标注」是两件事。** 前者是申请人对「我会不会把数据
+    转发给第三方」的声明；后者是平台对所有 MCP 一律显示的那句「此服务位于校外，
+    调用时你的数据会发送至外部」—— 只要它在校外，勾上它就意味着数据出校，
+    这与申请人怎么声明无关。
+    """
+
+    id: str = Field(min_length=1, description="目录记录标识")
+    name: str = Field(min_length=1, description="服务名，全平台唯一")
+    description: str = Field(description="一句话说明")
+    url: str = Field(min_length=1, description="服务地址")
+    transport: McpTransport = Field(description="传输方式。**没有 stdio 这个取值**")
+    has_credential: bool = Field(description="平台侧配没配凭据。**值本身永不出库**")
+    tool_names: list[str] = Field(description="上架时的工具清单（声明 5：接口描述）")
+    latency_note: str = Field(description="耗时声明（声明 6）")
+    stores_user_data: bool = Field(description="是否存储用户数据（声明 7）")
+    sends_data_out: bool = Field(description="是否把数据再转发出去（声明 7）")
+    has_write_operation: bool = Field(description="有没有写操作（声明 8）。**声明有的一律不批**")
+    status: McpStatus = Field(description="待审 / 已上架 / 已停用 / 已拒")
+    disabled_reason: str | None = Field(default=None, description="停用或被拒的原因")
+    created_at: datetime = Field(description="申请时间，UTC")
+    updated_at: datetime = Field(description="最后一次状态变化，UTC")
+
+
+class AdminMcpServerResponse(McpServerResponse):
+    """管理员后台多看到的两样：谁提的，以及此刻连续失败了几次。"""
+
+    submitted_by: str = Field(min_length=1, description="申请人标识")
+    submitter_name: str = Field(description="申请人姓名")
+    failure_count: int = Field(ge=0, description="当前连续失败次数。到阈值就自动停用")
+
+
+class ApplyMcpRequest(BaseModel):
+    """教师提的一份 MCP 申请，四项声明都在里面。"""
+
+    name: str = Field(min_length=1, max_length=MAX_MCP_NAME_LENGTH, description="服务名，全平台唯一")
+    description: str = Field(default="", max_length=MAX_AGENT_DESCRIPTION_LENGTH, description="一句话说明")
+    url: str = Field(min_length=1, max_length=MAX_MCP_URL_LENGTH, description="服务地址，必须是 http(s)")
+    transport: McpTransport = Field(
+        default=McpTransport.STREAMABLE_HTTP,
+        description="传输方式。**stdio 不是一个可填的值** —— 那等于在 worker 容器里任意代码执行",
+    )
+    credential_key: str | None = Field(
+        default=None,
+        max_length=MAX_MCP_NAME_LENGTH,
+        description="凭据键名。**值不在这里填**，由管理员写进 .env 的 MCP_CREDENTIALS",
+    )
+    tool_names: list[str] = Field(
+        min_length=1,
+        max_length=MAX_MCP_TOOL,
+        description="工具清单（声明 5）。装配时拿实际工具名与它比对，不一致会记 WARNING",
+    )
+    latency_note: str = Field(
+        default="",
+        max_length=MAX_AGENT_DESCRIPTION_LENGTH,
+        description="耗时声明（声明 6）：典型耗时与最坏耗时",
+    )
+    stores_user_data: bool = Field(default=False, description="是否存储用户数据（声明 7）")
+    sends_data_out: bool = Field(default=True, description="是否把数据再转发出去（声明 7）")
+    has_write_operation: bool = Field(
+        default=False,
+        description="有没有写操作（声明 8）。**如实填写** —— 声明有的一律不批，"
+        "而平台既不拦截审批也不传幂等键，队列是至少一次投递",
+    )
+
+
+class DecideMcpRequest(BaseModel):
+    """管理员对一条 MCP 申请的决策。"""
+
+    approved: bool = Field(description="放行还是拒绝")
+    reason: str | None = Field(
+        default=None,
+        max_length=MAX_REVIEW_REASON_LENGTH,
+        description="拒绝理由。**拒绝必须写**，申请人要照着它改",
+    )
+
+
+class SetMcpEnabledRequest(BaseModel):
+    """管理员手动启停一条已放行的记录。"""
+
+    enabled: bool = Field(description="启用还是停用")
+    reason: str | None = Field(
+        default=None,
+        max_length=MAX_REVIEW_REASON_LENGTH,
+        description="停用原因，会显示在后台。启用时忽略",
+    )
+
+
+class McpProbeResponse(BaseModel):
+    """一次「测试连接」的结果。
+
+    **走的是装配同一条路与同一个熔断计数器** —— 另写一份的话，验收判据验的就是
+    一条没人走的路，而它照样绿。
+    """
+
+    reachable: bool = Field(description="连上了没有")
+    tool_names: list[str] = Field(default_factory=list, description="实际拿到的工具名；连不上则空")
+    declared_only: list[str] = Field(default_factory=list, description="清单里有、实际没有的")
+    undeclared: list[str] = Field(default_factory=list, description="实际有、清单里没有的")
+    failure_count: int = Field(ge=0, description="探完之后的连续失败次数")

@@ -16,7 +16,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 
-from agent.config import AgentConfig, SkillReference, SubagentReference
+from agent.config import AgentConfig, McpReference, SkillReference, SubagentReference
 from api.error import invalid, not_found
 from api.platform import Platform, get_platform
 from api.schema import (
@@ -30,6 +30,7 @@ from api.schema import (
     UpdateDraftRequest,
 )
 from api.security import CurrentUser
+from preset.mcp_reference import McpReferenceError, resolve_mcp_references
 from preset.model import ReviewStatus, VersionStatus
 from preset.repository import AgentDetail, AgentListing
 from preset.review import Review
@@ -133,6 +134,7 @@ async def create_agent(
     """
     skill_refs = await _resolve_skills(platform, request.skills, current.user_id)
     subagent_refs = await _resolve_subagents(platform, request.subagents, current.user_id)
+    mcp_refs = await _resolve_mcps(platform, request.mcps)
     created = await platform.agent.create(
         owner_id=current.user_id,
         name=request.name,
@@ -141,6 +143,7 @@ async def create_agent(
         system_prompt=request.system_prompt,
         skill_refs=skill_refs,
         subagent_refs=subagent_refs,
+        mcp_refs=mcp_refs,
     )
     if created is None:
         raise invalid(NAME_TAKEN_MESSAGE)
@@ -195,6 +198,7 @@ async def write_draft(
             system_prompt=request.system_prompt,
             skill_refs=await _resolve_skills(platform, request.skills, current.user_id),
             subagent_refs=await _resolve_subagents(platform, request.subagents, current.user_id),
+            mcp_refs=await _resolve_mcps(platform, request.mcps),
         )
         is None
     ):
@@ -356,6 +360,7 @@ def _to_my_agent(detail: AgentDetail, latest: dict[str, Review], approved: set[s
             system_prompt=one.system_prompt,
             skill_refs=one.skill_refs,
             subagent_refs=one.subagent_refs,
+            mcp_refs=one.mcp_refs,
             created_at=one.created_at,
             released_at=one.released_at,
             review_id=None if one.id not in latest else latest[one.id].id,
@@ -394,6 +399,7 @@ def _to_listing(listing: AgentListing) -> AgentListingResponse:
         system_prompt=listing.system_prompt,
         skill_refs=listing.skill_refs,
         subagent_refs=listing.subagent_refs,
+        mcp_refs=listing.mcp_refs,
         source=listing.source,
         updated_at=listing.updated_at,
     )
@@ -429,3 +435,16 @@ async def _resolve_subagents(
     except SubagentReferenceError as exc:
         raise invalid(str(exc)) from exc
     return resolved.subagents or None
+
+
+async def _resolve_mcps(platform: Platform, server_ids: list[str] | None) -> list[McpReference] | None:
+    """把草稿选择解析成目录引用。
+
+    **MCP 没有可见性可言** —— 目录是平台级的，管理员放行了就人人可勾。这里挡的是
+    「还没放行」与「已停用」，与提交侧是同一条语句。
+    """
+    try:
+        resolved = await resolve_mcp_references(AgentConfig(), server_ids=server_ids or [], resolver=platform.mcp)
+    except McpReferenceError as exc:
+        raise invalid(str(exc)) from exc
+    return resolved.mcps or None

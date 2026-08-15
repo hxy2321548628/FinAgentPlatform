@@ -83,6 +83,11 @@ def test_the_openapi_document_is_served(client: TestClient) -> None:
         "/api/skills/{skill_id}/versions",
         "/api/skills/{skill_id}/sharing",
         "/api/skills/{skill_id}/reviews",
+        "/api/mcp",
+        "/api/mcp/admin",
+        "/api/mcp/admin/{server_id}/decision",
+        "/api/mcp/admin/{server_id}/enabled",
+        "/api/mcp/admin/{server_id}/probe",
         "/api/reviews",
         "/api/reviews/{review_id}",
     }

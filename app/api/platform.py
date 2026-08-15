@@ -23,6 +23,7 @@ from auth.password import PasswordHasher
 from auth.session import SessionStore
 from config import Settings
 from group.repository import GroupRepository, JoinRequestRepository
+from preset.mcp import McpRepository
 from preset.repository import AgentRepository
 from preset.review import ReviewRepository
 from preset.skill import SkillRepository
@@ -71,6 +72,11 @@ class Platform:
     agent: AgentRepository
     skill: SkillRepository
     skill_store: RemoteSkillStore
+    # MCP 目录。**引用解析走 `mcp.get` 再判状态** —— 目录列表里没有的，提交侧也解析不出来
+    mcp: McpRepository
+    # 凭据表，**只为探活那一条端点**：管理员按「测试连接」时要带上真凭据去连。
+    # 它一个字节都不进响应，`McpServerResponse` 只回「配没配」
+    mcp_credentials: dict[str, str]
     review: ReviewRepository
     thread: ThreadRepository
     # 会话标题的生成。**放在网关而不是 worker**：教师要的是提交完就看见侧边栏有了名字，
@@ -140,6 +146,8 @@ async def build_platform(settings: Settings) -> Platform:
         agent=AgentRepository(engine),
         skill=SkillRepository(engine),
         skill_store=RemoteSkillStore(connection),
+        mcp=McpRepository(engine),
+        mcp_credentials=settings.mcp_credentials,
         review=ReviewRepository(engine),
         thread=thread,
         # 走辅助模型：概括一句话不需要主模型那份多步推理能力，而主模型贵一个数量级

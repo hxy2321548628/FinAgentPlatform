@@ -42,6 +42,7 @@ from config import DEFAULT_UPLOAD_MAX_BYTE
 from event.mapper import StreamChunk
 from event.model import InterruptAction
 from group.repository import Group, GroupRepository, JoinRequestRepository
+from preset.mcp import McpRepository
 from preset.repository import AgentRepository
 from preset.review import ReviewRepository
 from preset.skill import SkillRepository
@@ -295,6 +296,8 @@ def platform(
         agent=AgentRepository(live_engine),
         skill=SkillRepository(live_engine),
         skill_store=RemoteSkillStore(connection),
+        mcp=McpRepository(live_engine),
+        mcp_credentials={},
         review=ReviewRepository(live_engine),
         thread=thread,
         title=TitleWriter(model=title_model, repository=thread),

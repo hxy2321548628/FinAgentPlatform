@@ -34,6 +34,7 @@ from api.schema import (
 )
 from api.security import UNAUTHENTICATED_MESSAGE, CurrentUser
 from cursor import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, CursorError, Page
+from preset.mcp_reference import McpReferenceError, resolve_mcp_references
 from preset.reference import ReferenceUnavailableError, resolve_reference
 from preset.skill_reference import SkillReferenceError, resolve_skill_references
 from preset.subagent_reference import SubagentReferenceError, resolve_subagent_references
@@ -213,7 +214,12 @@ async def submit_run(
             user_id=current.user_id,
             resolver=platform.agent,
         )
-    except (ReferenceUnavailableError, SkillReferenceError, SubagentReferenceError) as exc:
+        resolved = await resolve_mcp_references(
+            resolved,
+            server_ids=effective.mcps,
+            resolver=platform.mcp,
+        )
+    except (ReferenceUnavailableError, SkillReferenceError, SubagentReferenceError, McpReferenceError) as exc:
         # **不静默回退默认提示词。** 回退跑得完、不报错，唯一的症状是回答变了味
         raise invalid(str(exc)) from exc
 
