@@ -367,7 +367,7 @@ async def test_the_catalog_only_holds_approved_versions(
     assert pending_agent not in {one.id for one in await agents.list_available(outsider.id)}
 
 
-async def test_the_catalog_shows_the_approved_version_not_the_newest_one(
+async def test_the_catalog_version_takes_priority_for_every_viewer(
     agents: AgentRepository, reviews: ReviewRepository, users: UserRepository, owner: User
 ) -> None:
     """审核真的拦住每一次变更：作者发了 v2 而只审过 v1，广场上仍是 v1。"""
@@ -382,10 +382,10 @@ async def test_the_catalog_shows_the_approved_version_not_the_newest_one(
 
     listed = next(one for one in await agents.list_catalog() if one.id == agent_id)
     assert (listed.version, listed.system_prompt) == (1, "第一版")
-    # 作者自己看的仍是最新那一版 —— 审核管的是别人能不能看见
+    # 同时满足“自己的”和“广场的”时，广场优先，避免卡片与实际引用版本不一致
     resolved = await agents.resolve(agent_id, user_id=owner.id)
     assert resolved is not None
-    assert (resolved.version, resolved.system_prompt) == (2, "第二版")
+    assert (resolved.version, resolved.system_prompt) == (1, "第一版")
 
 
 async def test_a_deleted_agent_leaves_the_catalog(
@@ -402,10 +402,10 @@ async def test_a_deleted_agent_leaves_the_catalog(
     assert agent_id not in {one.id for one in await agents.list_catalog()}
 
 
-async def test_my_own_agent_is_labelled_owned_even_after_it_reaches_the_catalog(
+async def test_catalog_source_takes_priority_even_for_the_owner(
     agents: AgentRepository, reviews: ReviewRepository, users: UserRepository, owner: User
 ) -> None:
-    """展示错了会让人以为「组内的东西上了广场」。"""
+    """同一资源命中多个来源时，卡片标记采用优先级最高的广场。"""
     reviewer = await _teacher(users)
     agent_id = await _released(agents, owner)
     detail = await agents.detail(agent_id, owner_id=owner.id)
@@ -415,7 +415,7 @@ async def test_my_own_agent_is_labelled_owned_even_after_it_reaches_the_catalog(
     mine = next(one for one in await agents.list_available(owner.id) if one.id == agent_id)
     theirs = next(one for one in await agents.list_available(reviewer.id) if one.id == agent_id)
 
-    assert mine.source is AgentSource.OWNED
+    assert mine.source is AgentSource.CATALOG
     assert theirs.source is AgentSource.CATALOG
 
 
