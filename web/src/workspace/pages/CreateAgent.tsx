@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
-import { agentKeys, createAgent, getMine, updateAgent, writeDraft } from '../../api/agents'
+import { agentKeys, createAgent, getMine, listSubagentCandidates, updateAgent, writeDraft } from '../../api/agents'
 import { errorMessage } from '../../api/request'
 import { listAvailable as listAvailableSkills, skillKeys } from '../../api/skills'
 import { MAX_SYSTEM_PROMPT_LENGTH, systemPromptError } from '../config'
@@ -13,7 +13,7 @@ const SUBJECTS = ['公司金融', '量化投资', '资产管理', '风险管理'
 /**
  * 建一个智能体，或改一个已有的。
  *
- * Agent 的内容由系统提示词与可选 Skill 引用组成；子智能体与 MCP 留给后续阶段。
+ * Agent 的内容由系统提示词、Skill 与可选子智能体引用组成；MCP 留给后续阶段。
  *
  * **改内容与改元信息是两条路**：改名不产生新版本，改提示词会（已经定稿的话，
  * 这一下追加下一个版本号的新草稿）。两者分开写在这里，因为它们打的是两个端点。
@@ -25,6 +25,7 @@ export function CreateAgent() {
   const editing = Boolean(agentId)
 
   const availableSkills = useQuery({ queryKey: skillKeys.available(), queryFn: listAvailableSkills })
+  const availableSubagents = useQuery({ queryKey: agentKeys.subagentCandidates(), queryFn: listSubagentCandidates })
 
   const existing = useQuery({
     queryKey: agentKeys.detail(agentId ?? ''),
@@ -37,6 +38,7 @@ export function CreateAgent() {
   const [subject, setSubject] = useState(SUBJECTS[0])
   const [prompt, setPrompt] = useState('')
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([])
+  const [selectedSubagentIds, setSelectedSubagentIds] = useState<string[]>([])
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
 
@@ -53,14 +55,16 @@ export function CreateAgent() {
     setPrompt(draft?.system_prompt ?? released?.system_prompt ?? '')
     const refs = draft?.skill_refs ?? released?.skill_refs ?? []
     setSelectedSkillIds(refs.map(one => one.skill_id))
+    const subagentRefs = draft?.subagent_refs ?? released?.subagent_refs ?? []
+    setSelectedSubagentIds(subagentRefs.map(one => one.agent_id))
     setLoaded(true)
   }, [existing.data, loaded])
 
   const save = useMutation({
     async mutationFn() {
-      if (!agentId) return createAgent({ name, description, subject, system_prompt: prompt, skills: selectedSkillIds })
+      if (!agentId) return createAgent({ name, description, subject, system_prompt: prompt, skills: selectedSkillIds, subagents: selectedSubagentIds })
       await updateAgent(agentId, { name, description, subject })
-      return writeDraft(agentId, prompt, selectedSkillIds)
+      return writeDraft(agentId, prompt, selectedSkillIds, selectedSubagentIds)
     },
     async onSuccess() {
       await queryClient.invalidateQueries({ queryKey: agentKeys.all })
@@ -146,6 +150,31 @@ export function CreateAgent() {
                     <span style={{ minWidth: 0 }}>
                       <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{skill.name} · v{skill.version}</span>
                       <span style={{ display: 'block', marginTop: 3, fontSize: 12, color: 'var(--text-muted)' }}>{skill.owner_name} · {skill.subject || '未分类'} · {skill.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </Field>
+          </div>
+
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 24 }}>
+            <Field label="自带子智能体" hint="发布版本时会冻结所选子智能体的当前版本；子智能体不能再挂载子智能体">
+              {availableSubagents.isPending && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>正在加载可用子智能体…</div>}
+              {availableSubagents.isError && <div role="alert" style={{ fontSize: 13, color: '#DC2626' }}>{errorMessage(availableSubagents.error)}</div>}
+              {!availableSubagents.isPending && (availableSubagents.data ?? []).length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>当前没有可用子智能体。</div>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {(availableSubagents.data ?? []).map(agent => (
+                  <label key={agent.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid var(--border)', borderRadius: 7, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      aria-label={agent.name}
+                      checked={selectedSubagentIds.includes(agent.id)}
+                      onChange={event => setSelectedSubagentIds(current => event.target.checked ? [...current, agent.id] : current.filter(one => one !== agent.id))}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{agent.name} · v{agent.version}</span>
+                      <span style={{ display: 'block', marginTop: 3, fontSize: 12, color: 'var(--text-muted)' }}>{agent.owner_name} · {agent.subject || '未分类'} · {agent.description}</span>
                     </span>
                   </label>
                 ))}

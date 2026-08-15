@@ -5,6 +5,7 @@ export const agentKeys = {
   all: ['agents'] as const,
   catalog: () => ['agents', 'catalog'] as const,
   available: () => ['agents', 'available'] as const,
+  subagentCandidates: () => ['agents', 'subagent-candidates'] as const,
   mine: () => ['agents', 'mine'] as const,
   detail: (agentId: string) => ['agents', 'mine', agentId] as const,
 }
@@ -17,6 +18,11 @@ export function listCatalog(): Promise<AgentListing[]> {
 /** 我此刻能引用的：我自己的 ∪ 共享给我所在组的 ∪ 平台目录。 */
 export function listAvailable(): Promise<AgentListing[]> {
   return request('/api/agents/available')
+}
+
+/** 能作为子智能体的候选：已发布、当前可见且自身没有再挂子智能体。 */
+export function listSubagentCandidates(): Promise<AgentListing[]> {
+  return request('/api/agents/subagent-candidates')
 }
 
 /** 我的全部，**含删掉的那些**（由 `is_deleted` 标出）。 */
@@ -34,6 +40,7 @@ export function createAgent(body: {
   subject: string
   system_prompt: string
   skills?: string[]
+  subagents?: string[]
 }): Promise<MyAgent> {
   return request('/api/agents', { method: 'POST', json: body })
 }
@@ -46,10 +53,15 @@ export function updateAgent(
 }
 
 /** 改草稿。已经定稿的话，这一下会追加下一个版本号的新草稿。 */
-export function writeDraft(agentId: string, systemPrompt: string, skills: string[] = []): Promise<MyAgent> {
+export function writeDraft(
+  agentId: string,
+  systemPrompt: string,
+  skills: string[] = [],
+  subagents: string[] = [],
+): Promise<MyAgent> {
   return request(`/api/agents/${encodeURIComponent(agentId)}/draft`, {
     method: 'PUT',
-    json: { system_prompt: systemPrompt, skills },
+    json: { system_prompt: systemPrompt, skills, subagents },
   })
 }
 

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { agentKeys, listAvailable as listAvailableAgents } from '../../api/agents'
+import { agentKeys, listAvailable as listAvailableAgents, listSubagentCandidates } from '../../api/agents'
 import { errorMessage } from '../../api/request'
 import { listAvailable as listAvailableSkills, skillKeys } from '../../api/skills'
 import type { AgentConfig, SkillReference } from '../../api/types'
@@ -33,17 +33,29 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
   const [prompt, setPrompt] = useState('')
   const [agentId, setAgentId] = useState(initialAgentId ?? '')
   const [skillIds, setSkillIds] = useState<string[]>([])
+  const [subagentIds, setSubagentIds] = useState<string[]>([])
   const [configError, setConfigError] = useState('')
   const [isSending, setIsSending] = useState(false)
 
   // 只在配置面板真的展开时拉目录 —— 大多数提问不碰配置。
   const agents = useQuery({ queryKey: agentKeys.available(), queryFn: listAvailableAgents, enabled: configOpen })
   const skills = useQuery({ queryKey: skillKeys.available(), queryFn: listAvailableSkills, enabled: configOpen })
+  const subagents = useQuery({ queryKey: agentKeys.subagentCandidates(), queryFn: listSubagentCandidates, enabled: configOpen })
   const selectedAgent = (agents.data ?? []).find(one => one.id === agentId)
   const selectedSkills = (skills.data ?? []).filter(one => skillIds.includes(one.id))
-  const mounted = mergedSkillNames(selectedAgent?.skill_refs ?? [], selectedSkills)
+  const selectedSubagents = (subagents.data ?? []).filter(one => subagentIds.includes(one.id))
+  const mountedSkills = mergedSkillNames(selectedAgent?.skill_refs ?? [], selectedSkills)
+  const mountedSubagents = mergedSubagentNames(selectedAgent?.subagent_refs ?? [], selectedSubagents)
   const duplicateName = duplicateSkillName(selectedAgent?.skill_refs ?? [], selectedSkills)
-  const tooMany = mounted.length > 10
+  const duplicateSubagent = duplicateSubagentName(selectedAgent?.subagent_refs ?? [], selectedSubagents)
+  const tooMany = mountedSkills.length > 10
+  const tooManySubagents = mountedSubagents.length > 5
+
+  const toggleSubagent = (subagentId: string, checked: boolean) => {
+    setSubagentIds(current => checked ? [...current, subagentId] : current.filter(one => one !== subagentId))
+    if (checked && mode === 'inherit') setMode('default')
+    setConfigError('')
+  }
 
   const toggleSkill = (skillId: string, checked: boolean) => {
     setSkillIds(current => checked ? [...current, skillId] : current.filter(one => one !== skillId))
@@ -55,15 +67,15 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
     const content = text.trim()
     if (!content || disabled || isRunning || isSending || !onSend) return
     const error = mode === 'custom' ? systemPromptError(prompt) : mode === 'agent' ? agentChoiceError(agentId) : null
-    if (error || duplicateName || tooMany) {
-      setConfigError(error ?? (duplicateName ? `Skill 名称冲突：${duplicateName}` : '一次最多挂载 10 个 Skill'))
+    if (error || duplicateName || tooMany || duplicateSubagent || tooManySubagents) {
+      setConfigError(error ?? (duplicateName ? `Skill 名称冲突：${duplicateName}` : duplicateSubagent ? `子智能体名称冲突：${duplicateSubagent}` : tooManySubagents ? '一次最多挂载 5 个子智能体' : '一次最多挂载 10 个 Skill'))
       setConfigOpen(true)
       return
     }
     setConfigError('')
     setIsSending(true)
     try {
-      await onSend(content, buildRunAgentConfig(mode, prompt, agentId, skillIds))
+      await onSend(content, buildRunAgentConfig(mode, prompt, agentId, skillIds, subagentIds))
       setText('')
     } catch {
       // mutation 状态负责显示错误；保留输入供用户修改或重试。
@@ -76,7 +88,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
     <div style={{ padding: '12px 24px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg)', flexShrink: 0 }}>
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px 12px', boxShadow: '0 2px 8px rgba(11,46,92,0.06)' }}>
         <button type="button" aria-expanded={configOpen} onClick={() => setConfigOpen(open => !open)} style={{ border: 'none', background: 'transparent', color: 'var(--action)', fontSize: 12, padding: '2px 0 8px', cursor: 'pointer', fontFamily: 'inherit' }}>
-          {configOpen ? '▾' : '▸'} 本轮智能体配置 · {AGENT_CONFIG_MODE_LABEL[mode]}{skillIds.length ? ` · ${skillIds.length} 个 Skill` : ''}
+          {configOpen ? '▾' : '▸'} 本轮智能体配置 · {AGENT_CONFIG_MODE_LABEL[mode]}{skillIds.length ? ` · ${skillIds.length} 个 Skill` : ''}{subagentIds.length ? ` · ${subagentIds.length} 个子智能体` : ''}
         </button>
         {configOpen && <div style={{ padding: '10px 12px', marginBottom: 10, border: '1px solid var(--action-border)', borderRadius: 7, background: 'var(--action-light)' }}>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: mode === 'inherit' ? 0 : 10 }}>
@@ -119,7 +131,20 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
                 <span><strong>{one.name}</strong><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{one.owner_name} · v{one.version}</span></span>
               </label>)}
             </div>
-            {mounted.length > 0 && <div style={{ ...hintStyle, marginTop: 8 }}>最终挂载：{mounted.join('、')}</div>}
+            {mountedSkills.length > 0 && <div style={{ ...hintStyle, marginTop: 8 }}>最终挂载：{mountedSkills.join('、')}</div>}
+          </div>
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--action-border)' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 7 }}>本轮子智能体（可多选）</div>
+            {subagents.isPending && <div style={hintStyle}>正在加载可用的子智能体…</div>}
+            {subagents.isError && <div role="alert" style={{ ...hintStyle, color: '#DC2626' }}>{errorMessage(subagents.error)}</div>}
+            {!subagents.isPending && !subagents.isError && (subagents.data ?? []).length === 0 && <div style={hintStyle}>还没有可挂载的子智能体。</div>}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
+              {(subagents.data ?? []).map(one => <label key={one.id} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, color: 'var(--text-secondary)' }}>
+                <input type="checkbox" aria-label={one.name} checked={subagentIds.includes(one.id)} onChange={event => toggleSubagent(one.id, event.target.checked)} />
+                <span><strong>{one.name}</strong><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{one.owner_name} · v{one.version}</span></span>
+              </label>)}
+            </div>
+            {mountedSubagents.length > 0 && <div style={{ ...hintStyle, marginTop: 8 }}>最终挂载：{mountedSubagents.join('、')}</div>}
           </div>
           {configError && <div role="alert" style={{ marginTop: 6, fontSize: 11, color: '#DC2626' }}>{configError}</div>}
         </div>}
@@ -138,6 +163,27 @@ function mergedSkillNames(agentRefs: readonly SkillReference[], selected: readon
     ...selected.map(one => ({ key: `${one.id}:${one.version}:${one.name}`, name: one.name })),
   ]
   return [...new Map(refs.map(one => [one.key, one.name])).values()]
+}
+
+function mergedSubagentNames(agentRefs: readonly { agent_id: string; version: number; name: string }[], selected: readonly { id: string; version: number; name: string }[]): string[] {
+  const refs = [
+    ...agentRefs.map(one => ({ key: `${one.agent_id}:${one.version}:${one.name}`, name: one.name })),
+    ...selected.map(one => ({ key: `${one.id}:${one.version}:${one.name}`, name: one.name })),
+  ]
+  return [...new Map(refs.map(one => [one.key, one.name])).values()]
+}
+
+function duplicateSubagentName(agentRefs: readonly { agent_id: string; version: number; name: string }[], selected: readonly { id: string; version: number; name: string }[]): string | null {
+  const seen = new Map<string, string>()
+  for (const one of [
+    ...agentRefs.map(ref => ({ key: `${ref.agent_id}:${ref.version}:${ref.name}`, name: ref.name })),
+    ...selected.map(agent => ({ key: `${agent.id}:${agent.version}:${agent.name}`, name: agent.name })),
+  ]) {
+    const existing = seen.get(one.name)
+    if (existing && existing !== one.key) return one.name
+    seen.set(one.name, one.key)
+  }
+  return null
 }
 
 function duplicateSkillName(agentRefs: readonly SkillReference[], selected: readonly { id: string; version: number; name: string }[]): string | null {

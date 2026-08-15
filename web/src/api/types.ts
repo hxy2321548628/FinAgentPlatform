@@ -18,12 +18,20 @@ export interface SkillReference {
   name: string
 }
 
+export interface SubagentReference {
+  agent_id: string
+  version: number
+  name: string
+}
+
 export interface AgentConfig {
   system_prompt?: string | null
   agent_id?: string | null
   agent_version?: number | null
   /** 请求时是 Skill ID，响应与历史快照里是冻结三元组。 */
   skills?: string[] | SkillReference[] | null
+  /** 请求时是 Agent ID，响应与历史快照里是冻结三元组。 */
+  subagents?: string[] | SubagentReference[] | null
 }
 
 export type Visibility = 'private' | 'group'
@@ -41,6 +49,7 @@ export interface AgentVersion {
   status: VersionStatus
   system_prompt: string
   skill_refs?: SkillReference[] | null
+  subagent_refs?: SubagentReference[] | null
   created_at: string
   released_at: string | null
   review_id: string | null
@@ -77,6 +86,7 @@ export interface AgentListing {
   version: number
   system_prompt: string
   skill_refs?: SkillReference[] | null
+  subagent_refs?: SubagentReference[] | null
   source: AgentSource
   updated_at: string
 }

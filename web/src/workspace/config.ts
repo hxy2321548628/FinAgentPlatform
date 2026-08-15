@@ -42,18 +42,22 @@ export function buildRunAgentConfig(
   prompt: string,
   agentId = '',
   skillIds: string[] = [],
+  subagentIds: string[] = [],
 ): AgentConfig | undefined {
-  const skills = skillIds.length > 0 ? skillIds : undefined
-  if (mode === 'inherit') return skills ? { skills } : undefined
-  if (mode === 'default') return skills ? { skills } : {}
+  const additions: AgentConfig = {}
+  if (skillIds.length > 0) additions.skills = skillIds
+  if (subagentIds.length > 0) additions.subagents = subagentIds
+  const hasAdditions = Object.keys(additions).length > 0
+  if (mode === 'inherit') return hasAdditions ? additions : undefined
+  if (mode === 'default') return additions
   if (mode === 'agent') {
     const error = agentChoiceError(agentId)
     if (error) throw new Error(error)
-    return skills ? { agent_id: agentId, skills } : { agent_id: agentId }
+    return { agent_id: agentId, ...additions }
   }
   const error = systemPromptError(prompt)
   if (error) throw new Error(error)
-  return skills ? { system_prompt: prompt, skills } : { system_prompt: prompt }
+  return { system_prompt: prompt, ...additions }
 }
 
 /**

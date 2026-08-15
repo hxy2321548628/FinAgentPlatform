@@ -4,11 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentListing } from '../../api/types'
 import { ChatInput } from './ChatInput'
 
-const mocks = vi.hoisted(() => ({ available: [] as AgentListing[], skills: [] as import('../../api/types').SkillListing[] }))
+const mocks = vi.hoisted(() => ({ available: [] as AgentListing[], subagents: [] as AgentListing[], skills: [] as import('../../api/types').SkillListing[] }))
 
 vi.mock('../../api/agents', async importOriginal => ({
   ...(await importOriginal<typeof import('../../api/agents')>()),
   listAvailable: () => Promise.resolve(mocks.available),
+  listSubagentCandidates: () => Promise.resolve(mocks.subagents),
 }))
 
 vi.mock('../../api/skills', async importOriginal => ({
@@ -18,6 +19,7 @@ vi.mock('../../api/skills', async importOriginal => ({
 
 afterEach(() => {
   mocks.available = []
+  mocks.subagents = []
   mocks.skills = []
   cleanup()
 })
@@ -144,6 +146,33 @@ describe('ChatInput Skills', () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('算个波动率', {
       agent_id: 'agent-1',
       skills: ['skill-turn'],
+    }))
+  })
+})
+
+
+describe('ChatInput 子智能体', () => {
+  it('展示主智能体自带与本轮选择的并集，并只提交本轮子智能体 ID', async () => {
+    mocks.available = [listing({
+      subagent_refs: [{ agent_id: 'child-bundled', version: 2, name: '内置波动率助手' }],
+    })]
+    mocks.subagents = [listing({ id: 'child-turn', name: '本轮收益率助手', version: 3 })]
+    const onSend = vi.fn(async () => {})
+    mount({ onSend })
+
+    fireEvent.click(screen.getByRole('button', { name: /本轮智能体配置/ }))
+    fireEvent.click(screen.getByLabelText('选一个智能体'))
+    await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
+    fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
+    fireEvent.click(await screen.findByRole('checkbox', { name: /本轮收益率助手/ }))
+
+    expect(screen.getByText(/最终挂载：内置波动率助手、本轮收益率助手/)).toBeTruthy()
+    fireEvent.change(input(), { target: { value: '比较两种波动率' } })
+    fireEvent.click(screen.getByTitle('发送'))
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('比较两种波动率', {
+      agent_id: 'agent-1',
+      subagents: ['child-turn'],
     }))
   })
 })

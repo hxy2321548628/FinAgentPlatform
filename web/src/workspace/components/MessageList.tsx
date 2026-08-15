@@ -12,6 +12,10 @@ interface MessageListProps {
   onApprove?: (decisions: Decision[]) => Promise<void>
 }
 
+type RenderEntry =
+  | { kind: 'item'; item: RunViewItem; index: number }
+  | { kind: 'subagent'; path: string[]; items: Array<{ item: RunViewItem; index: number }> }
+
 const DECISION_TYPES = ['approve', 'reject', 'edit', 'respond'] as const
 
 function jsonArgs(args: Record<string, unknown>): string {
@@ -22,19 +26,72 @@ function pathLabel(path: string[]): string {
   return path.length > 0 ? path.join(' / ') : 'FinAgent'
 }
 
-function ToolView({ item }: { item: Extract<RunViewItem, { kind: 'tool' }> }) {
+function samePath(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((part, index) => part === right[index])
+}
+
+function groupNestedItems(items: RunViewItem[]): RenderEntry[] {
+  const entries: RenderEntry[] = []
+  items.forEach((item, index) => {
+    if (item.path.length === 0) {
+      entries.push({ kind: 'item', item, index })
+      return
+    }
+    const previous = entries.at(-1)
+    if (previous?.kind === 'subagent' && samePath(previous.path, item.path)) {
+      previous.items.push({ item, index })
+      return
+    }
+    entries.push({ kind: 'subagent', path: item.path, items: [{ item, index }] })
+  })
+  return entries
+}
+
+function ToolView({ item, nested = false }: { item: Extract<RunViewItem, { kind: 'tool' }>; nested?: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const color = item.status === 'error' ? '#DC2626' : item.status === 'running' ? 'var(--action)' : 'var(--status-done)'
-  return <div style={{ marginLeft: 44, border: '1px solid var(--border-light)', borderRadius: 7, background: 'var(--surface)', overflow: 'hidden' }}>
+  return <div style={{ marginLeft: nested ? 0 : 44, border: '1px solid var(--border-light)', borderRadius: 7, background: 'var(--surface)', overflow: 'hidden' }}>
     <button type="button" onClick={() => setExpanded(value => !value)} style={{ width: '100%', padding: '8px 12px', border: 'none', background: 'transparent', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--text-secondary)' }}>
       <span style={{ color, fontWeight: 700 }}>{item.status === 'running' ? '◉' : item.status === 'success' ? '✓' : '✗'}</span>
       <strong>{item.name}</strong>
-      <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>{pathLabel(item.path)} · {expanded ? '收起' : '详情'}</span>
+      <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>{nested ? '' : `${pathLabel(item.path)} · `}{expanded ? '收起' : '详情'}</span>
     </button>
     {expanded && <pre style={{ margin: 0, padding: '10px 12px', borderTop: '1px solid var(--border-light)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 11, color: 'var(--text-secondary)', background: 'var(--bg)' }}>
       {jsonArgs(item.args)}{item.content === undefined ? '' : `\n\n${item.content}`}
     </pre>}
   </div>
+}
+
+function ItemView({ item, index, nested = false }: { item: RunViewItem; index: number; nested?: boolean }) {
+  if (item.kind === 'tool') return <ToolView key={`tool-${item.id}-${index}`} item={item} nested={nested} />
+  if (item.kind === 'notice') return <div key={`notice-${index}`} style={{ marginLeft: nested ? 0 : 44, padding: '8px 12px', borderRadius: 6, background: item.tone === 'error' ? '#FEF2F2' : item.tone === 'warning' ? '#FFFBEB' : 'var(--action-light)', color: item.tone === 'error' ? '#DC2626' : item.tone === 'warning' ? '#92400E' : 'var(--action)', fontSize: 12 }}>{item.message}</div>
+  if (item.kind === 'reasoning') {
+    if (nested) return <div key={`reasoning-${index}`} style={{ padding: '8px 12px', borderLeft: '2px solid var(--action-border)', background: 'var(--action-light)', color: 'var(--text-secondary)', fontSize: 12 }}>
+      <div style={{ color: 'var(--action)', marginBottom: 6 }}>分析思路</div>
+      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{item.text}</div>
+    </div>
+    return <details key={`reasoning-${index}`} open style={{ marginLeft: 44, padding: '8px 12px', borderLeft: '2px solid var(--action-border)', background: 'var(--action-light)', color: 'var(--text-secondary)', fontSize: 12 }}>
+      <summary style={{ cursor: 'pointer', color: 'var(--action)', marginBottom: 6 }}>{pathLabel(item.path)} · 分析思路</summary>
+      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{item.text}</div>
+    </details>
+  }
+  if (nested) return <div key={`answer-${index}`} style={{ padding: '10px 12px', border: '1px solid var(--border-light)', borderRadius: 7, background: 'var(--surface)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.7, fontSize: 13 }}>{item.text}</div>
+  return <div key={`answer-${index}`} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+    <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--brand)', color: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0, fontWeight: 700 }}>F</div>
+    <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 5 }}>{pathLabel(item.path)}</div><div style={{ padding: '14px 18px', border: '1px solid var(--border)', borderRadius: '2px 12px 12px 12px', background: 'var(--surface)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.75, fontSize: 14 }}>{item.text}</div></div>
+  </div>
+}
+
+function SubagentGroup({ path, items }: Extract<RenderEntry, { kind: 'subagent' }>) {
+  const name = path[path.length - 1]
+  return <details data-subagent={name} style={{ marginLeft: 44, border: '1px solid var(--action-border)', borderRadius: 8, background: 'var(--action-light)', overflow: 'hidden' }}>
+    <summary style={{ padding: '10px 12px', cursor: 'pointer', color: 'var(--action)', fontSize: 13 }}>
+      <strong>{name}</strong><span style={{ marginLeft: 8, color: 'var(--text-muted)', fontSize: 11 }}>{items.length} 条过程</span>
+    </summary>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 12px 12px' }}>
+      {items.map(one => <ItemView key={`${one.item.kind}-${one.index}`} item={one.item} index={one.index} nested />)}
+    </div>
+  </details>
 }
 
 function ApprovalBatch({ actions, onApprove }: { actions: InterruptAction[]; onApprove: (decisions: Decision[]) => Promise<void> }) {
@@ -88,19 +145,11 @@ function ApprovalBatch({ actions, onApprove }: { actions: InterruptAction[]; onA
 }
 
 export function MessageList({ items, pendingActions, onApprove }: MessageListProps) {
+  const entries = groupNestedItems(items)
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-    {items.map((item, index) => {
-      if (item.kind === 'tool') return <ToolView key={`tool-${item.id}-${index}`} item={item} />
-      if (item.kind === 'notice') return <div key={`notice-${index}`} style={{ marginLeft: 44, padding: '8px 12px', borderRadius: 6, background: item.tone === 'error' ? '#FEF2F2' : item.tone === 'warning' ? '#FFFBEB' : 'var(--action-light)', color: item.tone === 'error' ? '#DC2626' : item.tone === 'warning' ? '#92400E' : 'var(--action)', fontSize: 12 }}>{item.message}</div>
-      if (item.kind === 'reasoning') return <details key={`reasoning-${index}`} open style={{ marginLeft: 44, padding: '8px 12px', borderLeft: '2px solid var(--action-border)', background: 'var(--action-light)', color: 'var(--text-secondary)', fontSize: 12 }}>
-        <summary style={{ cursor: 'pointer', color: 'var(--action)', marginBottom: 6 }}>{pathLabel(item.path)} · 分析思路</summary>
-        <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{item.text}</div>
-      </details>
-      return <div key={`answer-${index}`} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-        <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--brand)', color: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0, fontWeight: 700 }}>F</div>
-        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 5 }}>{pathLabel(item.path)}</div><div style={{ padding: '14px 18px', border: '1px solid var(--border)', borderRadius: '2px 12px 12px 12px', background: 'var(--surface)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.75, fontSize: 14 }}>{item.text}</div></div>
-      </div>
-    })}
+    {entries.map((entry, index) => entry.kind === 'subagent'
+      ? <SubagentGroup key={`subagent-${entry.path.join('/')}-${index}`} {...entry} />
+      : <ItemView key={`item-${entry.index}`} item={entry.item} index={entry.index} />)}
     {pendingActions && pendingActions.length > 0 && onApprove && <ApprovalBatch actions={pendingActions} onApprove={onApprove} />}
   </div>
 }
