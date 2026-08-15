@@ -52,11 +52,13 @@ function RunTurn({ run, threadId, autoReplay, onContentChange }: { run: RunHisto
   // **引用要说清是谁的哪一版**：只说「使用了一个智能体」的话，作者发了新版本之后，
   // 历史那几轮到底按哪一版跑的就再也说不清了
   const configuration = describeAgentConfig(run.agent_config)
-  const configurationLabel = run.agent_config?.agent_id
-    ? configuration
+  const roleLabel = run.agent_config?.agent_id
+    ? configuration.split('\n', 1)[0]
     : configuration === '平台默认配置'
       ? configuration
       : '自定义提示词'
+  const skillCount = run.agent_config?.skills?.length ?? 0
+  const configurationLabel = skillCount > 0 ? `${roleLabel} · ${skillCount} 个 Skill` : roleLabel
 
   useLayoutEffect(() => {
     onContentChange()

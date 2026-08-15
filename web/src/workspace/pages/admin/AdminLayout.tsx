@@ -33,11 +33,10 @@ const ADMIN_GROUPS = [
 export function AdminLayout() {
   const navigate = useNavigate()
   const current = useQuery({ queryKey: AUTH_QUERY_KEY, queryFn: () => me() })
-  // **reviewer 只看得到审核那一条。** 列出它打不开的入口，点进去只会被弹回工作台 ——
-  // 那种「看得见却进不去」比没有入口更让人以为是坏了
+  // reviewer 只看得到 Agent 与 Skill 两个审核入口；其余后台功能仍只属于 admin。
   const reviewerOnly = current.data?.role === 'reviewer'
   const visible = reviewerOnly
-    ? ADMIN_GROUPS.map(group => ({ ...group, links: group.links.filter(link => link.to === '/admin/agents') })).filter(
+    ? ADMIN_GROUPS.map(group => ({ ...group, links: group.links.filter(link => ['/admin/agents', '/admin/skills'].includes(link.to)) })).filter(
         group => group.links.length > 0,
       )
     : ADMIN_GROUPS

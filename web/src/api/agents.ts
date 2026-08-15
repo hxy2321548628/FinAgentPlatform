@@ -33,6 +33,7 @@ export function createAgent(body: {
   description: string
   subject: string
   system_prompt: string
+  skills?: string[]
 }): Promise<MyAgent> {
   return request('/api/agents', { method: 'POST', json: body })
 }
@@ -45,10 +46,10 @@ export function updateAgent(
 }
 
 /** 改草稿。已经定稿的话，这一下会追加下一个版本号的新草稿。 */
-export function writeDraft(agentId: string, systemPrompt: string): Promise<MyAgent> {
+export function writeDraft(agentId: string, systemPrompt: string, skills: string[] = []): Promise<MyAgent> {
   return request(`/api/agents/${encodeURIComponent(agentId)}/draft`, {
     method: 'PUT',
-    json: { system_prompt: systemPrompt },
+    json: { system_prompt: systemPrompt, skills },
   })
 }
 

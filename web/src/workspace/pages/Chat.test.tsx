@@ -103,6 +103,21 @@ describe('Chat event replay selection', () => {
     expect(enabledFor('older')).toBe(true)
   })
 
+  it('shows the frozen Skill snapshot for each historical run', () => {
+    const withSkill = run('with-skill', 'succeeded')
+    withSkill.agent_config = {
+      agent_id: 'agent-1',
+      agent_version: 2,
+      skills: [{ skill_id: 'skill-1', version: 1, name: 'annualized-252' }],
+    }
+    mocks.runs = [withSkill]
+
+    render(<Chat />)
+
+    expect(screen.getByText(/本轮配置：智能体：agent-1 · v2 · 1 个 Skill/)).toBeTruthy()
+    expect(screen.getByText(/annualized-252 · v1/)).toBeTruthy()
+  })
+
   it('prioritizes the live run for the sole automatic subscription', () => {
     mocks.runs = [run('newest-terminal', 'succeeded'), run('live', 'running'), run('older', 'succeeded')]
 

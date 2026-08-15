@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { agentKeys, createAgent, getMine, updateAgent, writeDraft } from '../../api/agents'
 import { errorMessage } from '../../api/request'
+import { listAvailable as listAvailableSkills, skillKeys } from '../../api/skills'
 import { MAX_SYSTEM_PROMPT_LENGTH, systemPromptError } from '../config'
 
 const MAX_NAME_LENGTH = 32
@@ -12,8 +13,7 @@ const SUBJECTS = ['公司金融', '量化投资', '资产管理', '风险管理'
 /**
  * 建一个智能体，或改一个已有的。
  *
- * **本期 agent 的内容只有提示词一项** —— 没有「系统提示词 / 独立部署」的类型二选一，
- * skill、子智能体、MCP 由 P8–P10 接。
+ * Agent 的内容由系统提示词与可选 Skill 引用组成；子智能体与 MCP 留给后续阶段。
  *
  * **改内容与改元信息是两条路**：改名不产生新版本，改提示词会（已经定稿的话，
  * 这一下追加下一个版本号的新草稿）。两者分开写在这里，因为它们打的是两个端点。
@@ -23,6 +23,8 @@ export function CreateAgent() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const editing = Boolean(agentId)
+
+  const availableSkills = useQuery({ queryKey: skillKeys.available(), queryFn: listAvailableSkills })
 
   const existing = useQuery({
     queryKey: agentKeys.detail(agentId ?? ''),
@@ -34,6 +36,7 @@ export function CreateAgent() {
   const [description, setDescription] = useState('')
   const [subject, setSubject] = useState(SUBJECTS[0])
   const [prompt, setPrompt] = useState('')
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([])
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
 
@@ -48,14 +51,16 @@ export function CreateAgent() {
     const draft = agent.versions.find(one => one.status === 'draft')
     const released = [...agent.versions].reverse().find(one => one.status === 'released')
     setPrompt(draft?.system_prompt ?? released?.system_prompt ?? '')
+    const refs = draft?.skill_refs ?? released?.skill_refs ?? []
+    setSelectedSkillIds(refs.map(one => one.skill_id))
     setLoaded(true)
   }, [existing.data, loaded])
 
   const save = useMutation({
     async mutationFn() {
-      if (!agentId) return createAgent({ name, description, subject, system_prompt: prompt })
+      if (!agentId) return createAgent({ name, description, subject, system_prompt: prompt, skills: selectedSkillIds })
       await updateAgent(agentId, { name, description, subject })
-      return writeDraft(agentId, prompt)
+      return writeDraft(agentId, prompt, selectedSkillIds)
     },
     async onSuccess() {
       await queryClient.invalidateQueries({ queryKey: agentKeys.all })
@@ -122,6 +127,30 @@ export function CreateAgent() {
               />
             </Field>
             <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--text-muted)' }}>{prompt.length} / {MAX_SYSTEM_PROMPT_LENGTH}</div>
+          </div>
+
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 24 }}>
+            <Field label="自带 Skills" hint="发布版本时会冻结所选 Skill 的当前版本；运行时还可以再临时追加">
+              {availableSkills.isPending && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>正在加载可用 Skills…</div>}
+              {availableSkills.isError && <div role="alert" style={{ fontSize: 13, color: '#DC2626' }}>{errorMessage(availableSkills.error)}</div>}
+              {!availableSkills.isPending && (availableSkills.data ?? []).length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>当前没有可用 Skill。</div>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {(availableSkills.data ?? []).map(skill => (
+                  <label key={skill.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid var(--border)', borderRadius: 7, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedSkillIds.includes(skill.id)}
+                      onChange={event => setSelectedSkillIds(current => event.target.checked ? [...current, skill.id] : current.filter(one => one !== skill.id))}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{skill.name} · v{skill.version}</span>
+                      <span style={{ display: 'block', marginTop: 3, fontSize: 12, color: 'var(--text-muted)' }}>{skill.owner_name} · {skill.subject || '未分类'} · {skill.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </Field>
           </div>
 
           {(error || save.isError) && (

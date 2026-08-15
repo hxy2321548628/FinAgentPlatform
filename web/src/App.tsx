@@ -25,12 +25,12 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
-        {/* **审核与管理是两道准入。** `reviewer` 只进得来 /admin/agents 一页，
-            账号与配额那几页仍然只有 admin 打得开 —— 让它顺手多拿一样，
-            这个角色就退化成 admin 的别名 */}
+        {/* **审核与管理是两道准入。** `reviewer` 只进得来 Agent 与 Skill 两个审核页，
+            账号与配额等管理页仍然只有 admin 打得开。 */}
         <Route element={<ReviewerGuard />}>
           <Route path="/admin" element={<AdminLayout />}>
             <Route path="agents" element={<AdminAgents />} />
+            <Route path="skills" element={<AdminSkills />} />
           </Route>
         </Route>
         <Route element={<AdminGuard />}>
@@ -38,7 +38,6 @@ export default function App() {
             <Route index element={<AdminUsers />} />
             <Route path="users" element={<AdminUsers />} />
             <Route path="scenarios" element={<AdminScenarios />} />
-            <Route path="skills" element={<AdminSkills />} />
             <Route path="mcp" element={<AdminMcp />} />
             <Route path="usage" element={<AdminUsage />} />
             <Route path="system" element={<AdminSystem />} />

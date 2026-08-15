@@ -4,15 +4,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentListing } from '../../api/types'
 import { ChatInput } from './ChatInput'
 
-const mocks = vi.hoisted(() => ({ available: [] as AgentListing[] }))
+const mocks = vi.hoisted(() => ({ available: [] as AgentListing[], skills: [] as import('../../api/types').SkillListing[] }))
 
 vi.mock('../../api/agents', async importOriginal => ({
   ...(await importOriginal<typeof import('../../api/agents')>()),
   listAvailable: () => Promise.resolve(mocks.available),
 }))
 
+vi.mock('../../api/skills', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../api/skills')>()),
+  listAvailable: () => Promise.resolve(mocks.skills),
+}))
+
 afterEach(() => {
   mocks.available = []
+  mocks.skills = []
   cleanup()
 })
 
@@ -110,5 +116,34 @@ describe('ChatInput', () => {
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('请先选一个智能体'))
     expect(onSend).not.toHaveBeenCalled()
+  })
+})
+
+describe('ChatInput Skills', () => {
+  it('提交多选 Skill，并展示 Agent 自带与本轮 Skill 的合并结果', async () => {
+    mocks.available = [listing({
+      skill_refs: [{ skill_id: 'skill-agent', version: 2, name: 'agent-skill' }],
+    })]
+    mocks.skills = [
+      { id: 'skill-agent', owner_id: 'u1', owner_name: '张老师', name: 'agent-skill', description: '自带', subject: '', visibility: 'group', call_count: 1, version: 2, file_count: 1, total_bytes: 10, source: 'group', updated_at: '2026-08-14T00:00:00Z' },
+      { id: 'skill-turn', owner_id: 'u2', owner_name: '李老师', name: 'turn-skill', description: '本轮', subject: '', visibility: 'group', call_count: 2, version: 1, file_count: 1, total_bytes: 10, source: 'group', updated_at: '2026-08-14T00:00:00Z' },
+    ]
+    const onSend = vi.fn(async () => {})
+    mount({ onSend })
+
+    fireEvent.click(screen.getByRole('button', { name: /本轮智能体配置/ }))
+    fireEvent.click(screen.getByLabelText('选一个智能体'))
+    await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
+    fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
+    fireEvent.click(screen.getByLabelText('turn-skill'))
+
+    expect(screen.getByText(/最终挂载：agent-skill、turn-skill/)).toBeTruthy()
+    fireEvent.change(input(), { target: { value: '算个波动率' } })
+    fireEvent.click(screen.getByTitle('发送'))
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('算个波动率', {
+      agent_id: 'agent-1',
+      skills: ['skill-turn'],
+    }))
   })
 })

@@ -3,12 +3,12 @@ import type { ReviewItem } from './types'
 
 export const reviewKeys = {
   all: ['reviews'] as const,
-  list: () => ['reviews', 'list'] as const,
+  list: (targetKind?: 'agent' | 'skill') => ['reviews', 'list', targetKind ?? 'all'] as const,
 }
 
 /** 审核队列：待审的在前，后面跟着最近处理过的那些。只有 reviewer 与 admin 打得开。 */
-export function listReviews(): Promise<ReviewItem[]> {
-  return request('/api/reviews')
+export function listReviews(targetKind?: 'agent' | 'skill'): Promise<ReviewItem[]> {
+  return request<ReviewItem[]>('/api/reviews').then(items => targetKind ? items.filter(one => one.target_kind === targetKind) : items)
 }
 
 /** 通过或拒绝。**拒绝必须带理由**，后端也校验。 */

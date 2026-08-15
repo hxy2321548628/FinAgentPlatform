@@ -19,7 +19,7 @@ export function AdminAgents() {
   const [reasons, setReasons] = useState<Record<string, string>>({})
   const [failed, setFailed] = useState<Record<string, string>>({})
 
-  const reviews = useQuery({ queryKey: reviewKeys.list(), queryFn: listReviews })
+  const reviews = useQuery({ queryKey: reviewKeys.list('agent'), queryFn: () => listReviews('agent') })
   const decide = useMutation({
     mutationFn: ({ id, approved, reason }: { id: string; approved: boolean; reason?: string }) =>
       decideReview(id, approved, reason),
@@ -70,7 +70,7 @@ export function AdminAgents() {
         {pending.map(item => (
           <article key={item.id} data-testid="review-row" style={rowStyle}>
             <Header item={item} />
-            <Prompt text={item.system_prompt} />
+            <Prompt text={item.system_prompt ?? ''} />
             <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 12 }}>
               <input
                 value={reasons[item.id] ?? ''}

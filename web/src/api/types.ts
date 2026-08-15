@@ -12,10 +12,18 @@ export interface Me {
  * 提交时只能给 `system_prompt` 与 `agent_id` 其中一个，同时给一律 422；
  * 回来的快照里两者都在 —— 引用在提交那一刻已经解析成了具体版本与那一版的原文。
  */
+export interface SkillReference {
+  skill_id: string
+  version: number
+  name: string
+}
+
 export interface AgentConfig {
   system_prompt?: string | null
   agent_id?: string | null
   agent_version?: number | null
+  /** 请求时是 Skill ID，响应与历史快照里是冻结三元组。 */
+  skills?: string[] | SkillReference[] | null
 }
 
 export type Visibility = 'private' | 'group'
@@ -32,6 +40,7 @@ export interface AgentVersion {
   version: number
   status: VersionStatus
   system_prompt: string
+  skill_refs?: SkillReference[] | null
   created_at: string
   released_at: string | null
   review_id: string | null
@@ -67,6 +76,7 @@ export interface AgentListing {
   call_count: number
   version: number
   system_prompt: string
+  skill_refs?: SkillReference[] | null
   source: AgentSource
   updated_at: string
 }
@@ -74,20 +84,71 @@ export interface AgentListing {
 /** 审核队列里的一条。 */
 export interface ReviewItem {
   id: string
-  target_kind: 'agent'
+  target_kind: 'agent' | 'skill'
   target_id: string
   status: ReviewStatus
   responsibility_confirmed: boolean
   reason: string | null
   created_at: string
   decided_at: string | null
-  agent_id: string
-  agent_name: string
   owner_name: string
   description: string
   subject: string
   version: number
-  system_prompt: string
+  agent_id: string | null
+  agent_name: string | null
+  system_prompt: string | null
+  skill_id: string | null
+  skill_name: string | null
+  file_count: number | null
+  total_bytes: number | null
+}
+
+export type SkillSource = 'owned' | 'group' | 'catalog'
+
+export interface SkillVersion {
+  id: string
+  version: number
+  status: VersionStatus
+  description: string
+  file_count: number
+  total_bytes: number
+  created_at: string
+  released_at: string | null
+  review_id: string | null
+  review_status: ReviewStatus | null
+  review_reason: string | null
+}
+
+export interface MySkill {
+  id: string
+  owner_name: string
+  name: string
+  subject: string
+  visibility: Visibility
+  call_count: number
+  is_deleted: boolean
+  in_catalog: boolean
+  group_ids: string[]
+  versions: SkillVersion[]
+  created_at: string
+  updated_at: string
+}
+
+export interface SkillListing {
+  id: string
+  owner_id: string
+  owner_name: string
+  name: string
+  description: string
+  subject: string
+  visibility: Visibility
+  call_count: number
+  version: number
+  file_count: number
+  total_bytes: number
+  source: SkillSource
+  updated_at: string
 }
 
 export interface ThreadSummary {

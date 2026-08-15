@@ -37,17 +37,23 @@ export function agentChoiceError(agentId: string): string | null {
  *   平台默认。**这两者不是同一件事**，合并的话「恢复平台默认」会静默变成「继承」。
  * @throws 模式要求的输入没填全。
  */
-export function buildRunAgentConfig(mode: AgentConfigMode, prompt: string, agentId = ''): AgentConfig | undefined {
-  if (mode === 'inherit') return undefined
-  if (mode === 'default') return {}
+export function buildRunAgentConfig(
+  mode: AgentConfigMode,
+  prompt: string,
+  agentId = '',
+  skillIds: string[] = [],
+): AgentConfig | undefined {
+  const skills = skillIds.length > 0 ? skillIds : undefined
+  if (mode === 'inherit') return skills ? { skills } : undefined
+  if (mode === 'default') return skills ? { skills } : {}
   if (mode === 'agent') {
     const error = agentChoiceError(agentId)
     if (error) throw new Error(error)
-    return { agent_id: agentId }
+    return skills ? { agent_id: agentId, skills } : { agent_id: agentId }
   }
   const error = systemPromptError(prompt)
   if (error) throw new Error(error)
-  return { system_prompt: prompt }
+  return skills ? { system_prompt: prompt, skills } : { system_prompt: prompt }
 }
 
 /**
@@ -60,10 +66,15 @@ export function describeAgentConfig(
   config: AgentConfig | null | undefined,
   available: readonly AgentListing[] = [],
 ): string {
+  let role: string
   if (config?.agent_id) {
     const found = available.find(one => one.id === config.agent_id)
     const version = config.agent_version ? ` · v${config.agent_version}` : ''
-    return `智能体：${found ? found.name : config.agent_id}${version}`
+    role = `智能体：${found ? found.name : config.agent_id}${version}`
+  } else {
+    role = config?.system_prompt ? config.system_prompt : '平台默认配置'
   }
-  return config?.system_prompt ? config.system_prompt : '平台默认配置'
+  const skills = config?.skills?.filter((one): one is import('../api/types').SkillReference => typeof one !== 'string') ?? []
+  return skills.length > 0 ? `${role}
+Skills：${skills.map(one => `${one.name} · v${one.version}`).join('、')}` : role
 }

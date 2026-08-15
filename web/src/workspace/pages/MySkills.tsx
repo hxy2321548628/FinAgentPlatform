@@ -1,89 +1,72 @@
 import { useRef, useState } from 'react'
-import { PublishDialog } from '../components/PublishDialog'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { groupKeys, listMyGroups } from '../../api/groups'
+import { errorMessage } from '../../api/request'
+import {
+  createSkill,
+  deleteSkill,
+  listMine,
+  releaseVersion,
+  setSharing,
+  skillKeys,
+  submitForReview,
+  updateSkill,
+  writeDraft,
+} from '../../api/skills'
+import type { MySkill, ReviewStatus, SkillVersion } from '../../api/types'
 
-type SkillStatus = 'created' | 'reviewing' | 'published'
+const SUBJECTS = ['公司金融', '量化投资', '资产管理', '风险管理', '学术科研', '会计审计', '其他']
+const TABS = ['draft', 'reviewing', 'published'] as const
+type SkillTab = (typeof TABS)[number]
 
-interface MySkill {
-  id: string
-  name: string
-  category: string
-  description: string
-  details: string
-  archiveName?: string
-  status: SkillStatus
-  calls?: number
-  submittedAt?: string
-  publishedAt?: string
-}
-
-const STATUS_LABEL: Record<SkillStatus, string> = {
-  created: '已创建',
+const TAB_LABEL: Record<SkillTab, string> = {
+  draft: '草稿',
   reviewing: '待审核',
   published: '已发布',
 }
 
-const STATUS_STYLE: Record<SkillStatus, { bg: string; color: string }> = {
-  created: { bg: '#EFF6FF', color: '#2563EB' },
-  reviewing: { bg: '#FFFBEB', color: 'var(--status-warn)' },
-  published: { bg: '#ECFDF5', color: 'var(--status-done)' },
+interface SkillState {
+  tab: SkillTab
+  draft: SkillVersion | null
+  released: SkillVersion | null
+  reviewStatus: ReviewStatus | null
+  rejectedReason: string | null
 }
 
-const MOCK_SKILLS: MySkill[] = [
-  { id: '1', name: '财务比率证据链', category: '金融分析', description: '计算关键财务比率，并保留公式、输入科目与结果证据。', details: '输入财务报表 CSV 或 XLSX，输出指标表与口径说明。', status: 'published', calls: 76, publishedAt: '2026-07-28' },
-  { id: '2', name: '回归结果稳健性检查', category: '科研分析', description: '按预设清单检查回归模型的稳健性与诊断结果。', details: '输入回归数据和模型结果，输出诊断清单。', status: 'reviewing', submittedAt: '2026-08-10 09:40' },
-  { id: '3', name: '行业数据字段标准化', category: '数据处理', description: '将不同来源的行业与公司字段统一为标准命名。', details: '输入 CSV 或 XLSX，输出标准化数据及字段映射。', status: 'created' },
-]
+function skillState(skill: MySkill): SkillState {
+  const draft = skill.versions.find(one => one.status === 'draft') ?? null
+  const released = [...skill.versions].reverse().find(one => one.status === 'released') ?? null
+  const reviewStatus = released?.review_status ?? null
+  return {
+    tab: reviewStatus === 'pending' || reviewStatus === 'rejected' ? 'reviewing' : released ? 'published' : 'draft',
+    draft,
+    released,
+    reviewStatus,
+    rejectedReason: reviewStatus === 'rejected' ? (released?.review_reason ?? null) : null,
+  }
+}
 
-const TABS: SkillStatus[] = ['created', 'reviewing', 'published']
-const EMPTY_FORM = { name: '', category: '', description: '', details: '', archiveName: '' }
+function validationReasons(error: unknown): string[] {
+  return error instanceof Error ? error.message.split('；').filter(Boolean) : ['上传失败，请稍后重试']
+}
 
 export function MySkills() {
-  const [activeTab, setActiveTab] = useState<SkillStatus>('created')
-  const [skills, setSkills] = useState(MOCK_SKILLS)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState(EMPTY_FORM)
-  const [showEditor, setShowEditor] = useState(false)
-  const [publishingId, setPublishingId] = useState<string | null>(null)
-  const archiveRef = useRef<HTMLInputElement>(null)
+  const queryClient = useQueryClient()
+  const [tab, setTab] = useState<SkillTab>('published')
+  const [editingId, setEditingId] = useState<string | null | undefined>(undefined)
+  const [sharingId, setSharingId] = useState<string | null>(null)
+  const [reviewingId, setReviewingId] = useState<string | null>(null)
 
-  const filtered = skills.filter(skill => skill.status === activeTab)
-  const formReady = Boolean(form.archiveName.trim())
+  const mine = useQuery({ queryKey: skillKeys.mine(), queryFn: listMine })
+  const skills = (mine.data ?? []).filter(one => !one.is_deleted)
+  const refresh = () => queryClient.invalidateQueries({ queryKey: skillKeys.all })
+  const release = useMutation({ mutationFn: releaseVersion, onSuccess: refresh })
+  const remove = useMutation({ mutationFn: deleteSkill, onSuccess: refresh })
 
-  const openCreate = () => {
-    setEditingId(null)
-    setForm(EMPTY_FORM)
-    setShowEditor(true)
-  }
-
-  const openEdit = (skill: MySkill) => {
-    setEditingId(skill.id)
-    setForm({ name: skill.name, category: skill.category, description: skill.description, details: skill.details, archiveName: skill.archiveName ?? `${skill.name}.zip` })
-    setShowEditor(true)
-  }
-
-  const saveSkill = (event: React.FormEvent) => {
-    event.preventDefault()
-    if (!formReady) return
-    if (editingId) {
-      setSkills(current => current.map(skill => skill.id === editingId ? { ...skill, ...form } : skill))
-    } else {
-      const fallbackName = form.archiveName.replace(/\.zip$/i, '')
-      setSkills(current => [{ id: String(Date.now()), name: form.name.trim() || fallbackName, category: form.category.trim() || '未分类', description: form.description.trim() || '从 ZIP 包读取 SKILL.md 后生成能力说明。', details: form.details.trim() || '等待服务端校验并解析 Skill 目录。', archiveName: form.archiveName, status: 'created' }, ...current])
-      setActiveTab('created')
-    }
-    setShowEditor(false)
-  }
-
-  const submitForReview = (id: string, name: string, description: string) => {
-    setSkills(current => current.map(skill => skill.id === id ? { ...skill, name, description, status: 'reviewing', submittedAt: '刚刚' } : skill))
-    setPublishingId(null)
-    setActiveTab('reviewing')
-  }
-
-  const takeOffline = (id: string) => {
-    setSkills(current => current.map(skill => skill.id === id ? { ...skill, status: 'created', publishedAt: undefined } : skill))
-    setActiveTab('created')
-  }
+  const shown = skills.filter(one => skillState(one).tab === tab)
+  const editingSkill = editingId ? skills.find(one => one.id === editingId) ?? null : null
+  const sharingSkill = skills.find(one => one.id === sharingId) ?? null
+  const reviewingSkill = skills.find(one => one.id === reviewingId) ?? null
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '32px 36px', background: 'var(--bg)' }}>
@@ -91,91 +74,179 @@ export function MySkills() {
         <div>
           <div style={eyebrowStyle}>// MY SKILLS</div>
           <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>我的 Skills</h1>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>管理你创建的 Skills，并申请发布到 Skills 库</p>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>上传后先形成草稿；发布版本后可组内共享，提审通过后进入平台目录</p>
         </div>
-        <button type="button" onClick={openCreate} style={primaryButtonStyle}>+ 创建 Skill</button>
+        <button type="button" onClick={() => setEditingId(null)} style={primaryButton}>+ 创建 Skill</button>
       </div>
 
+      {mine.isPending && <div style={{ color: 'var(--text-muted)' }}>正在加载…</div>}
+      {mine.isError && <div role="alert" style={errorStyle}>{errorMessage(mine.error)}</div>}
+
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
-        {TABS.map(tab => (
-          <button type="button" key={tab} onClick={() => setActiveTab(tab)} style={{ ...tabStyle, borderBottomColor: activeTab === tab ? 'var(--action)' : 'transparent', color: activeTab === tab ? 'var(--action)' : 'var(--text-muted)' }}>
-            {STATUS_LABEL[tab]}
-            <span style={countStyle}>{skills.filter(skill => skill.status === tab).length}</span>
+        {TABS.map(one => (
+          <button type="button" key={one} onClick={() => setTab(one)} style={{ ...tabStyle, borderBottomColor: tab === one ? 'var(--action)' : 'transparent', color: tab === one ? 'var(--action)' : 'var(--text-muted)' }}>
+            {TAB_LABEL[one]}
+            <span style={countStyle}>{skills.filter(skill => skillState(skill).tab === one).length}</span>
           </button>
         ))}
       </div>
 
-      {filtered.length === 0 ? (
+      {(release.isError || remove.isError) && <div role="alert" style={{ ...errorStyle, marginBottom: 16 }}>{errorMessage(release.error ?? remove.error)}</div>}
+
+      {!mine.isPending && shown.length === 0 ? (
         <div style={emptyStyle}>
-          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 12 }}>该状态下还没有 Skill</div>
-          {activeTab === 'created' && <button type="button" onClick={openCreate} style={primaryButtonStyle}>+ 创建 Skill</button>}
+          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 10 }}>该状态下还没有 Skill</div>
+          <button type="button" onClick={() => setEditingId(null)} style={primaryButton}>+ 创建 Skill</button>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {filtered.map(skill => (
-            <div key={skill.id} style={rowStyle}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{skill.name}</span>
-                  <span style={{ ...statusStyle, background: STATUS_STYLE[skill.status].bg, color: STATUS_STYLE[skill.status].color }}>{STATUS_LABEL[skill.status]}</span>
-                  {skill.calls !== undefined && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{skill.calls} 次调用</span>}
+          {shown.map(skill => {
+            const state = skillState(skill)
+            const description = state.draft?.description ?? state.released?.description ?? ''
+            return (
+              <div key={skill.id} data-testid="my-skill-row" style={rowStyle}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{skill.name}</span>
+                    {skill.in_catalog && <span style={badgeStyle}>平台目录</span>}
+                    {skill.visibility === 'group' && skill.group_ids.length > 0 && <span style={badgeStyle}>组内共享 · {skill.group_ids.length} 个组</span>}
+                    {!skill.in_catalog && skill.visibility === 'private' && <span style={badgeStyle}>私有</span>}
+                    {state.reviewStatus === 'pending' && <span style={warningBadgeStyle}>待审核</span>}
+                    {state.reviewStatus === 'rejected' && <span style={rejectedBadgeStyle}>已拒绝</span>}
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{skill.call_count} 次调用</span>
+                  </div>
+                  {state.rejectedReason && <div role="alert" style={reasonStyle}><strong>审核未通过：</strong>{state.rejectedReason}</div>}
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 5 }}>{description}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    {skill.subject || '未分类'}
+                    {state.released ? ` · 已发布 v${state.released.version}` : ' · 还没发布过版本'}
+                    {state.draft ? ` · 草稿 v${state.draft.version} 未发布` : ''}
+                    {(state.draft ?? state.released) && ` · ${(state.draft ?? state.released)?.file_count} 个文件 · ${formatBytes((state.draft ?? state.released)?.total_bytes ?? 0)}`}
+                  </div>
                 </div>
-                <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 5 }}>{skill.description}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  {skill.category}
-                  {skill.publishedAt && ` · ${skill.publishedAt} 发布`}
-                  {skill.submittedAt && ` · ${skill.submittedAt} 提交审核`}
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={() => setEditingId(skill.id)} style={ghostButton}>上传新草稿</button>
+                  {state.draft && <button type="button" onClick={() => release.mutate(skill.id)} disabled={release.isPending} style={outlineButton}>发布 v{state.draft.version}</button>}
+                  {state.released && <button type="button" onClick={() => setSharingId(skill.id)} style={outlineButton}>共享设置</button>}
+                  {state.released && state.reviewStatus !== 'pending' && <button type="button" onClick={() => setReviewingId(skill.id)} style={outlineButton}>{state.reviewStatus === 'rejected' ? '改后重新提审' : '提交审核'}</button>}
+                  <button type="button" onClick={() => remove.mutate(skill.id)} style={{ ...ghostButton, color: '#DC2626', borderColor: '#FECACA' }}>删除</button>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                {skill.status === 'created' && <><button type="button" onClick={() => openEdit(skill)} style={secondaryButtonStyle}>编辑</button><button type="button" onClick={() => setPublishingId(skill.id)} style={outlineActionStyle}>发布到 Skills 库</button></>}
-                {skill.status === 'reviewing' && <span style={waitingStyle}>等待审核</span>}
-                {skill.status === 'published' && <><button type="button" onClick={() => openEdit(skill)} style={secondaryButtonStyle}>编辑</button><button type="button" onClick={() => takeOffline(skill.id)} style={dangerButtonStyle}>下线</button></>}
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
-
-      {publishingId && (() => {
-        const skill = skills.find(item => item.id === publishingId)
-        return skill ? <PublishDialog kindLabel="Skill" initialName={skill.name} initialDescription={skill.description} existingNames={[...skills.filter(item => item.status === 'published').map(item => item.name), '数据清洗', 'PDF 文本提取', '财务指标计算']} onClose={() => setPublishingId(null)} onSubmit={(name, description) => submitForReview(skill.id, name, description)} /> : null
-      })()}
-
-      {showEditor && (
-        <>
-          <div onClick={() => setShowEditor(false)} style={backdropStyle} />
-          <div style={modalStyle}>
-            <div style={modalHeaderStyle}><div><div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>{editingId ? '更新 Skill 文件' : '上传 Skill'}</div><div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>上传整个 Skill 目录的 ZIP 压缩包，根目录必须包含唯一的 SKILL.md。</div></div><button type="button" onClick={() => setShowEditor(false)} style={closeStyle}>×</button></div>
-            <form onSubmit={saveSkill}>
-              <input ref={archiveRef} type="file" accept=".zip,application/zip" style={{ display: 'none' }} onChange={event => { const file = event.target.files?.[0]; if (file) setForm(current => ({ ...current, archiveName: file.name })) }} />
-              <button type="button" onClick={() => archiveRef.current?.click()} style={{ width: '100%', padding: '24px 18px', marginBottom: 14, border: '1px dashed var(--action-border)', borderRadius: 9, background: 'var(--action-light)', color: 'var(--action)', cursor: 'pointer', fontFamily: 'inherit' }}>
-                <span style={{ display: 'block', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{form.archiveName || '选择 ZIP 压缩包'}</span>
-                <span style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)' }}>解压后不超过 5 MB；仅允许文本与代码类附件</span>
-              </button>
-              <div style={{ padding: '10px 12px', marginBottom: 20, borderRadius: 7, background: 'var(--bg)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.65 }}>平台将从 SKILL.md 的 frontmatter 读取名称与描述，并校验路径穿越、符号链接、文件数量、压缩比和文件类型。</div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}><button type="button" onClick={() => setShowEditor(false)} style={secondaryButtonStyle}>取消</button><button type="submit" disabled={!formReady} style={{ ...primaryButtonStyle, background: formReady ? 'var(--action)' : 'var(--text-muted)', cursor: formReady ? 'pointer' : 'default' }}>{editingId ? '更新文件' : '上传并创建'}</button></div>
-            </form>
-          </div>
-        </>
-      )}
+      {editingId !== undefined && <UploadDialog skill={editingSkill} onClose={() => setEditingId(undefined)} onDone={() => { setEditingId(undefined); setTab('draft'); void refresh() }} />}
+      {sharingSkill && <SharingDialog skill={sharingSkill} onClose={() => setSharingId(null)} onDone={() => { setSharingId(null); void refresh() }} />}
+      {reviewingSkill && <ReviewDialog skill={reviewingSkill} onClose={() => setReviewingId(null)} onDone={() => { setReviewingId(null); setTab('reviewing'); void refresh() }} />}
     </div>
   )
 }
 
+function UploadDialog({ skill, onClose, onDone }: { skill: MySkill | null; onClose: () => void; onDone: () => void }) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [file, setFile] = useState<File | null>(null)
+  const [subject, setSubject] = useState(skill?.subject || SUBJECTS[0])
+  const upload = useMutation({
+    mutationFn: async () => {
+      if (!file) throw new Error('请选择 Skill 文件')
+      if (!skill) return createSkill(file, subject)
+      if (subject !== skill.subject) await updateSkill(skill.id, subject)
+      return writeDraft(skill.id, file)
+    },
+    onSuccess: onDone,
+  })
+
+  return (
+    <Dialog title={skill ? `上传「${skill.name}」的新草稿` : '上传 Skill'} onClose={onClose} width={500}>
+      <p style={hintStyle}>支持整个 Skill 目录的 ZIP，或单个包含 frontmatter 的 Markdown 文件。名称与描述由服务端从 SKILL.md 读取。</p>
+      <label style={labelStyle}>学科</label>
+      <select value={subject} onChange={event => setSubject(event.target.value)} style={{ ...inputStyle, marginBottom: 14 }}>
+        {SUBJECTS.map(one => <option key={one} value={one}>{one}</option>)}
+      </select>
+      <input
+        ref={fileRef}
+        aria-label="Skill 文件"
+        type="file"
+        accept=".zip,application/zip,.md,text/markdown,text/plain"
+        style={{ display: 'none' }}
+        onChange={event => setFile(event.target.files?.[0] ?? null)}
+      />
+      <button type="button" onClick={() => fileRef.current?.click()} style={fileButtonStyle}>
+        <span style={{ display: 'block', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{file?.name ?? '选择 ZIP 或 Markdown 文件'}</span>
+        <span style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)' }}>解压后不超过 5 MB；仅允许文本与代码类附件</span>
+      </button>
+      <div style={noticeStyle}>平台会校验路径穿越、符号链接、总大小、文件数量、压缩比、扩展名、单文件大小，以及 Skill 名称与目录名。</div>
+      {upload.isError && <ul role="alert" style={{ ...errorStyle, margin: '0 0 14px', paddingLeft: 30 }}>{validationReasons(upload.error).map(reason => <li key={reason}>{reason}</li>)}</ul>}
+      <DialogActions onClose={onClose} onSubmit={() => upload.mutate()} pending={upload.isPending} disabled={!file} label={skill ? '更新文件' : '上传并创建'} />
+    </Dialog>
+  )
+}
+
+function SharingDialog({ skill, onClose, onDone }: { skill: MySkill; onClose: () => void; onDone: () => void }) {
+  const groups = useQuery({ queryKey: groupKeys.mine(), queryFn: listMyGroups })
+  const [shared, setShared] = useState(skill.visibility === 'group')
+  const [selected, setSelected] = useState(skill.group_ids)
+  const save = useMutation({ mutationFn: () => setSharing(skill.id, shared ? 'group' : 'private', shared ? selected : []), onSuccess: onDone })
+  return (
+    <Dialog title={`共享「${skill.name}」`} onClose={onClose}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 14 }}><input type="checkbox" checked={shared} onChange={event => setShared(event.target.checked)} />共享给我的课题组</label>
+      {groups.isPending && <div style={hintStyle}>正在加载课题组…</div>}
+      {groups.isError && <div role="alert" style={errorStyle}>{errorMessage(groups.error)}</div>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+        {(groups.data ?? []).map(group => <label key={group.id} style={{ display: 'flex', gap: 8, fontSize: 13, opacity: shared ? 1 : 0.5 }}><input type="checkbox" disabled={!shared} checked={selected.includes(group.id)} onChange={event => setSelected(current => event.target.checked ? [...current, group.id] : current.filter(one => one !== group.id))} />{group.name}</label>)}
+      </div>
+      {save.isError && <div role="alert" style={errorStyle}>{errorMessage(save.error)}</div>}
+      <DialogActions onClose={onClose} onSubmit={() => save.mutate()} pending={save.isPending} disabled={shared && selected.length === 0} label="保存共享设置" />
+    </Dialog>
+  )
+}
+
+function ReviewDialog({ skill, onClose, onDone }: { skill: MySkill; onClose: () => void; onDone: () => void }) {
+  const [confirmed, setConfirmed] = useState(false)
+  const state = skillState(skill)
+  const submit = useMutation({ mutationFn: () => submitForReview(skill.id, confirmed), onSuccess: onDone })
+  return (
+    <Dialog title={`提交「${skill.name}」审核`} onClose={onClose}>
+      <p style={hintStyle}>提交当前已发布的 <strong>v{state.released?.version}</strong>。通过后这一版进入平台目录；以后发布新版本需重新提审。</p>
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13, lineHeight: 1.6, marginBottom: 16 }}><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} style={{ marginTop: 3 }} />我确认该 Skill 的内容合规，并对它产生的分析结果负责。</label>
+      {submit.isError && <div role="alert" style={errorStyle}>{errorMessage(submit.error)}</div>}
+      <DialogActions onClose={onClose} onSubmit={() => submit.mutate()} pending={submit.isPending} disabled={!confirmed} label="提交审核" />
+    </Dialog>
+  )
+}
+
+function Dialog({ title, onClose, width = 460, children }: { title: string; onClose: () => void; width?: number; children: React.ReactNode }) {
+  return <><div onClick={onClose} style={backdropStyle} /><div role="dialog" aria-label={title} style={{ ...dialogStyle, width }}><div style={dialogHeaderStyle}>{title}</div><div style={{ padding: '18px 22px' }}>{children}</div></div></>
+}
+
+function DialogActions({ onClose, onSubmit, pending, disabled = false, label }: { onClose: () => void; onSubmit: () => void; pending: boolean; disabled?: boolean; label: string }) {
+  return <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}><button type="button" onClick={onClose} style={ghostButton}>取消</button><button type="button" onClick={onSubmit} disabled={pending || disabled} style={{ ...primaryButton, opacity: pending || disabled ? 0.5 : 1 }}>{pending ? '正在提交…' : label}</button></div>
+}
+
+function formatBytes(bytes: number): string {
+  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`
+}
+
 const eyebrowStyle: React.CSSProperties = { fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }
-const primaryButtonStyle: React.CSSProperties = { padding: '9px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }
+const primaryButton: React.CSSProperties = { padding: '9px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }
+const ghostButton: React.CSSProperties = { padding: '6px 14px', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }
+const outlineButton: React.CSSProperties = { ...ghostButton, color: 'var(--action)', borderColor: 'var(--action-border)' }
 const tabStyle: React.CSSProperties = { padding: '10px 20px', fontSize: 13, fontWeight: 500, background: 'none', border: 'none', borderBottom: '2px solid transparent', marginBottom: -1, cursor: 'pointer', fontFamily: 'inherit' }
 const countStyle: React.CSSProperties = { marginLeft: 6, fontSize: 11, background: 'var(--bg)', padding: '1px 6px', borderRadius: 10, color: 'var(--text-muted)' }
 const emptyStyle: React.CSSProperties = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '48px 20px', textAlign: 'center' }
 const rowStyle: React.CSSProperties = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }
-const statusStyle: React.CSSProperties = { padding: '1px 7px', borderRadius: 10, fontSize: 11, fontWeight: 600 }
-const secondaryButtonStyle: React.CSSProperties = { padding: '7px 14px', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }
-const outlineActionStyle: React.CSSProperties = { ...secondaryButtonStyle, color: 'var(--action)', borderColor: 'var(--action-border)' }
-const dangerButtonStyle: React.CSSProperties = { ...secondaryButtonStyle, color: '#DC2626', borderColor: '#FECACA' }
-const waitingStyle: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', padding: '7px 0' }
-const backdropStyle: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.4)', backdropFilter: 'blur(4px)', zIndex: 300 }
-const modalStyle: React.CSSProperties = { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 500, maxHeight: 'calc(100vh - 64px)', overflowY: 'auto', padding: 30, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: '0 20px 60px rgba(11,46,92,0.2)', zIndex: 301 }
-const modalHeaderStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start', marginBottom: 22 }
-const closeStyle: React.CSSProperties = { border: 'none', background: 'none', color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer' }
+const badgeStyle: React.CSSProperties = { padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: '#EFF6FF', color: '#2563EB', border: '1px solid #BFDBFE' }
+const warningBadgeStyle: React.CSSProperties = { ...badgeStyle, background: '#FFFBEB', color: '#92400E', borderColor: '#FDE68A' }
+const rejectedBadgeStyle: React.CSSProperties = { ...badgeStyle, background: '#FEF2F2', color: '#DC2626', borderColor: '#FECACA' }
+const reasonStyle: React.CSSProperties = { fontSize: 12, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '7px 12px', margin: '4px 0' }
+const errorStyle: React.CSSProperties = { color: '#DC2626', fontSize: 13 }
+const hintStyle: React.CSSProperties = { fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: 14 }
+const labelStyle: React.CSSProperties = { display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }
+const inputStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7, background: 'var(--surface)', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit' }
+const fileButtonStyle: React.CSSProperties = { width: '100%', padding: '24px 18px', marginBottom: 14, border: '1px dashed var(--action-border)', borderRadius: 9, background: 'var(--action-light)', color: 'var(--action)', cursor: 'pointer', fontFamily: 'inherit' }
+const noticeStyle: React.CSSProperties = { padding: '10px 12px', marginBottom: 16, borderRadius: 7, background: 'var(--bg)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.65 }
+const backdropStyle: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.35)', zIndex: 300 }
+const dialogStyle: React.CSSProperties = { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', maxWidth: '92vw', background: 'var(--surface)', borderRadius: 12, zIndex: 301, boxShadow: '0 12px 40px rgba(11,46,92,0.2)' }
+const dialogHeaderStyle: React.CSSProperties = { padding: '18px 22px', borderBottom: '1px solid var(--border)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }
