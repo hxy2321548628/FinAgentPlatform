@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 平台回归验收：P0–P7 的 35 条判据，一个文件跑完。
+# 平台回归验收：P0–P8 当前 36 条判据，一个文件跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
@@ -10,24 +10,24 @@
 # 常用跑法：
 #
 #   bash deploy/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
-#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 25 条，约 25 分钟
+#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 26 条，约 25 分钟
 #
 # **默认全跑，不分 phase，也没有挑某一期跑的参数** —— P6 决策 §L2 的定案。
 # 保留的是 `SKIP_LLM` / `SKIP_HOSTILE` 两个开关：它们分的是**成本**（要不要花钱、
 # 要不要 root），不是期次。按期挑着跑，等于把刚拆掉的那层级联结构又装回来，
 # 还多一条「以为全验了其实只验了一期」的路。
 #
-# 35 条里 **10 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
+# 36 条里 **10 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
 # P2① 与 P3① 各要一次真实分析、P6① 与 P7③ 各要两次便宜的真实分析、P1① 那四条
-# 破坏性测试要 root。其余 25 条全免费。
+# 破坏性测试要 root。其余 26 条全免费。
 #
 # ---------------------------------------------------------------------------
 # **P7 那一组是 2026-08-14 随本期开发一起加的**，六条：三档可见性、审核闸门、
 # 引用真的改变行为、版本冻结、`reviewer` 的边界，以及一条 playwright 走查。
 #
-# **P7⑥ 是这个文件里唯一一条要浏览器的判据**，缺 chromium 二进制时记「未验」——
-# 与沙箱镜像缺失同一套规矩。它不进 `make all`：那是纯本地门禁，跑它不需要任何服务
-# 起着，而这一条要六个服务、真账号、真库。
+# **P7⑥ 与 P8⑥ 是两条要浏览器的判据**，缺 chromium 二进制时记「未验」——
+# 与沙箱镜像缺失同一套规矩。它们不进 `make all`：那是纯本地门禁，跑它不需要任何服务
+# 起着，而这两条要六个服务、真账号、真库。
 #
 # ---------------------------------------------------------------------------
 # **P5 那一组是 2026-08-14 补的**（P6 开工前的最后一件事）。P5 期是唯一一期没留下
@@ -2938,11 +2938,40 @@ else
         E2E_REVIEWER="$NAME_P7_R" \
         E2E_GROUP="P7-G1-$P7_TAG" \
         E2E_TAG="$P7_TAG" \
-        pnpm exec playwright test >"$P7_E2E_LOG" 2>&1); then
+        pnpm exec playwright test e2e/visibility.spec.ts >"$P7_E2E_LOG" 2>&1); then
         pass "三个账号在浏览器里走完了建、发布、共享、审核、上广场这条链路"
     else
         fail "playwright 未全过，详见 $P7_E2E_LOG"
         tail -30 "$P7_E2E_LOG" >&2 || true
+    fi
+fi
+end
+
+# ------------------------------------------ P8⑥ 浏览器上传与校验链路
+begin "P8⑥" "浏览器里走完 Skill 上传校验、发布、提审与通过"
+
+# 账号复用 P7 前置：这条只需要一名作者与一名 reviewer，不另造两份相同身份。
+if (( ! P7_READY )); then
+    fail "前置没就绪（$P7_SETUP_NOTE），Skill 浏览器链路验不了"
+elif ! command -v pnpm >/dev/null 2>&1; then
+    undone "没有 pnpm，跑不了 playwright"
+elif [[ ! -d $REPO_ROOT/web/node_modules/@playwright ]]; then
+    undone "web/ 没装 @playwright/test：cd web && pnpm install"
+elif ! (cd "$REPO_ROOT/web" && pnpm exec playwright install --dry-run chromium >/dev/null 2>&1); then
+    undone "查不到 chromium 二进制：cd web && pnpm exec playwright install chromium"
+else
+    P8_E2E_LOG="$WORK_DIR/p8-e2e.log"
+    if (cd "$REPO_ROOT/web" && \
+        E2E_BASE_URL="$BASE_URL" \
+        E2E_PASSWORD="$P7_SECRET" \
+        E2E_AUTHOR="$NAME_P7_A" \
+        E2E_REVIEWER="$NAME_P7_R" \
+        E2E_TAG="$P7_TAG" \
+        pnpm exec playwright test e2e/skill-upload.spec.ts >"$P8_E2E_LOG" 2>&1); then
+        pass "越界包被拒且不新增，合法包从 frontmatter 建成、发布、提审并审核通过"
+    else
+        fail "Skill playwright 未全过，详见 $P8_E2E_LOG"
+        tail -30 "$P8_E2E_LOG" >&2 || true
     fi
 fi
 end

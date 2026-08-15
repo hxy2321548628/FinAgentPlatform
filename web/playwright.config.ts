@@ -1,9 +1,9 @@
 import { defineConfig, devices } from '@playwright/test'
 
 /**
- * 端到端走查的配置。**只有一条链路**：三档可见性（P7⑥）。
+ * 端到端走查配置：三档可见性（P7⑥）与 Skill 上传校验（P8⑥）。
  *
- * **不进 `make all`。** 那是纯本地门禁，跑它不需要任何服务起着；而这一条要六个
+ * **不进 `make all`。** 那是纯本地门禁，跑它不需要任何服务起着；而这两条要六个
  * 服务、真账号、真库。塞进去等于让每一次 `git push` 都依赖一整套 compose 栈起着 ——
  * 那道门禁会在第一次没起服务的机器上变成一条永远红的判据。它进的是
  * `deploy/test/verify.sh` 的 `P7⑥`，缺浏览器二进制时记「未验」。
@@ -18,7 +18,7 @@ const PORT = Number(process.env.E2E_PORT ?? 5174)
 
 export default defineConfig({
   testDir: './e2e',
-  // **一个 worker、不重试。** 这条链路在三个账号之间来回切登录态，并行跑会互相
+  // **一个 worker、不重试。** 走查会在多个账号之间切登录态，并行跑会互相
   // 顶掉 cookie；而自动重试会把「第一次红、第二次绿」的偶发问题藏起来
   workers: 1,
   retries: 0,
