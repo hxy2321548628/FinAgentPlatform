@@ -16,7 +16,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 
-from agent.config import AgentConfig, SkillReference
+from agent.config import AgentConfig, SkillReference, SubagentReference
 from api.error import invalid, not_found
 from api.platform import Platform, get_platform
 from api.schema import (
@@ -34,6 +34,7 @@ from preset.model import ReviewStatus, VersionStatus
 from preset.repository import AgentDetail, AgentListing
 from preset.review import Review
 from preset.skill_reference import SkillReferenceError, resolve_skill_references
+from preset.subagent_reference import SubagentReferenceError, resolve_subagent_references
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,15 @@ async def list_available(
     return [_to_listing(one) for one in await platform.agent.list_available(current.user_id)]
 
 
+@router.get("/subagent-candidates")
+async def list_subagent_candidates(
+    current: CurrentUser,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> list[AgentListingResponse]:
+    """我能引用且自身没有挂子智能体的 agent。"""
+    return [_to_listing(one) for one in await platform.agent.list_subagent_candidates(current.user_id)]
+
+
 @router.get("/mine")
 async def list_mine(
     current: CurrentUser,
@@ -122,6 +132,7 @@ async def create_agent(
         ApiError: 同名的智能体你已经有一个了。
     """
     skill_refs = await _resolve_skills(platform, request.skills, current.user_id)
+    subagent_refs = await _resolve_subagents(platform, request.subagents, current.user_id)
     created = await platform.agent.create(
         owner_id=current.user_id,
         name=request.name,
@@ -129,6 +140,7 @@ async def create_agent(
         subject=request.subject,
         system_prompt=request.system_prompt,
         skill_refs=skill_refs,
+        subagent_refs=subagent_refs,
     )
     if created is None:
         raise invalid(NAME_TAKEN_MESSAGE)
@@ -182,6 +194,7 @@ async def write_draft(
             owner_id=current.user_id,
             system_prompt=request.system_prompt,
             skill_refs=await _resolve_skills(platform, request.skills, current.user_id),
+            subagent_refs=await _resolve_subagents(platform, request.subagents, current.user_id),
         )
         is None
     ):
@@ -398,3 +411,21 @@ async def _resolve_skills(platform: Platform, skill_ids: list[str] | None, user_
     except SkillReferenceError as exc:
         raise invalid(str(exc)) from exc
     return resolved.skills
+
+
+async def _resolve_subagents(
+    platform: Platform,
+    agent_ids: list[str] | None,
+    user_id: str,
+) -> list[SubagentReference] | None:
+    """按作者当前可见性把草稿选择解析成版本引用。"""
+    try:
+        resolved = await resolve_subagent_references(
+            AgentConfig(),
+            subagent_ids=agent_ids,
+            user_id=user_id,
+            resolver=platform.agent,
+        )
+    except SubagentReferenceError as exc:
+        raise invalid(str(exc)) from exc
+    return resolved.subagents or None

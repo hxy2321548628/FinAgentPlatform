@@ -343,6 +343,7 @@ class CreateAgentRequest(BaseModel):
         description="提示词",
     )
     skills: list[str] | None = Field(default=None, description="这个草稿自带的 Skill 标识")
+    subagents: list[str] | None = Field(default=None, description="这个草稿自带的子智能体标识")
 
 
 class UpdateAgentRequest(BaseModel):
@@ -358,6 +359,7 @@ class UpdateDraftRequest(BaseModel):
 
     system_prompt: str = Field(min_length=1, max_length=MAX_SYSTEM_PROMPT_LENGTH, description="新的提示词")
     skills: list[str] | None = Field(default=None, description="这个草稿自带的 Skill 标识；整块替换")
+    subagents: list[str] | None = Field(default=None, description="这个草稿自带的子智能体标识；整块替换")
 
 
 class SetSharingRequest(BaseModel):

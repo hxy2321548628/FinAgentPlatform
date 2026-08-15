@@ -36,6 +36,7 @@ from api.security import UNAUTHENTICATED_MESSAGE, CurrentUser
 from cursor import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, CursorError, Page
 from preset.reference import ReferenceUnavailableError, resolve_reference
 from preset.skill_reference import SkillReferenceError, resolve_skill_references
+from preset.subagent_reference import SubagentReferenceError, resolve_subagent_references
 from run.approval import DEFAULT_PENDING_LIMIT, pending_count
 from sandbox.remote import BrokerError
 from thread.repository import Thread
@@ -206,7 +207,13 @@ async def submit_run(
             user_id=current.user_id,
             resolver=platform.skill,
         )
-    except (ReferenceUnavailableError, SkillReferenceError) as exc:
+        resolved = await resolve_subagent_references(
+            resolved,
+            subagent_ids=effective.subagents,
+            user_id=current.user_id,
+            resolver=platform.agent,
+        )
+    except (ReferenceUnavailableError, SkillReferenceError, SubagentReferenceError) as exc:
         # **不静默回退默认提示词。** 回退跑得完、不报错，唯一的症状是回答变了味
         raise invalid(str(exc)) from exc
 
@@ -216,6 +223,8 @@ async def submit_run(
         await platform.agent.count_call(resolved.agent_id)
     for skill in resolved.skills or []:
         await platform.skill.count_call(skill.skill_id)
+    for subagent in resolved.subagents:
+        await platform.agent.count_call(subagent.agent_id)
 
     run = await platform.submitter.submit(
         thread_id=thread_id,

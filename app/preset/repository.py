@@ -570,6 +570,10 @@ class AgentRepository:
         statement = self._available_statement(owner).order_by(col(AgentRecord.name))
         return await self._listing(statement)
 
+    async def list_subagent_candidates(self, user_id: str) -> list[AgentListing]:
+        """我能引用且自身没有再挂子智能体的 agent。"""
+        return [one for one in await self.list_available(user_id) if not one.subagent_refs]
+
     async def list_owned(self, user_id: str) -> list[AgentDetail]:
         """我的全部智能体，**含软删掉的那些**，最近改动的排前面。
 

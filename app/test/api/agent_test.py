@@ -405,6 +405,80 @@ def test_an_agent_carries_its_frozen_skills_into_a_run(client: TestClient, threa
     assert run.json()["agent_config"]["skills"] == frozen
 
 
+def test_an_agent_carries_its_frozen_subagents_into_a_run(client: TestClient, thread_id: str) -> None:
+    child = create_agent(client, prompt="只做波动率")
+    child_id = str(child["id"])
+    child_name = str(child["name"])
+    release(client, child_id)
+
+    run = client.post(
+        f"/api/threads/{thread_id}/runs",
+        json={"content": "算年化收益", "agent_config": {"subagents": [child_id]}},
+    )
+
+    assert run.status_code == 202, run.text
+    refs = run.json()["agent_config"]["subagents"]
+    assert refs == [{"agent_id": child_id, "version": 1, "name": child_name}]
+    assert listed(client, f"{AGENT_PATH}/mine")[child_id]["call_count"] == 1
+
+
+def test_a_scene_agent_is_available_but_not_a_subagent_candidate(client: TestClient) -> None:
+    child_id = str(create_agent(client, prompt="只做波动率")["id"])
+    release(client, child_id)
+
+    scene = client.post(
+        AGENT_PATH,
+        json={
+            "name": f"场景-{uuid4().hex[:8]}",
+            "system_prompt": "负责调度",
+            "subagents": [child_id],
+        },
+    )
+    assert scene.status_code == 201, scene.text
+    scene_id = str(scene.json()["id"])
+    release(client, scene_id)
+
+    assert scene_id in listed(client, f"{AGENT_PATH}/available")
+    assert scene_id not in listed(client, f"{AGENT_PATH}/subagent-candidates")
+    assert child_id in listed(client, f"{AGENT_PATH}/subagent-candidates")
+
+
+def test_a_scene_agent_cannot_be_attached_as_a_temporary_subagent(client: TestClient, thread_id: str) -> None:
+    child_id = str(create_agent(client, prompt="只做波动率")["id"])
+    release(client, child_id)
+    scene = client.post(
+        AGENT_PATH,
+        json={
+            "name": f"场景-{uuid4().hex[:8]}",
+            "system_prompt": "负责调度",
+            "subagents": [child_id],
+        },
+    )
+    assert scene.status_code == 201, scene.text
+    scene_id = str(scene.json()["id"])
+    release(client, scene_id)
+
+    response = client.post(
+        f"/api/threads/{thread_id}/runs",
+        json={"content": "一", "agent_config": {"subagents": [scene_id]}},
+    )
+
+    assert response.status_code == 422
+    assert "已挂子智能体" in response.json()["error"]["message"]
+    assert client.get(f"/api/threads/{thread_id}/runs").json()["items"] == []
+
+
+def test_more_than_five_subagents_are_rejected_before_resolution(client: TestClient, thread_id: str) -> None:
+    response = client.post(
+        f"/api/threads/{thread_id}/runs",
+        json={"content": "太多子智能体", "agent_config": {"subagents": [uuid4().hex for _ in range(6)]}},
+    )
+
+    assert response.status_code == 422
+    assert "5" in response.json()["error"]["message"]
+    assert client.get(f"/api/threads/{thread_id}/runs").json()["items"] == []
+
+
 def test_a_reference_counts_as_one_call(client: TestClient, thread_id: str) -> None:
     agent_id = str(create_agent(client)["id"])
     release(client, agent_id)
