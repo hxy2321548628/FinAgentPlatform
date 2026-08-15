@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 平台回归验收：P0–P9 当前 43 条判据，一个文件跑完。
+# 平台回归验收：P0–P9 当前 44 条判据，一个文件跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
@@ -17,9 +17,9 @@
 # 要不要 root），不是期次。按期挑着跑，等于把刚拆掉的那层级联结构又装回来，
 # 还多一条「以为全验了其实只验了一期」的路。
 #
-# 43 条里 **14 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
+# 44 条里 **15 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
 # P2① 与 P3① 各要一次真实分析，P6①、P7③、P8① 与 P8③ 各要两次真实分析，
-# P9①与 P9② 共用两次真实分析，P1① 那四条破坏性测试要 root。其余 29 条全免费。
+# P9①与 P9② 共用两次真实分析，P9⑤另要一次便宜分析，P1① 那四条破坏性测试要 root。其余 29 条全免费。
 #
 # ---------------------------------------------------------------------------
 # **P7 那一组是 2026-08-14 随本期开发一起加的**，六条：三档可见性、审核闸门、
@@ -3465,10 +3465,14 @@ end
 # ===========================================================================
 
 P9_FIXTURE="$REPO_ROOT/deploy/test/subagent/volatility-expert.json"
+P9_DELETE_FIXTURE="$REPO_ROOT/deploy/test/subagent/delete-expert.json"
 P9_READY=0
+P9_HITL_READY=0
 P9_SETUP_NOTE="未开始"
+P9_HITL_SETUP_NOTE="未开始"
 P9_RUNS_READY=0
 AGENT_P9_VOLATILITY=""
+AGENT_P9_DELETE=""
 
 p9_new_fixture_agent() {
     local jar="$1" fixture="$2" name description prompt response agent_id
@@ -3503,6 +3507,26 @@ if (( P7_READY )); then
     fi
 else
     P9_SETUP_NOTE="P7 账号前置没就绪（$P7_SETUP_NOTE）"
+fi
+
+if (( P7_READY )); then
+    if [[ ! -f $P9_DELETE_FIXTURE ]]; then
+        P9_HITL_SETUP_NOTE="缺子智能体夹具 $P9_DELETE_FIXTURE"
+    elif ! jq -e '
+        .name == "delete-expert"
+        and (.description | type == "string" and length > 0)
+        and (.prompt | type == "string" and length > 0)
+    ' "$P9_DELETE_FIXTURE" >/dev/null; then
+        P9_HITL_SETUP_NOTE="delete-expert 夹具形状不合法"
+    elif AGENT_P9_DELETE="$(p9_new_fixture_agent "$JAR_P7_A" "$P9_DELETE_FIXTURE")" &&
+        [[ -n $AGENT_P9_DELETE ]]; then
+        P9_HITL_READY=1
+        P9_HITL_SETUP_NOTE="delete-expert v1 已发布"
+    else
+        P9_HITL_SETUP_NOTE="delete-expert 没创建并发布成功"
+    fi
+else
+    P9_HITL_SETUP_NOTE="P7 账号前置没就绪（$P7_SETUP_NOTE）"
 fi
 
 # ------------------------------------------ P9① 主判据：真进子图并写文件
@@ -3621,6 +3645,96 @@ else
         pass "挂子智能体的总 token $TOTAL_P9_CHILD > 对照组 $TOTAL_P9_PLAIN"
     else
         fail "子图 token 疑似漏计：挂子智能体=$TOTAL_P9_CHILD，对照组=$TOTAL_P9_PLAIN"
+    fi
+fi
+end
+
+# ------------------------------------------ P9⑤ 嵌套 HITL
+begin "P9⑤" "子智能体的 delete 能中断，批准后从子图继续并成功"
+
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    undone "SKIP_LLM=1，这条要一次便宜的真实分析"
+elif (( ! P9_HITL_READY )); then
+    fail "前置没就绪（$P9_HITL_SETUP_NOTE），嵌套审批验不了"
+else
+    THREAD_P9_HITL="$(new_thread "$JAR_P7_A")"
+    P9_HITL_FILE="$WORK_DIR/nested-hitl.txt"
+    printf 'P9⑤ 子智能体审批探针；批准 delete 后应消失。\n' > "$P9_HITL_FILE"
+    P9_HITL_CONFIGURED=0
+    P9_HITL_UPLOADED=0
+    api "$JAR_P7_A" -X PATCH "$BASE_URL/api/threads/$THREAD_P9_HITL" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg t "P9 嵌套审批 $P7_TAG" --arg id "$AGENT_P9_DELETE" \
+            '{title:$t,agent_config:{subagents:[$id]}}')" >/dev/null 2>&1 && P9_HITL_CONFIGURED=1
+    api "$JAR_P7_A" -X POST "$BASE_URL/api/threads/$THREAD_P9_HITL/files" \
+        -F "file=@$P9_HITL_FILE;filename=nested-hitl.txt" >/dev/null 2>&1 && P9_HITL_UPLOADED=1
+
+    if (( ! P9_HITL_CONFIGURED || ! P9_HITL_UPLOADED )); then
+        fail "会话配置或探针文件没准备好：configured=$P9_HITL_CONFIGURED uploaded=$P9_HITL_UPLOADED"
+    else
+        RUN_P9_HITL="$(api "$JAR_P7_A" -X POST "$BASE_URL/api/threads/$THREAD_P9_HITL/runs" \
+            -H 'Content-Type: application/json' \
+            -d '{"content":"必须把删除 /workspace/nested-hitl.txt 的整项工作委派给 delete-expert；你自己不得调用任何文件工具。子智能体完成后只回答已完成。"}' | jq -r '.id // empty')"
+        if [[ -z $RUN_P9_HITL ]] || ! wait_status "$JAR_P7_A" "$RUN_P9_HITL" waiting_approval "$RUN_TIMEOUT"; then
+            fail "run 没停在 waiting_approval（当前 $(run_status "$JAR_P7_A" "$RUN_P9_HITL" 2>/dev/null || echo 未提交)）"
+            [[ -n $RUN_P9_HITL ]] && api "$JAR_P7_A" -X POST "$BASE_URL/api/runs/$RUN_P9_HITL/cancel" >/dev/null 2>&1 || true
+        else
+            timeout 10 curl -fsS -b "$JAR_P7_A" -N "$BASE_URL/api/runs/$RUN_P9_HITL/events" \
+                > "$WORK_DIR/p9-hitl-before.sse" 2>/dev/null || true
+            grep '^data:' "$WORK_DIR/p9-hitl-before.sse" | sed 's/^data: *//' | jq -c . \
+                > "$WORK_DIR/p9-hitl-before.json"
+            P9_HITL_TASKS="$(jq -s '[.[]
+                | select(.type == "tool_call" and (.path | length == 0))
+                | select(.data.name == "task" and .data.args.subagent_type == "delete-expert")
+            ] | length' "$WORK_DIR/p9-hitl-before.json")"
+            P9_HITL_INTERRUPTS="$(jq -s '[.[]
+                | select(.type == "interrupt" and .path == ["delete-expert"])
+                | .data.actions[]
+                | select(.tool_name == "delete" and .args.file_path == "/workspace/nested-hitl.txt")
+            ] | length' "$WORK_DIR/p9-hitl-before.json")"
+            if (( P9_HITL_TASKS > 0 && P9_HITL_INTERRUPTS == 1 )); then
+                pass "delete 来自 delete-expert 子图，目标路径准确"
+            else
+                fail "没拿到准确的嵌套中断：task=$P9_HITL_TASKS interrupt=$P9_HITL_INTERRUPTS"
+            fi
+
+            APPROVE_P9_HITL="$(code "$JAR_P7_A" -X POST "$BASE_URL/api/runs/$RUN_P9_HITL/approve" \
+                -H 'Content-Type: application/json' -d '{"decisions":[{"index":0,"type":"approve"}]}')"
+            if [[ $APPROVE_P9_HITL != 202 ]] || ! wait_status "$JAR_P7_A" "$RUN_P9_HITL" succeeded "$RUN_TIMEOUT"; then
+                fail "批准后没成功：approve=$APPROVE_P9_HITL status=$(run_status "$JAR_P7_A" "$RUN_P9_HITL")"
+                api "$JAR_P7_A" -X POST "$BASE_URL/api/runs/$RUN_P9_HITL/cancel" >/dev/null 2>&1 || true
+            else
+                timeout "$RUN_TIMEOUT" curl -fsS -b "$JAR_P7_A" -N \
+                    "$BASE_URL/api/runs/$RUN_P9_HITL/events" > "$WORK_DIR/p9-hitl.sse"
+                grep '^data:' "$WORK_DIR/p9-hitl.sse" | sed 's/^data: *//' | jq -c . \
+                    > "$WORK_DIR/p9-hitl.json"
+                P9_HITL_STARTS_INITIAL="$(jq -s '[.[]
+                    | select(.type == "run.started" and .data.resumed == false)
+                ] | length' "$WORK_DIR/p9-hitl.json")"
+                P9_HITL_STARTS_RESUMED="$(jq -s '[.[]
+                    | select(.type == "run.started" and .data.resumed == true)
+                ] | length' "$WORK_DIR/p9-hitl.json")"
+                P9_HITL_TASKS_FINAL="$(jq -s '[.[]
+                    | select(.type == "tool_call" and (.path | length == 0))
+                    | select(.data.name == "task" and .data.args.subagent_type == "delete-expert")
+                ] | length' "$WORK_DIR/p9-hitl.json")"
+                P9_HITL_RESULTS="$(jq -s '[.[]
+                    | select(.type == "tool_result" and .path == ["delete-expert"])
+                    | select(.data.name == "delete")
+                ] | length' "$WORK_DIR/p9-hitl.json")"
+                P9_HITL_FILE_LEFT="$(api "$JAR_P7_A" "$BASE_URL/api/threads/$THREAD_P9_HITL/files" |
+                    jq '[.entries[] | select(.path == "nested-hitl.txt")] | length')"
+                if (( P9_HITL_STARTS_INITIAL == 1
+                    && P9_HITL_STARTS_RESUMED == 1
+                    && P9_HITL_TASKS_FINAL == 1
+                    && P9_HITL_RESULTS == 1
+                    && P9_HITL_FILE_LEFT == 0 )); then
+                    pass "批准后从子图断点续跑：首跑/续跑各 1 次，task 未重放，目标文件已删除"
+                else
+                    fail "恢复语义不对：initial=$P9_HITL_STARTS_INITIAL resumed=$P9_HITL_STARTS_RESUMED task=$P9_HITL_TASKS_FINAL result=$P9_HITL_RESULTS file_left=$P9_HITL_FILE_LEFT"
+                fi
+            fi
+        fi
     fi
 fi
 end

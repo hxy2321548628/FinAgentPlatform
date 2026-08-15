@@ -331,6 +331,30 @@ def test_path_uses_the_task_subagent_name_from_a_real_stream(
     assert any(isinstance(event, ToolCallEvent) and event.data.name == "write_file" for event in nested)
 
 
+def test_resumed_subgraph_recovers_its_name_from_historical_tool_call() -> None:
+    mapper = EventMapper(
+        RUN_ID,
+        known_tool_paths={"delete-call": ("delete-expert",)},
+    )
+    payload = {
+        "tools": {
+            "messages": [
+                ToolMessage(
+                    content="Deleted /nested-hitl.txt",
+                    tool_call_id="delete-call",
+                    name="delete",
+                    status="success",
+                )
+            ]
+        }
+    }
+
+    event = _only(mapper.map_chunk(("tools:new-resume-uuid",), "updates", payload))
+
+    assert isinstance(event, ToolResultEvent)
+    assert event.path == ("delete-expert",)
+
+
 def test_an_unmatched_real_subgraph_uuid_falls_back_to_eight_characters(
     subagent_chunk: dict[str, list[StreamChunk]],
 ) -> None:

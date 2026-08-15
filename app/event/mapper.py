@@ -10,6 +10,7 @@
 
 import logging
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
@@ -60,11 +61,17 @@ class EventMapper:
     每个 run 必须持有自己的实例，避免并发分析互相污染。
     """
 
-    def __init__(self, run_id: str) -> None:
+    def __init__(
+        self,
+        run_id: str,
+        *,
+        known_tool_paths: Mapping[str, tuple[str, ...]] | None = None,
+    ) -> None:
         self._run_id = run_id
         self._pending_subagents: deque[str] = deque()
         self._subagent_by_uuid: dict[str, str] = {}
         self._seen_task_calls: set[str] = set()
+        self._known_tool_paths = dict(known_tool_paths or {})
 
     def map_chunk(self, ns: tuple[str, ...], mode: str, payload: object) -> list[Event]:
         """把一个 DeepAgents chunk 映射成零个或多个平台事件。
@@ -93,8 +100,11 @@ class EventMapper:
                 return []
 
     def _remember_subagents(self, ns: tuple[str, ...], mode: str, payload: object) -> None:
-        """从父图 model 更新里记下尚未出现 namespace 的 task 调用。"""
-        if ns or mode != "updates" or not isinstance(payload, dict):
+        """记住首跑的 task 名称，或从历史工具调用恢复续跑 namespace。"""
+        if ns:
+            self._remember_resumed_subagent(ns, mode, payload)
+            return
+        if mode != "updates" or not isinstance(payload, dict):
             return
         update = payload.get(MODEL_NODE)
         if not isinstance(update, dict):
@@ -115,6 +125,28 @@ class EventMapper:
                 if call_id:
                     self._seen_task_calls.add(call_id)
                 self._pending_subagents.append(name)
+
+    def _remember_resumed_subagent(self, ns: tuple[str, ...], mode: str, payload: object) -> None:
+        """续跑时用历史 tool_call_id 把新的映射器接回原子图名称。"""
+        if mode != "updates" or not isinstance(payload, dict):
+            return
+        segment = ns[-1]
+        node, separator, task_uuid = segment.partition(":")
+        if node != TOOLS_NODE or not separator or task_uuid in self._subagent_by_uuid:
+            return
+        for update in payload.values():
+            if not isinstance(update, dict):
+                continue
+            messages = update.get("messages")
+            if not isinstance(messages, list):
+                continue
+            for message in messages:
+                if not isinstance(message, ToolMessage):
+                    continue
+                known = self._known_tool_paths.get(message.tool_call_id)
+                if known:
+                    self._subagent_by_uuid[task_uuid] = known[-1]
+                    return
 
     def _map_path(self, ns: tuple[str, ...]) -> tuple[str, ...]:
         """把 ``tools:<uuid>`` 翻译成子智能体名，未知 uuid 保留八位前缀。"""

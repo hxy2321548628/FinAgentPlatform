@@ -27,11 +27,15 @@ from event.model import (
     RunFinishedData,
     RunStatus,
     TokenUsage,
+    ToolCallData,
+    ToolCallEvent,
+    ToolResultData,
+    ToolResultEvent,
 )
 from log import JsonFormatter
 from run.decision import Decision, DecisionType
-from run.executor import RunExecutor
-from run.log import EventLog
+from run.executor import RunExecutor, _known_tool_paths, _pending_action_path
+from run.log import EventLog, LoggedEvent
 from run.repository import RunStart
 from sandbox.pool import SandboxQueueTimeoutError
 from sandbox.remote import AsyncQueuePositionCallback
@@ -743,6 +747,68 @@ async def test_an_uncancelled_run_still_checks_the_flag(pool: FakePool, log: Eve
 
 
 # ------------------------------------------------------------------ HITL 审批
+def _logged_tool_call(
+    event_id: str,
+    *,
+    call_id: str,
+    path: tuple[str, ...],
+    name: str = "delete",
+    args: dict[str, object] | None = None,
+) -> LoggedEvent:
+    return LoggedEvent(
+        id=event_id,
+        event=ToolCallEvent(
+            ts=1,
+            run_id="run-under-test",
+            path=path,
+            data=ToolCallData(
+                id=call_id,
+                name=name,
+                args=args or {"file_path": "/workspace/a.csv"},
+            ),
+        ),
+    )
+
+
+def test_historical_nested_tool_calls_restore_their_paths() -> None:
+    history = [
+        _logged_tool_call("1-0", call_id="root-call", path=()),
+        _logged_tool_call("2-0", call_id="delete-call", path=("delete-expert",)),
+    ]
+
+    assert _known_tool_paths(history) == {"delete-call": ("delete-expert",)}
+
+
+def test_pending_nested_action_inherits_the_tool_call_path() -> None:
+    history = [
+        _logged_tool_call("1-0", call_id="delete-call", path=("delete-expert",)),
+    ]
+
+    assert _pending_action_path(history, _interrupt()) == ("delete-expert",)
+
+
+def test_completed_tool_call_is_not_used_for_a_later_interrupt() -> None:
+    history = [
+        _logged_tool_call("1-0", call_id="delete-call", path=("delete-expert",)),
+        LoggedEvent(
+            id="2-0",
+            event=ToolResultEvent(
+                ts=2,
+                run_id="run-under-test",
+                path=("delete-expert",),
+                data=ToolResultData(
+                    tool_call_id="delete-call",
+                    name="delete",
+                    content="Deleted /a.csv",
+                    status="success",
+                ),
+            ),
+        ),
+    ]
+
+    assert _pending_action_path(history, _interrupt()) == ()
+
+
 def _interrupt() -> list[InterruptAction]:
     return [InterruptAction(index=0, tool_name="delete", args={"file_path": "/workspace/a.csv"})]
 

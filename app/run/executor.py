@@ -39,11 +39,13 @@ from event.model import (
     SandboxReadyData,
     SandboxReadyEvent,
     TokenUsage,
+    ToolCallEvent,
+    ToolResultEvent,
     now_ms,
 )
 from log import run_context
 from run.decision import to_resume
-from run.log import EventLog
+from run.log import EventLog, LoggedEvent
 from run.repository import Run, RunStart
 from sandbox.pool import SandboxQueueTimeoutError
 from sandbox.remote import AsyncQueuePositionCallback, RemoteBackendFactory
@@ -310,7 +312,8 @@ class RunExecutor:
         """消费智能体的流，逐个 chunk 映射成事件。"""
         backend = self._backend(run.thread_id)
         tokens = TokenUsage()
-        mapper = EventMapper(run.id)
+        history = await self._log.read(run.id)
+        mapper = EventMapper(run.id, known_tool_paths=_known_tool_paths(history))
 
         async for ns, mode, payload in self._start(backend, run, task):
             tokens = tokens + _token_usage(mode, payload)
@@ -374,7 +377,10 @@ class RunExecutor:
         if not actions:
             return False
         if await self._repository.wait_approval(run.id, tokens=tokens):
-            await self._emit(InterruptEvent(ts=now_ms(), run_id=run.id, path=(), data=InterruptData(actions=actions)))
+            path = _pending_action_path(await self._log.read(run.id), actions)
+            await self._emit(
+                InterruptEvent(ts=now_ms(), run_id=run.id, path=path, data=InterruptData(actions=actions))
+            )
             logger.info("run 停在等人确认上：待确认 %d 个调用", len(actions))
         return True
 
@@ -405,6 +411,50 @@ class RunExecutor:
 
     async def _emit(self, event: Event) -> None:
         await self._log.append(event)
+
+
+def _known_tool_paths(history: Sequence[LoggedEvent]) -> dict[str, tuple[str, ...]]:
+    """从不可变事件恢复 tool_call_id 到子图路径的映射，供审批续跑使用。"""
+    return {
+        event.data.id: event.path
+        for logged in history
+        if isinstance((event := logged.event), ToolCallEvent) and event.path
+    }
+
+
+def _pending_action_path(
+    history: Sequence[LoggedEvent],
+    actions: Sequence[InterruptAction],
+) -> tuple[str, ...]:
+    """用尚未完成的工具调用给 interrupt 补上子图路径。"""
+    completed = {
+        event.data.tool_call_id
+        for logged in history
+        if isinstance((event := logged.event), ToolResultEvent)
+    }
+    pending = [
+        event
+        for logged in history
+        if isinstance((event := logged.event), ToolCallEvent) and event.data.id not in completed
+    ]
+    paths: list[tuple[str, ...]] = []
+    used: set[str] = set()
+    for action in actions:
+        match = next(
+            (
+                event
+                for event in reversed(pending)
+                if event.data.id not in used
+                and event.data.name == action.tool_name
+                and event.data.args == action.args
+            ),
+            None,
+        )
+        if match is None:
+            return ()
+        used.add(match.data.id)
+        paths.append(match.path)
+    return paths[0] if paths and all(path == paths[0] for path in paths) else ()
 
 
 def _token_usage(mode: str, payload: object) -> TokenUsage:
