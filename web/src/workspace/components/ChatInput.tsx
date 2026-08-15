@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { agentKeys, listAvailable as listAvailableAgents, listSubagentCandidates } from '../../api/agents'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { agentKeys, createAgent, listAvailable as listAvailableAgents, listSubagentCandidates } from '../../api/agents'
 import { errorMessage } from '../../api/request'
 import { listAvailable as listAvailableSkills, skillKeys } from '../../api/skills'
 import type { AgentConfig, SkillReference } from '../../api/types'
@@ -36,6 +36,9 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
   const [subagentIds, setSubagentIds] = useState<string[]>([])
   const [configError, setConfigError] = useState('')
   const [isSending, setIsSending] = useState(false)
+  const [sceneName, setSceneName] = useState('')
+  const [saveNotice, setSaveNotice] = useState('')
+  const queryClient = useQueryClient()
 
   // 只在配置面板真的展开时拉目录 —— 大多数提问不碰配置。
   const agents = useQuery({ queryKey: agentKeys.available(), queryFn: listAvailableAgents, enabled: configOpen })
@@ -50,6 +53,31 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
   const duplicateSubagent = duplicateSubagentName(selectedAgent?.subagent_refs ?? [], selectedSubagents)
   const tooMany = mountedSkills.length > 10
   const tooManySubagents = mountedSubagents.length > 5
+  const saveScene = useMutation({
+    mutationFn: () => {
+      const name = sceneName.trim()
+      if (!name) throw new Error('请输入场景名称')
+      if (duplicateName || tooMany || duplicateSubagent || tooManySubagents) throw new Error('请先修正当前配置后再保存')
+      const systemPrompt = mode === 'agent' ? selectedAgent?.system_prompt : mode === 'custom' ? prompt : threadAgentConfig?.system_prompt || '你是一名严谨的金融分析助手。'
+      if (!systemPrompt) throw new Error('当前智能体还没有可保存的提示词')
+      return createAgent({
+        name,
+        description: '从分析对话中保存的可复用场景配置。',
+        subject: '金融分析',
+        system_prompt: systemPrompt,
+        skills: [...new Set([...(selectedAgent?.skill_refs?.map(one => one.skill_id) ?? []), ...skillIds])],
+        subagents: [...new Set([...(selectedAgent?.subagent_refs?.map(one => one.agent_id) ?? []), ...subagentIds])],
+      })
+    },
+    async onSuccess() {
+      setSceneName('')
+      setSaveNotice('已保存到我的场景')
+      await queryClient.invalidateQueries({ queryKey: agentKeys.mine() })
+    },
+    onError(error) {
+      setSaveNotice(error instanceof Error ? error.message : errorMessage(error, '保存场景失败'))
+    },
+  })
 
   const toggleSubagent = (subagentId: string, checked: boolean) => {
     setSubagentIds(current => checked ? [...current, subagentId] : current.filter(one => one !== subagentId))
@@ -87,10 +115,10 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
   return (
     <div style={{ padding: '12px 24px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg)', flexShrink: 0 }}>
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px 12px', boxShadow: '0 2px 8px rgba(11,46,92,0.06)' }}>
-        <button type="button" aria-expanded={configOpen} onClick={() => setConfigOpen(open => !open)} style={{ border: 'none', background: 'transparent', color: 'var(--action)', fontSize: 12, padding: '2px 0 8px', cursor: 'pointer', fontFamily: 'inherit' }}>
-          {configOpen ? '▾' : '▸'} 本轮智能体配置 · {AGENT_CONFIG_MODE_LABEL[mode]}{skillIds.length ? ` · ${skillIds.length} 个 Skill` : ''}{subagentIds.length ? ` · ${subagentIds.length} 个子智能体` : ''}
+        <button type="button" aria-label="本轮智能体配置" aria-expanded={configOpen} onClick={() => setConfigOpen(open => !open)} style={{ border: 'none', background: 'transparent', color: 'var(--action)', fontSize: 12, padding: '2px 0 8px', cursor: 'pointer', fontFamily: 'inherit' }}>
+          配置智能体 · {AGENT_CONFIG_MODE_LABEL[mode]}{skillIds.length ? ` · ${skillIds.length} 个 Skill` : ''}{subagentIds.length ? ` · ${subagentIds.length} 个子智能体` : ''}
         </button>
-        {configOpen && <div style={{ padding: '10px 12px', marginBottom: 10, border: '1px solid var(--action-border)', borderRadius: 7, background: 'var(--action-light)' }}>
+        {configOpen && <><div onClick={() => setConfigOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.35)', zIndex: 300 }} /><div role="dialog" aria-label="智能体配置" style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 620, maxWidth: 'calc(100vw - 32px)', maxHeight: 'calc(100vh - 48px)', overflowY: 'auto', padding: '18px 20px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)', boxShadow: '0 16px 48px rgba(11,46,92,0.22)', zIndex: 301 }}><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}><strong style={{ fontSize: 16, color: 'var(--text-primary)' }}>本轮智能体配置</strong><button type="button" aria-label="关闭配置" onClick={() => setConfigOpen(false)} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer' }}>×</button></div><div style={{ padding: '10px 12px', border: '1px solid var(--action-border)', borderRadius: 7, background: 'var(--action-light)' }}>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: mode === 'inherit' ? 0 : 10 }}>
             {AGENT_CONFIG_MODES.map(value => <label key={value} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
               <input type="radio" name="agent-config-mode" value={value} checked={mode === value} onChange={() => { setMode(value); setConfigError('') }} />
@@ -147,7 +175,13 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
             {mountedSubagents.length > 0 && <div style={{ ...hintStyle, marginTop: 8 }}>最终挂载：{mountedSubagents.join('、')}</div>}
           </div>
           {configError && <div role="alert" style={{ marginTop: 6, fontSize: 11, color: '#DC2626' }}>{configError}</div>}
-        </div>}
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input value={sceneName} onChange={event => { setSceneName(event.target.value); setSaveNotice('') }} placeholder="场景名称" style={{ ...selectStyle, flex: 1, minWidth: 180 }} />
+            <button type="button" onClick={() => saveScene.mutate()} disabled={saveScene.isPending} style={{ padding: '8px 12px', border: '1px solid var(--action-border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--action)', cursor: saveScene.isPending ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 12 }}>{saveScene.isPending ? '保存中…' : '保存到我的场景库'}</button>
+            <button type="button" onClick={() => setConfigOpen(false)} style={{ padding: '8px 12px', border: 'none', borderRadius: 6, background: 'var(--action)', color: '#fff', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12 }}>完成</button>
+            {saveNotice && <span style={{ width: '100%', fontSize: 11, color: saveNotice.startsWith('已') ? '#059669' : '#DC2626' }}>{saveNotice}</span>}
+          </div>
+        </div></div></>}
         <textarea value={text} disabled={disabled || isSending} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSend() } }} placeholder={disabled ? '请先新建一个分析对话' : '输入分析需求…（Enter 发送，Shift+Enter 换行）'} style={{ width: '100%', minHeight: 52, maxHeight: 160, border: 'none', outline: 'none', fontSize: 14, color: 'var(--text-primary)', background: 'transparent', resize: 'none', fontFamily: 'inherit', lineHeight: 1.65, boxSizing: 'border-box' }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-light)' }}>
           {isRunning ? <button type="button" onClick={onStop} title="停止分析" style={{ width: 36, height: 36, borderRadius: 7, background: '#DC2626', border: 'none', color: '#fff', cursor: 'pointer' }}>■</button> : <button type="button" disabled={disabled || isSending || !text.trim()} onClick={() => void handleSend()} title="发送" style={{ width: 36, height: 36, borderRadius: 7, background: 'var(--action)', border: 'none', color: '#fff', cursor: disabled || isSending || !text.trim() ? 'default' : 'pointer', opacity: disabled || isSending || !text.trim() ? 0.5 : 1 }}>↗</button>}

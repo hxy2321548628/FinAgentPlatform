@@ -162,7 +162,7 @@ export function Chat() {
     <ThreadSidebar />
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
       <header style={{ minHeight: 54, padding: '10px 24px', boxSizing: 'border-box', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-        <div style={{ minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{threadId ? thread.data?.title || '新分析' : '选择或新建分析'}</div>{threadId && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{threadId}</div>}</div>
+        <div style={{ minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{threadId ? thread.data?.title || '新分析' : '选择或新建分析'}</div></div>
         {threadId && <button type="button" onClick={() => setPanelVisible(value => !value)} style={{ border: '1px solid var(--border)', borderRadius: 5, background: 'var(--surface)', color: 'var(--text-secondary)', padding: '5px 9px', cursor: 'pointer', fontSize: 11 }}>{panelVisible ? '收起工作目录' : '展开工作目录'}</button>}
       </header>
       <div ref={scrollRegion} data-testid="chat-scroll-region" onScroll={event => {
