@@ -101,7 +101,10 @@ test('越界包显示具体理由且不新增，合法包可发布、提审并�
   await page.getByLabel('Skill 文件').setInputFiles({
     name: `${SKILL_NAME}.zip`,
     mimeType: 'application/zip',
-    buffer: zip([{ name: `${SKILL_NAME}/SKILL.md`, content: skillMarkdown(SKILL_NAME) }]),
+    buffer: zip([
+      { name: `${SKILL_NAME}/SKILL.md`, content: skillMarkdown(SKILL_NAME) },
+      { name: `${SKILL_NAME}/assets/eval_review.html`, content: '<html><body>评审表</body></html>' },
+    ]),
   })
   await page.getByRole('button', { name: '上传并创建' }).click()
 

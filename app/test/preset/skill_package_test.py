@@ -62,6 +62,17 @@ def test_a_valid_zip_returns_normalized_files_and_frontmatter() -> None:
     assert {one.path for one in result.package.files} == {"SKILL.md", "notes/口径.txt"}
 
 
+def test_html_assets_are_allowed() -> None:
+    result = validate_skill_package(
+        _valid_zip(**{"annualized-naming/assets/eval_review.html": b"<html></html>"}),
+        filename="annualized.zip",
+    )
+
+    assert result.reasons == ()
+    assert result.package is not None
+    assert "assets/eval_review.html" in {one.path for one in result.package.files}
+
+
 def test_a_single_markdown_is_wrapped_as_skill_md() -> None:
     result = validate_skill_package(_skill_markdown(), filename="annualized-naming.md")
 

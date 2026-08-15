@@ -69,5 +69,6 @@ describe('MySkills', () => {
     fireEvent.click(screen.getByRole('button', { name: '+ 创建 Skill' }))
     expect(screen.getByLabelText('Skill 文件').getAttribute('accept')).toContain('.zip')
     expect(screen.getByLabelText('Skill 文件').getAttribute('accept')).toContain('.md')
+    expect(screen.getByText(/允许 Markdown、文本、HTML/)).toBeTruthy()
   })
 })

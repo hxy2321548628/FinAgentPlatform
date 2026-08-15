@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 平台回归验收：P0–P8 当前 36 条判据，一个文件跑完。
+# 平台回归验收：P0–P8 当前 41 条判据，一个文件跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
@@ -10,16 +10,16 @@
 # 常用跑法：
 #
 #   bash deploy/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
-#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 26 条，约 25 分钟
+#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 29 条，约 25 分钟
 #
 # **默认全跑，不分 phase，也没有挑某一期跑的参数** —— P6 决策 §L2 的定案。
 # 保留的是 `SKIP_LLM` / `SKIP_HOSTILE` 两个开关：它们分的是**成本**（要不要花钱、
 # 要不要 root），不是期次。按期挑着跑，等于把刚拆掉的那层级联结构又装回来，
 # 还多一条「以为全验了其实只验了一期」的路。
 #
-# 36 条里 **10 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
-# P2① 与 P3① 各要一次真实分析、P6① 与 P7③ 各要两次便宜的真实分析、P1① 那四条
-# 破坏性测试要 root。其余 26 条全免费。
+# 41 条里 **12 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
+# P2① 与 P3① 各要一次真实分析，P6①、P7③、P8① 与 P8③ 各要两次真实分析，
+# P1① 那四条破坏性测试要 root。其余 29 条全免费。
 #
 # ---------------------------------------------------------------------------
 # **P7 那一组是 2026-08-14 随本期开发一起加的**，六条：三档可见性、审核闸门、
@@ -2181,7 +2181,7 @@ fi
 # P6_LAST_* 里，不用 command substitution：答复可能有换行，拿制表符之类的分隔符
 # 来回传会把“以喵开头”这条判据自己改掉。
 p6_analyse() {
-    local jar="$1" thread_id="$2" stem="$3" run_body
+    local jar="$1" thread_id="$2" stem="$3" window="${4:-$RUN_WINDOW}" run_body
     P6_LAST_RUN=""
     P6_LAST_STATUS=""
     P6_LAST_ANSWER=""
@@ -2191,7 +2191,7 @@ p6_analyse() {
     P6_LAST_RUN="$(jq -r '.id // empty' <<<"$run_body")"
     [[ -n $P6_LAST_RUN ]] || return 1
 
-    if ! timeout "$RUN_WINDOW" curl -fsS -b "$jar" -N \
+    if ! timeout "$window" curl -fsS -b "$jar" -N \
         "$BASE_URL/api/runs/$P6_LAST_RUN/events" > "$WORK_DIR/$stem.sse"; then
         curl -s --connect-timeout 5 --max-time 20 -b "$jar" -X POST \
             "$BASE_URL/api/runs/$P6_LAST_RUN/cancel" >/dev/null 2>&1
@@ -2943,6 +2943,489 @@ else
     else
         fail "playwright 未全过，详见 $P7_E2E_LOG"
         tail -30 "$P7_E2E_LOG" >&2 || true
+    fi
+fi
+end
+
+# ===========================================================================
+# P8：Skill 校验、装配、热更新、对齐与审核
+# ===========================================================================
+#
+# 账号与课题组复用 P7 的 A/B/C/reviewer/admin；P8 自己只新建 Skill。这样 P8⑤
+# 验的是同一套可见性与审核基础设施换成 target_kind=skill 后是否仍成立，不把重复的
+# 造号流程算成被测内容。
+
+P8_FIXTURE="$REPO_ROOT/deploy/test/skill/annualized-naming/SKILL.md"
+P8_READY=0
+P8_SETUP_NOTE="未开始"
+SKILL_P8_BASE=""
+
+# 上传单个 Markdown 并发布 v1，标准输出是 skill_id。
+p8_new_skill() {
+    local jar="$1" file="$2" filename="$3" response skill_id
+    response="$(api "$jar" -X POST "$BASE_URL/api/skills" \
+        -F "file=@$file;filename=$filename" -F 'subject=金融学')" || return 1
+    skill_id="$(jq -r '.id // empty' <<<"$response")"
+    [[ -n $skill_id ]] || return 1
+    api "$jar" -X POST "$BASE_URL/api/skills/$skill_id/versions" >/dev/null || return 1
+    printf '%s\n' "$skill_id"
+}
+
+p8_submit_review() {
+    local jar="$1" skill_id="$2" response
+    response="$(api "$jar" -X POST "$BASE_URL/api/skills/$skill_id/reviews" \
+        -H 'Content-Type: application/json' -d '{"responsibility_confirmed":true}')" || return 1
+    jq -r 'first(.versions[] | select(.review_status == "pending") | .review_id) // empty' <<<"$response"
+}
+
+p8_available_has() {
+    api "$1" "$BASE_URL/api/skills/available" |
+        jq -e --arg id "$2" 'any(.[]; .id == $id)' >/dev/null
+}
+
+p8_catalog_has() {
+    api "$1" "$BASE_URL/api/skills" |
+        jq -e --arg id "$2" 'any(.[]; .id == $id)' >/dev/null
+}
+
+p8_skill_root_count() {
+    in_broker python -c '
+from config import get_settings
+root = get_settings().skill_root
+print(sum(1 for one in root.iterdir() if one.is_dir()) if root.exists() else 0)
+'
+}
+
+if (( P7_READY )); then
+    if [[ ! -f $P8_FIXTURE ]]; then
+        P8_SETUP_NOTE="缺 Skill 夹具 $P8_FIXTURE"
+    elif SKILL_P8_BASE="$(p8_new_skill "$JAR_P7_A" "$P8_FIXTURE" annualized-naming.md)" &&
+        [[ -n $SKILL_P8_BASE ]]; then
+        P8_READY=1
+        P8_SETUP_NOTE="annualized-naming v1 已发布"
+    else
+        P8_SETUP_NOTE="annualized-naming 没上传并发布成功"
+    fi
+else
+    P8_SETUP_NOTE="P7 账号前置没就绪（$P7_SETUP_NOTE）"
+fi
+
+# ------------------------------------------ P8① 挂与不挂，产物名不同
+begin "P8①" "挂与不挂同一个 Skill，产物文件名可见地不同"
+
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    undone "SKIP_LLM=1，这条要两次真实分析"
+elif (( ! P8_READY )); then
+    fail "前置没就绪（$P8_SETUP_NOTE），两次真实分析验不了"
+else
+    THREAD_P8_PLAIN="$(new_thread "$JAR_P7_A")"
+    THREAD_P8_SKILL="$(new_thread "$JAR_P7_A")"
+    P8_PLAIN_SET=0
+    P8_SKILL_SET=0
+    api "$JAR_P7_A" -X PATCH "$BASE_URL/api/threads/$THREAD_P8_PLAIN" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg t "P8 无 Skill $P7_TAG" '{title:$t}')" >/dev/null 2>&1 && P8_PLAIN_SET=1
+    api "$JAR_P7_A" -X PATCH "$BASE_URL/api/threads/$THREAD_P8_SKILL" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg t "P8 有 Skill $P7_TAG" --arg id "$SKILL_P8_BASE" \
+            '{title:$t,agent_config:{skills:[$id]}}')" >/dev/null 2>&1 && P8_SKILL_SET=1
+
+    P6_QUESTION='只做这一件事：用一个 Python 脚本读取固定收益率数组 [0.01,-0.005,0.008,-0.002,0.006]，按你采用的年化口径计算波动率并画一张柱状图，保存到 outputs/。如果系统列出了与年化有关的 skill，先读取并严格遵守；没有就直接按默认做法。不要查资料、不要写计划、不要请求确认、不要创建图以外的产物；最后只说明数值和文件名。'
+    P8_PLAIN_OK=0
+    P8_SKILL_OK=0
+    if (( P8_PLAIN_SET )) && p6_analyse "$JAR_P7_A" "$THREAD_P8_PLAIN" p8-plain "$RUN_TIMEOUT"; then
+        P8_PLAIN_OK=1
+        RUN_P8_PLAIN="$P6_LAST_RUN"
+        STATUS_P8_PLAIN="$P6_LAST_STATUS"
+    else
+        RUN_P8_PLAIN="${P6_LAST_RUN:-}"
+        STATUS_P8_PLAIN="${P6_LAST_STATUS:-提交失败}"
+    fi
+    if (( P8_SKILL_SET )) && p6_analyse "$JAR_P7_A" "$THREAD_P8_SKILL" p8-skill "$RUN_TIMEOUT"; then
+        P8_SKILL_OK=1
+        RUN_P8_SKILL="$P6_LAST_RUN"
+        STATUS_P8_SKILL="$P6_LAST_STATUS"
+    else
+        RUN_P8_SKILL="${P6_LAST_RUN:-}"
+        STATUS_P8_SKILL="${P6_LAST_STATUS:-提交失败}"
+    fi
+
+    if (( ! P8_PLAIN_SET || ! P8_SKILL_SET )); then
+        fail "两个会话没都在提交前设好标题与配置"
+    elif (( ! P8_PLAIN_OK || ! P8_SKILL_OK )); then
+        fail "两条 run 没都跑到 succeeded：不挂=$STATUS_P8_PLAIN，挂上=$STATUS_P8_SKILL"
+    else
+        TREE_P8_PLAIN="$(api "$JAR_P7_A" "$BASE_URL/api/threads/$THREAD_P8_PLAIN/files")"
+        TREE_P8_SKILL="$(api "$JAR_P7_A" "$BASE_URL/api/threads/$THREAD_P8_SKILL/files")"
+        P8_PLAIN_IMAGES="$(jq '[.entries[] | select(.is_dir == false) | select(.path | test("^outputs/.*\\.(png|jpg|jpeg|svg)$"; "i"))] | length' <<<"$TREE_P8_PLAIN")"
+        P8_PLAIN_PREFIX="$(jq '[.entries[] | select(.is_dir == false) | select(.path | test("^outputs/.*\\.(png|jpg|jpeg|svg)$"; "i")) | select((.path | split("/") | last) | startswith("ANNUALIZED-252-"))] | length' <<<"$TREE_P8_PLAIN")"
+        P8_SKILL_IMAGES="$(jq '[.entries[] | select(.is_dir == false) | select(.path | test("^outputs/.*\\.(png|jpg|jpeg|svg)$"; "i"))] | length' <<<"$TREE_P8_SKILL")"
+        P8_SKILL_PREFIX="$(jq '[.entries[] | select(.is_dir == false) | select(.path | test("^outputs/.*\\.(png|jpg|jpeg|svg)$"; "i")) | select((.path | split("/") | last) | startswith("ANNUALIZED-252-"))] | length' <<<"$TREE_P8_SKILL")"
+
+        if (( P8_PLAIN_IMAGES > 0 && P8_PLAIN_PREFIX == 0 && P8_SKILL_IMAGES > 0 && P8_SKILL_PREFIX == P8_SKILL_IMAGES )); then
+            pass "双向断言成立：不挂 Skill 的图无前缀，挂上后全部带 ANNUALIZED-252- 前缀"
+        else
+            fail "产物名不符合双向断言：不挂图=$P8_PLAIN_IMAGES/带前缀=$P8_PLAIN_PREFIX，挂上图=$P8_SKILL_IMAGES/带前缀=$P8_SKILL_PREFIX"
+        fi
+
+        if jq -e 'all(.entries[]; (.path != "skill" and (.path | startswith("skill/") | not)))' \
+            <<<"$TREE_P8_PLAIN" >/dev/null &&
+            jq -e 'any(.entries[]; .path == "skill/annualized-naming/SKILL.md" and .is_dir == false)' \
+                <<<"$TREE_P8_SKILL" >/dev/null; then
+            pass "物化边界成立：A 没有 skill/，B 有 annualized-naming/SKILL.md"
+        else
+            fail "两个会话的 Skill 文件树不符合预期"
+        fi
+
+        P8_SKILL_SNAPSHOT="$(psql_query "SELECT COALESCE(agent_config->'skills', '[]'::jsonb)::text
+            FROM runs WHERE id='$RUN_P8_SKILL';" | tr -d '\r')"
+        if jq -e --arg id "$SKILL_P8_BASE" \
+            'length == 1 and .[0].skill_id == $id and .[0].version == 1 and .[0].name == "annualized-naming"' \
+            <<<"$P8_SKILL_SNAPSHOT" >/dev/null; then
+            pass "挂 Skill 的 run 快照冻结了 skill_id、version 与 name"
+        else
+            fail "Skill 快照不完整：$P8_SKILL_SNAPSHOT"
+        fi
+
+        TOKENS_P8_PLAIN="$(psql_query "SELECT COALESCE(tokens_cache_read,0) || '|' || COALESCE(tokens_uncached,0) || '|' || COALESCE(tokens_output,0)
+            FROM runs WHERE id='$RUN_P8_PLAIN';" | tr -d '[:space:]')"
+        TOKENS_P8_SKILL="$(psql_query "SELECT COALESCE(tokens_cache_read,0) || '|' || COALESCE(tokens_uncached,0) || '|' || COALESCE(tokens_output,0)
+            FROM runs WHERE id='$RUN_P8_SKILL';" | tr -d '[:space:]')"
+        info "第 15 个 token 样本（P8① 不挂 Skill，cache|uncached|output）：$TOKENS_P8_PLAIN；run=$RUN_P8_PLAIN"
+        info "第 16 个 token 样本（P8① 挂 Skill，cache|uncached|output）：$TOKENS_P8_SKILL；run=$RUN_P8_SKILL"
+    fi
+fi
+end
+
+# ------------------------------------------ P8② 八个真实恶意 ZIP
+begin "P8②" "八条上传校验逐包拒绝，理由可区分且磁盘无残留"
+
+if (( ! P8_READY )); then
+    fail "前置没就绪（$P8_SETUP_NOTE），恶意包验不了"
+else
+    P8_BAD_DIR="$WORK_DIR/p8-hostile"
+    mkdir -p "$P8_BAD_DIR"
+    if ! python3 - "$P8_BAD_DIR" <<'PY'
+import stat
+import sys
+from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
+
+root = Path(sys.argv[1])
+root.mkdir(parents=True, exist_ok=True)
+name = "annualized-naming"
+skill = b"---\nname: annualized-naming\ndescription: p8 validation\n---\nrule\n"
+
+with ZipFile(root / "path.zip", "w", ZIP_STORED) as archive:
+    archive.writestr("../../etc/passwd.txt", b"x")
+
+with ZipFile(root / "symlink.zip", "w", ZIP_STORED) as archive:
+    archive.writestr(f"{name}/SKILL.md", skill)
+    link = ZipInfo(f"{name}/link.txt")
+    link.create_system = 3
+    link.external_attr = (stat.S_IFLNK | 0o777) << 16
+    archive.writestr(link, "/etc/passwd")
+
+max_total = 5 * 1024 * 1024
+with ZipFile(root / "total.zip", "w", ZIP_STORED) as archive:
+    archive.writestr(f"{name}/SKILL.md", skill)
+    remaining = max_total + 1 - len(skill)
+    index = 0
+    while remaining:
+        size = min(1024 * 1024, remaining)
+        archive.writestr(f"{name}/part-{index}.txt", b"x" * size)
+        remaining -= size
+        index += 1
+
+with ZipFile(root / "count.zip", "w", ZIP_STORED) as archive:
+    archive.writestr(f"{name}/SKILL.md", skill)
+    for index in range(100):
+        archive.writestr(f"{name}/file-{index}.txt", b"x")
+
+with ZipFile(root / "ratio.zip", "w", ZIP_DEFLATED, compresslevel=9) as archive:
+    archive.writestr(f"{name}/SKILL.md", skill)
+    with archive.open(f"{name}/bomb.txt", "w", force_zip64=True) as member:
+        chunk = b"0" * (1024 * 1024)
+        for _ in range(500):
+            member.write(chunk)
+
+with ZipFile(root / "extension.zip", "w", ZIP_STORED) as archive:
+    archive.writestr(f"{name}/SKILL.md", skill)
+    archive.writestr(f"{name}/scripts/run.sh", b"echo nope\n")
+
+with ZipFile(root / "single.zip", "w", ZIP_STORED) as archive:
+    archive.writestr(f"{name}/SKILL.md", skill)
+    archive.writestr(f"{name}/large.txt", b"x" * (1024 * 1024 + 1))
+
+with ZipFile(root / "name.zip", "w", ZIP_STORED) as archive:
+    archive.writestr(
+        f"{name}/SKILL.md",
+        b"---\nname: another-name\ndescription: mismatch\n---\nrule\n",
+    )
+PY
+    then
+        fail "八个恶意 ZIP 没造出来"
+    else
+        P8_ROOT_BEFORE="$(p8_skill_root_count | tr -d '[:space:]')"
+        P8_BAD_CASES=(
+            "path.zip|路径不合法"
+            "symlink.zip|符号链接"
+            "total.zip|解压后总大小"
+            "count.zip|文件数量"
+            "ratio.zip|压缩比"
+            "extension.zip|扩展名不允许"
+            "single.zip|单文件超过上限"
+            "name.zip|name"
+        )
+        for P8_BAD_CASE in "${P8_BAD_CASES[@]}"; do
+            IFS='|' read -r P8_BAD_FILE P8_BAD_REASON <<<"$P8_BAD_CASE"
+            P8_BAD_RESPONSE="$WORK_DIR/p8-${P8_BAD_FILE%.zip}.json"
+            P8_BAD_STARTED="$(date +%s%N)"
+            P8_BAD_CODE="$(curl -sS -o "$P8_BAD_RESPONSE" -w '%{http_code}' -b "$JAR_P7_A" \
+                -X POST "$BASE_URL/api/skills" -F "file=@$P8_BAD_DIR/$P8_BAD_FILE;filename=$P8_BAD_FILE" \
+                -F 'subject=金融学')"
+            P8_BAD_ELAPSED=$(( ($(date +%s%N) - P8_BAD_STARTED) / 1000000 ))
+            P8_BAD_MESSAGE="$(jq -r '.error.message // empty' "$P8_BAD_RESPONSE" 2>/dev/null)"
+            P8_ROOT_AFTER="$(p8_skill_root_count | tr -d '[:space:]')"
+
+            [[ $P8_BAD_CODE == 422 ]] \
+                && pass "$P8_BAD_FILE 被 422 拒绝" \
+                || fail "$P8_BAD_FILE 返回 $P8_BAD_CODE，不是 422：$P8_BAD_MESSAGE"
+            [[ $P8_BAD_MESSAGE == *"$P8_BAD_REASON"* ]] \
+                && pass "$P8_BAD_FILE 的理由明确指向「$P8_BAD_REASON」" \
+                || fail "$P8_BAD_FILE 的理由分不清：$P8_BAD_MESSAGE"
+            [[ $P8_ROOT_AFTER == "$P8_ROOT_BEFORE" ]] \
+                && pass "$P8_BAD_FILE 被拒后 SKILL_ROOT 目录数仍是 $P8_ROOT_BEFORE" \
+                || fail "$P8_BAD_FILE 在磁盘留下了目录：$P8_ROOT_BEFORE → $P8_ROOT_AFTER"
+            if [[ $P8_BAD_FILE == ratio.zip ]]; then
+                (( P8_BAD_ELAPSED < 2000 )) \
+                    && pass "500 MB 高压缩比包在 ${P8_BAD_ELAPSED}ms 内、解压前被拒" \
+                    || fail "500 MB 高压缩比包用了 ${P8_BAD_ELAPSED}ms，未证明在解压前拒绝"
+            fi
+        done
+    fi
+fi
+end
+
+# ------------------------------------------ P8③ 同会话中途挂 Skill
+begin "P8③" "同一个会话中途挂上 Skill，下一次 run 立即生效"
+
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    undone "SKIP_LLM=1，这条要两次便宜的真实分析"
+elif (( ! P8_READY )); then
+    fail "前置没就绪（$P8_SETUP_NOTE），热更新验不了"
+else
+    THREAD_P8_RELOAD="$(new_thread "$JAR_P7_A")"
+    P8_RELOAD_SET=0
+    api "$JAR_P7_A" -X PATCH "$BASE_URL/api/threads/$THREAD_P8_RELOAD" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg t "P8 热更新 $P7_TAG" '{title:$t}')" >/dev/null 2>&1 && P8_RELOAD_SET=1
+    P6_QUESTION='你现在有哪些 skill 可用？请只列出名称；如果没有就回答“没有”。不要调用工具。'
+
+    P8_RELOAD_FIRST_OK=0
+    if (( P8_RELOAD_SET )) && p6_analyse "$JAR_P7_A" "$THREAD_P8_RELOAD" p8-reload-before; then
+        P8_RELOAD_FIRST_OK=1
+        RUN_P8_RELOAD_FIRST="$P6_LAST_RUN"
+        ANSWER_P8_RELOAD_FIRST="$P6_LAST_ANSWER"
+    else
+        RUN_P8_RELOAD_FIRST="${P6_LAST_RUN:-}"
+        ANSWER_P8_RELOAD_FIRST="${P6_LAST_ANSWER:-}"
+    fi
+    CHECKPOINT_P8_FIRST="$(psql_query "SELECT count(*) FROM checkpoints WHERE thread_id='$THREAD_P8_RELOAD';" | tr -d '[:space:]')"
+    TREE_P8_RELOAD_FIRST="$(api "$JAR_P7_A" "$BASE_URL/api/threads/$THREAD_P8_RELOAD/files")"
+
+    P8_RELOAD_PATCHED=0
+    api "$JAR_P7_A" -X PATCH "$BASE_URL/api/threads/$THREAD_P8_RELOAD" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg id "$SKILL_P8_BASE" '{agent_config:{skills:[$id]}}')" >/dev/null 2>&1 && P8_RELOAD_PATCHED=1
+
+    P8_RELOAD_SECOND_OK=0
+    if (( P8_RELOAD_PATCHED )) && p6_analyse "$JAR_P7_A" "$THREAD_P8_RELOAD" p8-reload-after; then
+        P8_RELOAD_SECOND_OK=1
+        RUN_P8_RELOAD_SECOND="$P6_LAST_RUN"
+        ANSWER_P8_RELOAD_SECOND="$P6_LAST_ANSWER"
+    else
+        RUN_P8_RELOAD_SECOND="${P6_LAST_RUN:-}"
+        ANSWER_P8_RELOAD_SECOND="${P6_LAST_ANSWER:-}"
+    fi
+    CHECKPOINT_P8_SECOND="$(psql_query "SELECT count(*) FROM checkpoints WHERE thread_id='$THREAD_P8_RELOAD';" | tr -d '[:space:]')"
+    TREE_P8_RELOAD_SECOND="$(api "$JAR_P7_A" "$BASE_URL/api/threads/$THREAD_P8_RELOAD/files")"
+
+    if (( ! P8_RELOAD_SET || ! P8_RELOAD_PATCHED || ! P8_RELOAD_FIRST_OK || ! P8_RELOAD_SECOND_OK )); then
+        fail "同会话两轮没都成功：初始配置=$P8_RELOAD_SET，PATCH=$P8_RELOAD_PATCHED，第一轮=$P8_RELOAD_FIRST_OK，第二轮=$P8_RELOAD_SECOND_OK"
+    elif [[ $ANSWER_P8_RELOAD_FIRST == *annualized-naming* ]]; then
+        fail "挂载前就答出了 annualized-naming，Skill 串进了默认会话：$ANSWER_P8_RELOAD_FIRST"
+    elif [[ $ANSWER_P8_RELOAD_SECOND != *annualized-naming* ]]; then
+        fail "挂载后仍没答出 annualized-naming，热更新没生效：$ANSWER_P8_RELOAD_SECOND"
+    else
+        pass "同一会话双向断言成立：第一轮无 annualized-naming，PATCH 后第二轮立即出现"
+    fi
+
+    if jq -e 'all(.entries[]; (.path != "skill" and (.path | startswith("skill/") | not)))' \
+        <<<"$TREE_P8_RELOAD_FIRST" >/dev/null &&
+        jq -e 'any(.entries[]; .path == "skill/annualized-naming/SKILL.md" and .is_dir == false)' \
+            <<<"$TREE_P8_RELOAD_SECOND" >/dev/null; then
+        pass "同一 workspace 第一轮无 skill/，第二轮已物化 SKILL.md"
+    else
+        fail "同一 workspace 的 Skill 文件树没有随配置变化"
+    fi
+
+    SNAPSHOT_P8_RELOAD_FIRST="$(psql_query "SELECT COALESCE(agent_config->'skills', '[]'::jsonb)::text FROM runs WHERE id='$RUN_P8_RELOAD_FIRST';" | tr -d '\r')"
+    SNAPSHOT_P8_RELOAD_SECOND="$(psql_query "SELECT COALESCE(agent_config->'skills', '[]'::jsonb)::text FROM runs WHERE id='$RUN_P8_RELOAD_SECOND';" | tr -d '\r')"
+    if jq -e 'length == 0' <<<"$SNAPSHOT_P8_RELOAD_FIRST" >/dev/null &&
+        jq -e --arg id "$SKILL_P8_BASE" \
+            'length == 1 and .[0].skill_id == $id and .[0].version == 1 and .[0].name == "annualized-naming"' \
+            <<<"$SNAPSHOT_P8_RELOAD_SECOND" >/dev/null &&
+        (( CHECKPOINT_P8_FIRST > 0 && CHECKPOINT_P8_SECOND > CHECKPOINT_P8_FIRST )); then
+        pass "两次 run 快照由空变为 v1 引用，checkpoint 数 $CHECKPOINT_P8_FIRST → $CHECKPOINT_P8_SECOND"
+    else
+        fail "快照或 checkpoint 没随第二轮变化：first=$SNAPSHOT_P8_RELOAD_FIRST second=$SNAPSHOT_P8_RELOAD_SECOND checkpoints=$CHECKPOINT_P8_FIRST→$CHECKPOINT_P8_SECOND"
+    fi
+fi
+end
+
+# ------------------------------------------ P8④ 全量覆盖对齐
+begin "P8④" "Skill 对齐覆盖改坏内容，并删除清单外文件"
+
+if (( ! P8_READY )); then
+    fail "前置没就绪（$P8_SETUP_NOTE），全量对齐验不了"
+else
+    THREAD_P8_ALIGN="$(new_thread "$JAR_P7_A")"
+    PAYLOAD_P8_ALIGN="$(jq -nc --arg id "$SKILL_P8_BASE" \
+        '{skills:[{skill_id:$id,version:1,name:"annualized-naming"}]}')"
+    P8_ALIGN_INITIAL=0
+    broker_call POST "/threads/$THREAD_P8_ALIGN/skill/align" "$PAYLOAD_P8_ALIGN" >/dev/null 2>&1 && P8_ALIGN_INITIAL=1
+    HASH_P8_EXPECTED="$(sha256sum "$P8_FIXTURE" | cut -d' ' -f1)"
+    HASH_P8_INITIAL="$(in_broker python -c "
+from hashlib import sha256
+from config import get_settings
+path = get_settings().sandbox_workspace_root / '$THREAD_P8_ALIGN' / 'skill' / 'annualized-naming' / 'SKILL.md'
+print(sha256(path.read_bytes()).hexdigest() if path.is_file() else '')
+" | tr -d '[:space:]')"
+
+    P8_ALIGN_MUTATED=0
+    in_broker python -c "
+from config import get_settings
+root = get_settings().sandbox_workspace_root / '$THREAD_P8_ALIGN' / 'skill'
+target = root / 'annualized-naming' / 'SKILL.md'
+target.write_text('BROKEN BY P8\n', encoding='utf-8')
+extra = root / 'not-in-manifest'
+extra.mkdir(parents=True, exist_ok=True)
+(extra / 'README.md').write_text('orphan\n', encoding='utf-8')
+" >/dev/null 2>&1 && P8_ALIGN_MUTATED=1
+
+    P8_ALIGN_RESTORED=0
+    broker_call POST "/threads/$THREAD_P8_ALIGN/skill/align" "$PAYLOAD_P8_ALIGN" >/dev/null 2>&1 && P8_ALIGN_RESTORED=1
+    PROBE_P8_ALIGN="$(in_broker python -c "
+from hashlib import sha256
+from config import get_settings
+root = get_settings().sandbox_workspace_root / '$THREAD_P8_ALIGN' / 'skill'
+target = root / 'annualized-naming' / 'SKILL.md'
+print((sha256(target.read_bytes()).hexdigest() if target.is_file() else '') + '|' + str((root / 'not-in-manifest').exists()).lower())
+" | tr -d '[:space:]')"
+
+    if (( P8_ALIGN_INITIAL )) && [[ $HASH_P8_INITIAL == "$HASH_P8_EXPECTED" ]]; then
+        pass "首次对齐逐字节物化了 annualized-naming/SKILL.md"
+    else
+        fail "首次对齐内容不对：initial=$P8_ALIGN_INITIAL hash=$HASH_P8_INITIAL expected=$HASH_P8_EXPECTED"
+    fi
+    if (( P8_ALIGN_MUTATED && P8_ALIGN_RESTORED )) && [[ $PROBE_P8_ALIGN == "$HASH_P8_EXPECTED|false" ]]; then
+        pass "再次对齐覆盖了改坏内容，并删除 not-in-manifest/"
+    else
+        fail "全量覆盖失败：mutated=$P8_ALIGN_MUTATED restored=$P8_ALIGN_RESTORED probe=$PROBE_P8_ALIGN"
+    fi
+fi
+end
+
+# ------------------------------------------ P8⑤ 共享与审核
+begin "P8⑤" "Skill 复用共享与审核；别组拿着 id 也挂不上"
+
+if (( ! P7_READY )); then
+    fail "前置没就绪（$P7_SETUP_NOTE），Skill 共享审核验不了"
+else
+    NAME_P8_SHARE="p8-sharing-$P7_TAG"
+    FILE_P8_SHARE="$WORK_DIR/$NAME_P8_SHARE.md"
+    cat > "$FILE_P8_SHARE" <<EOF_SKILL
+---
+name: $NAME_P8_SHARE
+description: P8 共享与审核验收用 Skill。
+---
+共享验收规则。
+EOF_SKILL
+    SKILL_P8_SHARE="$(p8_new_skill "$JAR_P7_A" "$FILE_P8_SHARE" "$NAME_P8_SHARE.md")" || SKILL_P8_SHARE=""
+
+    if [[ -z $SKILL_P8_SHARE ]]; then
+        fail "A 没能上传并发布共享验收 Skill"
+    else
+        P8_SHARE_SET=0
+        api "$JAR_P7_A" -X PUT "$BASE_URL/api/skills/$SKILL_P8_SHARE/sharing" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg g "$GROUP_P7_1" '{visibility:"group",group_ids:[$g]}')" \
+            >/dev/null 2>&1 && P8_SHARE_SET=1
+
+        (( P8_SHARE_SET )) && p8_available_has "$JAR_P7_B" "$SKILL_P8_SHARE" \
+            && pass "A 共享给 G1 后，同组 B 的可用列表有它" \
+            || fail "共享后 B 的可用列表没有 Skill"
+        if ! p8_available_has "$JAR_P7_C" "$SKILL_P8_SHARE" && ! p8_catalog_has "$JAR_P7_C" "$SKILL_P8_SHARE"; then
+            pass "别组 C 的可用列表与平台目录都没有未过审 Skill"
+        else
+            fail "别组 C 提前看到了组内或未过审 Skill"
+        fi
+
+        THREAD_P8_C="$(new_thread "$JAR_P7_C")"
+        RUN_COUNT_P8_C_BEFORE="$(psql_query "SELECT count(*) FROM runs WHERE user_id='$UID_P7_C';" | tr -d '[:space:]')"
+        RESPONSE_P8_C="$WORK_DIR/p8-c-invisible.json"
+        CODE_P8_C="$(curl -sS -o "$RESPONSE_P8_C" -w '%{http_code}' -b "$JAR_P7_C" \
+            -X POST "$BASE_URL/api/threads/$THREAD_P8_C/runs" -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg id "$SKILL_P8_SHARE" '{content:"越权引用 Skill",agent_config:{skills:[$id]}}')")"
+        RUN_COUNT_P8_C_AFTER="$(psql_query "SELECT count(*) FROM runs WHERE user_id='$UID_P7_C';" | tr -d '[:space:]')"
+        if [[ $CODE_P8_C == 422 && $RUN_COUNT_P8_C_AFTER == "$RUN_COUNT_P8_C_BEFORE" ]]; then
+            pass "C 拿着 skill_id 提交仍是 422，runs 行数保持 $RUN_COUNT_P8_C_BEFORE"
+        else
+            fail "C 的越权引用没有 fail-closed：code=$CODE_P8_C runs=$RUN_COUNT_P8_C_BEFORE→$RUN_COUNT_P8_C_AFTER body=$(cat "$RESPONSE_P8_C")"
+        fi
+
+        REVIEW_P8_ONE="$(p8_submit_review "$JAR_P7_A" "$SKILL_P8_SHARE")"
+        P8_NO_REASON="$(code "$JAR_P7_R" -X POST "$BASE_URL/api/reviews/$REVIEW_P8_ONE" \
+            -H 'Content-Type: application/json' -d '{"approved":false}')"
+        P8_REJECT_REASON="请补充来源与适用边界"
+        P8_REJECT="$(code "$JAR_P7_R" -X POST "$BASE_URL/api/reviews/$REVIEW_P8_ONE" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg r "$P8_REJECT_REASON" '{approved:false,reason:$r}')")"
+        P8_AUTHOR_REASON="$(api "$JAR_P7_A" "$BASE_URL/api/skills/mine/$SKILL_P8_SHARE" |
+            jq -r 'first(.versions[] | select(.review_status == "rejected") | .review_reason) // empty')"
+        if [[ $P8_NO_REASON == 422 && $P8_REJECT == 202 && $P8_AUTHOR_REASON == "$P8_REJECT_REASON" ]]; then
+            pass "reviewer 无理由拒绝被 422 挡住；写理由后作者逐字可见"
+        else
+            fail "拒绝理由闸门不完整：无理由=$P8_NO_REASON 有理由=$P8_REJECT 作者看到=$P8_AUTHOR_REASON"
+        fi
+
+        if ! p8_catalog_has "$JAR_P7_C" "$SKILL_P8_SHARE" && p8_available_has "$JAR_P7_B" "$SKILL_P8_SHARE"; then
+            pass "被拒后 C 的平台目录仍没有，组内 B 仍可用"
+        else
+            fail "拒绝错误地撤回了组内可见性，或泄露进平台目录"
+        fi
+
+        REVIEW_P8_TWO="$(p8_submit_review "$JAR_P7_A" "$SKILL_P8_SHARE")"
+        P8_APPROVE="$(code "$JAR_P7_R" -X POST "$BASE_URL/api/reviews/$REVIEW_P8_TWO" \
+            -H 'Content-Type: application/json' -d '{"approved":true}')"
+        if [[ $P8_APPROVE == 202 ]] && p8_catalog_has "$JAR_P7_C" "$SKILL_P8_SHARE"; then
+            pass "同一版本重新提审并通过后，C 的平台目录出现该 Skill"
+        else
+            fail "通过后平台目录仍不可见：review=$P8_APPROVE"
+        fi
+
+        KINDS_P8="$(psql_query "SELECT count(DISTINCT r.target_kind)
+            FROM reviews r
+            WHERE (r.target_kind='agent' AND EXISTS (
+                SELECT 1 FROM agent_versions v JOIN agents a ON a.id=v.agent_id
+                WHERE v.id=r.target_id AND a.owner_id='$UID_P7_A'))
+               OR (r.target_kind='skill' AND EXISTS (
+                SELECT 1 FROM skill_versions v JOIN skills s ON s.id=v.skill_id
+                WHERE v.id=r.target_id AND s.owner_id='$UID_P7_A'));" | tr -d '[:space:]')"
+        [[ $KINDS_P8 == 2 ]] \
+            && pass "同一作者的 reviews 行同时覆盖 agent 与 skill 两种 target_kind" \
+            || fail "reviews 没同时存住两种 target_kind：count=${KINDS_P8:-空}"
     fi
 fi
 end

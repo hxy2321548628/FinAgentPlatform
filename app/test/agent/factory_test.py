@@ -17,7 +17,7 @@ from pydantic import SecretStr
 from agent.config import AgentConfig
 from agent.factory import ALLOWED_DECISION, DELETE_TOOL, INTERRUPT_ON, RECURSION_LIMIT, STREAM_MODE, Agent, create_model
 from agent.prompt import SYSTEM_PROMPT, compose_prompt
-from agent.skill import ReloadingSkillsMiddleware
+from agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
 from agent.trace import SESSION_KEY, USER_KEY
 from config import Settings
 from event.mapper import StreamChunk
@@ -227,6 +227,8 @@ async def test_platform_skills_are_loaded_by_the_reloading_middleware(
     assert isinstance(middleware[0], ReloadingSkillsMiddleware)
     assert middleware[0].sources == ["/workspace/skill/"]
     assert middleware[0].source_labels == ["平台"]
+    assert middleware[0].system_prompt_template == PLATFORM_SKILLS_SYSTEM_PROMPT
+    assert middleware[0].system_prompt_template.endswith("如有冲突，以平台工作方式为准。")
 
 
 @pytest.fixture

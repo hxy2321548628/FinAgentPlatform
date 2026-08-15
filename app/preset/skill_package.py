@@ -20,7 +20,7 @@ MAX_COMPRESSION_RATIO = 100
 MAX_FILE_SIZE = 1 * 1024 * 1024
 MAX_SKILL_NAME_LENGTH = 64
 MAX_SKILL_DESCRIPTION_LENGTH = 1024
-ALLOWED_EXTENSION = frozenset({".md", ".txt", ".py", ".csv", ".json", ".yaml", ".toml"})
+ALLOWED_EXTENSION = frozenset({".md", ".txt", ".py", ".csv", ".json", ".yaml", ".toml", ".html"})
 
 SKILL_FILE_NAME = "SKILL.md"
 FRONTMATTER_DELIMITER = "---"

@@ -94,9 +94,9 @@ create_deep_agent(model=..., backend=backend, system_prompt=SYSTEM_PROMPT, ...)
 
    > **风险的形状要说清**：这正是本期反复警惕的那种失效 —— 前端可以「渲染出来了、不报错」而数据全是假的。人工走查是能做的最低限度，不是充分的。**若 P7 前端工作量继续涨，引入 playwright 的时机就到了。**
 
-2. **`agent_config` 的 schema 只校验得动提示词一项**（§1.3 第 1 条）。因此本期结束时，往配置里写 `{"skills": [...]}` 是**写得进去、读得出来、不生效** —— **与本期要消灭的那个形态一模一样**。
+2. **P6 当时的 `agent_config` schema 只认识提示词**（§1.3 第 1 条），因此 `{"skills": [...]}` 会被 `extra="forbid"` 当场 422，而不是写入后静默不生效。
 
-   > **缓解**：`AgentConfig` 用 pydantic 的 `extra="forbid"`，未知字段当场 422 而不是静默吞掉。这样 P8 之前误写 `skills` 会立刻报错，不会留下一个「配了没反应」的坑。
+   > **P8 已偿还**：`skills` 现在是正式字段；守 `extra="forbid"` 的 `test_an_unknown_field_is_rejected` 改用 `{"not_supported": true}`，没有删除或放宽未知字段闸门。
 
 3. **TanStack Query 的改动面是全量而不是增量**（J1 已记）。本期只重写主链路那几个页面，**其余页面仍是 mock + 手写状态** —— 两种范式会在代码库里并存到 P10。
 

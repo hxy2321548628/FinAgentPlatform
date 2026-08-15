@@ -175,7 +175,7 @@ function UploadDialog({ skill, onClose, onDone }: { skill: MySkill | null; onClo
       />
       <button type="button" onClick={() => fileRef.current?.click()} style={fileButtonStyle}>
         <span style={{ display: 'block', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{file?.name ?? '选择 ZIP 或 Markdown 文件'}</span>
-        <span style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)' }}>解压后不超过 5 MB；仅允许文本与代码类附件</span>
+        <span style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)' }}>解压后不超过 5 MB；允许 Markdown、文本、HTML、Python 与结构化数据附件</span>
       </button>
       <div style={noticeStyle}>平台会校验路径穿越、符号链接、总大小、文件数量、压缩比、扩展名、单文件大小，以及 Skill 名称与目录名。</div>
       {upload.isError && <ul role="alert" style={{ ...errorStyle, margin: '0 0 14px', paddingLeft: 30 }}>{validationReasons(upload.error).map(reason => <li key={reason}>{reason}</li>)}</ul>}
