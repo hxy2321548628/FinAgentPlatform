@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 平台回归验收：P0–P8 当前 41 条判据，一个文件跑完。
+# 平台回归验收：P0–P9 当前 43 条判据，一个文件跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
@@ -17,9 +17,9 @@
 # 要不要 root），不是期次。按期挑着跑，等于把刚拆掉的那层级联结构又装回来，
 # 还多一条「以为全验了其实只验了一期」的路。
 #
-# 41 条里 **12 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
+# 43 条里 **14 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
 # P2① 与 P3① 各要一次真实分析，P6①、P7③、P8① 与 P8③ 各要两次真实分析，
-# P1① 那四条破坏性测试要 root。其余 29 条全免费。
+# P9①与 P9② 共用两次真实分析，P1① 那四条破坏性测试要 root。其余 29 条全免费。
 #
 # ---------------------------------------------------------------------------
 # **P7 那一组是 2026-08-14 随本期开发一起加的**，六条：三档可见性、审核闸门、
@@ -3455,6 +3455,172 @@ else
     else
         fail "Skill playwright 未全过，详见 $P8_E2E_LOG"
         tail -30 "$P8_E2E_LOG" >&2 || true
+    fi
+fi
+end
+
+
+# ===========================================================================
+# P9：子智能体主判据与 token 汇总
+# ===========================================================================
+
+P9_FIXTURE="$REPO_ROOT/deploy/test/subagent/volatility-expert.json"
+P9_READY=0
+P9_SETUP_NOTE="未开始"
+P9_RUNS_READY=0
+AGENT_P9_VOLATILITY=""
+
+p9_new_fixture_agent() {
+    local jar="$1" fixture="$2" name description prompt response agent_id
+    name="$(jq -r '.name // empty' "$fixture")"
+    description="$(jq -r '.description // empty' "$fixture")"
+    prompt="$(jq -r '.prompt // empty' "$fixture")"
+    [[ -n $name && -n $description && -n $prompt ]] || return 1
+    response="$(api "$jar" -X POST "$BASE_URL/api/agents" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg n "$name" --arg d "$description" --arg p "$prompt" \
+            '{name:$n,description:$d,subject:"金融学",system_prompt:$p}')")" || return 1
+    agent_id="$(jq -r '.id // empty' <<<"$response")"
+    [[ -n $agent_id ]] || return 1
+    api "$jar" -X POST "$BASE_URL/api/agents/$agent_id/versions" >/dev/null || return 1
+    printf '%s\n' "$agent_id"
+}
+
+if (( P7_READY )); then
+    if [[ ! -f $P9_FIXTURE ]]; then
+        P9_SETUP_NOTE="缺子智能体夹具 $P9_FIXTURE"
+    elif ! jq -e '
+        .name == "volatility-expert"
+        and (.description | type == "string" and length > 0)
+        and (.prompt | type == "string" and length > 0)
+    ' "$P9_FIXTURE" >/dev/null; then
+        P9_SETUP_NOTE="volatility-expert 夹具形状不合法"
+    elif AGENT_P9_VOLATILITY="$(p9_new_fixture_agent "$JAR_P7_A" "$P9_FIXTURE")" &&
+        [[ -n $AGENT_P9_VOLATILITY ]]; then
+        P9_READY=1
+        P9_SETUP_NOTE="volatility-expert v1 已发布"
+    else
+        P9_SETUP_NOTE="volatility-expert 没创建并发布成功"
+    fi
+else
+    P9_SETUP_NOTE="P7 账号前置没就绪（$P7_SETUP_NOTE）"
+fi
+
+# ------------------------------------------ P9① 主判据：真进子图并写文件
+begin "P9①" "挂与不挂子智能体，事件 path、文件与快照可见地不同"
+
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    undone "SKIP_LLM=1，这条要两次真实分析"
+elif (( ! P9_READY )); then
+    fail "前置没就绪（$P9_SETUP_NOTE），子智能体主判据验不了"
+else
+    THREAD_P9_PLAIN="$(new_thread "$JAR_P7_A")"
+    THREAD_P9_CHILD="$(new_thread "$JAR_P7_A")"
+    P9_PLAIN_SET=0
+    P9_CHILD_SET=0
+    api "$JAR_P7_A" -X PATCH "$BASE_URL/api/threads/$THREAD_P9_PLAIN" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg t "P9 无子智能体 $P7_TAG" '{title:$t}')" >/dev/null 2>&1 && P9_PLAIN_SET=1
+    api "$JAR_P7_A" -X PATCH "$BASE_URL/api/threads/$THREAD_P9_CHILD" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg t "P9 有子智能体 $P7_TAG" --arg id "$AGENT_P9_VOLATILITY" \
+            '{title:$t,agent_config:{subagents:[$id]}}')" >/dev/null 2>&1 && P9_CHILD_SET=1
+
+    P6_QUESTION='只做这一件事：固定收益率数组 [0.01,-0.005,0.008,-0.002,0.006] 的样本标准差是 0.00654217089351845，乘以 sqrt(252) 后年化波动率是 0.10385374331241026。不要复核或执行代码，只调用一次 write_file，把这段计算写进 outputs/volatility-result.txt。如果存在名为 volatility-expert 的可委派子智能体，必须把整项工作委派给它，自己不得代做；不存在时才自行写文件。不调用其他工具，不创建临时文件，不删除、移动或覆盖任何已有文件；完成后只回答输出文件名。'
+    P9_PLAIN_OK=0
+    P9_CHILD_OK=0
+    if (( P9_PLAIN_SET )) && p6_analyse "$JAR_P7_A" "$THREAD_P9_PLAIN" p9-plain "$RUN_TIMEOUT"; then
+        P9_PLAIN_OK=1
+        RUN_P9_PLAIN="$P6_LAST_RUN"
+        STATUS_P9_PLAIN="$P6_LAST_STATUS"
+    else
+        RUN_P9_PLAIN="${P6_LAST_RUN:-}"
+        STATUS_P9_PLAIN="${P6_LAST_STATUS:-提交失败}"
+    fi
+    if (( P9_CHILD_SET )) && p6_analyse "$JAR_P7_A" "$THREAD_P9_CHILD" p9-child "$RUN_TIMEOUT"; then
+        P9_CHILD_OK=1
+        RUN_P9_CHILD="$P6_LAST_RUN"
+        STATUS_P9_CHILD="$P6_LAST_STATUS"
+    else
+        RUN_P9_CHILD="${P6_LAST_RUN:-}"
+        STATUS_P9_CHILD="${P6_LAST_STATUS:-提交失败}"
+    fi
+
+    if (( ! P9_PLAIN_SET || ! P9_CHILD_SET )); then
+        fail "两个独立会话没都在提交前设好配置"
+    elif (( ! P9_PLAIN_OK || ! P9_CHILD_OK )); then
+        fail "两条 run 没都跑到 succeeded：不挂=$STATUS_P9_PLAIN，挂上=$STATUS_P9_CHILD"
+    else
+        P9_RUNS_READY=1
+        P9_PLAIN_NESTED="$(jq -s '[.[] | select(.path | length > 0)] | length' "$WORK_DIR/p9-plain.json")"
+        P9_CHILD_NAMED="$(jq -s '[.[] | select(.path == ["volatility-expert"])] | length' "$WORK_DIR/p9-child.json")"
+        if (( P9_PLAIN_NESTED == 0 && P9_CHILD_NAMED > 0 )); then
+            pass "双向 path 断言成立：A 全为空，B 有 $P9_CHILD_NAMED 条 volatility-expert 事件"
+        else
+            fail "path 没形成对照：A 非空=$P9_PLAIN_NESTED，B 命名事件=$P9_CHILD_NAMED"
+        fi
+
+        TREE_P9_CHILD="$(api "$JAR_P7_A" "$BASE_URL/api/threads/$THREAD_P9_CHILD/files")"
+        P9_OUTPUTS="$(jq '[.entries[] | select(.is_dir == false and (.path | startswith("outputs/")))] | length' \
+            <<<"$TREE_P9_CHILD")"
+        P9_NESTED_FILE_CALLS="$(jq -s '[.[]
+            | select(.type == "tool_call" and .path == ["volatility-expert"])
+            | select(.data.name | test("^(write_file|edit_file|execute)$"))] | length' \
+            "$WORK_DIR/p9-child.json")"
+        if (( P9_OUTPUTS > 0 && P9_NESTED_FILE_CALLS > 0 )); then
+            pass "子智能体通过文件工具工作并在 outputs/ 留下了 $P9_OUTPUTS 个文件"
+        else
+            fail "未证明子智能体真的干活：outputs 文件=$P9_OUTPUTS，嵌套文件工具=$P9_NESTED_FILE_CALLS"
+        fi
+
+        SNAPSHOT_P9_CHILD="$(psql_query "SELECT COALESCE(agent_config->'subagents', '[]'::jsonb)::text
+            FROM runs WHERE id='$RUN_P9_CHILD';" | tr -d '\r')"
+        if jq -e --arg id "$AGENT_P9_VOLATILITY" '
+            length == 1
+            and .[0].agent_id == $id
+            and .[0].version == 1
+            and .[0].name == "volatility-expert"
+        ' <<<"$SNAPSHOT_P9_CHILD" >/dev/null; then
+            pass "run 快照冻结了 agent_id、version 与 name"
+        else
+            fail "子智能体快照不完整：$SNAPSHOT_P9_CHILD"
+        fi
+
+        TASK_CALLS_P9="$(jq -s '[.[]
+            | select(.type == "tool_call" and (.path | length == 0))
+            | select(.data.name == "task" and .data.args.subagent_type == "volatility-expert")
+        ] | length' "$WORK_DIR/p9-child.json")"
+        info "【观察项】P9① task 调用了 $TASK_CALLS_P9 次；run=$RUN_P9_CHILD"
+        (( TASK_CALLS_P9 > 0 )) \
+            && pass "主智能体确实调用了 task(volatility-expert)" \
+            || fail "事件流里没有主智能体的 task(volatility-expert) 调用"
+    fi
+fi
+end
+
+# ------------------------------------------ P9② 子图 token 汇总
+begin "P9②" "子智能体消耗计进同一条 run 的 token"
+
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    undone "SKIP_LLM=1；这条复用 P9① 的两次真实分析"
+elif (( ! P9_RUNS_READY )); then
+    fail "P9① 两条 run 没都成功，无法比较 token"
+else
+    TOKENS_P9_PLAIN="$(psql_query "SELECT COALESCE(tokens_cache_read,0) || '|' || COALESCE(tokens_uncached,0) || '|' || COALESCE(tokens_output,0)
+        FROM runs WHERE id='$RUN_P9_PLAIN';" | tr -d '[:space:]')"
+    TOKENS_P9_CHILD="$(psql_query "SELECT COALESCE(tokens_cache_read,0) || '|' || COALESCE(tokens_uncached,0) || '|' || COALESCE(tokens_output,0)
+        FROM runs WHERE id='$RUN_P9_CHILD';" | tr -d '[:space:]')"
+    IFS='|' read -r P9_PLAIN_CACHE P9_PLAIN_UNCACHED P9_PLAIN_OUTPUT <<<"$TOKENS_P9_PLAIN"
+    IFS='|' read -r P9_CHILD_CACHE P9_CHILD_UNCACHED P9_CHILD_OUTPUT <<<"$TOKENS_P9_CHILD"
+    TOTAL_P9_PLAIN=$(( P9_PLAIN_CACHE + P9_PLAIN_UNCACHED + P9_PLAIN_OUTPUT ))
+    TOTAL_P9_CHILD=$(( P9_CHILD_CACHE + P9_CHILD_UNCACHED + P9_CHILD_OUTPUT ))
+
+    info "第 17 个 token 样本（P9① 不挂子智能体，cache|uncached|output）：$TOKENS_P9_PLAIN；run=$RUN_P9_PLAIN"
+    info "第 18 个 token 样本（P9① 挂子智能体，cache|uncached|output）：$TOKENS_P9_CHILD；run=$RUN_P9_CHILD"
+    info "【人工核对】请用这两个 run 的 UTC 时间窗与 DeepSeek 后台账单对账，并把结果记进 P9 计划 §8"
+    if (( TOTAL_P9_CHILD > TOTAL_P9_PLAIN )); then
+        pass "挂子智能体的总 token $TOTAL_P9_CHILD > 对照组 $TOTAL_P9_PLAIN"
+    else
+        fail "子图 token 疑似漏计：挂子智能体=$TOTAL_P9_CHILD，对照组=$TOTAL_P9_PLAIN"
     fi
 fi
 end
