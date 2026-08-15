@@ -472,3 +472,33 @@ async def test_an_mcp_snapshot_without_a_catalog_fails_loudly(
 
     with pytest.raises(RuntimeError, match="MCP"):
         await drain(runner.stream(FakeBackend(), "thread-1", "一", config))  # type: ignore[arg-type]
+
+
+async def test_asking_whether_anything_is_pending_does_not_reach_out_to_the_network(
+    recorded: tuple[RecordingAgent, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """查中断不该再连一遍那台校外机器。
+
+    中断记在 checkpoint 里，读它与图上绑了哪些工具无关；而每条 run 流跑完都要查一次
+    中断 —— 不去掉的话，挂了 MCP 的分析每次都连两遍（实测日志里两条装配相隔 8 秒），
+    而每一次都可能失败、都会记进熔断计数。
+    """
+    from agent.config import McpReference
+
+    loaded = 0
+
+    async def counting_load(*argument: Any, **keyword: Any) -> list[Any]:  # noqa: ANN401 - 替身照单全收
+        nonlocal loaded
+        loaded += 1
+        return []
+
+    monkeypatch.setattr("agent.factory.load_mcp_tools", counting_load)
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver(), mcp_loader=object())  # type: ignore[arg-type]
+    config = AgentConfig(mcps=[McpReference(server_id="srv-1", name="paper-search")])
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一", config))  # type: ignore[arg-type]
+    assert loaded == 1
+
+    await runner.pending(FakeBackend(), "thread-1", config)  # type: ignore[arg-type]
+
+    assert loaded == 1

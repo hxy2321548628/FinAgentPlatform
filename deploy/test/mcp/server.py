@@ -36,10 +36,15 @@ SLOW_SECOND = 90
 
 DEFAULT_PORT = 8931
 
+# **默认只听回环。** 单测在宿主机上连它，回环就够了 —— 而这是一个没有任何认证、
+# 谁调都答的服务，别把它默认暴露到局域网上。compose 部署的验收要让 worker 容器连得到
+# （它走 host.docker.internal，落在宿主的网桥地址上，回环收不到），那时才设 `0.0.0.0`
+DEFAULT_HOST = "127.0.0.1"
+
 server = FastMCP(
     "zuel-fixture",
     instructions="验收夹具，只提供检索类只读工具。",
-    host="127.0.0.1",
+    host=os.environ.get("MCP_FIXTURE_HOST", DEFAULT_HOST),
     port=int(os.environ.get("MCP_FIXTURE_PORT", DEFAULT_PORT)),
 )
 

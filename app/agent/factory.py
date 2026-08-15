@@ -187,7 +187,11 @@ class Agent:
         Returns:
             待确认的调用，按 index 排列；没有中断则空列表。
         """
-        snapshot = await (await self._graph(backend, agent_config)).aget_state(self._config(thread_id))
+        # **这一步不装外部工具。** 中断记在 checkpoint 里，读它与图上绑了哪些工具无关；
+        # 而装一遍就是一次外网往返 —— 每条 run 流跑完都要查一次中断，不去掉的话
+        # 挂了 MCP 的分析每次都连两遍那台校外机器（实测日志里两条装配相隔 8 秒），
+        # 而每一次都可能失败、都会记进熔断计数
+        snapshot = await (await self._graph(backend, agent_config, with_mcp=False)).aget_state(self._config(thread_id))
         return _actions(getattr(snapshot, "interrupts", ()))
 
     def _astream(
@@ -211,13 +215,19 @@ class Agent:
 
         return stream()
 
-    async def _graph(self, backend: BackendProtocol, agent_config: AgentConfig | None = None) -> SupportsAgent:
+    async def _graph(
+        self,
+        backend: BackendProtocol,
+        agent_config: AgentConfig | None = None,
+        *,
+        with_mcp: bool = True,
+    ) -> SupportsAgent:
         # LangGraph 的 astream 按 stream_mode 的字面量类型分重载，表达不了
         # 「传 list 且 subgraphs=True 时逐个吐 (ns, mode, payload) 三元组」这个组合，
         # 于是收窄成本模块自己的 Protocol。三元组的形状由入库的真实 chunk 钉住。
         # **不挂 MCP 的 run 一个额外动作都不做。** 绝大多数分析走的是这条路，
         # 而「平台好像变慢了」不会有任何日志指向外网往返
-        mcp_tools = await self._mcp_tools(agent_config)
+        mcp_tools = await self._mcp_tools(agent_config) if with_mcp else []
         subagents = None
         if agent_config is not None and agent_config.subagents:
             if self._subagent_loader is None:
