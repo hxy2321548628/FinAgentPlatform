@@ -25,6 +25,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import Select, Subquery, case, delete, exists, func, insert, literal, update
@@ -36,6 +37,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.config import SkillReference, SubagentReference
+from agent.subagent import SubagentDefinition
 from group.model import GroupMemberRecord
 from preset.model import (
     FIRST_VERSION,
@@ -661,6 +663,33 @@ class AgentRepository:
             system_prompt=found["system_prompt"],
             skill_refs=_load_skill_refs(found["skill_refs"]),
             subagent_refs=_load_subagent_refs(found["subagent_refs"]),
+        )
+
+    async def load_subagent(self, agent_id: str, version: int) -> SubagentDefinition | None:
+        """按快照中的稳定标识与版本读取子智能体内容。
+
+        这里刻意不判断当前可见性与软删除状态：提交侧已经完成授权并冻结版本，worker
+        晚几分钟执行时不能因为作者刚好撤回共享而改变同一次提交的结果。
+        """
+        identifier = _parse(agent_id)
+        if identifier is None:
+            return None
+        statement = cast(
+            Select[tuple[object, ...]],
+            sa_select(
+                col(AgentRecord.description).label("description"),
+                col(AgentVersionRecord.system_prompt).label("system_prompt"),
+            )
+            .join(AgentVersionRecord, onclause=col(AgentVersionRecord.agent_id) == col(AgentRecord.id))
+            .where(col(AgentRecord.id) == identifier, col(AgentVersionRecord.version) == version),
+        )
+        async with self._engine.connect() as connection:
+            found = (await connection.execute(statement)).mappings().first()
+        if found is None:
+            return None
+        return SubagentDefinition(
+            description=found["description"],
+            system_prompt=found["system_prompt"],
         )
 
     async def count_call(self, agent_id: str) -> None:

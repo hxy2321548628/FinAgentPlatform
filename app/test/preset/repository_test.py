@@ -437,3 +437,27 @@ async def test_a_malformed_identifier_is_a_miss_not_a_crash(agents: AgentReposit
     assert await agents.soft_delete("不是-uuid", owner_id=owner.id) is False
     assert await agents.list_available("不是-uuid") == []
     assert await agents.list_owned("不是-uuid") == []
+
+
+async def test_worker_loads_the_exact_frozen_subagent_version_even_after_delete(
+    agents: AgentRepository, owner: User
+) -> None:
+    created = await agents.create(
+        owner_id=owner.id,
+        name=f"冻结版本-{uuid4().hex[:8]}",
+        description="用于子图调度",
+        subject="金融学",
+        system_prompt="第一版",
+    )
+    assert created is not None
+    assert await agents.release(created.id, owner_id=owner.id) is not None
+    assert await agents.write_draft(created.id, owner_id=owner.id, system_prompt="第二版") is not None
+    assert await agents.release(created.id, owner_id=owner.id) is not None
+    assert await agents.soft_delete(created.id, owner_id=owner.id) is True
+
+    frozen = await agents.load_subagent(created.id, 1)
+
+    assert frozen is not None
+    assert frozen.description == "用于子图调度"
+    assert frozen.system_prompt == "第一版"
+    assert await agents.load_subagent(created.id, 99) is None

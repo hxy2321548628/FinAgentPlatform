@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from agent.factory import Agent, create_model
 from agent.trace import create_callback
 from config import Settings
+from preset.repository import AgentRepository
 from preset.skill_remote import RemoteSkillStore
 from run.archive import EventArchive
 from run.cancel import CancelFlag
@@ -93,6 +94,7 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
             # **只有这个进程驱动 agent**，因此追踪也只在这里挂。
             # 没配 Langfuse 时是 None，图上一个回调都不挂
             callback=create_callback(settings),
+            subagent_loader=AgentRepository(engine),
         ),
         repository=RunRepository(engine),
         cancel=CancelFlag(cache),

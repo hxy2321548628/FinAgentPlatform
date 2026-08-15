@@ -4,8 +4,8 @@
 问一句「有没有在等人确认」，不认识 graph、config、`Command` 这些框架概念，
 换掉编排框架时改这里就够。
 
-本期是单 agent、无子 agent：工具集就是 DeepAgents 内置的 8 个，
-只把驱动它们的 backend 换成沙箱的实现。
+主图与子图都使用 DeepAgents 内置文件工具，并由同一个沙箱 backend 驱动；
+子图自行编译，以便平台绑定独立递归上限。
 """
 
 from collections.abc import AsyncIterator
@@ -24,6 +24,7 @@ from langgraph.types import Command
 from agent.config import AgentConfig
 from agent.prompt import compose_prompt
 from agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
+from agent.subagent import SubagentLoaderProtocol, compile_subagents
 from agent.trace import attribution
 from config import Settings
 from event.mapper import StreamChunk
@@ -118,10 +119,12 @@ class Agent:
         model: BaseChatModel,
         checkpointer: BaseCheckpointSaver[str],
         callback: BaseCallbackHandler | None = None,
+        subagent_loader: SubagentLoaderProtocol | None = None,
     ) -> None:
         self._model = model
         self._checkpointer = checkpointer
         self._callback = callback
+        self._subagent_loader = subagent_loader
 
     def stream(
         self,
@@ -178,7 +181,7 @@ class Agent:
         Returns:
             待确认的调用，按 index 排列；没有中断则空列表。
         """
-        snapshot = await self._graph(backend, agent_config).aget_state(self._config(thread_id))
+        snapshot = await (await self._graph(backend, agent_config)).aget_state(self._config(thread_id))
         return _actions(getattr(snapshot, "interrupts", ()))
 
     def _astream(
@@ -190,17 +193,32 @@ class Agent:
         *,
         user_id: str | None,
     ) -> AsyncIterator[StreamChunk]:
-        return self._graph(backend, agent_config).astream(
-            entry,
-            self._config(thread_id, user_id=user_id),
-            stream_mode=STREAM_MODE,
-            subgraphs=True,
-        )
+        async def stream() -> AsyncIterator[StreamChunk]:
+            graph = await self._graph(backend, agent_config)
+            async for chunk in graph.astream(
+                entry,
+                self._config(thread_id, user_id=user_id),
+                stream_mode=STREAM_MODE,
+                subgraphs=True,
+            ):
+                yield chunk
 
-    def _graph(self, backend: BackendProtocol, agent_config: AgentConfig | None = None) -> SupportsAgent:
+        return stream()
+
+    async def _graph(self, backend: BackendProtocol, agent_config: AgentConfig | None = None) -> SupportsAgent:
         # LangGraph 的 astream 按 stream_mode 的字面量类型分重载，表达不了
         # 「传 list 且 subgraphs=True 时逐个吐 (ns, mode, payload) 三元组」这个组合，
         # 于是收窄成本模块自己的 Protocol。三元组的形状由入库的真实 chunk 钉住。
+        subagents = None
+        if agent_config is not None and agent_config.subagents:
+            if self._subagent_loader is None:
+                raise RuntimeError("运行快照包含子智能体，但 worker 未配置子智能体仓储")
+            subagents = await compile_subagents(
+                agent_config.subagents,
+                loader=self._subagent_loader,
+                model=self._model,
+                backend=backend,
+            )
         return cast(
             SupportsAgent,
             create_deep_agent(
@@ -208,6 +226,7 @@ class Agent:
                 backend=backend,
                 system_prompt=compose_prompt(agent_config),
                 checkpointer=self._checkpointer,
+                subagents=subagents,
                 middleware=[
                     ReloadingSkillsMiddleware(
                         backend=backend,

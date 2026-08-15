@@ -368,3 +368,38 @@ async def test_an_unreadable_interrupt_is_treated_as_none(recorded: tuple[Record
     runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
 
     assert await runner.pending(FakeBackend(), "thread-1") == []  # type: ignore[arg-type]
+
+
+async def test_an_empty_subagent_snapshot_does_not_touch_the_loader(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    class Loader:
+        async def load_subagent(self, agent_id: str, version: int) -> None:
+            raise AssertionError("空快照不应访问子智能体仓储")
+
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver(), subagent_loader=Loader())
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一", AgentConfig()))  # type: ignore[arg-type]
+
+    assert built["subagents"] is None
+
+
+async def test_a_compiled_subagent_list_reaches_deepagents(
+    recorded: tuple[RecordingAgent, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent.config import SubagentReference
+
+    expected: list[Any] = [{"name": "volatility-expert"}]
+
+    async def fake_compile(*argument: Any, **keyword: Any) -> list[Any]:  # noqa: ANN401 - 替身照单全收
+        return expected
+
+    monkeypatch.setattr("agent.factory.compile_subagents", fake_compile)
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver(), subagent_loader=object())  # type: ignore[arg-type]
+    config = AgentConfig(subagents=[SubagentReference(agent_id="agent-1", version=1, name="volatility-expert")])
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一", config))  # type: ignore[arg-type]
+
+    assert built["subagents"] is expected
