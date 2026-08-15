@@ -1,5 +1,13 @@
 export type UserRole = 'admin' | 'reviewer' | 'teacher' | 'student'
 
+export interface RegisterResponse {
+  id: string
+  name: string
+  role: UserRole
+  is_active: boolean
+  group_name: string | null
+}
+
 export interface Me {
   id: string
   name: string

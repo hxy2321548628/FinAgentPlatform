@@ -146,6 +146,7 @@ export function Login() {
               {loginMutation.isPending ? '正在登录…' : '登录系统'}
             </button>
           </form>
+          <div style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--text-secondary)' }}>还没有账号？ <a href="/register" style={{ color: 'var(--action)', fontWeight: 600 }}>注册账号</a></div>
         </div>
       </div>
     </div>

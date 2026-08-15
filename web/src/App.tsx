@@ -8,6 +8,7 @@ import { Scenarios } from './pages/Scenarios'
 import { Capabilities } from './pages/Capabilities'
 import { DataAssets } from './pages/DataAssets'
 import { Login } from './pages/Login'
+import { Register } from './pages/Register'
 import { AuthGuard } from './auth/AuthGuard'
 import { WorkspaceLayout } from './workspace/WorkspaceLayout'
 import { WorkspaceRouter } from './workspace/WorkspaceRouter'
@@ -25,6 +26,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
         {/* **审核与管理是两道准入。** `reviewer` 只进得来 Agent 与 Skill 两个审核页，
             账号与配额等管理页仍然只有 admin 打得开。 */}
         <Route element={<ReviewerGuard />}>
