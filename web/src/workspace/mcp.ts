@@ -1,4 +1,4 @@
-import type { AgentListing, McpReference, McpServer } from '../api/types'
+import type { AgentListing, McpServer } from '../api/types'
 
 /**
  * 外发标注：**每一条 MCP 都要显示它，与申请人怎么声明无关。**
@@ -44,9 +44,4 @@ export function mountedMcps(
     if (!merged.has(one.serverId)) merged.set(one.serverId, one)
   }
   return [...merged.values()]
-}
-
-/** 快照里的引用摊成一句人话，历史 run 的配置回看时用。 */
-export function describeMcpReferences(references: readonly McpReference[]): string {
-  return references.map(one => one.name).join('、')
 }

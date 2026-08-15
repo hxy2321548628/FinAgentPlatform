@@ -29,8 +29,8 @@ from api.schema import (
     SetMcpEnabledRequest,
 )
 from api.security import AdminUser, CurrentUser
-from preset.mcp import McpApplication, McpServer, McpStatus, McpTargetLoader
-from preset.model import ResourceKind
+from preset.mcp import McpApplication, McpServer, McpTargetLoader
+from preset.model import ResourceKind, ReviewStatus
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +232,7 @@ async def _close_review(
     pending = [
         one
         for one in await platform.review.list_for_target([server_id], target_kind=ResourceKind.MCP)
-        if one.status.value == "pending"
+        if one.status is ReviewStatus.PENDING
     ]
     for one in pending:
         await platform.review.decide(one.id, reviewer_id=admin_id, approved=approved, reason=reason)
@@ -271,7 +271,3 @@ def _to_response(server: McpServer) -> McpServerResponse:
         created_at=server.created_at,
         updated_at=server.updated_at,
     )
-
-
-def _is_enabled(server: McpServer) -> bool:
-    return server.status is McpStatus.ENABLED
