@@ -61,6 +61,8 @@ from broker.schema import (
     UploadRequest,
     UploadResponse,
     WriteRequest,
+    WorkspaceCreateDirectoryRequest,
+    WorkspaceWriteRequest,
 )
 from broker.skill import SkillFile as StoredSkillFile
 from broker.skill import SkillReference
@@ -176,6 +178,40 @@ async def save_file(thread_id: str, request: SaveRequest, broker: BrokerDep) -> 
 # **与上面八个工具是两套东西。** 那八个服务 agent，路径带 `/workspace` 前缀、
 # 结果按 LLM 的口味排布；这三个服务侧边栏，路径相对会话根。硬凑成一套的话，
 # 「改前端显示」与「改 agent 行为」就成了同一次改动。
+@router.put("/{thread_id}/workspace/file", status_code=status.HTTP_204_NO_CONTENT)
+async def write_workspace_file(
+    thread_id: str,
+    request: WorkspaceWriteRequest,
+    broker: BrokerDep,
+) -> None:
+    """覆盖工作目录中的一个文件。"""
+    try:
+        await asyncio.to_thread(broker.workspace.write, thread_id, request.path, request.content)
+    except PathEscapeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except IsADirectoryError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/{thread_id}/workspace/directory", status_code=status.HTTP_201_CREATED)
+async def create_workspace_directory(
+    thread_id: str,
+    request: WorkspaceCreateDirectoryRequest,
+    broker: BrokerDep,
+) -> None:
+    """创建工作目录中的一个目录。"""
+    try:
+        await asyncio.to_thread(broker.workspace.mkdir, thread_id, request.path)
+    except PathEscapeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 @router.get("/{thread_id}/workspace/tree")
 async def workspace_tree(
     thread_id: str,

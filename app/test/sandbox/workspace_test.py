@@ -324,3 +324,42 @@ def test_destroying_an_escaping_identifier_is_refused(space: Workspace) -> None:
     """标识参与拼路径。这一条要是漏了，`../..` 就是一条递归删宿主机目录的路。"""
     with pytest.raises(PathEscapeError):
         space.destroy("../../etc")
+
+# ------------------------------------------------------------------ 侧边栏编辑与创建
+def test_a_workspace_file_can_be_overwritten(space: Workspace) -> None:
+    thread_id = space.create(uuid4().hex)
+    space.save(thread_id, "analysis.py", b"old")
+
+    saved = space.write(thread_id, "analysis.py", b"new")
+
+    assert saved.read_bytes() == b"new"
+
+
+def test_writing_requires_an_existing_parent_directory(space: Workspace) -> None:
+    thread_id = space.create(uuid4().hex)
+
+    with pytest.raises(PathEscapeError):
+        space.write(thread_id, "missing/analysis.py", b"x")
+
+
+def test_a_workspace_directory_can_be_created(space: Workspace) -> None:
+    thread_id = space.create(uuid4().hex)
+
+    created = space.mkdir(thread_id, "analysis")
+
+    assert created.is_dir()
+
+
+def test_directory_creation_requires_an_existing_parent(space: Workspace) -> None:
+    thread_id = space.create(uuid4().hex)
+
+    with pytest.raises(PathEscapeError):
+        space.mkdir(thread_id, "missing/analysis")
+
+
+def test_workspace_editing_cannot_touch_reserved_skill_directory(space: Workspace) -> None:
+    thread_id = space.create(uuid4().hex)
+    (space.path(thread_id) / "skill").mkdir()
+
+    with pytest.raises(PathEscapeError):
+        space.write(thread_id, "skill/config.toml", b"x")

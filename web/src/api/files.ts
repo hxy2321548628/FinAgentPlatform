@@ -25,6 +25,20 @@ export function uploadFile(threadId: string, file: File, directory = ''): Promis
   })
 }
 
+export function writeFile(threadId: string, path: string, text: string): Promise<void> {
+  return request(`/api/threads/${encodeURIComponent(threadId)}/files/content`, {
+    method: 'PUT',
+    json: { path, text },
+  })
+}
+
+export function createDirectory(threadId: string, path: string): Promise<void> {
+  return request(`/api/threads/${encodeURIComponent(threadId)}/files/directory`, {
+    method: 'POST',
+    json: { path },
+  })
+}
+
 export function deleteFile(threadId: string, path: string): Promise<void> {
   const query = new URLSearchParams({ path })
   return request(`/api/threads/${encodeURIComponent(threadId)}/files?${query}`, { method: 'DELETE' })

@@ -201,6 +201,19 @@ class SaveRequest(BaseModel):
     )
 
 
+class WorkspaceWriteRequest(BaseModel):
+    """覆盖工作目录中的一个文件。"""
+
+    path: str = Field(min_length=1, description="相对会话根的文件路径")
+    content: Base64Bytes = Field(description="文件内容")
+
+
+class WorkspaceCreateDirectoryRequest(BaseModel):
+    """创建工作目录中的一个目录。"""
+
+    path: str = Field(min_length=1, description="相对会话根的目录路径")
+
+
 class SaveResponse(BaseModel):
     """落盘结果。"""
 

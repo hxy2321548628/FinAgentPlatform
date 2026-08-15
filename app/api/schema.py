@@ -280,6 +280,19 @@ class UploadResponse(BaseModel):
     size: int = Field(ge=0, description="字节数")
 
 
+class FileWriteRequest(BaseModel):
+    """保存文本文件。"""
+
+    path: str = Field(min_length=1, description="相对会话根的文件路径")
+    text: str = Field(description="UTF-8 文本内容")
+
+
+class DirectoryCreateRequest(BaseModel):
+    """创建工作目录中的一个目录。"""
+
+    path: str = Field(min_length=1, description="相对会话根的目录路径")
+
+
 class WorkspaceEntryResponse(BaseModel):
     """工作目录里的一个条目。"""
 

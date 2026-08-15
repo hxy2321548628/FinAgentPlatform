@@ -425,6 +425,42 @@ class RemoteWorkspace:
             raise
         return str(result["path"])
 
+    async def write(self, thread_id: str, relative_path: str, content: bytes) -> None:
+        """覆盖工作目录中的一个文件。"""
+        try:
+            response = await self._connection.raw.put(
+                f"/threads/{thread_id}/workspace/file",
+                json={"path": relative_path, "content": _encode(content)},
+            )
+        except httpx.HTTPError as exc:
+            raise _fail(exc) from exc
+        if response.status_code == httpx.codes.BAD_REQUEST:
+            raise PathEscapeError(response.text[:200])
+        if response.status_code == httpx.codes.NOT_FOUND:
+            raise FileMissingError(relative_path)
+        if response.status_code == httpx.codes.CONFLICT:
+            raise IsADirectoryError(relative_path)
+        if response.is_error:
+            raise BrokerError(f"broker 返回 {response.status_code}：{response.text[:200]}")
+
+    async def mkdir(self, thread_id: str, relative_path: str) -> None:
+        """创建工作目录中的一个目录。"""
+        try:
+            response = await self._connection.raw.post(
+                f"/threads/{thread_id}/workspace/directory",
+                json={"path": relative_path},
+            )
+        except httpx.HTTPError as exc:
+            raise _fail(exc) from exc
+        if response.status_code == httpx.codes.BAD_REQUEST:
+            raise PathEscapeError(response.text[:200])
+        if response.status_code == httpx.codes.NOT_FOUND:
+            raise FileMissingError(relative_path)
+        if response.status_code == httpx.codes.CONFLICT:
+            raise FileExistsError(relative_path)
+        if response.is_error:
+            raise BrokerError(f"broker 返回 {response.status_code}：{response.text[:200]}")
+
     async def tree(self, thread_id: str) -> Tree:
         """列出会话工作目录下的全部条目。
 

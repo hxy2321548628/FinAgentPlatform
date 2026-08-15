@@ -24,7 +24,9 @@ from api.error import invalid, not_found, too_large
 from api.platform import Platform, get_platform
 from api.route.thread import require_thread
 from api.schema import (
+    DirectoryCreateRequest,
     FileContentResponse,
+    FileWriteRequest,
     UploadResponse,
     WorkspaceEntryResponse,
     WorkspaceTreeResponse,
@@ -161,6 +163,44 @@ async def upload_file(
         logger.info("上传被拒：thread_id=%s filename=%r directory=%r", thread_id, name, directory)
         raise not_found(f"文件名或目标目录不可用：{name!r}") from exc
     return UploadResponse(filename=saved.rsplit("/", maxsplit=1)[-1], path=saved, size=len(content))
+
+
+@router.put("/{thread_id}/files/content", status_code=status.HTTP_204_NO_CONTENT)
+async def write_file(
+    thread_id: str,
+    request: FileWriteRequest,
+    current: CurrentUser,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> None:
+    """保存文本文件内容。"""
+    await require_thread(platform, thread_id, current.user_id)
+    try:
+        await platform.workspace.write(thread_id, request.path, request.text.encode("utf-8"))
+    except PathEscapeError as exc:
+        raise not_found("文件路径或父目录不可用") from exc
+    except FileMissingError as exc:
+        raise not_found("文件或父目录不存在") from exc
+    except IsADirectoryError as exc:
+        raise invalid("不能把目录当作文件保存") from exc
+
+
+@router.post("/{thread_id}/files/directory", status_code=status.HTTP_201_CREATED)
+async def create_directory(
+    thread_id: str,
+    request: DirectoryCreateRequest,
+    current: CurrentUser,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> None:
+    """创建一个工作目录。"""
+    await require_thread(platform, thread_id, current.user_id)
+    try:
+        await platform.workspace.mkdir(thread_id, request.path)
+    except PathEscapeError as exc:
+        raise not_found("目录路径或父目录不可用") from exc
+    except FileMissingError as exc:
+        raise not_found("父目录不存在") from exc
+    except FileExistsError as exc:
+        raise invalid("目录已存在") from exc
 
 
 @router.delete("/{thread_id}/files", status_code=status.HTTP_204_NO_CONTENT)

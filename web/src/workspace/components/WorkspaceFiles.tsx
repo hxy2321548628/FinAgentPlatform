@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { deleteFile as removeFile, fileKeys, listFiles, rawFileUrl, readFile, uploadFile } from '../../api/files'
+import { createDirectory, deleteFile as removeFile, fileKeys, listFiles, rawFileUrl, readFile, uploadFile, writeFile } from '../../api/files'
 import { errorMessage } from '../../api/request'
 import type { WorkspaceEntry } from '../../api/types'
 
@@ -56,11 +56,17 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
+  const [editing, setEditing] = useState(false)
+  const [editorText, setEditorText] = useState('')
+  const [dialog, setDialog] = useState<'file' | 'directory' | null>(null)
+  const [dialogName, setDialogName] = useState('')
   const uploadRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setCurrentDir('')
     setPreview(null)
+    setEditing(false)
+    setDialog(null)
     setNotice('')
   }, [threadId])
 
@@ -90,6 +96,8 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
       })
       const next = { path: entry.path, text: body.text, isBinary: body.is_binary, truncated: body.truncated, rawUrl }
       setPreview(next)
+      setEditorText(body.text)
+      setEditing(false)
     } catch (error) {
       setPreview(null)
       setNotice(errorMessage(error, '文件预览失败'))
@@ -129,6 +137,47 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
     }
   }
 
+  const saveEditedFile = async () => {
+    if (!preview || preview.isBinary) return
+    setBusy(true)
+    setNotice('')
+    try {
+      await writeFile(threadId, preview.path, editorText)
+      setPreview({ ...preview, text: editorText, truncated: false })
+      await queryClient.invalidateQueries({ queryKey: fileKeys.tree(threadId) })
+      await queryClient.invalidateQueries({ queryKey: fileKeys.content(threadId, preview.path) })
+      setEditing(false)
+      setNotice('文件已保存')
+    } catch (error) {
+      setNotice(errorMessage(error, '保存失败'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const createEntry = async () => {
+    const name = dialogName.trim()
+    if (!name || name.includes('/') || name === '.' || name === '..') {
+      setNotice('名称不能为空，且不能包含路径分隔符')
+      return
+    }
+    const path = currentDir ? `${currentDir}/${name}` : name
+    setBusy(true)
+    setNotice('')
+    try {
+      if (dialog === 'directory') await createDirectory(threadId, path)
+      else await writeFile(threadId, path, '')
+      await queryClient.invalidateQueries({ queryKey: fileKeys.tree(threadId) })
+      setDialog(null)
+      setDialogName('')
+      setNotice(dialog === 'directory' ? '文件夹已创建' : '文件已创建')
+    } catch (error) {
+      setNotice(errorMessage(error, dialog === 'directory' ? '创建文件夹失败' : '创建文件失败'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const copyPath = async (path: string) => {
     await navigator.clipboard.writeText(`/workspace/${path}`)
     setNotice('已复制工作路径')
@@ -144,6 +193,8 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
           <div style={{ fontSize: compact ? 12 : 13, color: 'var(--text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title ?? '工作目录'}</div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <button type="button" disabled={busy} onClick={() => { setDialogName(''); setDialog('file') }} style={smallButtonStyle}>新建文件</button>
+          <button type="button" disabled={busy} onClick={() => { setDialogName(''); setDialog('directory') }} style={smallButtonStyle}>新建文件夹</button>
           <input ref={uploadRef} type="file" multiple style={{ display: 'none' }} onChange={event => event.target.files && void uploadFiles(event.target.files)} />
           <button type="button" disabled={busy} onClick={() => uploadRef.current?.click()} style={{ padding: '6px 10px', border: 'none', borderRadius: 6, background: 'var(--action)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>上传</button>
           <button type="button" onClick={() => void tree.refetch()} title="刷新" style={{ width: 30, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer' }}>↻</button>
@@ -191,6 +242,9 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
         <div style={{ flex: 1, minHeight: compact ? 220 : 300, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--border-light)', background: 'var(--bg)' }}>
             <span style={{ flex: 1, minWidth: 0, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview.path}</span>
+            {!preview.isBinary && <button type="button" disabled={busy} onClick={() => setEditing(value => !value)} style={smallButtonStyle}>{editing ? '取消编辑' : '编辑'}</button>}
+            {editing && <button type="button" disabled={busy} onClick={() => void saveEditedFile()} style={{ ...smallButtonStyle, background: 'var(--action)', color: '#fff', borderColor: 'var(--action)' }}>保存</button>}
+            <a href={rawFileUrl(threadId, preview.path, true)} style={{ ...smallButtonStyle, textDecoration: 'none' }}>下载</a>
             <button type="button" onClick={() => setPreview(null)} style={smallButtonStyle}>关闭</button>
           </div>
           <div style={{ flex: 1, overflow: 'auto', padding: 12, background: '#F8FAFD' }}>
@@ -199,10 +253,25 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
               <img src={preview.rawUrl} alt={fileName(preview.path)} style={{ display: 'block', maxWidth: '100%', maxHeight: 360, margin: '0 auto', objectFit: 'contain' }} />
             ) : preview.isBinary ? (
               <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>该文件不支持文本预览，请点击“下载”查看。</div>
+            ) : editing ? (
+              <textarea value={editorText} onChange={event => setEditorText(event.target.value)} style={{ width: '100%', minHeight: 240, resize: 'vertical', border: '1px solid var(--border)', borderRadius: 6, padding: 10, background: 'var(--surface)', color: 'var(--text-primary)', fontSize: 11, lineHeight: 1.7, fontFamily: "'JetBrains Mono', monospace", boxSizing: 'border-box' }} aria-label="文件内容编辑器" />
             ) : (
               <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 11, lineHeight: 1.7, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-secondary)' }}>{preview.text}</pre>
             )}
           </div>
+        </div>
+      )}
+
+      {dialog && (
+        <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 20, display: 'grid', placeItems: 'center', padding: 20, background: 'rgba(11, 46, 92, 0.25)' }}>
+          <form onSubmit={event => { event.preventDefault(); void createEntry() }} style={{ width: 'min(360px, 100%)', padding: 20, borderRadius: 10, background: 'var(--surface)', boxShadow: '0 16px 45px rgba(11,46,92,0.2)' }}>
+            <div style={{ marginBottom: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{dialog === 'directory' ? '新建文件夹' : '新建文件'}</div>
+            <input autoFocus value={dialogName} onChange={event => setDialogName(event.target.value)} placeholder={dialog === 'directory' ? '文件夹名称' : '文件名，例如 analysis.py'} aria-label="名称" style={{ width: '100%', boxSizing: 'border-box', padding: '9px 10px', border: '1px solid var(--border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 12 }} />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+              <button type="button" onClick={() => setDialog(null)} style={smallButtonStyle}>取消</button>
+              <button type="submit" disabled={busy} style={{ ...smallButtonStyle, background: 'var(--action)', color: '#fff', borderColor: 'var(--action)' }}>创建</button>
+            </div>
+          </form>
         </div>
       )}
 

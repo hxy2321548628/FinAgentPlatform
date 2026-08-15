@@ -178,6 +178,41 @@ class Workspace:
         target.write_bytes(content)
         return target
 
+    def write(self, thread_id: str, relative_path: str, content: bytes) -> Path:
+        """覆盖会话目录里的一个文件。
+
+        父目录必须已经存在；目录创建单独走 ``mkdir``，避免 broker 创建出的
+        目录与沙箱运行用户产生属主不一致。
+        """
+        target = self.resolve(thread_id, relative_path)
+        self._check_user_path(thread_id, target)
+        if target.is_dir():
+            raise IsADirectoryError(f"这是一个目录，不能写：{relative_path!r}")
+        if not target.parent.is_dir():
+            raise PathEscapeError(f"目标目录不存在：{relative_path!r}")
+        target.write_bytes(content)
+        return target
+
+    def mkdir(self, thread_id: str, relative_path: str) -> Path:
+        """在会话目录里创建一个目录。
+
+        只创建一层，父目录必须存在，且不允许触碰平台保留目录。
+        """
+        target = self.resolve(thread_id, relative_path)
+        self._check_user_path(thread_id, target)
+        if not relative_path or target == self.path(thread_id).resolve():
+            raise PathEscapeError("目录名不可用")
+        if not target.parent.is_dir():
+            raise PathEscapeError(f"父目录不存在：{relative_path!r}")
+        target.mkdir()
+        return target
+
+    def _check_user_path(self, thread_id: str, target: Path) -> None:
+        workspace = self.path(thread_id).resolve()
+        relative = target.relative_to(workspace)
+        if relative.parts and relative.parts[0] == SKILL_DIR:
+            raise PathEscapeError("不能操作平台保留目录")
+
     def remove(self, thread_id: str, relative_path: str) -> None:
         """删掉会话目录下的一个文件。
 
