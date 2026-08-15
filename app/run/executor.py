@@ -378,9 +378,7 @@ class RunExecutor:
             return False
         if await self._repository.wait_approval(run.id, tokens=tokens):
             path = _pending_action_path(await self._log.read(run.id), actions)
-            await self._emit(
-                InterruptEvent(ts=now_ms(), run_id=run.id, path=path, data=InterruptData(actions=actions))
-            )
+            await self._emit(InterruptEvent(ts=now_ms(), run_id=run.id, path=path, data=InterruptData(actions=actions)))
             logger.info("run 停在等人确认上：待确认 %d 个调用", len(actions))
         return True
 
@@ -427,11 +425,7 @@ def _pending_action_path(
     actions: Sequence[InterruptAction],
 ) -> tuple[str, ...]:
     """用尚未完成的工具调用给 interrupt 补上子图路径。"""
-    completed = {
-        event.data.tool_call_id
-        for logged in history
-        if isinstance((event := logged.event), ToolResultEvent)
-    }
+    completed = {event.data.tool_call_id for logged in history if isinstance((event := logged.event), ToolResultEvent)}
     pending = [
         event
         for logged in history
@@ -444,9 +438,7 @@ def _pending_action_path(
             (
                 event
                 for event in reversed(pending)
-                if event.data.id not in used
-                and event.data.name == action.tool_name
-                and event.data.args == action.args
+                if event.data.id not in used and event.data.name == action.tool_name and event.data.args == action.args
             ),
             None,
         )
