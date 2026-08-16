@@ -4749,17 +4749,24 @@ if [[ ${SKIP_LLM:-0} == 1 ]]; then
 elif [[ -z ${P11_TOKENS:-} || -z ${P11_RUNS_TOKENS:-} ]]; then
     undone "P11① 没跑成，没有可对账的数"
 else
-    # **不验相等，只验同量级。** 两边的口径本来就不同：runs 表记的是
-    # `tokens_uncached + tokens_output`（cache 命中不计，见 quota/usage.py），
-    # Langfuse 记的是 input 全量 + output。要求相等的判据一定会红，
-    # 而红的原因是口径而不是缺陷
-    info "Langfuse=${P11_TOKENS}  runs 表=${P11_RUNS_TOKENS}"
+    # **验的是「两边都在记」与一个必然成立的不等式，不是数值接近。**
+    #
+    # 计划 §1.4 原本写的是「同量级」，2026-08-16 实测把它推翻了：同一次 run
+    # 上 Langfuse 报 7412，runs 表报 145 —— 差 51 倍。原因是口径，不是缺陷：
+    # runs 表记 `tokens_uncached + tokens_output`（**cache 命中一律不计**，
+    # 见 quota/usage.py 开头那段），Langfuse 记的是 input 全量 + output，
+    # 而长系统提示词的第二次调用几乎全是 cache 命中。
+    #
+    # 所以这里改验 `Langfuse >= runs 表`：这个不等式由两者的定义保证必然成立，
+    # 一旦反过来就说明其中一边算错了。加上「两边都不是 0」，足以抓到
+    # 「某一份账没在记」这个真正要防的故障
+    info "Langfuse=${P11_TOKENS}  runs 表=${P11_RUNS_TOKENS}（口径不同，前者含 cache 命中）"
     if (( P11_RUNS_TOKENS <= 0 )); then
         fail "runs 表里这次 run 的 token 是 0 —— 配额闸门读的就是它"
-    elif (( P11_TOKENS * 10 < P11_RUNS_TOKENS || P11_RUNS_TOKENS * 10 < P11_TOKENS )); then
-        fail "两份账差了一个数量级以上，其中一份多半没在记"
+    elif (( P11_TOKENS < P11_RUNS_TOKENS )); then
+        fail "Langfuse 比 runs 表还少，而它多算了 cache 命中 —— 有一边算错了"
     else
-        pass "两份账同量级，各自都不是 0"
+        pass "两份账都在记，且大小关系与各自的口径相符"
     fi
 fi
 end

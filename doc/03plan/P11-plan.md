@@ -50,6 +50,8 @@
 - **埋点修复要花钱验证。** 传播是否生效**只能靠一次真实 LLM 调用**确认 —— FakeListChatModel 走的是同步路径，而失效恰恰只发生在真实 async 路径上（§2.2）。
 - **两个用量来源会有系统性差异。** `runs` 表记的是 `tokens_uncached + tokens_output`（cache 命中不计，见 `quota/usage.py`），Langfuse 记的是 input 全量 + output。**两边永远对不上绝对值**，判据只能验量级与方向，不能验相等。
 
+  > **「量级」这个词在 2026-08-16 的实测里也不成立**：同一次 run 上 Langfuse 报 7412、`runs` 表报 145，**差 51 倍**。长系统提示词的第二次调用几乎全是 cache 命中，而那一大块只有 Langfuse 算。`P11②` 因此改验一个由定义保证必然成立的不等式（`Langfuse >= runs`）加上「两边都不是 0」，见 §8.7。
+
 ---
 
 ## 2. 与上游文档不一致处的本期定案
@@ -363,6 +365,44 @@ Langfuse 而不是本地账本，路径也换到了 `/api/usage/ranking`。
 - **`app_test.py` 锁着完整的 API 路径清单**，加三个端点就红。这是个好设计 ——
   它逼着每一次 API 表面的变化都被看见一次。
 
-### 8.6 收尾
+### 8.6 部署之后才冒出来的一处
 
-> 待验收跑完后回填。
+**`api` 容器里 `LANGFUSE_BASE_URL` 是 `http://localhost:3000`，而那是容器自己的回环。**
+门禁全绿、单测全过 —— 因为测试环境里 `platform.langfuse` 本来就是 `None`，走的是
+「没接账本」那一支。部署起来才发现两个用量端点一律返回 `available: false`。
+
+`.env.example` 原来只提醒过 worker 要用 `host.docker.internal`（P4 就写着），本期
+api 也开始读它了。**同一个配置错误有两处症状**：用量看板显示「账本未接入」，
+同时 worker 那侧的 trace 上报也在静默失败 —— 看起来像两个毛病。
+
+顺带踩了一次 `CLAUDE.md` 里记着的坑：`export SANDBOX_QUOTA_DEVICE=...` 与
+`docker compose up broker` 写在两条命令里，而 shell 变量不跨命令持久 ——
+`docker inspect` 出来是 `/dev/null`。写成一条才对。
+
+### 8.7 主判据成立，但 §1.4 的「同量级」被实测推翻
+
+部署后跑了一次真实分析（`8d47e8d9…`，succeeded），当场对照：
+
+| 口径 | 数值 |
+|---|---|
+| Langfuse 该用户名下 `GENERATION` | **2 条，7412 token**（修复前：按 userId 只捞得到 1 条 `CHAIN`，token 为 0） |
+| 其中 input / output | 7286 / 126 |
+| `runs` 表这一行 | `tokens_uncached=86` + `tokens_output=59` = **145** |
+| `GET /api/usage/me` | `available: true`，7412 token |
+| `GET /api/usage/ranking` | 总量 7,118,801，19 个用户 |
+
+**`P11①` 三条全部成立**：GENERATION 条数 > 0、token > 0、端点报的是同一个数。
+这是本期的主判据 —— 修复前的现状是「接口全部 200 而按用户切出来每人都是 0」。
+
+**但两份账差了 51 倍**，远超 §1.4 预期的「同量级」。原因是口径而非缺陷：长系统
+提示词的第二次调用几乎全是 cache 命中，而 `runs` 表按定义不计那一块。
+`P11②` 因此从「同量级」改成验一个必然成立的不等式（`Langfuse >= runs`）加上
+「两边都不是 0」—— 前者由两个口径的定义保证，后者才是真正要防的故障。
+
+> **output 也对不上**（126 vs 59），这一处尚未查清，记在这里作为观察项。
+> 它不影响配额闸门（那读的是 `runs` 表自己那一列），也不影响用量看板
+> （那读的是 Langfuse），但两份账在**理应一致**的那一项上有差异，值得下一期看一眼。
+
+### 8.8 收尾
+
+> 待全量回归跑完后回填。
