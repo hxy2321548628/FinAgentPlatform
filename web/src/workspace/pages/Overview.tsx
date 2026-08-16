@@ -40,7 +40,7 @@ function StatCard({ label, value, unit, hint }: { label: string; value: string; 
       borderRadius: 10, padding: '18px 20px',
     }}>
       <div style={{ fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.12em', color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", marginBottom: 8 }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", lineHeight: 1, marginBottom: 4 }}>{value}</div>
+      <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums', lineHeight: 1, marginBottom: 4 }}>{value}</div>
       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{unit}</div>
       {hint && <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>{hint}</div>}
     </div>

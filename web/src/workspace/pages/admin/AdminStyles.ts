@@ -75,7 +75,7 @@ export const thStyle: CSSProperties = {
   borderBottom: '1px solid var(--border)',
   background: 'var(--bg)',
   color: 'var(--text-muted)',
-  fontSize: 11,
+  fontSize: 12,
   fontWeight: 600,
   letterSpacing: '0.08em',
   textAlign: 'left',
