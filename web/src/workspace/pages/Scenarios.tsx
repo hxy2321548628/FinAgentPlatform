@@ -25,8 +25,8 @@ export function MyScenarios() {
 function ScenarioPage({ title, description, loading, error, children }: { title: string; description: string; loading: boolean; error: string | null; children: React.ReactNode }) {
   return <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
     <div style={{ padding: '28px 36px 20px' }}>
-      <div style={eyebrowStyle}>// SCENARIO LIBRARY</div>
-      <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>{title}</h1>
+      <div className="page-eyebrow">// SCENARIO LIBRARY</div>
+      <h1 className="page-title">{title}</h1>
       <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>{description}</p>
     </div>
     {loading && <div style={noticeStyle}>正在加载…</div>}
@@ -62,6 +62,5 @@ function MyScenarioCards({ items }: { items: MyAgent[] }) {
   })}</div>
 }
 
-const eyebrowStyle: React.CSSProperties = { fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }
 const gridStyle: React.CSSProperties = { padding: '0 36px 32px', display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }
 const noticeStyle: React.CSSProperties = { padding: '60px 36px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 14 }

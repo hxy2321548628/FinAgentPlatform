@@ -107,11 +107,11 @@ export function Overview() {
     <div style={{ flex: 1, overflowY: 'auto', padding: '32px 36px', background: 'var(--bg)' }}>
       {/* 页头 */}
       <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase' as const, letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }}>
+        <div className="page-eyebrow">
           // OVERVIEW
         </div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)' }}>总览</h1>
-        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
+        <h1 className="page-title">总览</h1>
+        <p className="page-desc">
           {new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}
         </p>
       </div>

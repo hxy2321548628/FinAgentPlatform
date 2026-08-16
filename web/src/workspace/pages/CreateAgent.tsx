@@ -104,9 +104,9 @@ export function CreateAgent() {
     <div style={{ flex: 1, overflowY: 'auto', padding: '32px 36px', background: 'var(--bg)' }}>
       <div style={{ maxWidth: 680, margin: '0 auto' }}>
         <div style={{ marginBottom: 28 }}>
-          <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }}>// {editing ? 'EDIT AGENT' : 'CREATE AGENT'}</div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>{editing ? '编辑智能体 / 场景' : '创建智能体 / 场景'}</h1>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          <div className="page-eyebrow">// {editing ? 'EDIT AGENT' : 'CREATE AGENT'}</div>
+          <h1 className="page-title">{editing ? '编辑智能体 / 场景' : '创建智能体 / 场景'}</h1>
+          <p className="page-desc">
             内容就是一段提示词，可以再挂上 Skill、MCP 与子智能体。保存之后它先是草稿，
             只有自己看得到；发布一版之后才谈得上共享与提审。
           </p>

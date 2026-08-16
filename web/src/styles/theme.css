@@ -160,6 +160,29 @@ body {
   margin-bottom: 12px;
 }
 
+/* ── 工作台页头骨架（P1 b3：把 8 个页面的重复内联样式收敛到这里）── */
+.page-eyebrow {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.page-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  line-height: 1.3;
+}
+.page-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.6;
+}
+
 /* ── Status badge ── */
 .status-badge {
   display: inline-flex; align-items: center; gap: 8px;

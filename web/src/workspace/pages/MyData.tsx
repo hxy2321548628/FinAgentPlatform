@@ -22,9 +22,9 @@ export function MyData() {
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: '28px 32px', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, flexShrink: 0 }}>
         <div>
-          <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }}>// THREAD WORKSPACES</div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>工作空间</h1>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>每个分析对话拥有独立目录；选择 thread 后管理其中的文件。</p>
+          <div className="page-eyebrow">// THREAD WORKSPACES</div>
+          <h1 className="page-title">工作空间</h1>
+          <p className="page-desc">每个分析对话拥有独立目录；选择 thread 后管理其中的文件。</p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           {selected && <button type="button" onClick={() => navigate(`/workspace/chat/${encodeURIComponent(selected.id)}`)} style={{ padding: '9px 18px', border: '1px solid var(--border)', borderRadius: 7, background: 'var(--surface)', color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>进入对话 →</button>}

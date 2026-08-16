@@ -44,9 +44,9 @@ export function AgentPlaza() {
   return (
     <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
       <div style={{ padding: '28px 36px 0' }}>
-        <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }}>// AGENT PLAZA</div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>智能体广场</h1>
-        <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>你此刻能引用的全部智能体，广场可见优先展示审核通过的版本</p>
+        <div className="page-eyebrow">// AGENT PLAZA</div>
+        <h1 className="page-title">智能体广场</h1>
+        <p className="page-desc">你此刻能引用的全部智能体，广场可见优先展示审核通过的版本</p>
       </div>
 
       <CatalogControls

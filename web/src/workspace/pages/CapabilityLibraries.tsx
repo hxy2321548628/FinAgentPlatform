@@ -259,8 +259,8 @@ function LibraryPage({ eyebrow, title, description, children }: { eyebrow: strin
   return (
     <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
       <div style={{ padding: '28px 36px 0' }}>
-        <div style={eyebrowStyle}>{eyebrow}</div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>{title}</h1>
+        <div className="page-eyebrow">{eyebrow}</div>
+        <h1 className="page-title">{title}</h1>
         <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>{description}</p>
       </div>
       {children}
@@ -281,7 +281,6 @@ function formatBytes(bytes: number): string {
 }
 
 const sectionTitle: React.CSSProperties = { fontSize: 12, fontWeight: 650, color: 'var(--text-primary)', marginBottom: 8 }
-const eyebrowStyle: React.CSSProperties = { fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }
 const gridStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }
 const countStyle: React.CSSProperties = { padding: '20px 0 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }
 const backdropStyle: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.35)', zIndex: 200 }

@@ -74,8 +74,8 @@ export function MySkills() {
     <div style={{ flex: 1, overflowY: 'auto', padding: '32px 36px', background: 'var(--bg)' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, marginBottom: 28 }}>
         <div>
-          <div style={eyebrowStyle}>// MY SKILLS</div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>我的 Skills</h1>
+          <div className="page-eyebrow">// MY SKILLS</div>
+          <h1 className="page-title">我的 Skills</h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>上传后先形成草稿；发布版本后可组内共享，提审通过后进入平台目录</p>
         </div>
         <button type="button" onClick={() => setEditingId(null)} style={primaryButton}>+ 创建 Skill</button>
@@ -243,7 +243,6 @@ function formatBytes(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`
 }
 
-const eyebrowStyle: React.CSSProperties = { fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }
 const primaryButton: React.CSSProperties = { padding: '9px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }
 const ghostButton: React.CSSProperties = { padding: '6px 14px', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }
 const outlineButton: React.CSSProperties = { ...ghostButton, color: 'var(--action)', borderColor: 'var(--action-border)' }

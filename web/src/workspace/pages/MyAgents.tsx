@@ -52,9 +52,9 @@ export function MyAgents() {
     <div style={{ flex: 1, overflowY: 'auto', padding: '32px 36px', background: 'var(--bg)' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28 }}>
         <div>
-          <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }}>// MY AGENTS</div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>我的智能体</h1>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>发布一版之后组内才看得见；进广场要审核通过</p>
+          <div className="page-eyebrow">// MY AGENTS</div>
+          <h1 className="page-title">我的智能体</h1>
+          <p className="page-desc">发布一版之后组内才看得见；进广场要审核通过</p>
         </div>
         <button onClick={() => navigate('/workspace/my-agents/create')} style={primaryButton}>+ 创建智能体</button>
       </div>
