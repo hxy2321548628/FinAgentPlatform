@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { agentKeys, listMine } from '../../api/agents'
 import { errorMessage } from '../../api/request'
@@ -47,7 +47,6 @@ function StatCard({ label, value, unit, hint }: { label: string; value: string; 
 }
 
 function ActionBanner() {
-  const navigate = useNavigate()
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -56,18 +55,17 @@ function ActionBanner() {
       borderRadius: 8, padding: '14px 20px', marginBottom: 20,
     }}>
       <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>从场景库开始你的下一次分析</span>
-      <button
-        onClick={() => navigate('/workspace/scenarios')}
-        style={{ padding: '7px 16px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+      <Link
+        to="/workspace/scenarios"
+        style={{ padding: '7px 16px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, textDecoration: 'none' }}
       >
         浏览场景库 →
-      </button>
+      </Link>
     </div>
   )
 }
 
 export function Overview() {
-  const navigate = useNavigate()
   const [hoveredSession, setHoveredSession] = useState<string | null>(null)
   const [hoveredAction, setHoveredAction] = useState<string | null>(null)
 
@@ -132,14 +130,15 @@ export function Overview() {
               <div style={emptyStyle}>还没有会话，从右边开一个吧</div>
             )}
             {recent.map((session, i) => (
-              <div
+              <Link
                 key={session.id}
-                onClick={() => navigate(`/workspace/chat/${session.id}`)}
+                to={`/workspace/chat/${session.id}`}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '12px 16px',
                   borderBottom: i < recent.length - 1 ? '1px solid var(--border-light)' : 'none',
-                  cursor: 'pointer', transition: 'background 0.15s',
+                  textDecoration: 'none',
+                  transition: 'background 0.15s',
                   background: hoveredSession === session.id ? 'var(--bg)' : 'transparent',
                 }}
                 onMouseEnter={() => setHoveredSession(session.id)}
@@ -153,7 +152,7 @@ export function Overview() {
                     {relativeTime(session.updated_at)}
                   </div>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         </div>
@@ -162,13 +161,14 @@ export function Overview() {
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>快速入口</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {QUICK_ACTIONS.map(item => (
-              <div
+              <Link
                 key={item.to}
-                onClick={() => navigate(item.to)}
+                to={item.to}
                 style={{
                   background: 'var(--surface)',
                   border: '1px solid var(--border)',
-                  borderRadius: 8, padding: '14px 16px', cursor: 'pointer',
+                  borderRadius: 8, padding: '14px 16px',
+                  textDecoration: 'none',
                   transition: 'border-color 0.2s, box-shadow 0.2s',
                   borderColor: hoveredAction === item.to ? 'var(--action-border)' : 'var(--border)',
                   boxShadow: hoveredAction === item.to ? '0 2px 8px rgba(23,73,196,0.08)' : 'none',
@@ -181,7 +181,7 @@ export function Overview() {
                   <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{item.label}</span>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', paddingLeft: 24 }}>{item.desc}</div>
-              </div>
+              </Link>
             ))}
           </div>
         </div>

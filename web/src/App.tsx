@@ -68,8 +68,9 @@ export function AppRoutes() {
         </Route>
         <Route path="*" element={
           <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+            <a className="skip-link" href="#main-content">跳到主要内容</a>
             <Navbar />
-            <main style={{ flex: 1 }}>
+            <main id="main-content" tabIndex={-1} style={{ flex: 1 }}>
               <Routes>
                 <Route path="/" element={<Home />} />
                 <Route path="/marketplace" element={<Marketplace />} />

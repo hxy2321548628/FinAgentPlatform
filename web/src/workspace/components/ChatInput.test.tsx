@@ -99,7 +99,7 @@ describe('ChatInput', () => {
     mount({ onSend })
 
     fireEvent.change(input(), { target: { value: '保留这段输入' } })
-    fireEvent.click(screen.getByTitle('发送'))
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
     await waitFor(() => expect(onSend).toHaveBeenCalledOnce())
     await waitFor(() => expect(input().disabled).toBe(false))
@@ -133,7 +133,7 @@ describe('ChatInput', () => {
     await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
     fireEvent.change(input(), { target: { value: '算个波动率' } })
-    fireEvent.click(screen.getByTitle('发送'))
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('算个波动率', { agent_id: 'agent-1' }))
   })
@@ -146,7 +146,7 @@ describe('ChatInput', () => {
     fireEvent.click(screen.getByRole('button', { name: /本轮智能体配置/ }))
     fireEvent.click(screen.getByLabelText('选一个智能体'))
     fireEvent.change(input(), { target: { value: '算个波动率' } })
-    fireEvent.click(screen.getByTitle('发送'))
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('请先选一个智能体'))
     expect(onSend).not.toHaveBeenCalled()
@@ -173,7 +173,7 @@ describe('ChatInput Skills', () => {
 
     expect(screen.getByText(/最终挂载：agent-skill、turn-skill/)).toBeTruthy()
     fireEvent.change(input(), { target: { value: '算个波动率' } })
-    fireEvent.click(screen.getByTitle('发送'))
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('算个波动率', {
       agent_id: 'agent-1',
@@ -200,7 +200,7 @@ describe('ChatInput 子智能体', () => {
 
     expect(screen.getByText(/最终挂载：内置波动率助手、本轮收益率助手/)).toBeTruthy()
     fireEvent.change(input(), { target: { value: '比较两种波动率' } })
-    fireEvent.click(screen.getByTitle('发送'))
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('比较两种波动率', {
       agent_id: 'agent-1',

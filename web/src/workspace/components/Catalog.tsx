@@ -26,7 +26,7 @@ export function CatalogControls({ search, onSearch, placeholder, filters, active
             value={search}
             onChange={event => onSearch(event.target.value)}
             placeholder={placeholder}
-            style={{ width: '100%', height: 36, padding: '0 12px 0 32px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', outline: 'none', background: 'var(--surface)', color: 'var(--text-primary)', boxSizing: 'border-box', transition: 'border-color 0.15s' }}
+            style={{ width: '100%', height: 36, padding: '0 12px 0 32px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-primary)', boxSizing: 'border-box', transition: 'border-color 0.15s' }}
             onFocus={event => (event.target.style.borderColor = 'var(--action)')}
             onBlur={event => (event.target.style.borderColor = 'var(--border)')}
           />

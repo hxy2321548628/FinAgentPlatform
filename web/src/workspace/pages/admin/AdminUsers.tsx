@@ -124,7 +124,7 @@ export function AdminUsers() {
       </AdminTableSection>
 
       <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' as const }}>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索用户名或邮箱" style={{ padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', outline: 'none', background: 'var(--surface)', color: 'var(--text-primary)', width: 200 }} />
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索用户名或邮箱" style={{ padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-primary)', width: 200 }} />
         <select value={roleFilter} onChange={e => setRoleFilter(e.target.value as 'all' | UserRole)} style={selectStyle}>
           <option value="all">全部角色</option>
           {CREATABLE_ROLE.map(role => <option key={role} value={role}>{ROLE_LABEL[role]}</option>)}
@@ -274,6 +274,6 @@ function Labelled({ label, children }: { label: string; children: React.ReactNod
 }
 
 const selectStyle: React.CSSProperties = { padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer' }
-const modalInputStyle: React.CSSProperties = { width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box' }
+const modalInputStyle: React.CSSProperties = { width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-primary)', boxSizing: 'border-box' }
 const alertStyle: React.CSSProperties = { marginBottom: 14, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: '#FEF2F2', color: '#DC2626', fontSize: 13 }
 const emptyStyle: React.CSSProperties = { padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }

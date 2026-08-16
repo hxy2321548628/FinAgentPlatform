@@ -133,12 +133,12 @@ export function Login() {
 
           {/* 登录表单 */}
           <form onSubmit={handleLogin}>
-            <Field label="用户名或邮箱">
-              <input className="login-input" type="text" autoComplete="username" placeholder="用户名或邮箱都可以" value={loginName} onChange={event => setLoginName(event.target.value)}
+            <Field label="用户名或邮箱" id="login-name">
+              <input className="login-input" id="login-name" name="username" type="text" autoComplete="username" placeholder="用户名或邮箱都可以" value={loginName} onChange={event => setLoginName(event.target.value)}
                 style={inputStyle} />
             </Field>
-            <Field label="密码">
-              <input className="login-input" type="password" autoComplete="current-password" placeholder="请输入密码" value={loginPassword} onChange={event => setLoginPassword(event.target.value)}
+            <Field label="密码" id="login-password">
+              <input className="login-input" id="login-password" name="password" type="password" autoComplete="current-password" placeholder="请输入密码" value={loginPassword} onChange={event => setLoginPassword(event.target.value)}
                 style={inputStyle} />
             </Field>
             {loginError && <div role="alert" style={{ marginBottom: 16, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: '#FEF2F2', color: '#DC2626', fontSize: 13 }}>{loginError}</div>}
@@ -156,10 +156,10 @@ export function Login() {
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, id, children }: { label: string; id: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 20 }}>
-      <label style={{ display: 'block', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.15em', color: 'var(--text-muted)', marginBottom: 8 }}>
+      <label htmlFor={id} style={{ display: 'block', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.15em', color: 'var(--text-muted)', marginBottom: 8 }}>
         {label}
       </label>
       {children}
@@ -170,7 +170,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const inputStyle: React.CSSProperties = {
   width: '100%', height: 40, border: '1px solid var(--border)', borderRadius: 6,
   padding: '0 12px', fontSize: 14, color: 'var(--text-primary)',
-  background: '#F7F9FC', outline: 'none', fontFamily: 'inherit',
+  background: '#F7F9FC', fontFamily: 'inherit',
   boxSizing: 'border-box',
 }
 

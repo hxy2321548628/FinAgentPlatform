@@ -1,8 +1,9 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { createThread, deleteThread, listThreads, threadKeys } from '../../api/threads'
 import { errorMessage } from '../../api/request'
+import { ConfirmDialog } from './ConfirmDialog'
 
 function threadLabel(title: string, createdAt: string): string {
   if (title) return title
@@ -14,6 +15,7 @@ export function ThreadSidebar() {
   const queryClient = useQueryClient()
   const { threadId } = useParams()
   const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null)
   const threads = useInfiniteQuery({
     queryKey: threadKeys.list(),
     initialPageParam: null as string | null,
@@ -54,13 +56,12 @@ export function ThreadSidebar() {
           const active = thread.id === threadId
           const hovered = thread.id === hoveredId
           return (
-            <div key={thread.id} onClick={() => navigate(`/workspace/chat/${thread.id}`)} onMouseEnter={() => setHoveredId(thread.id)} onMouseLeave={() => setHoveredId(null)} style={{ padding: '10px 12px', borderRadius: 7, cursor: 'pointer', marginBottom: 2, position: 'relative', background: active ? 'var(--action-light)' : hovered ? 'var(--bg)' : 'transparent', border: active ? '1px solid var(--action-border)' : '1px solid transparent' }}>
-              <div style={{ fontSize: 13, fontWeight: 500, color: active ? 'var(--action)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: hovered ? 20 : 0 }}>{threadLabel(thread.title, thread.created_at)}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(thread.updated_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
-              {hovered && <button type="button" aria-label={`删除${threadLabel(thread.title, thread.created_at)}`} disabled={remove.isPending} onClick={event => {
-                event.stopPropagation()
-                if (window.confirm(`确认删除“${threadLabel(thread.title, thread.created_at)}”？此操作不可撤销。`)) remove.mutate(thread.id)
-              }} style={{ position: 'absolute', top: '50%', right: 8, transform: 'translateY(-50%)', width: 22, height: 22, border: 'none', background: 'transparent', color: '#DC2626', cursor: 'pointer' }}>×</button>}
+            <div key={thread.id} className="thread-row" onMouseEnter={() => setHoveredId(thread.id)} onMouseLeave={() => setHoveredId(null)} style={{ marginBottom: 2, background: active ? 'var(--action-light)' : hovered ? 'var(--bg)' : 'transparent', border: active ? '1px solid var(--action-border)' : '1px solid transparent', borderRadius: 7 }}>
+              <Link to={`/workspace/chat/${thread.id}`} aria-current={active ? 'page' : undefined} style={{ display: 'block', padding: '10px 12px', textDecoration: 'none' }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: active ? 'var(--action)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: hovered ? 20 : 0 }}>{threadLabel(thread.title, thread.created_at)}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(thread.updated_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+              </Link>
+              <button type="button" className="thread-delete" aria-label={`删除${threadLabel(thread.title, thread.created_at)}`} disabled={remove.isPending} onClick={() => setPendingDelete({ id: thread.id, label: threadLabel(thread.title, thread.created_at) })}>×</button>
             </div>
           )
         })}
@@ -68,6 +69,19 @@ export function ThreadSidebar() {
           {threads.isFetchingNextPage ? '正在加载…' : '加载更早会话'}
         </button>}
       </div>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="删除会话"
+        message={`确认删除“${pendingDelete?.label ?? ''}”？此操作不可撤销。`}
+        confirmLabel="删除"
+        danger
+        onConfirm={() => {
+          if (pendingDelete) remove.mutate(pendingDelete.id)
+          setPendingDelete(null)
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   )
 }

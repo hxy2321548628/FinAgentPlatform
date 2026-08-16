@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createDirectory, deleteFile as removeFile, fileKeys, listFiles, rawFileUrl, readFile, uploadFile, writeFile } from '../../api/files'
 import { errorMessage } from '../../api/request'
 import type { WorkspaceEntry } from '../../api/types'
+import { ConfirmDialog } from './ConfirmDialog'
 
 interface FilePreview {
   path: string
@@ -60,6 +61,7 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
   const [editorText, setEditorText] = useState('')
   const [dialog, setDialog] = useState<'file' | 'directory' | null>(null)
   const [dialogName, setDialogName] = useState('')
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const uploadRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -122,7 +124,6 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
   }
 
   const deleteFile = async (path: string) => {
-    if (!window.confirm(`确认删除 ${path}？此操作不可撤销。`)) return
     setBusy(true)
     setNotice('')
     try {
@@ -197,7 +198,7 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
           <button type="button" disabled={busy} onClick={() => { setDialogName(''); setDialog('directory') }} style={smallButtonStyle}>新建文件夹</button>
           <input ref={uploadRef} type="file" multiple style={{ display: 'none' }} onChange={event => event.target.files && void uploadFiles(event.target.files)} />
           <button type="button" disabled={busy} onClick={() => uploadRef.current?.click()} style={{ padding: '6px 10px', border: 'none', borderRadius: 6, background: 'var(--action)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>上传</button>
-          <button type="button" onClick={() => void tree.refetch()} title="刷新" style={{ width: 30, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer' }}>↻</button>
+          <button type="button" onClick={() => void tree.refetch()} aria-label="刷新文件列表" title="刷新" style={{ width: 30, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer' }}>↻</button>
         </div>
       </div>
 
@@ -231,7 +232,7 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
               <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
                 <button type="button" title="复制路径" onClick={() => void copyPath(entry.path)} style={iconButtonStyle}>复制</button>
                 <a title="下载" href={rawFileUrl(threadId, entry.path, true)} style={{ ...iconButtonStyle, textDecoration: 'none' }}>下载</a>
-                <button type="button" title="删除" disabled={busy} onClick={() => void deleteFile(entry.path)} style={{ ...iconButtonStyle, color: '#DC2626' }}>删除</button>
+                <button type="button" title="删除" disabled={busy} onClick={() => setPendingDelete(entry.path)} style={{ ...iconButtonStyle, color: 'var(--danger)' }}>删除</button>
               </div>
             )}
           </div>
@@ -275,7 +276,20 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
         </div>
       )}
 
-      {notice && <div style={{ padding: '7px 12px', borderTop: '1px solid var(--border-light)', fontSize: 11, color: notice.includes('失败') ? '#DC2626' : 'var(--status-done)', background: 'var(--surface)' }}>{notice}</div>}
+      {notice && <div style={{ padding: '7px 12px', borderTop: '1px solid var(--border-light)', fontSize: 11, color: notice.includes('失败') ? 'var(--danger)' : 'var(--status-done)', background: 'var(--surface)' }}>{notice}</div>}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="删除文件"
+        message={`确认删除 ${pendingDelete ?? ''}？此操作不可撤销。`}
+        confirmLabel="删除"
+        danger
+        onConfirm={() => {
+          if (pendingDelete) void deleteFile(pendingDelete)
+          setPendingDelete(null)
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   )
 }
