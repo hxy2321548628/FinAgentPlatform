@@ -32,7 +32,7 @@ export function Navbar() {
         to="/"
         style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', marginRight: 20, flexShrink: 0 }}
       >
-        <svg viewBox="12 3 24 34" fill="currentColor" style={{ height: 24, width: 'auto', color: 'var(--logo-red)', flexShrink: 0 }} aria-hidden="true">
+        <svg viewBox="12 3 24 34" fill="currentColor" style={{ height: 24, width: 'auto', color: 'var(--logo-green)', flexShrink: 0 }} aria-hidden="true">
           <path d={LOGO_PATH_1} /><path d={LOGO_PATH_2} />
         </svg>
         <span style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.02em' }}>

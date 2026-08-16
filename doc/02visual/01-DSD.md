@@ -35,7 +35,7 @@
 | 变量名 | 色值 | 用途 |
 |--------|------|------|
 | `--brand`       | `#0B2E5C` | 品牌深海军蓝，用于导航激活态、重要强调 |
-| `--logo-red`    | `#A61B29` | 学校红，**仅用于 Logo**，不参与界面配色 |
+| `--logo-green`    | `#A61B29` | 学校绿，**仅用于 Logo**，不参与界面配色 |
 | `--action`      | `#1749C4` | 主交互色：按钮、链接、选中态（比亮蓝更沉稳） |
 | `--action-hover`| `#1239A6` | 按钮 hover 态 |
 | `--action-light`| `#EAF0FC` | 轻量填充背景（选中卡片、标签 active 态） |
@@ -63,7 +63,7 @@
   --text-muted:    #8E9BB0;
 
   --brand:         #0B2E5C;
-  --logo-red:      #A61B29;   /* 仅 Logo，见 §6 */
+  --logo-green:      #A61B29;   /* 仅 Logo，见 §6 */
   --action:        #1749C4;
   --action-hover:  #1239A6;
   --action-light:  #EAF0FC;
@@ -81,7 +81,6 @@
 - `--action`（`#1749C4`）用于所有可交互元素，不要用在纯装饰上
 - Hero 大标题可用 `--action` 大面积着色（这是全站蓝色最集中的位置）
 - 严禁引入暖色系（红、橙、黄）作为主调，仅限警告状态
-- **唯一例外**：Logo 使用学校红 `--logo-red`，作为机构标识独立存在。该色不得扩散到按钮、链接、图表或任何界面元素上——界面配色仍以深海军蓝为唯一品牌色
 - 不使用渐变作为主视觉，仅用于细节装饰
 
 ---
@@ -256,7 +255,7 @@ setInterval(updateDecoStamps, 60 * 1000);
 
 **学院塔形图标 + 粗体品牌文字**
 
-图标取自中南财经政法大学金融学院院徽，使用学校红 `--logo-red`（`#A61B29`）。这是本设计系统中唯一的暖色，作为机构标识独立存在——它标示平台的归属，不参与界面配色（见 §2 配色原则的例外条款）。
+图标取自中南财经政法大学金融学院院徽，使用 `--logo-green`（`#A61B29`）。这是本设计系统中唯一的暖色，作为机构标识独立存在——它标示平台的归属，不参与界面配色（见 §2 配色原则的例外条款）。
 
 资产文件：`doc/02visual/logo.svg`，`viewBox="12 3 24 34"`，**竖版**，宽高比约 5:7。
 
@@ -280,7 +279,7 @@ setInterval(updateDecoStamps, 60 * 1000);
 .logo-icon {
   height: 24px;             /* 54px navbar 内的推荐高度 */
   width: auto;              /* 竖版，宽度按比例约 17px */
-  color: var(--logo-red);
+  color: var(--logo-green);
   display: block;
   flex-shrink: 0;
 }
@@ -299,8 +298,8 @@ setInterval(updateDecoStamps, 60 * 1000);
 
 | 场景 | 图标高度 | 颜色 |
 |---|---|---|
-| Navbar | 24px | `--logo-red` |
-| 登录页 / 页面级标识 | 40–48px | `--logo-red` |
+| Navbar | 24px | `--logo-green` |
+| 登录页 / 页面级标识 | 40–48px | `--logo-green` |
 | 深色背景反白 | 同上 | `#FFFFFF` |
 | 页脚 | 22px | `rgba(255,255,255,0.6)` |
 

@@ -165,7 +165,7 @@ DSD 未定义暗色色值，现在配等于设计工作前置。当前做法是�
 - **英文品牌名 `FinAgentPlatform`** —— 用于 Logo 文字、footer、页面 `<title>`
 - **中文项目名「金融学院智能体平台」** —— 用于正文表述与文档
 
-Logo 采用「学院塔形图标 + FinAgentPlatform 文字」的组合（DSD §6）。图标资产为 `doc/02visual/logo.svg`，取自学院院徽，色值 `--logo-red: #A61B29`。
+Logo 采用「学院塔形图标 + FinAgentPlatform 文字」的组合（DSD §6）。图标资产为 `doc/02visual/logo.svg`，取自学院院徽，色值 `--logo-green: #A61B29`。
 
 **这是整套设计系统里唯一的暖色**，仅用于标示机构归属，不得扩散到界面任何元素。界面配色仍以深海军蓝 `--brand` 为唯一品牌色。
 
