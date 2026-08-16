@@ -82,10 +82,10 @@ export function Home() {
               金融学院 AI 原生科研环境，下一代研究者的工作方式。
             </p>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <a href="/workspace" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 48, padding: '0 28px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: 'pointer', textDecoration: 'none', transition: 'background 0.2s' }}>
+              <Link to="/workspace" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 48, padding: '0 28px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: 'pointer', textDecoration: 'none', transition: 'background 0.2s' }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 进入平台
-              </a>
+              </Link>
               <Link to="/scenarios" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 48, padding: '0 24px', background: 'transparent', color: 'var(--text-primary)', border: '1.5px solid var(--border)', borderRadius: 8, fontSize: 15, fontWeight: 500, cursor: 'pointer', textDecoration: 'none', transition: 'border-color 0.2s, background 0.2s, color 0.2s' }}>
                 了解研究范式 →
               </Link>

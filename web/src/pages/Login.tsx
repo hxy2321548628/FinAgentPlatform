@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { DecoStamp } from '../components/DecoStamp'
 import { AUTH_QUERY_KEY, login } from '../api/auth'
 import { errorMessage } from '../api/request'
@@ -145,7 +145,7 @@ export function Login() {
               {loginMutation.isPending ? '正在登录…' : '登录系统'}
             </button>
           </form>
-          <div style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--text-secondary)' }}>还没有账号？ <a href="/register" style={{ color: 'var(--action)', fontWeight: 600 }}>注册账号</a></div>
+          <div style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--text-secondary)' }}>还没有账号？ <Link to="/register" style={{ color: 'var(--action)', fontWeight: 600 }}>注册账号</Link></div>
         </div>
       </div>
     </div>

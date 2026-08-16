@@ -456,6 +456,7 @@ AdminUsers.tsx:277 - modal 输入 outline:none 无 focus 替代
 | 2026-08-16 | P1 b3 第二批：19 个文件 111 处错误/警告/成功色字面量 token 化（--danger/--warn/--success 系），组件内硬编码状态色清零 | §4.4 |
 | 2026-08-16 | **D2 决策变更并落地**：暗色模式本期实现（前置条件已满足）——.dark 变量级覆盖、三态切换（浅/深/跟随系统）、Shiki 换肤、对比度实测 ≥4.5:1；切换入口在公共站顶栏（含未登录访客），设置页留同步入口；图表浅底为已知债务 | §4.9 |
 | 2026-08-16 | 会话侧栏「进行中」状态点：后端 `ThreadResponse.live_run_status`（RunRepository.live_statuses 批量查询，终态不算在跑）+ 前端状态点与文案（排队中/分析中/等待确认） | §4.8 待办项 |
+| 2026-08-16 | 收尾：删除 Vite 模板死 CSS（index.css/App.css）；字体自托管落地（@fontsource Inter/JetBrains Mono，woff2 进 dist，选型文档 §4.4 承诺项）；首页 CTA 与登录页注册链接改 `<Link>`（消除 SPA 内整页跳转） | 附录 A / 选型文档 §4.4 |
 | 待办 | 公共站 mock 数据决策（D1）：接真实 API 或标注示例数据，待评审 | §4.7 |
 
 ---

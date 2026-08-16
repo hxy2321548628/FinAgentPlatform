@@ -227,7 +227,7 @@
 }
 
 body {
-  font-family: 'Noto Sans SC', 'PingFang SC', '微软雅黑', sans-serif;
+  font-family: 'Inter Variable', 'PingFang SC', 'Noto Sans SC', '微软雅黑', sans-serif;
   background-color: var(--bg);
   color: var(--text-primary);
   line-height: 1.6;
