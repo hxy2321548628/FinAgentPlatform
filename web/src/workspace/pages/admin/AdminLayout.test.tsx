@@ -16,7 +16,11 @@ vi.mock('../../../api/auth', async importOriginal => ({
 afterEach(() => { cleanup(); mocks.me.mockClear() })
 
 describe('AdminLayout', () => {
-  it('reviewer 只看得到审核相关的两个入口', async () => {
+  /**
+   * reviewer 看得到三个审核入口（agent / skill / MCP，2026-08-16 起 MCP 也归它审），
+   * 看不到账号、用量与系统状态 —— 那三样是运维，交出去这个角色就成了 admin 的别名。
+   */
+  it('reviewer 只看得到审核相关的三个入口', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={client}>
@@ -33,7 +37,9 @@ describe('AdminLayout', () => {
     expect(await screen.findByText('审核老师')).toBeTruthy()
     expect(screen.getByRole('link', { name: '场景与智能体审核' })).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Skill 管理' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'MCP 管理' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: '用户管理' })).toBeNull()
-    expect(screen.queryByRole('link', { name: 'MCP 管理' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '用量看板' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '系统状态' })).toBeNull()
   })
 })

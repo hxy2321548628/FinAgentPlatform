@@ -100,15 +100,45 @@ async def test_a_fresh_application_is_invisible_and_unusable(
     assert client.get(f"{THREAD_PATH}/{thread_id}/runs").json()["items"] == []
 
 
-async def test_a_reviewer_cannot_approve_an_mcp(client: TestClient, teacher: User, reviewer: User) -> None:
-    """本期定案：放行一个外网地址是安全边界决定，不是内容合规判断。"""
+async def test_a_reviewer_can_approve_an_mcp(client: TestClient, teacher: User, reviewer: User) -> None:
+    """审核员审 MCP 与审 agent、skill 是同一档权限（2026-08-16 改）。
+
+    此前这里断言的是 403：理由是「放行外网地址是安全边界决定，不是内容合规判断」。
+    改成同一档之后，那条理由不再成立 —— 边界重新划在**审核与运维之间**，
+    而不是划在资源类型之间。
+    """
     as_user(client, teacher)
     created = apply_for(client)
 
     as_user(client, reviewer)
-    refused = client.post(f"{ADMIN_PATH}/{created['id']}/decision", json={"approved": True})
+    decided = client.post(f"{ADMIN_PATH}/{created['id']}/decision", json={"approved": True})
+    queue = client.get(ADMIN_PATH)
 
-    assert refused.status_code == 403, refused.text
+    assert decided.status_code == 202, decided.text
+    assert queue.status_code == 200, queue.text
+    assert str(created["id"]) in [str(one["id"]) for one in queue.json()]
+
+
+async def test_a_reviewer_cannot_disable_or_probe_an_mcp(
+    client: TestClient, teacher: User, reviewer: User, administrator: User
+) -> None:
+    """**审核员审得了，但停不了也探不了。**
+
+    启停与探活是运维动作：它们改的是一个已经放行的服务此刻通不通，而不是
+    「这条申请该不该放行」。审核员多拿一样就离 admin 的别名近一步，
+    这个角色存在的意义正是它比 admin 少。
+    """
+    as_user(client, teacher)
+    created = apply_for(client)
+    as_user(client, administrator)
+    approve(client, str(created["id"]))
+
+    as_user(client, reviewer)
+    disabled = client.post(f"{ADMIN_PATH}/{created['id']}/enabled", json={"enabled": False, "reason": "试试"})
+    probed = client.post(f"{ADMIN_PATH}/{created['id']}/probe")
+
+    assert disabled.status_code == 403, disabled.text
+    assert probed.status_code == 403, probed.text
 
 
 async def test_an_approved_server_becomes_visible_and_selectable(

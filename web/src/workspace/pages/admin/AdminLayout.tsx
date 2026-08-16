@@ -35,10 +35,11 @@ const ADMIN_GROUPS = [
 export function AdminLayout() {
   const navigate = useNavigate()
   const current = useQuery({ queryKey: AUTH_QUERY_KEY, queryFn: () => me() })
-  // reviewer 只看得到 Agent 与 Skill 两个审核入口；其余后台功能仍只属于 admin。
+  // reviewer 看得到三个审核入口（agent / skill / MCP）；账号、用量、系统仍只属于 admin。
+  // MCP 那一页对 reviewer 只显示批与拒，启停与探活是运维动作，见页面内的判断
   const reviewerOnly = current.data?.role === 'reviewer'
   const visible = reviewerOnly
-    ? ADMIN_GROUPS.map(group => ({ ...group, links: group.links.filter(link => ['/admin/agents', '/admin/skills'].includes(link.to)) })).filter(
+    ? ADMIN_GROUPS.map(group => ({ ...group, links: group.links.filter(link => ['/admin/agents', '/admin/skills', '/admin/mcp'].includes(link.to)) })).filter(
         group => group.links.length > 0,
       )
     : ADMIN_GROUPS

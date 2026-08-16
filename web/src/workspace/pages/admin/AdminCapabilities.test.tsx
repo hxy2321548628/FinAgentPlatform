@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AdminMcpServer } from '../../../api/types'
+import type { AdminMcpServer, UserRole } from '../../../api/types'
+import { AUTH_QUERY_KEY } from '../../../api/auth'
 import { AdminMcp, AdminSkills } from './AdminCapabilities'
 
 const mocks = vi.hoisted(() => ({
@@ -24,6 +25,11 @@ vi.mock('../../../api/reviews', async importOriginal => ({
   ...(await importOriginal<typeof import('../../../api/reviews')>()),
   listReviews: mocks.listReviews,
   decideReview: mocks.decideReview,
+}))
+
+vi.mock('../../../api/auth', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../../api/auth')>()),
+  me: vi.fn(async () => ({ id: 'u0', name: '某人', email: 'a@zuel.edu.cn', role: 'admin' as UserRole })),
 }))
 
 vi.mock('../../../api/mcp', async importOriginal => ({
@@ -63,6 +69,15 @@ function mount() {
   return render(<QueryClientProvider client={client}><AdminSkills /></QueryClientProvider>)
 }
 
+/** 挂 MCP 管理页。**身份要给全** —— 启停与探活按角色显隐，缺身份时它们一律不出现。 */
+function mountMcp(role: UserRole = 'admin') {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY }, mutations: { retry: false } },
+  })
+  client.setQueryData(AUTH_QUERY_KEY, { id: 'u0', name: '某人', email: 'a@zuel.edu.cn', role })
+  return render(<QueryClientProvider client={client}><AdminMcp /></QueryClientProvider>)
+}
+
 describe('AdminSkills', () => {
   it('展示真实 Skill 审核元数据并要求拒绝理由', async () => {
     mount()
@@ -87,8 +102,7 @@ describe('AdminMcp', () => {
     mocks.listForAdmin.mockResolvedValueOnce([
       mcpRecord({ status: 'disabled', disabled_reason: '连续失败 5 次，最后一次：连接失败：ExceptionGroup', failure_count: 5 }),
     ])
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-    render(<QueryClientProvider client={client}><AdminMcp /></QueryClientProvider>)
+    mountMcp()
 
     expect(await screen.findByText('已自动停用')).toBeTruthy()
     expect(screen.getByText(/最后一次：连接失败/)).toBeTruthy()
@@ -99,8 +113,7 @@ describe('AdminMcp', () => {
     mocks.listForAdmin.mockResolvedValueOnce([
       mcpRecord({ status: 'disabled', disabled_reason: '管理员手动停用' }),
     ])
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-    render(<QueryClientProvider client={client}><AdminMcp /></QueryClientProvider>)
+    mountMcp()
 
     expect(await screen.findByText('已停用')).toBeTruthy()
     expect(screen.queryByText('已自动停用')).toBeNull()
@@ -110,8 +123,7 @@ describe('AdminMcp', () => {
     mocks.listForAdmin.mockResolvedValueOnce([
       mcpRecord({ status: 'pending', has_write_operation: true }),
     ])
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-    render(<QueryClientProvider client={client}><AdminMcp /></QueryClientProvider>)
+    mountMcp()
 
     expect(await screen.findByText('有写操作 · 不可批')).toBeTruthy()
   })
@@ -119,11 +131,37 @@ describe('AdminMcp', () => {
   it('测试连接把连不上与清单差异都摆出来', async () => {
     mocks.listForAdmin.mockResolvedValue([mcpRecord()])
     mocks.probe.mockResolvedValueOnce({ reachable: true, tool_names: ['search_paper', 'read_file'], declared_only: [], undeclared: ['read_file'], failure_count: 0 })
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-    render(<QueryClientProvider client={client}><AdminMcp /></QueryClientProvider>)
+    mountMcp()
 
     fireEvent.click(await screen.findByRole('button', { name: '测试连接' }))
 
     await waitFor(() => expect(screen.getByText(/清单外多出：read_file/)).toBeTruthy())
+  })
+
+  /**
+   * **审核员批得了 MCP，但停不了也探不了**（2026-08-16 起）。
+   *
+   * 边界从「按资源类型分」改成「按审核与运维分」：批与拒是审核，启停与探活是运维。
+   * 后端对后两者回 403 —— 摆一个必然失败的按钮比不摆更糟，点下去只得到
+   * 一句「需要管理员权限」，而页面看上去像是坏了。
+   */
+  it('审核员看得到批与拒，看不到启停与探活', async () => {
+    mocks.listForAdmin.mockResolvedValue([mcpRecord({ status: 'pending' }), mcpRecord({ id: 'mcp-2', status: 'enabled' })])
+
+    mountMcp('reviewer')
+
+    expect(await screen.findByRole('button', { name: '通过' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '拒绝' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '测试连接' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '停用' })).toBeNull()
+  })
+
+  it('管理员那两个运维按钮照旧在', async () => {
+    mocks.listForAdmin.mockResolvedValue([mcpRecord({ id: 'mcp-2', status: 'enabled' })])
+
+    mountMcp('admin')
+
+    expect(await screen.findByRole('button', { name: '测试连接' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '停用' })).toBeTruthy()
   })
 })

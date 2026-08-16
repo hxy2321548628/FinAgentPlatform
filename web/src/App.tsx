@@ -50,12 +50,12 @@ export function AppRoutes() {
             <Route index element={<AdminHome />} />
             <Route path="agents" element={<AdminAgents />} />
             <Route path="skills" element={<AdminSkills />} />
+            <Route path="mcp" element={<AdminMcp />} />
           </Route>
         </Route>
         <Route element={<AdminGuard />}>
           <Route path="/admin" element={<AdminLayout />}>
             <Route path="users" element={<AdminUsers />} />
-            <Route path="mcp" element={<AdminMcp />} />
             <Route path="usage" element={<AdminUsage />} />
             <Route path="system" element={<AdminSystem />} />
             <Route path="*" element={<NotFound title="后台页面不存在" description="该管理页面不存在，或已经被移除。" primaryTo="/admin/users" primaryLabel="返回用户管理" secondaryTo="/workspace" secondaryLabel="返回工作台" />} />

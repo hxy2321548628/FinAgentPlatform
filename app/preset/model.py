@@ -92,8 +92,10 @@ class ResourceKind(StrEnum):
     MCP = "mcp"
 
 
-# reviewer 队列里出现的那些。**MCP 不在其中，这不是遗漏**：reviewer 审的是内容合规
-# （这段提示词能不能进广场），而放行一个外网地址是安全边界决定，只有管理员能做。
+# 统一审核队列里出现的那些。**MCP 不在其中，这不是遗漏，也不是权限问题** ——
+# reviewer 2026-08-16 起审得了 MCP，但它有自己那一页（`/api/mcp/admin`），
+# 上面带着申请人、失败计数与探活结果，那些在统一队列里表达不了。
+# 两个入口同时列同一批申请只会让两边的状态看起来不一致。
 REVIEWABLE_KIND: tuple[ResourceKind, ...] = (ResourceKind.AGENT, ResourceKind.SKILL)
 
 

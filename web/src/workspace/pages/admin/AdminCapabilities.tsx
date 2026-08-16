@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AUTH_QUERY_KEY, me } from '../../../api/auth'
 import { decideApplication, listForAdmin, mcpKeys, probe, setEnabled } from '../../../api/mcp'
 import { decideReview, listReviews, reviewKeys } from '../../../api/reviews'
 import { errorMessage } from '../../../api/request'
@@ -131,6 +132,10 @@ function formatBytes(bytes: number): string {
 export function AdminMcp() {
   const queryClient = useQueryClient()
   const servers = useQuery({ queryKey: mcpKeys.admin(), queryFn: listForAdmin })
+  // **审核员批得了但停不了、探不了**：那两个是运维动作，后端也回 403。
+  // 摆一个必然失败的按钮比不摆更糟 —— 点下去只会得到一句「需要管理员权限」
+  const current = useQuery({ queryKey: AUTH_QUERY_KEY, queryFn: () => me() })
+  const canOperate = current.data?.role === 'admin'
   const [reasons, setReasons] = useState<Record<string, string>>({})
   const [failed, setFailed] = useState<Record<string, string>>({})
   const [probes, setProbes] = useState<Record<string, McpProbe>>({})
@@ -213,7 +218,7 @@ export function AdminMcp() {
             records={live}
             probes={probes}
             failed={failed}
-            action={item => (
+            action={item => !canOperate ? null : (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <button type="button" onClick={() => test.mutate(item.id)} disabled={test.isPending} style={secondaryButtonStyle}>测试连接</button>
                 {item.status === 'enabled'

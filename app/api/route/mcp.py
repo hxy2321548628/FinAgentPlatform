@@ -1,8 +1,13 @@
 """MCP 目录端点：教师侧的目录与申请，管理员侧的队列、批拒、启停与探活。
 
-**审批人只能是管理员，`reviewer` 不行。** `reviewer` 审的是**内容合规**（这段提示词
-能不能进广场）；放行一个外网地址是**安全边界决定** —— 它决定教师的数据会不会发到
-一台平台既管不了也提前不知道状态的机器上。两者不是同一批人该做的判断。
+**审批人是 `reviewer` 与 `admin`，与 agent、skill 同一档**（2026-08-16 改）。此前
+只有 admin 批得了，理由是「放行外网地址是安全边界决定，不是内容合规判断」——
+那条线划在**资源类型**上，于是同一个人审得了提示词却审不了 MCP，而两者要看的
+其实是同一件事：这份东西该不该让全平台用。
+
+**边界改划在审核与运维之间**：批与拒（连同这份队列）是审核，`reviewer` 做得了；
+启停与探活是运维，仍然只有 admin —— 它们改的是一个已放行的服务此刻通不通，
+与「该不该放行」无关。`reviewer` 多拿一样就离 admin 的别名近一步。
 
 **目录没有三档可见性。** 管理员放行了就人人可勾 —— 一条目录记录就是一个平台级的
 外部服务，「只有某个课题组能用」这种需求出现之前不做那一层。
@@ -28,7 +33,7 @@ from api.schema import (
     McpServerResponse,
     SetMcpEnabledRequest,
 )
-from api.security import AdminUser, CurrentUser
+from api.security import AdminUser, CurrentUser, ReviewerUser
 from preset.mcp import McpApplication, McpServer, McpTargetLoader
 from preset.model import ResourceKind, ReviewStatus
 
@@ -111,7 +116,7 @@ async def apply_for_mcp(
 
 @router.get("/admin")
 async def list_for_admin(
-    current: AdminUser,
+    current: ReviewerUser,
     platform: Annotated[Platform, Depends(get_platform)],
 ) -> list[AdminMcpServerResponse]:
     """管理员后台：待审、已上架、已停用、已拒全都看得见，带申请人与失败计数。"""
@@ -133,7 +138,7 @@ async def list_for_admin(
 async def decide_application(
     server_id: str,
     request: DecideMcpRequest,
-    current: AdminUser,
+    current: ReviewerUser,
     platform: Annotated[Platform, Depends(get_platform)],
 ) -> AdminMcpServerResponse:
     """放行或拒绝一份申请。

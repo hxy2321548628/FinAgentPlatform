@@ -2931,6 +2931,20 @@ else
     [[ $P7_T_QUEUE == 403 ]] && pass "普通教师打不开审核队列（403）" || fail "教师打审核队列得到 $P7_T_QUEUE，应该是 403"
     [[ $P7_ADMIN_QUEUE == 200 ]] && pass "admin 同时满足 reviewer" || fail "admin 打审核队列得到 $P7_ADMIN_QUEUE"
 
+    # **MCP 的边界 2026-08-16 改过一次**：批与拒放给了 reviewer（与 agent、skill 同一档），
+    # 而启停与探活仍归 admin —— 线从「按资源类型分」改成「按审核与运维分」。
+    # 这里不需要一条真的 MCP 记录：准入是依赖注入，在查库之前就判完了，
+    # 因此拿一个不存在的 id 也能验出 403 与 404 的分野
+    P7_GHOST_MCP="00000000-0000-4000-8000-000000000000"
+    P7_R_MCP_QUEUE="$(code "$JAR_P7_R" "$BASE_URL/api/mcp/admin")"
+    P7_R_MCP_TOGGLE="$(code "$JAR_P7_R" -X POST "$BASE_URL/api/mcp/admin/$P7_GHOST_MCP/enabled" \
+        -H 'Content-Type: application/json' -d '{"enabled":false,"reason":"越权试探"}')"
+    P7_T_MCP_QUEUE="$(code "$JAR_P7_A" "$BASE_URL/api/mcp/admin")"
+
+    [[ $P7_R_MCP_QUEUE == 200 ]] && pass "reviewer 打得开 MCP 审核队列" || fail "reviewer 打 MCP 队列得到 $P7_R_MCP_QUEUE"
+    [[ $P7_R_MCP_TOGGLE == 403 ]] && pass "reviewer 停不了 MCP（403，运维仍归 admin）" || fail "reviewer 停 MCP 得到 $P7_R_MCP_TOGGLE，应该是 403"
+    [[ $P7_T_MCP_QUEUE == 403 ]] && pass "普通教师打不开 MCP 审核队列（403）" || fail "教师打 MCP 队列得到 $P7_T_MCP_QUEUE，应该是 403"
+
     # 建号那一下若真的成功了，库里就多了一个越权造出来的账号 —— 顺手核一下
     P7_LEAKED="$(psql_query "SELECT count(*) FROM users WHERE name = 'p7-越权-$P7_TAG';" | tr -d '[:space:]')"
     [[ $P7_LEAKED == 0 ]] && pass "库里没有越权造出来的账号" || fail "库里多出了 $P7_LEAKED 个越权造出来的账号"
