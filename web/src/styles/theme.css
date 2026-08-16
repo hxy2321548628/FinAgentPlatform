@@ -373,3 +373,57 @@ body {
   @keyframes blink {}
   [style*="ticker-scroll"], [style*="card-enter"], [style*="thinking-bounce"] { animation: none !important; }
 }
+
+/* ── Toast（DSD 第二章 §2.4）── */
+.toast-viewport {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+  list-style: none;
+}
+.toast {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  align-items: start;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(11,46,92,0.14);
+}
+.toast-success { border-left: 3px solid var(--status-done); }
+.toast-error   { border-left: 3px solid var(--danger); }
+.toast-default { border-left: 3px solid var(--action); }
+.toast[data-state='open']   { animation: toast-in 0.2s ease-out; }
+.toast[data-state='closed'] { animation: toast-out 0.15s ease-in forwards; }
+.toast-title { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.toast-desc  { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+.toast-close {
+  border: none; background: none; color: var(--text-muted); cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 2px;
+}
+@keyframes toast-in  { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+@keyframes toast-out { to { opacity: 0; transform: translateX(12px); } }
+@media (prefers-reduced-motion: reduce) {
+  .toast[data-state='open'], .toast[data-state='closed'] { animation: none; }
+}
+
+/* ── Skeleton 骨架屏 ── */
+.skeleton {
+  background: linear-gradient(90deg, var(--border-light) 25%, var(--bg) 50%, var(--border-light) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+}
+@keyframes skeleton-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}

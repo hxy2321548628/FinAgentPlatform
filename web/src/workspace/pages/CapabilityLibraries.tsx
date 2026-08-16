@@ -23,7 +23,7 @@ export function SkillsLibrary() {
 
   return (
     <LibraryPage eyebrow="// SKILLS LIBRARY" title="Skills 库" description={`浏览审核通过的能力目录，共 ${items.length} 个目录项`}>
-      <CatalogControls search={search} onSearch={setSearch} placeholder="搜索 Skill 名称、描述或作者..." filters={filters} activeFilter={activeFilter} onFilter={setActiveFilter} />
+      <CatalogControls search={search} onSearch={setSearch} placeholder="搜索 Skill 名称、描述或作者…" filters={filters} activeFilter={activeFilter} onFilter={setActiveFilter} />
       {catalog.isPending && <Notice>正在加载 Skills…</Notice>}
       {catalog.isError && <Notice error>{errorMessage(catalog.error)}</Notice>}
       {!catalog.isPending && !catalog.isError && <SkillCards items={filtered} search={search} onSelect={setSelected} />}
@@ -96,7 +96,7 @@ export function McpLibrary() {
       <div style={{ padding: '0 36px' }}>
         <div role="note" style={outboundBannerStyle}>{DATA_LEAVES_CAMPUS}</div>
       </div>
-      <CatalogControls search={search} onSearch={setSearch} placeholder="搜索 MCP Server 名称、描述或工具名..." filters={[]} activeFilter="" onFilter={() => undefined} />
+      <CatalogControls search={search} onSearch={setSearch} placeholder="搜索 MCP Server 名称、描述或工具名…" filters={[]} activeFilter="" onFilter={() => undefined} />
       <div style={{ padding: '0 36px 12px' }}>
         <button type="button" onClick={() => setApplying(true)} style={applyButtonStyle}>申请添加 MCP</button>
       </div>

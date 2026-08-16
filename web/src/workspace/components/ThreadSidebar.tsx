@@ -4,6 +4,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { createThread, deleteThread, listThreads, threadKeys } from '../../api/threads'
 import { errorMessage } from '../../api/request'
 import { ConfirmDialog } from './ConfirmDialog'
+import { useToast } from '../../components/ui/toast-context'
+import { Skeleton } from '../../components/ui/Skeleton'
 
 function threadLabel(title: string, createdAt: string): string {
   if (title) return title
@@ -13,6 +15,7 @@ function threadLabel(title: string, createdAt: string): string {
 export function ThreadSidebar() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { toast } = useToast()
   const { threadId } = useParams()
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null)
@@ -28,12 +31,19 @@ export function ThreadSidebar() {
       await queryClient.invalidateQueries({ queryKey: threadKeys.all })
       navigate(`/workspace/chat/${thread.id}`)
     },
+    onError(error) {
+      toast({ title: '创建会话失败', description: errorMessage(error), variant: 'error' })
+    },
   })
   const remove = useMutation({
     mutationFn: deleteThread,
     async onSuccess(_, removedId) {
       await queryClient.invalidateQueries({ queryKey: threadKeys.all })
       if (threadId === removedId) navigate('/workspace/chat')
+      toast({ title: '会话已删除', variant: 'success' })
+    },
+    onError(error) {
+      toast({ title: '会话删除失败', description: errorMessage(error), variant: 'error' })
     },
   })
   const items = threads.data?.pages.flatMap(page => page.items) ?? []
@@ -44,13 +54,11 @@ export function ThreadSidebar() {
         <button type="button" disabled={create.isPending} onClick={() => create.mutate()} style={{ width: '100%', padding: '8px 0', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>
           {create.isPending ? '正在创建…' : '＋ 新建分析'}
         </button>
-        {create.isError && <div role="alert" style={{ color: '#DC2626', fontSize: 11, marginTop: 7 }}>{errorMessage(create.error)}</div>}
-        {remove.isError && <div role="alert" style={{ color: '#DC2626', fontSize: 11, marginTop: 7 }}>{errorMessage(remove.error, '会话删除失败')}</div>}
       </div>
       <div style={{ padding: '4px 16px 8px', fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.2em', color: 'var(--text-muted)' }}>// HISTORY</div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 8px' }}>
-        {threads.isPending && <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>正在加载会话…</div>}
-        {threads.isError && <div role="alert" style={{ padding: 16, color: '#DC2626', fontSize: 12 }}>{errorMessage(threads.error)}</div>}
+        {threads.isPending && Array.from({ length: 3 }, (_, i) => <div key={i} style={{ padding: '10px 12px', marginBottom: 2, display: 'flex', flexDirection: 'column', gap: 6 }}><Skeleton width="80%" height={13} /><Skeleton width="45%" height={11} /></div>)}
+        {threads.isError && <div role="alert" style={{ padding: 16, color: 'var(--danger)', fontSize: 12 }}>{errorMessage(threads.error)}</div>}
         {!threads.isPending && !threads.isError && items.length === 0 && <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>还没有分析对话</div>}
         {items.map(thread => {
           const active = thread.id === threadId

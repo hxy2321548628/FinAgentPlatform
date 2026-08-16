@@ -48,7 +48,7 @@ const FEATURED_SCENES: FeaturedScene[] = [
     id: 'paper',
     name: '论文计量方法鉴别',
     subject: '经济学',
-    tagline: '上传论文，识别识别策略缺陷，生成审稿意见底稿',
+    tagline: '上传论文，识别计量策略缺陷，生成审稿意见底稿',
     desc: '面向教师科研与课题组指导：上传一篇实证论文，系统自动识别识别策略类型、提取稳健性检验方法、标注潜在识别威胁，输出结构化审阅意见。',
     flow: ['上传论文 PDF', '识别核心识别策略（DID/RDD/IV）', '提取模型设定与控制变量逻辑', '检查稳健性检验完整性', '输出审阅意见与改进建议'],
     agents: [
@@ -329,7 +329,7 @@ export function Marketplace() {
                   <button
                     key={s}
                     onClick={() => setActiveSubject(s)}
-                    style={{ padding: '6px 14px', borderRadius: 20, border: `1px solid ${activeSubject === s ? 'var(--action)' : 'var(--border)'}`, background: activeSubject === s ? 'var(--action)' : 'var(--surface)', color: activeSubject === s ? '#fff' : 'var(--text-secondary)', fontSize: 12, fontWeight: activeSubject === s ? 600 : 400, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s' }}
+                    style={{ padding: '6px 14px', borderRadius: 20, border: `1px solid ${activeSubject === s ? 'var(--action)' : 'var(--border)'}`, background: activeSubject === s ? 'var(--action)' : 'var(--surface)', color: activeSubject === s ? '#fff' : 'var(--text-secondary)', fontSize: 12, fontWeight: activeSubject === s ? 600 : 400, cursor: 'pointer', fontFamily: 'inherit', transition: 'background 0.15s, color 0.15s, border-color 0.15s' }}
                   >{s}</button>
                 ))}
               </div>

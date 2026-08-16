@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentListing } from '../../api/types'
 import { ChatInput } from './ChatInput'
+import { ToastProvider } from '../../components/ui/Toast'
 
 const mocks = vi.hoisted(() => ({
   available: [] as AgentListing[],
@@ -76,7 +77,7 @@ function mcpServer(overrides: Partial<import('../../api/types').McpServer> = {})
 
 function mount(props: Parameters<typeof ChatInput>[0]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={client}><ChatInput {...props} /></QueryClientProvider>)
+  return render(<QueryClientProvider client={client}><ToastProvider><ChatInput {...props} /></ToastProvider></QueryClientProvider>)
 }
 
 function input() {

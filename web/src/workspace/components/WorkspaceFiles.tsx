@@ -4,6 +4,7 @@ import { createDirectory, deleteFile as removeFile, fileKeys, listFiles, rawFile
 import { errorMessage } from '../../api/request'
 import type { WorkspaceEntry } from '../../api/types'
 import { ConfirmDialog } from './ConfirmDialog'
+import { useToast } from '../../components/ui/toast-context'
 
 interface FilePreview {
   path: string
@@ -51,12 +52,12 @@ function EntryIcon({ entry }: { entry: WorkspaceEntry }) {
 
 export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFilesProps) {
   const queryClient = useQueryClient()
+  const { toast } = useToast()
   const tree = useQuery({ queryKey: fileKeys.tree(threadId), queryFn: () => listFiles(threadId) })
   const entries = tree.data?.entries ?? EMPTY_ENTRIES
   const [currentDir, setCurrentDir] = useState('')
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState('')
   const [editing, setEditing] = useState(false)
   const [editorText, setEditorText] = useState('')
   const [dialog, setDialog] = useState<'file' | 'directory' | null>(null)
@@ -69,7 +70,6 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
     setPreview(null)
     setEditing(false)
     setDialog(null)
-    setNotice('')
   }, [threadId])
 
   const visibleEntries = useMemo(() => entries.filter(entry => {
@@ -102,21 +102,20 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
       setEditing(false)
     } catch (error) {
       setPreview(null)
-      setNotice(errorMessage(error, '文件预览失败'))
+      toast({ title: '文件预览失败', description: errorMessage(error), variant: 'error' })
     }
   }
 
   const uploadFiles = async (files: FileList | File[], directory = currentDir) => {
     setBusy(true)
-    setNotice('')
     try {
       for (const file of Array.from(files)) {
         await uploadFile(threadId, file, directory)
       }
-      setNotice('文件已上传')
+      toast({ title: '文件已上传', variant: 'success' })
       await queryClient.invalidateQueries({ queryKey: fileKeys.tree(threadId) })
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '上传失败')
+      toast({ title: '上传失败', description: error instanceof Error ? error.message : '请重试', variant: 'error' })
     } finally {
       setBusy(false)
       if (uploadRef.current) uploadRef.current.value = ''
@@ -125,14 +124,13 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
 
   const deleteFile = async (path: string) => {
     setBusy(true)
-    setNotice('')
     try {
       await removeFile(threadId, path)
       await queryClient.invalidateQueries({ queryKey: fileKeys.tree(threadId) })
       if (preview?.path === path) setPreview(null)
-      setNotice('文件已删除')
+      toast({ title: '文件已删除', variant: 'success' })
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '删除失败')
+      toast({ title: '删除失败', description: error instanceof Error ? error.message : '请重试', variant: 'error' })
     } finally {
       setBusy(false)
     }
@@ -141,16 +139,15 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
   const saveEditedFile = async () => {
     if (!preview || preview.isBinary) return
     setBusy(true)
-    setNotice('')
     try {
       await writeFile(threadId, preview.path, editorText)
       setPreview({ ...preview, text: editorText, truncated: false })
       await queryClient.invalidateQueries({ queryKey: fileKeys.tree(threadId) })
       await queryClient.invalidateQueries({ queryKey: fileKeys.content(threadId, preview.path) })
       setEditing(false)
-      setNotice('文件已保存')
+      toast({ title: '文件已保存', variant: 'success' })
     } catch (error) {
-      setNotice(errorMessage(error, '保存失败'))
+      toast({ title: '保存失败', description: errorMessage(error), variant: 'error' })
     } finally {
       setBusy(false)
     }
@@ -159,21 +156,20 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
   const createEntry = async () => {
     const name = dialogName.trim()
     if (!name || name.includes('/') || name === '.' || name === '..') {
-      setNotice('名称不能为空，且不能包含路径分隔符')
+      toast({ title: '名称不合法', description: '名称不能为空，且不能包含路径分隔符', variant: 'error' })
       return
     }
     const path = currentDir ? `${currentDir}/${name}` : name
     setBusy(true)
-    setNotice('')
     try {
       if (dialog === 'directory') await createDirectory(threadId, path)
       else await writeFile(threadId, path, '')
       await queryClient.invalidateQueries({ queryKey: fileKeys.tree(threadId) })
       setDialog(null)
       setDialogName('')
-      setNotice(dialog === 'directory' ? '文件夹已创建' : '文件已创建')
+      toast({ title: dialog === 'directory' ? '文件夹已创建' : '文件已创建', variant: 'success' })
     } catch (error) {
-      setNotice(errorMessage(error, dialog === 'directory' ? '创建文件夹失败' : '创建文件失败'))
+      toast({ title: dialog === 'directory' ? '创建文件夹失败' : '创建文件失败', description: errorMessage(error), variant: 'error' })
     } finally {
       setBusy(false)
     }
@@ -181,7 +177,7 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
 
   const copyPath = async (path: string) => {
     await navigator.clipboard.writeText(`/workspace/${path}`)
-    setNotice('已复制工作路径')
+    toast({ title: '已复制工作路径', variant: 'success' })
   }
 
   const crumbs = currentDir ? currentDir.split('/') : []
@@ -251,7 +247,7 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
           <div style={{ flex: 1, overflow: 'auto', padding: 12, background: '#F8FAFD' }}>
             {preview.truncated && <div style={{ marginBottom: 10, padding: '7px 9px', borderRadius: 5, background: '#FFFBEB', color: '#92400E', fontSize: 11 }}>文件较长，当前仅展示开头部分；下载可查看完整内容。</div>}
             {IMAGE_EXTENSIONS.has(extension(preview.path)) ? (
-              <img src={preview.rawUrl} alt={fileName(preview.path)} style={{ display: 'block', maxWidth: '100%', maxHeight: 360, margin: '0 auto', objectFit: 'contain' }} />
+              <img src={preview.rawUrl} alt={fileName(preview.path)} width="100%" height="240" style={{ display: 'block', maxWidth: '100%', height: 240, width: '100%', margin: '0 auto', objectFit: 'contain' }} />
             ) : preview.isBinary ? (
               <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>该文件不支持文本预览，请点击“下载”查看。</div>
             ) : editing ? (
@@ -275,8 +271,6 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
           </form>
         </div>
       )}
-
-      {notice && <div style={{ padding: '7px 12px', borderTop: '1px solid var(--border-light)', fontSize: 11, color: notice.includes('失败') ? 'var(--danger)' : 'var(--status-done)', background: 'var(--surface)' }}>{notice}</div>}
 
       <ConfirmDialog
         open={pendingDelete !== null}

@@ -48,7 +48,7 @@ export function CatalogControls({ search, onSearch, placeholder, filters, active
               background: activeFilter === key ? 'var(--action)' : 'var(--surface)',
               color: activeFilter === key ? '#fff' : 'var(--text-secondary)',
               fontSize: 12, fontWeight: activeFilter === key ? 600 : 400,
-              cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s',
+              cursor: 'pointer', fontFamily: 'inherit', transition: 'background 0.15s, color 0.15s, border-color 0.15s',
             }}
           >{label}</button>
         ))}

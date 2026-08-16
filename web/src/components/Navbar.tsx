@@ -46,7 +46,7 @@ export function Navbar() {
             key={to} to={to} end={end}
             style={({ isActive }) => ({
               fontSize: 13, textDecoration: 'none', padding: '5px 12px', borderRadius: 6,
-              transition: 'all 0.2s',
+              transition: 'background 0.2s, color 0.2s',
               background: isActive ? 'var(--brand)' : 'transparent',
               color: isActive ? '#fff' : 'var(--text-secondary)',
               fontWeight: isActive ? 500 : 400,

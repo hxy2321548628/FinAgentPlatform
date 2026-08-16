@@ -8,6 +8,7 @@ import { setUnauthorizedHandler } from './api/request.ts'
 import { runEventTransport } from './api/runEventTransport.ts'
 import { RunEventTransportProvider } from './api/RunEventTransportContext.tsx'
 import { queryClient } from './queryClient.ts'
+import { ToastProvider } from './components/ui/Toast.tsx'
 
 setUnauthorizedHandler(() => {
   queryClient.clear()
@@ -18,7 +19,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <RunEventTransportProvider transport={runEventTransport}>
       <QueryClientProvider client={queryClient}>
-        <App />
+        <ToastProvider>
+          <App />
+        </ToastProvider>
       </QueryClientProvider>
     </RunEventTransportProvider>
   </StrictMode>,

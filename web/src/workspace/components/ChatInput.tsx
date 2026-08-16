@@ -7,6 +7,7 @@ import { listAvailable as listAvailableSkills, skillKeys } from '../../api/skill
 import type { AgentConfig, SkillReference } from '../../api/types'
 import { listingCaption } from '../agent'
 import { DATA_LEAVES_CAMPUS, mountedMcps } from '../mcp'
+import { useToast } from '../../components/ui/toast-context'
 import {
   AGENT_CONFIG_MODES,
   AGENT_CONFIG_MODE_LABEL,
@@ -40,7 +41,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
   const [configError, setConfigError] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [sceneName, setSceneName] = useState('')
-  const [saveNotice, setSaveNotice] = useState('')
+  const { toast } = useToast()
   const queryClient = useQueryClient()
 
   // 只在配置面板真的展开时拉目录 —— 大多数提问不碰配置。
@@ -81,11 +82,11 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
     },
     async onSuccess() {
       setSceneName('')
-      setSaveNotice('已保存到我的场景')
+      toast({ title: '已保存到我的场景', variant: 'success' })
       await queryClient.invalidateQueries({ queryKey: agentKeys.mine() })
     },
     onError(error) {
-      setSaveNotice(error instanceof Error ? error.message : errorMessage(error, '保存场景失败'))
+      toast({ title: '保存场景失败', description: error instanceof Error ? error.message : errorMessage(error), variant: 'error' })
     },
   })
 
@@ -208,10 +209,9 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
           </div>
           {configError && <div role="alert" style={{ marginTop: 6, fontSize: 11, color: '#DC2626' }}>{configError}</div>}
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <input value={sceneName} onChange={event => { setSceneName(event.target.value); setSaveNotice('') }} placeholder="场景名称" style={{ ...selectStyle, flex: 1, minWidth: 180 }} />
+            <input value={sceneName} onChange={event => setSceneName(event.target.value)} placeholder="场景名称" style={{ ...selectStyle, flex: 1, minWidth: 180 }} />
             <button type="button" onClick={() => saveScene.mutate()} disabled={saveScene.isPending} style={{ padding: '8px 12px', border: '1px solid var(--action-border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--action)', cursor: saveScene.isPending ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 12 }}>{saveScene.isPending ? '保存中…' : '保存到我的场景库'}</button>
             <button type="button" onClick={() => setConfigOpen(false)} style={{ padding: '8px 12px', border: 'none', borderRadius: 6, background: 'var(--action)', color: '#fff', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12 }}>完成</button>
-            {saveNotice && <span style={{ width: '100%', fontSize: 11, color: saveNotice.startsWith('已') ? '#059669' : '#DC2626' }}>{saveNotice}</span>}
           </div>
         </div></div></>}
         <textarea value={text} disabled={disabled || isSending} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSend() } }} placeholder={disabled ? '请先新建一个分析对话' : '输入分析需求…（Enter 发送，Shift+Enter 换行）'} style={{ width: '100%', minHeight: 52, maxHeight: 160, border: 'none', fontSize: 14, color: 'var(--text-primary)', background: 'transparent', resize: 'none', fontFamily: 'inherit', lineHeight: 1.65, boxSizing: 'border-box' }} />

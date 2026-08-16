@@ -433,4 +433,20 @@ AdminUsers.tsx:277 - modal 输入 outline:none 无 focus 替代
 
 ---
 
+## 6. 实施进度记录
+
+> 2026-08-16 起随改造回填，格式：日期 · 完成项 · 依据。
+
+| 日期 | 完成项 | 依据 |
+|---|---|---|
+| 2026-08-16 | P0-1 对话渲染层：Markdown/高亮/公式/文内图/产物区/流式光标；M3 提示词契约 | [04-answer-rendering-plan](./04-answer-rendering-plan.md) §11 |
+| 2026-08-16 | DSD 第二章「工作台组件规范」扩写（v1.1） | 01-DSD.md |
+| 2026-08-16 | P0-2 无障碍基线：lang/description/theme-color、focus-visible、删 10 处 outline:none、`--text-muted` 加深至 `#5D6D82`、会话/总览 Link 化、aria-label、40px 触控目标、skip link、表单 label 关联 | §4.2 全项 |
+| 2026-08-16 | P0-3 ConfirmDialog 替换两处 window.confirm（alertdialog、焦点陷阱、Esc） | §4.3 |
+| 2026-08-16 | P1-2 反馈系统：Toast（Radix Toast）替换 WorkspaceFiles/ChatInput/ThreadSidebar 内联通知；Skeleton 骨架屏替换会话列表/总览/广场加载态 | §4.5 |
+| 2026-08-16 | P1-5 部分：`transition: all` ×4 改显式属性；`...` 改 `…`；预览图固定尺寸；Marketplace 文案笔误；Overview「本月会话」改为有界翻页全量统计 | §4.8 |
+| 待办 | 会话重命名：前端无入口（`updateThread` 已支持 title 通道）；会话状态指示：`ThreadSummary` 无 run 状态字段，需后端配合 | §4.8 |
+
+---
+
 *最后更新：2026-08-16*

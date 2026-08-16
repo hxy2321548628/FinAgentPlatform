@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { agentKeys, listMine } from '../../api/agents'
@@ -6,6 +6,7 @@ import { errorMessage } from '../../api/request'
 import { listThreads, threadKeys } from '../../api/threads'
 import { myUsage, usageKeys } from '../../api/usage'
 import type { ThreadSummary } from '../../api/types'
+import { Skeleton } from '../../components/ui/Skeleton'
 
 const QUICK_ACTIONS = [
   { label: '新建分析对话', desc: '直接描述需求，智能体开始工作', to: '/workspace/chat',
@@ -83,6 +84,14 @@ export function Overview() {
   const usage = useQuery({ queryKey: usageKeys.mine(), queryFn: myUsage })
   const agents = useQuery({ queryKey: agentKeys.mine(), queryFn: listMine })
 
+  // **「本月会话」是对全量的统计，只数第一页会静默偏小。** 有界地翻完剩余页
+  // （最多 10 页/200 条，教师量级碰不到上限；超过时统计仍偏小但不阻塞页面），
+  // 翻进来的页落在共享缓存里，侧边栏顺带受益。
+  useEffect(() => {
+    if (!threads.hasNextPage || threads.isFetchingNextPage) return
+    if ((threads.data?.pages.length ?? 0) < 10) void threads.fetchNextPage()
+  }, [threads])
+
   const items: ThreadSummary[] = threads.data?.pages.flatMap(page => page.items) ?? []
   const recent = items.slice(0, 5)
   const monthlyThreads = items.filter(one => isThisMonth(one.created_at)).length
@@ -124,8 +133,8 @@ export function Overview() {
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>最近会话</div>
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-            {threads.isPending && <div style={emptyStyle}>正在加载…</div>}
-            {threads.isError && <div role="alert" style={{ ...emptyStyle, color: '#DC2626' }}>{errorMessage(threads.error)}</div>}
+            {threads.isPending && Array.from({ length: 4 }, (_, i) => <div key={i} style={{ padding: '12px 16px', borderBottom: i < 3 ? '1px solid var(--border-light)' : 'none', display: 'flex', flexDirection: 'column', gap: 6 }}><Skeleton width="55%" height={13} /><Skeleton width="30%" height={11} /></div>)}
+            {threads.isError && <div role="alert" style={{ ...emptyStyle, color: 'var(--danger)' }}>{errorMessage(threads.error)}</div>}
             {!threads.isPending && !threads.isError && recent.length === 0 && (
               <div style={emptyStyle}>还没有会话，从右边开一个吧</div>
             )}

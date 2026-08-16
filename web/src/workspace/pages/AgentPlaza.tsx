@@ -8,6 +8,7 @@ import type { AgentListing } from '../../api/types'
 import { sourceLabel } from '../agent'
 import { handOffAgent } from '../pickedAgent'
 import { CatalogCard, CatalogControls } from '../components/Catalog'
+import { Skeleton } from '../../components/ui/Skeleton'
 
 const SUBJECT_FILTERS = ['全部', '公司金融', '量化投资', '资产管理', '风险管理', '学术科研', '会计审计', '其他']
 
@@ -51,15 +52,19 @@ export function AgentPlaza() {
       <CatalogControls
         search={search}
         onSearch={setSearch}
-        placeholder="搜索名称、说明或作者..."
+        placeholder="搜索名称、说明或作者…"
         filters={SUBJECT_FILTERS.map(key => ({ key, label: key }))}
         activeFilter={subject}
         onFilter={setSubject}
       />
 
       <div style={{ padding: '0 36px 32px' }}>
-        {current.isPending && <div style={{ padding: '60px 0', textAlign: 'center', color: 'var(--text-muted)' }}>正在加载…</div>}
-        {current.isError && <div role="alert" style={{ padding: '60px 0', textAlign: 'center', color: '#DC2626' }}>{errorMessage(current.error)}</div>}
+        {current.isPending && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+            {Array.from({ length: 6 }, (_, i) => <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, display: 'flex', flexDirection: 'column', gap: 10 }}><Skeleton width="55%" height={15} /><Skeleton width="30%" height={12} /><Skeleton width="100%" height={12} /><Skeleton width="85%" height={12} /></div>)}
+          </div>
+        )}
+        {current.isError && <div role="alert" style={{ padding: '60px 0', textAlign: 'center', color: 'var(--danger)' }}>{errorMessage(current.error)}</div>}
         {!current.isPending && shown.length === 0 && (
           <div style={{ padding: '60px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 14 }}>
             {search ? `未找到与「${search}」相关的智能体` : '还没有你能引用的智能体'}
