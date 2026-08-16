@@ -48,6 +48,7 @@ from broker.schema import (
     GlobRequest,
     GrepRequest,
     LsRequest,
+    PoolStatResponse,
     PreviewResponse,
     QueuedData,
     ReadRequest,
@@ -78,8 +79,21 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/threads", tags=["broker"])
 skill_router = APIRouter(prefix="/skill", tags=["broker-skill"])
+# **不挂在 /threads 下**：池是全局的，不属于任何一个会话
+stat_router = APIRouter(tags=["broker-stat"])
 
 SSE_MEDIA_TYPE = "text/event-stream"
+
+
+# ------------------------------------------------------------------ 池的占用
+@stat_router.get("/stat")
+async def pool_stat(broker: BrokerDep) -> PoolStatResponse:
+    """沙箱池此刻的占用情况。
+
+    **只有 broker 答得出这个问题** —— 池活在它的进程里，api 那边只有一个 HTTP 客户端。
+    """
+    found = broker.pool.stat()
+    return PoolStatResponse(in_use=found.in_use, capacity=found.capacity, queued=found.queued)
 
 
 # ------------------------------------------------------------------ Skill 仓库与物化

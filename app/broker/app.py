@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from broker.route import router, skill_router
+from broker.route import router, skill_router, stat_router
 from broker.runtime import Broker, build_broker
 from config import get_settings
 from log import configure
@@ -56,6 +56,7 @@ def create_app(broker: Broker | None = None) -> FastAPI:
     )
     app.include_router(router)
     app.include_router(skill_router)
+    app.include_router(stat_router)
     if broker is not None:
         # 注入进来的运行时立刻就位，不等 lifespan：httpx 的 ASGI 传输（测试走这条）
         # 压根不跑 lifespan，只在这里挂的话每个请求都会拿不到运行时

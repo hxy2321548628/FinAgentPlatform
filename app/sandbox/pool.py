@@ -89,6 +89,15 @@ class _Waiter:
     on_queued: QueuePositionCallback | None
 
 
+@dataclass(frozen=True)
+class PoolStat:
+    """池此刻的占用情况。"""
+
+    in_use: int
+    capacity: int
+    queued: int
+
+
 class SandboxPool:
     """按 thread 复用容器，并在容器数达上限时排队。
 
@@ -141,6 +150,17 @@ class SandboxPool:
     def size(self) -> int:
         """当前存活的容器数。"""
         return len(self._slot)
+
+    def stat(self) -> PoolStat:
+        """池此刻的占用情况，给后台那一页看。
+
+        **排队长度要跟着一起给。** 只看占用与容量的话，满池与「满池且还有十个人在等」
+        长得一模一样，而这两种情况该做的事完全不同。
+
+        Returns:
+            存活容器数、上限与排队人数。
+        """
+        return PoolStat(in_use=len(self._slot), capacity=self._max_container, queued=len(self._queue))
 
     def current(self, thread_id: str) -> ContainerProtocol | None:
         """给出该 thread 眼下的容器，没有则返回 None。

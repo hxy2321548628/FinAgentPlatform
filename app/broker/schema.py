@@ -184,6 +184,16 @@ class ThreadResponse(BaseModel):
     thread_id: str = Field(min_length=1, description="会话标识")
 
 
+class PoolStatResponse(BaseModel):
+    """沙箱池此刻的占用情况。"""
+
+    in_use: int = Field(ge=0, description="存活着的容器数")
+    capacity: int = Field(ge=0, description="同时存活的容器数上限")
+    # **满池与「满池且十个人在等」要分得开** —— 只看前两项的话它们长得一模一样，
+    # 而这两种情况该做的事完全不同
+    queued: int = Field(ge=0, description="正在排队等沙箱的申请数")
+
+
 class ExistsResponse(BaseModel):
     """会话是否存在。"""
 

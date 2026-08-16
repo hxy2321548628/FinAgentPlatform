@@ -26,7 +26,7 @@ from broker.runtime import AbsentContainer, Broker
 from broker.skill import SkillStore
 from sandbox.container import CommandResult
 from sandbox.path import PathEscapeError
-from sandbox.pool import QueuePositionCallback, SandboxQueueTimeoutError
+from sandbox.pool import PoolStat, QueuePositionCallback, SandboxQueueTimeoutError
 from sandbox.remote import (
     BrokerConnection,
     FileMissingError,
@@ -52,6 +52,10 @@ class FakeContainer:
     def exec(self, command: str, *, timeout: int) -> CommandResult:
         self.ran.append(command)
         return CommandResult(output=f"跑过了：{command}", exit_code=0)
+
+
+# 假池的容量，判据只看「不是 0」与「真实反映占用」
+FAKE_CAPACITY = 20
 
 
 class FakePool:
@@ -85,6 +89,9 @@ class FakePool:
 
     def current(self, thread_id: str) -> FakeContainer | None:
         return None if self.container_gone else self.held.get(thread_id)
+
+    def stat(self) -> PoolStat:
+        return PoolStat(in_use=len(self.held), capacity=FAKE_CAPACITY, queued=0)
 
 
 def _free_port() -> int:

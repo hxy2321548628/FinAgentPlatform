@@ -744,3 +744,35 @@ async def test_discard_hands_the_slot_to_whoever_is_queuing(tmp_path: Path, fact
     await asyncio.wait_for(waiting, timeout=1)
     assert pool.current("thread-2") is not None
     await pool.aclose()
+
+
+async def test_the_pool_reports_what_it_is_holding(tmp_path: Path, factory: Factory) -> None:
+    """**后台那一页要的是真数字。**
+
+    「沙箱池占用」原先是前端写死的 6 / 20。写死的容量看板在满池时最没用 ——
+    它永远显示还有余量，而那正是有人要来问「为什么建不了会话」的时刻。
+    """
+    pool = make_pool(tmp_path, factory, max_container=3)
+
+    before = pool.stat()
+    await pool.acquire("thread-1", holder="run-1")
+    after = pool.stat()
+
+    assert before.in_use == 0
+    assert before.capacity == 3
+    assert after.in_use == 1
+    assert after.capacity == 3
+    await pool.aclose()
+
+
+async def test_the_pool_reports_who_is_waiting(tmp_path: Path, factory: Factory) -> None:
+    """排队长度是「池不够用」的直接证据，容量本身看不出这一点。"""
+    pool = make_pool(tmp_path, factory, max_container=1)
+    await pool.acquire("thread-1", holder="run-1")
+
+    waiting = asyncio.create_task(pool.acquire("thread-2", holder="run-2"))
+    await asyncio.sleep(0)
+
+    assert pool.stat().queued == 1
+    waiting.cancel()
+    await pool.aclose()
