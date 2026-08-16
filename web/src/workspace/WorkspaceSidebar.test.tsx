@@ -73,6 +73,31 @@ describe('WorkspaceSidebar', () => {
   it.each(['teacher', 'student'] as const)('%s 看不到后台入口', role => {
     expect(entryHref({ id: 'u1', name: '某人', email: 'a@zuel.edu.cn', role })).toBeNull()
   })
+
+  it('侧栏可折叠为图标栏并恢复（P2-2）', () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+    })
+    queryClient.setQueryData(AUTH_QUERY_KEY, { id: 'u1', name: '张老师', email: 'a@zuel.edu.cn', role: 'teacher' })
+    const { container } = render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/workspace']}>
+          <WorkspaceSidebar />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    const aside = container.querySelector('.ws-sidebar')!
+    expect(aside.className).not.toContain('collapsed')
+
+    fireEvent.click(screen.getByRole('button', { name: '折叠侧栏' }))
+    expect(aside.className).toContain('collapsed')
+    const expand = screen.getByRole('button', { name: '展开侧栏' }) as HTMLButtonElement
+    // 折叠态：受控区域（侧栏）处于收起状态，aria-expanded=false
+    expect(expand.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.click(expand)
+    expect(aside.className).not.toContain('collapsed')
+  })
 })
 
 /** 渲染侧边栏，返回「管理后台」那条链接的 href；没有这条链接时返回 null。 */

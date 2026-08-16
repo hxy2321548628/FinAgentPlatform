@@ -40,8 +40,8 @@ const BACKEND_ENTRY = { admin: '/admin/users', reviewer: '/admin/agents' } as co
 function NavItemRow({ item }: { item: NavItem }) {
   const [hovered, setHovered] = useState(false)
   return (
-    <NavLink to={item.to} end={item.end} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', fontSize: 13, fontWeight: isActive ? 600 : 400, color: isActive ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)', background: isActive ? 'var(--ws-sidebar-accent)' : hovered ? 'var(--ws-sidebar-hover)' : 'transparent', borderLeft: isActive ? '3px solid var(--action)' : '3px solid transparent', textDecoration: 'none', cursor: 'pointer', transition: 'background 0.15s, color 0.15s' })}>
-      <span style={{ flexShrink: 0 }}>{item.icon()}</span>{item.label}
+    <NavLink to={item.to} end={item.end} title={item.label} className="nav-row" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, fontWeight: isActive ? 600 : 400, color: isActive ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)', background: isActive ? 'var(--ws-sidebar-accent)' : hovered ? 'var(--ws-sidebar-hover)' : 'transparent', borderLeft: isActive ? '3px solid var(--action)' : '3px solid transparent', textDecoration: 'none', cursor: 'pointer', transition: 'background 0.15s, color 0.15s' })}>
+      <span style={{ flexShrink: 0 }}>{item.icon()}</span><span className="nav-label">{item.label}</span>
     </NavLink>
   )
 }
@@ -51,6 +51,7 @@ export function WorkspaceSidebar() {
   const queryClient = useQueryClient()
   const current = useQuery({ queryKey: AUTH_QUERY_KEY, queryFn: () => me() })
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
   const logoutMutation = useMutation({
     mutationFn: logout,
     onSuccess() {
@@ -62,10 +63,13 @@ export function WorkspaceSidebar() {
   const backendTo = user && user.role in BACKEND_ENTRY ? BACKEND_ENTRY[user.role as keyof typeof BACKEND_ENTRY] : null
 
   return (
-    <aside style={{ width: 220, flexShrink: 0, background: 'var(--ws-sidebar-bg)', display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-      <div style={{ height: 72, display: 'flex', alignItems: 'center', gap: 9, padding: '0 16px', borderBottom: '1px solid var(--ws-sidebar-border)', flexShrink: 0 }}>
+    <aside className={`ws-sidebar${collapsed ? ' collapsed' : ''}`} style={{ flexShrink: 0, background: 'var(--ws-sidebar-bg)', display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      <div className="ws-header">
         <Logo height={22} color="#fff" />
-        <div><div style={{ fontSize: 14, fontWeight: 700, color: '#fff', lineHeight: 1.2 }}>FinAgentPlatform</div><div style={{ fontSize: 10, color: 'var(--ws-sidebar-text)', marginTop: 2 }}>工作台</div></div>
+        <div className="ws-brand"><div style={{ fontSize: 14, fontWeight: 700, color: '#fff', lineHeight: 1.2 }}>FinAgentPlatform</div><div style={{ fontSize: 10, color: 'var(--ws-sidebar-text)', marginTop: 2 }}>工作台</div></div>
+        <button type="button" className="ws-collapse" aria-label={collapsed ? '展开侧栏' : '折叠侧栏'} aria-expanded={!collapsed} onClick={() => setCollapsed(value => !value)}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points={collapsed ? '13 17 18 12 13 7' : '11 17 6 12 11 7'} /></svg>
+        </button>
       </div>
       <nav style={{ flex: 1, overflowY: 'auto', padding: '10px 0' }}>
         {NAV_GROUPS.map((group, index) => <div key={index}>{index > 0 && <div style={{ height: 1, background: 'var(--ws-sidebar-border)', margin: '6px 0' }}/>} {group.items.map(item => <NavItemRow key={item.to} item={item}/>)}</div>)}
@@ -85,24 +89,25 @@ export function WorkspaceSidebar() {
           <div style={{ padding: '8px 0', borderBottom: '1px solid var(--ws-sidebar-border)' }}>
             <button onClick={() => { setUserMenuOpen(false); navigate('/') }} style={userMenuItemStyle}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-              返回首页
+              <span className="ws-menu-label">返回首页</span>
             </button>
             <button onClick={() => logoutMutation.mutate()} disabled={logoutMutation.isPending} style={{ ...userMenuItemStyle, color: logoutMutation.isPending ? 'var(--ws-sidebar-text)' : '#FCA5A5' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-              {logoutMutation.isPending ? '正在退出…' : '退出登录'}
+              <span className="ws-menu-label">{logoutMutation.isPending ? '正在退出…' : '退出登录'}</span>
             </button>
             {logoutMutation.isError && <div role="alert" style={{ padding: '4px 16px 0', color: '#FCA5A5', fontSize: 11 }}>{errorMessage(logoutMutation.error, '退出失败，请重试')}</div>}
           </div>
         )}
         <button
           type="button"
+          className="ws-userbar"
           aria-expanded={userMenuOpen}
           onClick={() => setUserMenuOpen(open => !open)}
-          style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+          style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
         >
           <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--action)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{user?.name.at(0) ?? '·'}</div>
-          <div style={{ minWidth: 0, flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.name ?? '正在加载…'}</div><div style={{ fontSize: 11, color: 'var(--ws-sidebar-text)', marginTop: 1 }}>{user ? ROLE_LABEL[user.role] : ''}</div></div>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: 'var(--ws-sidebar-text)', transform: userMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}><polyline points="18 15 12 9 6 15"/></svg>
+          <div className="ws-user-info" style={{ minWidth: 0, flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.name ?? '正在加载…'}</div><div style={{ fontSize: 11, color: 'var(--ws-sidebar-text)', marginTop: 1 }}>{user ? ROLE_LABEL[user.role] : ''}</div></div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="ws-userbar-chevron" style={{ color: 'var(--ws-sidebar-text)', transform: userMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}><polyline points="18 15 12 9 6 15"/></svg>
         </button>
       </div>
     </aside>

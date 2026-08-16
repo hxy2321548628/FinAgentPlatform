@@ -451,6 +451,7 @@ AdminUsers.tsx:277 - modal 输入 outline:none 无 focus 替代
 | 2026-08-16 | P1 b1 第二批：MySkills/MyAgents 的 ReviewDialog 与 PublishDialog 全部迁 Radix Dialog（存量手写 modal 清零）；Button 增加 outline 变体并接入 ChatInput/ThreadSidebar/WorkspaceFiles；WorkspaceSidebar 导航项补上缺失的 hover 态（附录 A 记录的无效过渡） | §4.4 |
 | 2026-08-16 | P1 b3 第一批：8 个页面页头三件套（eyebrow/h1/desc）收敛为 `.page-eyebrow`/`.page-title`/`.page-desc` | §4.4 |
 | 2026-08-16 | P2-3 兜底方案：会话行与对话轮次加 `content-visibility: auto`（对「滚到底」安全，见 theme.css 注释），不引入虚拟列表依赖 | §4.11 |
+| 2026-08-16 | P2-2 桌面+平板档落地：工作台侧栏可折叠为 60px 图标栏（aria-expanded、native tooltip）；文件面板 <1280px 自动变为右侧抽屉 | §4.10 |
 | 待办 | 会话状态指示：`ThreadSummary` 无 run 状态字段，需后端配合 | §4.8 |
 | 待办 | 公共站 mock 数据决策（D1）：接真实 API 或标注示例数据，待评审 | §4.7 |
 

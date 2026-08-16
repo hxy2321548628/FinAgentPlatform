@@ -161,7 +161,7 @@ export function Chat() {
     },
   })
 
-  return <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+  return <div className="chat-root" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
     <ThreadSidebar />
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
       <header style={{ minHeight: 54, padding: '10px 24px', boxSizing: 'border-box', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -183,6 +183,6 @@ export function Chat() {
       </div>
       <ChatInput key={pickedAgentId ?? 'default'} disabled={!threadId || submit.isPending} isRunning={Boolean(latestLive)} threadAgentConfig={thread.data?.agent_config} initialAgentId={pickedAgentId} onSend={async (text, agentConfig) => { await submit.mutateAsync({ text, agentConfig }) }} onStop={() => latestLive && cancel.mutate(latestLive.id)} />
     </div>
-    {panelVisible && threadId && <aside style={{ width: 380, flexShrink: 0, borderLeft: '1px solid var(--border)', overflow: 'hidden' }}><WorkspaceFiles threadId={threadId} title={thread.data?.title || '新分析'} compact /></aside>}
+    {panelVisible && threadId && <aside className="chat-files-panel" style={{ flexShrink: 0, borderLeft: '1px solid var(--border)', overflow: 'hidden' }}><WorkspaceFiles threadId={threadId} title={thread.data?.title || '新分析'} compact /></aside>}
   </div>
 }
