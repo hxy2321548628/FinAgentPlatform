@@ -1900,11 +1900,14 @@ else
         && pass "管理员建出两个组，响应里带着邀请码" \
         || fail "建组没成：$GROUP_ONE_BODY ｜ $GROUP_TWO_BODY"
 
+    # **三处注册都要带 email**：P11 起它是必填且全库唯一的第二把登录钥匙。
+    # 不带的话这一整段红成「注册结果不对」，指向的是注册流程而不是缺字段
+    #
     # 凭码注册：账号当场可用，且回话里说得出进了哪个组 —— `is_active` 决定使用者
     # 接下来该去登录还是该去等管理员，说错一句就是一通电话
     REG_JOINED="$(curl -s -X POST "$BASE_URL/api/auth/register" -H 'Content-Type: application/json' \
         -d "$(jq -nc --arg n "$P5_STUDENT" --arg p "$P5_SECRET" --arg c "$INVITE_ONE" \
-            '{name:$n,password:$p,invite_code:$c}')")"
+            '{name:$n,email:($n + "@verify.local"),password:$p,invite_code:$c}')")"
     [[ $(jq -r .is_active <<<"$REG_JOINED") == true && $(jq -r '.group_name // empty' <<<"$REG_JOINED") == "zuel-p5-码组-$P5_TAG" ]] \
         && pass "凭邀请码注册：账号当场可用，且带出了进的那个组" \
         || fail "凭码注册的结果不对：$REG_JOINED"
@@ -1916,7 +1919,7 @@ else
     # 不填码注册：账号先停用，而「停用」要真的登不上 —— 只看字段的话，
     # 一个把 is_active 当摆设的实现照样绿
     REG_LONER="$(curl -s -X POST "$BASE_URL/api/auth/register" -H 'Content-Type: application/json' \
-        -d "$(jq -nc --arg n "$P5_LONER" --arg p "$P5_SECRET" '{name:$n,password:$p}')")"
+        -d "$(jq -nc --arg n "$P5_LONER" --arg p "$P5_SECRET" '{name:$n,email:($n + "@verify.local"),password:$p}')")"
     LONER_LOGIN="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/auth/login" \
         -H 'Content-Type: application/json' \
         -d "$(jq -nc --arg n "$P5_LONER" --arg p "$P5_SECRET" '{name:$n,password:$p}')")"
@@ -1926,7 +1929,7 @@ else
     # 填错码不是「当没填」：那会留下一个自己登不上、管理员也不认识的账号
     BAD_INVITE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/auth/register" \
         -H 'Content-Type: application/json' \
-        -d "$(jq -nc --arg n "zuel-p5-bad-$P5_TAG" --arg p "$P5_SECRET" '{name:$n,password:$p,invite_code:"这不是一个码"}')")"
+        -d "$(jq -nc --arg n "zuel-p5-bad-$P5_TAG" --arg p "$P5_SECRET" '{name:$n,email:($n + "@verify.local"),password:$p,invite_code:"这不是一个码"}')")"
     [[ $BAD_INVITE == 422 ]] && pass "邀请码填错 → 422，号根本不建" || fail "填错码得到 $BAD_INVITE"
 
     if ! login "$P5_STUDENT" "$P5_SECRET" "$JAR_P5_STUDENT"; then
@@ -4484,158 +4487,6 @@ end
 # ===========================================================================
 # P0：一次完整的真实分析（要 LLM，有费用）
 # ===========================================================================
-#
-# **贯穿始终的回归基线。** 走的是教师真正走的那条路：建会话、上传数据、提问、
-# 订阅事件流、中途断线重连、取回图表。**单次约 30 万 token、几分钟。**
-#
-# 分析只跑一次，五条判据都从它的产出上读 —— 因此先跑，跑不成就五条一起记未验。
-
-
-log "P0 一次完整的真实分析（要 LLM，有费用）"
-P0_READY=0
-P0_BLOCKED=""
-if [[ ${SKIP_LLM:-0} == 1 ]]; then
-    P0_BLOCKED="SKIP_LLM=1，这一组要真实调用 DeepSeek"
-elif [[ ! -f $SAMPLE_CSV ]]; then
-    # **`tmp/` 不入库**，新克隆的仓库里没有这个文件。整组记未验而不是让验收退出 ——
-    # 另外二十四条与它无关，没有理由陪着一起不跑
-    P0_BLOCKED="缺样例数据 $SAMPLE_CSV（放一份持仓 csv 过去，或 SAMPLE_CSV=... 指到别处）"
-elif ! session_for p0; then
-    P0_BLOCKED="造不出账号"
-fi
-
-if [[ -z $P0_BLOCKED ]]; then
-    JAR_P0="$SESSION_JAR"
-    THREAD_P0="$(curl -fsS -b "$JAR_P0" -X POST "$BASE_URL/api/threads" | jq -r .id)"
-    info "thread_id=$THREAD_P0"
-    if ! curl -fsS -b "$JAR_P0" -X POST "$BASE_URL/api/threads/$THREAD_P0/files" -F "file=@$SAMPLE_CSV" >/dev/null; then
-        P0_BLOCKED="holdings.csv 上传失败，分析没有输入"
-    else
-        RUN_P0="$(curl -fsS -b "$JAR_P0" -X POST "$BASE_URL/api/threads/$THREAD_P0/runs" \
-            -H 'Content-Type: application/json' \
-            -d "$(jq -nc --arg c "$QUESTION" '{content:$c}')" | jq -r .id)"
-        if [[ -z $RUN_P0 || $RUN_P0 == null ]]; then
-            P0_BLOCKED="提交分析失败"
-        else
-            info "run_id=$RUN_P0，订阅事件流，收满 $CUT_AFTER_EVENT 条后主动断开"
-            # --max-time 之外还要 head -n：SSE 是长连接，不主动切就要等到 run 结束
-            timeout $RUN_TIMEOUT curl -fsS -b "$JAR_P0" -N "$BASE_URL/api/runs/$RUN_P0/events" \
-                | head -n $((CUT_AFTER_EVENT * 3)) > "$WORK_DIR/first.sse"
-            LAST_ID="$(grep '^id:' "$WORK_DIR/first.sse" | tail -1 | sed 's/^id: *//')"
-            info "断开于 Last-Event-ID=$LAST_ID，带它重连补齐剩下的"
-            timeout $RUN_TIMEOUT curl -fsS -b "$JAR_P0" -N "$BASE_URL/api/runs/$RUN_P0/events" \
-                -H "Last-Event-ID: $LAST_ID" > "$WORK_DIR/rest.sse"
-
-            cat "$WORK_DIR/first.sse" "$WORK_DIR/rest.sse" > "$WORK_DIR/all.sse"
-            grep '^data:' "$WORK_DIR/all.sse" | sed 's/^data: *//' | jq -c . > "$WORK_DIR/all.json" 2>/dev/null
-            P0_READY=1
-        fi
-    fi
-fi
-p0_types() { jq -r .type < "$WORK_DIR/all.json"; }
-
-begin "P0①" "事件流完整：run.started 开头，run.finished 收尾"
-if (( P0_READY )); then
-    if [[ $(p0_types | head -1) == run.started ]] && p0_types | grep -q '^run.finished$'; then
-        pass "事件流完整：run.started 开头，run.finished 收尾"
-    else
-        fail "事件流不完整：首=$(p0_types | head -1) 末=$(p0_types | tail -1)"
-    fi
-else
-    undone "$P0_BLOCKED"
-fi
-end
-
-begin "P0②" "agent 自写脚本并 execute"
-if (( P0_READY )); then
-    WROTE=$(jq -r 'select(.type=="tool_call") | .data.name' < "$WORK_DIR/all.json" | grep -cE '^(write_file|execute)$')
-    if (( WROTE >= 2 )); then
-        pass "agent 自写脚本并执行（write_file / execute 共 $WROTE 次）"
-    else
-        fail "没看到 agent 自己写脚本并执行，相关 tool_call 只有 $WROTE 次"
-    fi
-else
-    undone "$P0_BLOCKED"
-fi
-end
-
-begin "P0③" "断线重连补齐不重不漏"
-if (( P0_READY )); then
-    # id 严格递增且无重复
-    IDS=$(grep '^id:' "$WORK_DIR/all.sse" | sed 's/^id: *//')
-    TOTAL=$(wc -l <<<"$IDS"); UNIQUE=$(sort -u <<<"$IDS" | wc -l)
-    SORTED=$(sort -t- -k1,1n -k2,2n <<<"$IDS")
-    if [[ $TOTAL -eq $UNIQUE && $IDS == "$SORTED" ]]; then
-        pass "断线重连补齐不重不漏（$TOTAL 条，id 严格递增）"
-    else
-        fail "重连有重复或乱序：共 $TOTAL 条、去重后 $UNIQUE 条"
-    fi
-else
-    undone "$P0_BLOCKED"
-fi
-end
-
-begin "P0④" "产物取回且是一张能显示的图"
-if (( P0_READY )); then
-    # 产物不再有独立的身份与端点：agent 把图写进会话工作目录的 outputs/，
-    # 教师从侧边栏那套端点取回。这里照着教师的路径走一遍 —— 列目录，挑一张图，下载
-    CHART="$(curl -fsS -b "$JAR_P0" "$BASE_URL/api/threads/$THREAD_P0/files" \
-        | jq -r '.entries[] | select(.is_dir == false) | select(.path | test("\\.(png|jpg|jpeg|svg)$")) | .path' | head -1)"
-    if [[ -n $CHART ]]; then
-        curl -fsS -b "$JAR_P0" --get --data-urlencode "path=$CHART" \
-            "$BASE_URL/api/threads/$THREAD_P0/files/raw" -o "$WORK_DIR/artifact.bin"
-        KIND="$(file -b --mime-type "$WORK_DIR/artifact.bin")"
-        SIZE=$(stat -c %s "$WORK_DIR/artifact.bin")
-        if [[ $KIND == image/* ]] && (( SIZE > 1024 )); then
-            pass "产物取回正常：$CHART（$KIND，$SIZE 字节）"
-            # 「能显示」这条最终要靠人眼看一次，给出原图路径
-            info "原图：$BASE_URL/api/threads/$THREAD_P0/files/raw?path=$CHART"
-        else
-            fail "产物不是一张正常的图：$KIND，$SIZE 字节"
-        fi
-    else
-        fail "会话工作目录里没有任何图片"
-    fi
-else
-    undone "$P0_BLOCKED"
-fi
-end
-
-begin "P0⑤" "token 口径按 cache 拆分"
-if (( P0_READY )); then
-    # 两个数都要在。这是校准「一次分析多少 token」唯一可信的样本
-    TOKENS="$(jq -c 'select(.type=="run.finished") | .data.tokens' < "$WORK_DIR/all.json" | head -1)"
-    if [[ -n $TOKENS ]] && jq -e 'has("input_cache_read") and has("input_uncached")' <<<"$TOKENS" >/dev/null; then
-        pass "token 口径按 cache 拆分：$TOKENS"
-    else
-        fail "run.finished 未按 cache 拆分给出 token：$TOKENS"
-    fi
-else
-    undone "$P0_BLOCKED"
-fi
-end
-
-
-# ===========================================================================
-# 破坏性四条（要 sudo）
-# ===========================================================================
-
-begin "P1①" "四条破坏性测试宿主机不受影响"
-if [[ ${SKIP_HOSTILE:-0} == 1 ]]; then
-    undone "SKIP_HOSTILE=1，这一组要 root"
-# **参数走命令行，不走环境变量** —— 见 run_hostile_group 上方那段：`sudo -E` 在
-# 默认的 env_reset 下是被拒的，靠它传值等于这一组永远跑不起来
-elif sudo bash "${BASH_SOURCE[0]}" "$HOSTILE_ENTRY" \
-    "$SANDBOX_WORKSPACE_ROOT" "$SANDBOX_IMAGE" "$SANDBOX_DISK_QUOTA" \
-    "$SANDBOX_TMP_SIZE" "$SANDBOX_PIDS_LIMIT" "$(id -u):$(id -g)"; then
-    pass "四条全过：宿主机的内存、磁盘与进程数都回到了基线"
-else
-    fail "破坏性测试未全过，详见上面的输出"
-fi
-end
-
-
-# ===========================================================================
 # P11：用量归属、账号补全与沙箱池状态
 # ===========================================================================
 #
@@ -4647,8 +4498,8 @@ end
 # 本组自己的账号，与 P7 那批分开 —— 配额判据会把某个人的额度调到极小，
 # 借别人的号来做会让后面的判据莫名其妙地撞上配额
 P11_TAG="p11-$$"
-JAR_P11_A="$WORK/p11-a.jar"
-JAR_P11_ADMIN="$WORK/p11-admin.jar"
+JAR_P11_A="$WORK_DIR/p11-a.jar"
+JAR_P11_ADMIN="$WORK_DIR/p11-admin.jar"
 P11_READY=0
 P11_SETUP_NOTE=""
 P11_USER_A=""
@@ -4807,8 +4658,8 @@ else
     if ! make_user "$P11_MAIL_NAME" "$P11_MAIL_PASS" teacher; then
         fail "邮箱登录用的账号没造出来"
     else
-        JAR_P11_BY_NAME="$WORK/p11-by-name.jar"
-        JAR_P11_BY_MAIL="$WORK/p11-by-mail.jar"
+        JAR_P11_BY_NAME="$WORK_DIR/p11-by-name.jar"
+        JAR_P11_BY_MAIL="$WORK_DIR/p11-by-mail.jar"
         if ! login "$P11_MAIL_NAME" "$P11_MAIL_PASS" "$JAR_P11_BY_NAME"; then
             fail "用用户名登不进去"
         elif ! login "$P11_MAIL_ADDR" "$P11_MAIL_PASS" "$JAR_P11_BY_MAIL"; then
@@ -4834,7 +4685,7 @@ begin "P11⑤" "后台把日配额调到极小之后，那个人提交分析被 
 if (( ! P11_READY )); then
     fail "前置没就绪（$P11_SETUP_NOTE）"
 else
-    JAR_P11_Q="$WORK/p11-quota.jar"
+    JAR_P11_Q="$WORK_DIR/p11-quota.jar"
     if ! P11_USER_Q="$(open_session "$JAR_P11_Q" teacher "$P11_TAG-q")"; then
         fail "配额判据的账号没开出来"
     else
@@ -4924,6 +4775,158 @@ else
     fi
 fi
 end
+
+# ===========================================================================
+#
+# **贯穿始终的回归基线。** 走的是教师真正走的那条路：建会话、上传数据、提问、
+# 订阅事件流、中途断线重连、取回图表。**单次约 30 万 token、几分钟。**
+#
+# 分析只跑一次，五条判据都从它的产出上读 —— 因此先跑，跑不成就五条一起记未验。
+
+
+log "P0 一次完整的真实分析（要 LLM，有费用）"
+P0_READY=0
+P0_BLOCKED=""
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    P0_BLOCKED="SKIP_LLM=1，这一组要真实调用 DeepSeek"
+elif [[ ! -f $SAMPLE_CSV ]]; then
+    # **`tmp/` 不入库**，新克隆的仓库里没有这个文件。整组记未验而不是让验收退出 ——
+    # 另外二十四条与它无关，没有理由陪着一起不跑
+    P0_BLOCKED="缺样例数据 $SAMPLE_CSV（放一份持仓 csv 过去，或 SAMPLE_CSV=... 指到别处）"
+elif ! session_for p0; then
+    P0_BLOCKED="造不出账号"
+fi
+
+if [[ -z $P0_BLOCKED ]]; then
+    JAR_P0="$SESSION_JAR"
+    THREAD_P0="$(curl -fsS -b "$JAR_P0" -X POST "$BASE_URL/api/threads" | jq -r .id)"
+    info "thread_id=$THREAD_P0"
+    if ! curl -fsS -b "$JAR_P0" -X POST "$BASE_URL/api/threads/$THREAD_P0/files" -F "file=@$SAMPLE_CSV" >/dev/null; then
+        P0_BLOCKED="holdings.csv 上传失败，分析没有输入"
+    else
+        RUN_P0="$(curl -fsS -b "$JAR_P0" -X POST "$BASE_URL/api/threads/$THREAD_P0/runs" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg c "$QUESTION" '{content:$c}')" | jq -r .id)"
+        if [[ -z $RUN_P0 || $RUN_P0 == null ]]; then
+            P0_BLOCKED="提交分析失败"
+        else
+            info "run_id=$RUN_P0，订阅事件流，收满 $CUT_AFTER_EVENT 条后主动断开"
+            # --max-time 之外还要 head -n：SSE 是长连接，不主动切就要等到 run 结束
+            timeout $RUN_TIMEOUT curl -fsS -b "$JAR_P0" -N "$BASE_URL/api/runs/$RUN_P0/events" \
+                | head -n $((CUT_AFTER_EVENT * 3)) > "$WORK_DIR/first.sse"
+            LAST_ID="$(grep '^id:' "$WORK_DIR/first.sse" | tail -1 | sed 's/^id: *//')"
+            info "断开于 Last-Event-ID=$LAST_ID，带它重连补齐剩下的"
+            timeout $RUN_TIMEOUT curl -fsS -b "$JAR_P0" -N "$BASE_URL/api/runs/$RUN_P0/events" \
+                -H "Last-Event-ID: $LAST_ID" > "$WORK_DIR/rest.sse"
+
+            cat "$WORK_DIR/first.sse" "$WORK_DIR/rest.sse" > "$WORK_DIR/all.sse"
+            grep '^data:' "$WORK_DIR/all.sse" | sed 's/^data: *//' | jq -c . > "$WORK_DIR/all.json" 2>/dev/null
+            P0_READY=1
+        fi
+    fi
+fi
+p0_types() { jq -r .type < "$WORK_DIR/all.json"; }
+
+begin "P0①" "事件流完整：run.started 开头，run.finished 收尾"
+if (( P0_READY )); then
+    if [[ $(p0_types | head -1) == run.started ]] && p0_types | grep -q '^run.finished$'; then
+        pass "事件流完整：run.started 开头，run.finished 收尾"
+    else
+        fail "事件流不完整：首=$(p0_types | head -1) 末=$(p0_types | tail -1)"
+    fi
+else
+    undone "$P0_BLOCKED"
+fi
+end
+
+begin "P0②" "agent 自写脚本并 execute"
+if (( P0_READY )); then
+    WROTE=$(jq -r 'select(.type=="tool_call") | .data.name' < "$WORK_DIR/all.json" | grep -cE '^(write_file|execute)$')
+    if (( WROTE >= 2 )); then
+        pass "agent 自写脚本并执行（write_file / execute 共 $WROTE 次）"
+    else
+        fail "没看到 agent 自己写脚本并执行，相关 tool_call 只有 $WROTE 次"
+    fi
+else
+    undone "$P0_BLOCKED"
+fi
+end
+
+begin "P0③" "断线重连补齐不重不漏"
+if (( P0_READY )); then
+    # id 严格递增且无重复
+    IDS=$(grep '^id:' "$WORK_DIR/all.sse" | sed 's/^id: *//')
+    TOTAL=$(wc -l <<<"$IDS"); UNIQUE=$(sort -u <<<"$IDS" | wc -l)
+    SORTED=$(sort -t- -k1,1n -k2,2n <<<"$IDS")
+    if [[ $TOTAL -eq $UNIQUE && $IDS == "$SORTED" ]]; then
+        pass "断线重连补齐不重不漏（$TOTAL 条，id 严格递增）"
+    else
+        fail "重连有重复或乱序：共 $TOTAL 条、去重后 $UNIQUE 条"
+    fi
+else
+    undone "$P0_BLOCKED"
+fi
+end
+
+begin "P0④" "产物取回且是一张能显示的图"
+if (( P0_READY )); then
+    # 产物不再有独立的身份与端点：agent 把图写进会话工作目录的 outputs/，
+    # 教师从侧边栏那套端点取回。这里照着教师的路径走一遍 —— 列目录，挑一张图，下载
+    CHART="$(curl -fsS -b "$JAR_P0" "$BASE_URL/api/threads/$THREAD_P0/files" \
+        | jq -r '.entries[] | select(.is_dir == false) | select(.path | test("\\.(png|jpg|jpeg|svg)$")) | .path' | head -1)"
+    if [[ -n $CHART ]]; then
+        curl -fsS -b "$JAR_P0" --get --data-urlencode "path=$CHART" \
+            "$BASE_URL/api/threads/$THREAD_P0/files/raw" -o "$WORK_DIR/artifact.bin"
+        KIND="$(file -b --mime-type "$WORK_DIR/artifact.bin")"
+        SIZE=$(stat -c %s "$WORK_DIR/artifact.bin")
+        if [[ $KIND == image/* ]] && (( SIZE > 1024 )); then
+            pass "产物取回正常：$CHART（$KIND，$SIZE 字节）"
+            # 「能显示」这条最终要靠人眼看一次，给出原图路径
+            info "原图：$BASE_URL/api/threads/$THREAD_P0/files/raw?path=$CHART"
+        else
+            fail "产物不是一张正常的图：$KIND，$SIZE 字节"
+        fi
+    else
+        fail "会话工作目录里没有任何图片"
+    fi
+else
+    undone "$P0_BLOCKED"
+fi
+end
+
+begin "P0⑤" "token 口径按 cache 拆分"
+if (( P0_READY )); then
+    # 两个数都要在。这是校准「一次分析多少 token」唯一可信的样本
+    TOKENS="$(jq -c 'select(.type=="run.finished") | .data.tokens' < "$WORK_DIR/all.json" | head -1)"
+    if [[ -n $TOKENS ]] && jq -e 'has("input_cache_read") and has("input_uncached")' <<<"$TOKENS" >/dev/null; then
+        pass "token 口径按 cache 拆分：$TOKENS"
+    else
+        fail "run.finished 未按 cache 拆分给出 token：$TOKENS"
+    fi
+else
+    undone "$P0_BLOCKED"
+fi
+end
+
+
+# ===========================================================================
+# 破坏性四条（要 sudo）
+# ===========================================================================
+
+begin "P1①" "四条破坏性测试宿主机不受影响"
+if [[ ${SKIP_HOSTILE:-0} == 1 ]]; then
+    undone "SKIP_HOSTILE=1，这一组要 root"
+# **参数走命令行，不走环境变量** —— 见 run_hostile_group 上方那段：`sudo -E` 在
+# 默认的 env_reset 下是被拒的，靠它传值等于这一组永远跑不起来
+elif sudo bash "${BASH_SOURCE[0]}" "$HOSTILE_ENTRY" \
+    "$SANDBOX_WORKSPACE_ROOT" "$SANDBOX_IMAGE" "$SANDBOX_DISK_QUOTA" \
+    "$SANDBOX_TMP_SIZE" "$SANDBOX_PIDS_LIMIT" "$(id -u):$(id -g)"; then
+    pass "四条全过：宿主机的内存、磁盘与进程数都回到了基线"
+else
+    fail "破坏性测试未全过，详见上面的输出"
+fi
+end
+
 
 # ===========================================================================
 # 结果
