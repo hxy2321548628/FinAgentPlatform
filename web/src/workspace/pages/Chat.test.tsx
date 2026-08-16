@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RunHistory } from '../../api/types'
 
@@ -8,10 +8,40 @@ const mocks = vi.hoisted(() => ({
   connectionError: null as unknown,
   connectionRetryable: false,
   useRunEvents: vi.fn(),
+  createThread: vi.fn(),
+  submitRun: vi.fn(),
+  navigate: vi.fn(),
+  chatInputProps: null as null | Record<string, unknown>,
 }))
 
+const routeState: { threadId?: string } = { threadId: 'thread-1' }
+
 vi.mock('react-router-dom', () => ({
-  useParams: () => ({ threadId: 'thread-1' }),
+  useParams: () => ({ threadId: routeState.threadId }),
+  useNavigate: () => mocks.navigate,
+}))
+
+vi.mock('../../api/threads', () => ({
+  createThread: (...args: unknown[]) => mocks.createThread(...args),
+  getThread: vi.fn(),
+  updateThread: vi.fn(),
+  threadKeys: {
+    all: ['threads'],
+    list: () => ['threads', 'list'],
+    detail: (id: string) => ['threads', 'detail', id],
+  },
+}))
+
+vi.mock('../../api/runs', () => ({
+  approveRun: vi.fn(),
+  cancelRun: vi.fn(),
+  getRun: vi.fn(),
+  listRuns: vi.fn(),
+  submitRun: (...args: unknown[]) => mocks.submitRun(...args),
+  runKeys: {
+    all: ['runs'],
+    list: (id: string) => ['runs', 'list', id],
+  },
 }))
 
 vi.mock('@tanstack/react-query', () => ({
@@ -28,11 +58,11 @@ vi.mock('@tanstack/react-query', () => ({
     isFetchingNextPage: false,
     fetchNextPage: vi.fn(),
   }),
-  useMutation: () => ({
+  useMutation: (options: { mutationFn?: (...args: never[]) => unknown }) => ({
     isError: false,
     isPending: false,
     mutate: vi.fn(),
-    mutateAsync: vi.fn(),
+    mutateAsync: options.mutationFn ?? vi.fn(),
   }),
 }))
 
@@ -42,14 +72,62 @@ vi.mock('../../hooks/useRunEvents', () => ({
 
 vi.mock('../components/ThreadSidebar', () => ({ ThreadSidebar: () => null }))
 vi.mock('../components/MessageList', () => ({ MessageList: () => null }))
-vi.mock('../components/ChatInput', () => ({ ChatInput: () => null }))
+vi.mock('../components/ChatInput', () => ({
+  ChatInput: (props: Record<string, unknown>) => {
+    mocks.chatInputProps = props
+    return null
+  },
+}))
 vi.mock('../components/WorkspaceFiles', () => ({ WorkspaceFiles: () => null }))
 
 import { Chat } from './Chat'
 
+/** 可控的 IntersectionObserver：jsdom 不提供，触发时机由测试决定。 */
+class FakeIntersectionObserver {
+  static instances: FakeIntersectionObserver[] = []
+  callback: IntersectionObserverCallback
+  observed: Element[] = []
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback
+    FakeIntersectionObserver.instances.push(this)
+  }
+  observe(node: Element) {
+    this.observed.push(node)
+  }
+  unobserve() {}
+  disconnect() {}
+  trigger(isIntersecting: boolean) {
+    this.callback([{ isIntersecting } as IntersectionObserverEntry], this as unknown as IntersectionObserver)
+  }
+}
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  mocks.chatInputProps = null
+})
+
+beforeEach(() => {
+  routeState.threadId = 'thread-1'
+  mocks.runs = []
+  mocks.loadedRuns.clear()
+  mocks.connectionError = null
+  mocks.connectionRetryable = false
+  mocks.useRunEvents.mockReset()
+  mocks.createThread.mockReset()
+  mocks.submitRun.mockReset()
+  mocks.navigate.mockReset()
+  FakeIntersectionObserver.instances = []
+  vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
+  mocks.useRunEvents.mockImplementation((runId: string, status: RunHistory['status']) => ({
+    status,
+    items: mocks.loadedRuns.has(runId) ? [{ kind: 'answer', path: [], text: '已回放' }] : [],
+    pendingActions: null,
+    connectionAvailable: true,
+    connectionError: mocks.connectionError,
+    connectionRetryable: mocks.connectionRetryable,
+    markApprovalSubmitted: vi.fn(),
+  }))
 })
 
 function run(id: string, status: RunHistory['status']): RunHistory {
@@ -70,71 +148,56 @@ function enabledFor(runId: string): boolean | undefined {
   return call?.[2]?.enabled as boolean | undefined
 }
 
-describe('Chat event replay selection', () => {
-  beforeEach(() => {
-    mocks.runs = []
-    mocks.loadedRuns.clear()
-    mocks.connectionError = null
-    mocks.connectionRetryable = false
-    mocks.useRunEvents.mockReset()
-    mocks.useRunEvents.mockImplementation((runId: string, status: RunHistory['status']) => ({
-      status,
-      items: mocks.loadedRuns.has(runId) ? [{ kind: 'answer', path: [], text: '已回放' }] : [],
-      pendingActions: null,
-      connectionAvailable: true,
-      connectionError: mocks.connectionError,
-      connectionRetryable: mocks.connectionRetryable,
-      markApprovalSubmitted: vi.fn(),
-    }))
-  })
+function observerFor(runId: string): FakeIntersectionObserver | undefined {
+  return FakeIntersectionObserver.instances.find(one =>
+    one.observed.some(node => node.getAttribute('data-run-id') === runId))
+}
 
-  it('automatically replays the newest terminal run and leaves older terminal runs on demand', () => {
-    // The history endpoint is newest-first; Chat renders it oldest-first.
+describe('Chat 历史轮次视口自动回放', () => {
+  it('滚进视口的终态轮次自动回放，不再需要逐条点击', () => {
     mocks.runs = [run('newest', 'succeeded'), run('older', 'succeeded')]
 
     render(<Chat />)
 
+    expect(enabledFor('newest')).toBe(false)
+    expect(enabledFor('older')).toBe(false)
+    // 浏览器里页面滚动到最新一轮时 IO 自动触发；测试里手动触发
+    act(() => { observerFor('newest')?.trigger(true) })
     expect(enabledFor('newest')).toBe(true)
     expect(enabledFor('older')).toBe(false)
-    const replay = screen.getByRole('button', { name: '查看本轮回答与过程' })
-
-    fireEvent.click(replay)
-
+    act(() => { observerFor('older')?.trigger(true) })
     expect(enabledFor('older')).toBe(true)
   })
 
-  it('shows the frozen Skill snapshot for each historical run', () => {
-    const withSkill = run('with-skill', 'succeeded')
-    withSkill.agent_config = {
-      agent_id: 'agent-1',
-      agent_version: 2,
-      skills: [{ skill_id: 'skill-1', version: 1, name: 'annualized-252' }],
-    }
-    mocks.runs = [withSkill]
+  it('回放粘住不回退：离开视口后仍保持回放', () => {
+    mocks.runs = [run('newest', 'succeeded')]
 
     render(<Chat />)
+    const observer = observerFor('newest')
+    act(() => { observer?.trigger(true) })
+    act(() => { observer?.trigger(false) })
 
-    expect(screen.getByText(/本轮配置：智能体：agent-1 · v2 · 1 个 Skill/)).toBeTruthy()
-    expect(screen.getByText(/annualized-252 · v1/)).toBeTruthy()
+    expect(enabledFor('newest')).toBe(true)
   })
 
-  it('prioritizes the live run for the sole automatic subscription', () => {
-    mocks.runs = [run('newest-terminal', 'succeeded'), run('live', 'running'), run('older', 'succeeded')]
+  it('运行中的轮次无需视口即回放', () => {
+    mocks.runs = [run('newest-terminal', 'succeeded'), run('live', 'running')]
 
     render(<Chat />)
 
     expect(enabledFor('live')).toBe(true)
     expect(enabledFor('newest-terminal')).toBe(false)
-    expect(enabledFor('older')).toBe(false)
   })
 
-  it('does not offer to load a historical run whose events are already rendered', () => {
-    mocks.runs = [run('newest', 'succeeded'), run('older', 'succeeded')]
-    mocks.loadedRuns.add('older')
+  it('保留「查看本轮回答与过程」作为事件流异常的兜底入口', () => {
+    mocks.runs = [run('newest', 'succeeded')]
 
     render(<Chat />)
 
-    expect(screen.queryByRole('button', { name: '查看本轮回答与过程' })).toBeNull()
+    const replay = screen.getByRole('button', { name: '查看本轮回答与过程' })
+    expect(enabledFor('newest')).toBe(false)
+    fireEvent.click(replay)
+    expect(enabledFor('newest')).toBe(true)
   })
 
   it('distinguishes a fatal event stream error from a retryable disconnect', () => {
@@ -171,5 +234,44 @@ describe('Chat event replay selection', () => {
     rerender(<Chat />)
 
     expect(region.scrollTop).toBe(1000)
+  })
+})
+
+describe('Chat 欢迎页与懒创建', () => {
+  it('没有会话时显示居中欢迎页，输入区可用', () => {
+    routeState.threadId = undefined
+
+    render(<Chat />)
+
+    expect(screen.getByText('开始一次新的分析')).toBeTruthy()
+    expect(screen.queryByTestId('chat-scroll-region')).toBeTruthy()
+    expect(mocks.chatInputProps?.disabled).toBe(false)
+    expect(mocks.createThread).not.toHaveBeenCalled()
+  })
+
+  it('第一次发送才创建会话：先建会话、提交成功后再跳转', async () => {
+    routeState.threadId = undefined
+    mocks.createThread.mockResolvedValue({ id: 'thread-new' })
+    mocks.submitRun.mockResolvedValue({ id: 'run-1' })
+
+    render(<Chat />)
+    const onSend = mocks.chatInputProps?.onSend as (text: string, config: unknown) => Promise<void>
+    await onSend('算个波动率', undefined)
+
+    await waitFor(() => expect(mocks.submitRun).toHaveBeenCalledWith('thread-new', '算个波动率', undefined))
+    expect(mocks.navigate).toHaveBeenCalledWith('/workspace/chat/thread-new', { replace: true })
+  })
+
+  it('提交失败时不跳转、不丢会话（草稿保留在欢迎页）', async () => {
+    routeState.threadId = undefined
+    mocks.createThread.mockResolvedValue({ id: 'thread-new' })
+    mocks.submitRun.mockRejectedValue(new Error('配额不足'))
+
+    render(<Chat />)
+    const onSend = mocks.chatInputProps?.onSend as (text: string, config: unknown) => Promise<void>
+    await expect(onSend('算个波动率', undefined)).rejects.toThrow('配额不足')
+
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    expect(screen.getByText('开始一次新的分析')).toBeTruthy()
   })
 })

@@ -3,6 +3,37 @@ import { describe, expect, it } from 'vitest'
 import type { RunViewItem } from '../eventReducer'
 import { MessageList } from './MessageList'
 
+describe('MessageList 分析思路单行收起', () => {
+  it('默认收起；流式时思考内容以单行预览内联在标题行', () => {
+    const items: RunViewItem[] = [{ kind: 'reasoning', text: '先计算对数收益率', path: [] }]
+
+    const { rerender } = render(<MessageList items={items} />)
+
+    const details = screen.getByText(/FinAgent · 分析思路/).closest('details') as HTMLDetailsElement
+    expect(details.open).toBe(false)
+    expect(document.querySelector('.reasoning-preview')).toBeNull()
+
+    rerender(<MessageList items={items} live />)
+
+    expect(details.open).toBe(false)
+    expect(document.querySelector('.reasoning-preview')?.textContent).toBe('先计算对数收益率')
+
+    fireEvent.click(screen.getByText(/FinAgent · 分析思路/))
+    expect(details.open).toBe(true)
+  })
+})
+
+describe('MessageList 助手头像', () => {
+  it('用平台 Logo 而不是字母 F', () => {
+    const items: RunViewItem[] = [{ kind: 'answer', text: '结论如下', path: [] }]
+
+    render(<MessageList items={items} />)
+
+    expect(screen.queryByText('F')).toBeNull()
+    expect(document.querySelector('svg[viewBox="12 3 24 34"]')).toBeTruthy()
+  })
+})
+
 describe('MessageList 子智能体折叠块', () => {
   it('按 path 收起嵌套过程，并用子智能体名作为标题', () => {
     const items: RunViewItem[] = [

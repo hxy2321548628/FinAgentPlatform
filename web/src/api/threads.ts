@@ -3,14 +3,15 @@ import type { AgentConfig, CursorPage, ThreadDetail, ThreadSummary } from './typ
 
 export const threadKeys = {
   all: ['threads'] as const,
-  list: () => ['threads', 'list'] as const,
+  list: (query = '') => ['threads', 'list', query] as const,
   detail: (threadId: string) => ['threads', 'detail', threadId] as const,
 }
 
-export function listThreads(cursor?: string | null, limit = 20): Promise<CursorPage<ThreadSummary>> {
-  const query = new URLSearchParams({ limit: String(limit) })
-  if (cursor) query.set('cursor', cursor)
-  return request(`/api/threads?${query}`)
+export function listThreads(cursor?: string | null, limit = 20, query = ''): Promise<CursorPage<ThreadSummary>> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (cursor) params.set('cursor', cursor)
+  if (query) params.set('q', query)
+  return request(`/api/threads?${params}`)
 }
 
 export function createThread(): Promise<ThreadSummary> {

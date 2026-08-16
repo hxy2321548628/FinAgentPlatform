@@ -6,6 +6,7 @@ import { buildDecisions, createDecisionDrafts, DECISION_LABEL } from '../decisio
 import type { DecisionDraft } from '../decisions'
 import type { RunViewItem } from '../eventReducer'
 import { MarkdownAnswer } from './MarkdownAnswer'
+import { Logo } from '../../components/Logo'
 
 interface MessageListProps {
   items: RunViewItem[]
@@ -67,22 +68,32 @@ function ToolView({ item, nested = false }: { item: Extract<RunViewItem, { kind:
   </div>
 }
 
+/**
+ * 分析思路块：默认收起，标题行单行流式展示思考进度（与 DSH Web 一致），
+ * 点击展开完整 Markdown。流式结束后自动回到收起态。
+ */
+function ReasoningBlock({ item, nested, streaming, threadId }: { item: Extract<RunViewItem, { kind: 'reasoning' }>; nested?: boolean; streaming?: boolean; threadId?: string }) {
+  const label = nested ? '分析思路' : `${pathLabel(item.path)} · 分析思路`
+  return <details className="reasoning" style={{ marginLeft: nested ? 0 : 44, borderLeft: '2px solid var(--action-border)', background: 'var(--action-light)', color: 'var(--text-secondary)', fontSize: 12 }}>
+    <summary className="reasoning-summary">
+      <span className={`reasoning-dot${streaming ? ' streaming' : ''}`} aria-hidden="true" />
+      <span className="reasoning-label" style={{ color: 'var(--action)' }}>{label}</span>
+      {streaming && <span className="reasoning-preview" aria-hidden="true">{item.text}</span>}
+      <svg className="reasoning-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--text-muted)', flexShrink: 0 }}><polyline points="18 15 12 9 6 15"/></svg>
+    </summary>
+    <div className="reasoning-body">
+      <MarkdownAnswer text={item.text} threadId={threadId} streaming={streaming} />
+    </div>
+  </details>
+}
+
 const ItemView = memo(function ItemView({ item, index, nested = false, streaming = false, threadId }: { item: RunViewItem; index: number; nested?: boolean; streaming?: boolean; threadId?: string }) {
   if (item.kind === 'tool') return <ToolView key={`tool-${item.id}-${index}`} item={item} nested={nested} />
   if (item.kind === 'notice') return <div key={`notice-${index}`} style={{ marginLeft: nested ? 0 : 44, padding: '8px 12px', borderRadius: 6, background: item.tone === 'error' ? 'var(--danger-bg)' : item.tone === 'warning' ? 'var(--warn-bg)' : 'var(--action-light)', color: item.tone === 'error' ? 'var(--danger)' : item.tone === 'warning' ? 'var(--warn)' : 'var(--action)', fontSize: 12 }}>{item.message}</div>
-  if (item.kind === 'reasoning') {
-    if (nested) return <div key={`reasoning-${index}`} style={{ padding: '8px 12px', borderLeft: '2px solid var(--action-border)', background: 'var(--action-light)', color: 'var(--text-secondary)', fontSize: 12 }}>
-      <div style={{ color: 'var(--action)', marginBottom: 6 }}>分析思路</div>
-      <MarkdownAnswer text={item.text} threadId={threadId} streaming={streaming} />
-    </div>
-    return <details key={`reasoning-${index}`} open style={{ marginLeft: 44, padding: '8px 12px', borderLeft: '2px solid var(--action-border)', background: 'var(--action-light)', color: 'var(--text-secondary)', fontSize: 12 }}>
-      <summary style={{ cursor: 'pointer', color: 'var(--action)', marginBottom: 6 }}>{pathLabel(item.path)} · 分析思路</summary>
-      <MarkdownAnswer text={item.text} threadId={threadId} streaming={streaming} />
-    </details>
-  }
+  if (item.kind === 'reasoning') return <ReasoningBlock key={`reasoning-${index}`} item={item} nested={nested} streaming={streaming} threadId={threadId} />
   if (nested) return <div key={`answer-${index}`} style={{ padding: '10px 12px', border: '1px solid var(--border-light)', borderRadius: 7, background: 'var(--surface)', overflowWrap: 'anywhere', lineHeight: 1.7, fontSize: 13 }}><MarkdownAnswer text={item.text} threadId={threadId} streaming={streaming} /></div>
   return <div key={`answer-${index}`} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-    <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--brand)', color: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0, fontWeight: 700 }}>F</div>
+    <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--brand)', display: 'grid', placeItems: 'center', flexShrink: 0 }}><Logo height={18} color="#fff" /></div>
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 5 }}>{pathLabel(item.path)}</div>
       <div style={{ padding: '14px 18px', border: '1px solid var(--border)', borderRadius: '2px 12px 12px 12px', background: 'var(--surface)', overflowWrap: 'anywhere', lineHeight: 1.75, fontSize: 14 }}>

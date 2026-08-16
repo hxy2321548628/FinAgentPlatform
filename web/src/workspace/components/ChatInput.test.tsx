@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   subagents: [] as AgentListing[],
   skills: [] as import('../../api/types').SkillListing[],
   mcps: [] as import('../../api/types').McpServer[],
+  updateThread: vi.fn(),
 }))
 
 vi.mock('../../api/agents', async importOriginal => ({
@@ -28,11 +29,17 @@ vi.mock('../../api/mcp', async importOriginal => ({
   listCatalog: () => Promise.resolve(mocks.mcps),
 }))
 
+vi.mock('../../api/threads', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../api/threads')>()),
+  updateThread: (...args: unknown[]) => mocks.updateThread(...args),
+}))
+
 afterEach(() => {
   mocks.available = []
   mocks.subagents = []
   mocks.skills = []
   mocks.mcps = []
+  mocks.updateThread.mockReset()
   cleanup()
 })
 
@@ -148,16 +155,54 @@ describe('ChatInput', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /本轮智能体配置/ }))
     fireEvent.click(screen.getByLabelText('选一个智能体'))
+    // 不选就点完成：错误留在面板里，面板不关闭
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
+
+    expect(screen.getByRole('alert').textContent).toBe('请先选一个智能体')
+    expect(onSend).not.toHaveBeenCalled()
+
+    // 改回继承默认，恢复可用
+    fireEvent.click(screen.getByLabelText('继承会话默认'))
     fireEvent.click(screen.getByRole('button', { name: '完成' }))
     fireEvent.change(input(), { target: { value: '算个波动率' } })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('请先选一个智能体'))
-    expect(onSend).not.toHaveBeenCalled()
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('算个波动率', undefined))
   })
 })
 
 describe('ChatInput Skills', () => {
+  it('选项多时分页加载：先出一页，点「加载更多」补全', async () => {
+    mocks.skills = Array.from({ length: 15 }, (_, i) => ({
+      id: `skill-${i}`,
+      owner_id: 'u1',
+      owner_name: '张老师',
+      name: `技能 ${String(i + 1).padStart(2, '0')}`,
+      description: '',
+      subject: '',
+      visibility: 'group',
+      call_count: 1,
+      version: 1,
+      file_count: 1,
+      total_bytes: 10,
+      source: 'group',
+      updated_at: '2026-08-14T00:00:00Z',
+    }))
+    mount({ onSend: vi.fn(async () => {}) })
+
+    fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
+    fireEvent.click(screen.getByRole('tab', { name: /^Skill/ }))
+    await screen.findByRole('checkbox', { name: '技能 01' })
+
+    // 第一页 12 个，剩余 3 个
+    expect(screen.queryByRole('checkbox', { name: '技能 13' })).toBeNull()
+    expect(screen.getByRole('button', { name: /加载更多/ }).textContent).toContain('3')
+
+    fireEvent.click(screen.getByRole('button', { name: /加载更多/ }))
+    expect(screen.getByRole('checkbox', { name: '技能 15' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /加载更多/ })).toBeNull()
+  })
+
   it('提交多选 Skill，并展示 Agent 自带与本轮 Skill 的合并结果', async () => {
     mocks.available = [listing({
       skill_refs: [{ skill_id: 'skill-agent', version: 2, name: 'agent-skill' }],
@@ -173,6 +218,7 @@ describe('ChatInput Skills', () => {
     fireEvent.click(screen.getByLabelText('选一个智能体'))
     await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
+    fireEvent.click(screen.getByRole('tab', { name: /^Skill/ }))
     fireEvent.click(screen.getByLabelText('turn-skill'))
 
     expect(screen.getByText(/最终挂载：agent-skill、turn-skill/)).toBeTruthy()
@@ -201,6 +247,7 @@ describe('ChatInput 子智能体', () => {
     fireEvent.click(screen.getByLabelText('选一个智能体'))
     await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
+    fireEvent.click(screen.getByRole('tab', { name: /^子智能体/ }))
     fireEvent.click(await screen.findByRole('checkbox', { name: /本轮收益率助手/ }))
 
     expect(screen.getByText(/最终挂载：内置波动率助手、本轮收益率助手/)).toBeTruthy()
@@ -218,6 +265,7 @@ describe('ChatInput 子智能体', () => {
     mocks.mcps = [mcpServer()]
     mount({ onSend: vi.fn(async () => {}) })
     fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
+    fireEvent.click(screen.getByRole('tab', { name: /^MCP/ }))
 
     fireEvent.click(await screen.findByRole('checkbox', { name: '论文检索' }))
 
@@ -233,8 +281,10 @@ describe('ChatInput 子智能体', () => {
     mocks.subagents = [listing({ id: 'sub-1', name: '波动率专家', mcp_refs: [{ server_id: 'mcp-1', name: '论文检索' }] })]
     mount({ onSend: vi.fn(async () => {}) })
     fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
+    fireEvent.click(screen.getByRole('tab', { name: /^子智能体/ }))
 
     fireEvent.click(await screen.findByRole('checkbox', { name: '波动率专家' }))
+    fireEvent.click(screen.getByRole('tab', { name: /^MCP/ }))
 
     const notice = await screen.findByTestId('mcp-outbound')
     // expect(notice.textContent).toContain('此服务位于校外，调用时你的数据会发送至外部')
@@ -245,6 +295,7 @@ describe('ChatInput 子智能体', () => {
     mocks.mcps = [mcpServer()]
     mount({ onSend: vi.fn(async () => {}) })
     fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
+    fireEvent.click(screen.getByRole('tab', { name: /^MCP/ }))
     await screen.findByRole('checkbox', { name: '论文检索' })
 
     expect(screen.queryByTestId('mcp-outbound')).toBeNull()
@@ -255,6 +306,7 @@ describe('ChatInput 子智能体', () => {
     mocks.mcps = [mcpServer()]
     mount({ onSend })
     fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
+    fireEvent.click(screen.getByRole('tab', { name: /^MCP/ }))
     fireEvent.click(await screen.findByRole('checkbox', { name: '论文检索' }))
     fireEvent.click(screen.getByRole('button', { name: '完成' }))
 
@@ -263,5 +315,69 @@ describe('ChatInput 子智能体', () => {
 
     await waitFor(() => expect(onSend).toHaveBeenCalled())
     expect(onSend.mock.calls[0][1]).toMatchObject({ mcps: ['mcp-1'] })
+  })
+})
+
+describe('ChatInput 会话配置持久化', () => {
+  it('重新打开会话时从会话配置回填表单', async () => {
+    const onSend = vi.fn(async () => {})
+    mocks.available = [listing()]
+    mount({
+      threadId: 't1',
+      threadAgentConfig: { agent_id: 'agent-1', skills: ['skill-turn'] },
+      onSend,
+    })
+
+    fireEvent.change(input(), { target: { value: '继续上一轮' } })
+    fireEvent.keyDown(input(), { key: 'Enter' })
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('继续上一轮', {
+      agent_id: 'agent-1',
+      skills: ['skill-turn'],
+    }))
+  })
+
+  it('点「完成」把配置写回会话默认', async () => {
+    mocks.available = [listing()]
+    mocks.updateThread.mockResolvedValue({ id: 't1' })
+    mount({ threadId: 't1', onSend: vi.fn(async () => {}) })
+
+    fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
+    fireEvent.click(screen.getByLabelText('选一个智能体'))
+    await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
+    fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
+
+    await waitFor(() => expect(mocks.updateThread).toHaveBeenCalledWith('t1', { agent_config: { agent_id: 'agent-1' } }))
+  })
+
+  it('发送时同样持久化，且先写配置再提交本轮', async () => {
+    mocks.available = [listing()]
+    mocks.updateThread.mockResolvedValue({ id: 't1' })
+    const onSend = vi.fn(async () => {})
+    mount({ threadId: 't1', onSend })
+
+    fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
+    fireEvent.click(screen.getByLabelText('选一个智能体'))
+    await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
+    fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
+    mocks.updateThread.mockClear()
+    fireEvent.change(input(), { target: { value: '算个波动率' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('算个波动率', { agent_id: 'agent-1' }))
+    expect(mocks.updateThread).toHaveBeenCalledWith('t1', { agent_config: { agent_id: 'agent-1' } })
+  })
+
+  it('继承默认且无追加时不写配置', async () => {
+    const onSend = vi.fn(async () => {})
+    mount({ threadId: 't1', onSend })
+
+    fireEvent.change(input(), { target: { value: '普通提问' } })
+    fireEvent.keyDown(input(), { key: 'Enter' })
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('普通提问', undefined))
+    expect(mocks.updateThread).not.toHaveBeenCalled()
   })
 })

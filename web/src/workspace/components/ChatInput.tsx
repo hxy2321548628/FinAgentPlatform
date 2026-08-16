@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { agentKeys, createAgent, listAvailable as listAvailableAgents, listSubagentCandidates } from '../../api/agents'
 import { listCatalog as listMcpCatalog, mcpKeys } from '../../api/mcp'
 import { errorMessage } from '../../api/request'
 import { listAvailable as listAvailableSkills, skillKeys } from '../../api/skills'
+import { threadKeys, updateThread } from '../../api/threads'
 import type { AgentConfig, SkillReference } from '../../api/types'
 import { listingCaption } from '../agent'
-import {  mountedMcps } from '../mcp'
+import { mountedMcps } from '../mcp'
 import { useToast } from '../../components/ui/toast-context'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Button } from '../../components/ui/Button'
@@ -24,6 +25,8 @@ import {
 interface ChatInputProps {
   isRunning?: boolean
   disabled?: boolean
+  /** 所属会话；欢迎页（懒创建）下为 undefined，此时持久化推迟到首次发送建会话时。 */
+  threadId?: string
   threadAgentConfig?: AgentConfig
   /** 从广场「用它开始分析」跳过来时带的那个 agent，直接把配置面板预设成引用它。 */
   initialAgentId?: string
@@ -31,7 +34,92 @@ interface ChatInputProps {
   onStop?: () => void
 }
 
-export function ChatInput({ isRunning = false, disabled = false, threadAgentConfig, initialAgentId, onSend, onStop }: ChatInputProps) {
+interface PickableItem {
+  id: string
+  name: string
+  meta: string
+}
+
+/** 把会话里存的配置（快照可能是冻结三元组，也可能是请求态的裸 ID）还原成表单状态。 */
+function initialStateFromConfig(config: AgentConfig | null | undefined): {
+  mode: AgentConfigMode
+  agentId: string
+  prompt: string
+  skillIds: string[]
+  subagentIds: string[]
+  mcpIds: string[]
+} {
+  const base = { agentId: '', prompt: '', skillIds: [] as string[], subagentIds: [] as string[], mcpIds: [] as string[] }
+  if (!config) return { mode: 'inherit', ...base }
+  const skillIds = (config.skills ?? []).map(one => (typeof one === 'string' ? one : one.skill_id))
+  const subagentIds = (config.subagents ?? []).map(one => (typeof one === 'string' ? one : one.agent_id))
+  const mcpIds = (config.mcps ?? []).map(one => (typeof one === 'string' ? one : one.server_id))
+  const additions = { ...base, skillIds, subagentIds, mcpIds }
+  if (config.agent_id) return { ...additions, mode: 'agent', agentId: config.agent_id }
+  if (config.system_prompt) return { ...additions, mode: 'custom', prompt: config.system_prompt }
+  if (skillIds.length > 0 || subagentIds.length > 0 || mcpIds.length > 0) return { mode: 'default', ...additions }
+  return { mode: 'inherit', ...base }
+}
+
+/** 选项列表分页大小：选项多时先出一页，其余点「加载更多」。 */
+const PICKER_PAGE_SIZE = 12
+
+function ConfigPicker({ title, empty, items, selectedIds, onToggle, searchable }: {
+  title: string
+  empty: string
+  items: PickableItem[]
+  selectedIds: string[]
+  onToggle: (id: string, checked: boolean) => void
+  searchable: boolean
+}) {
+  const [filter, setFilter] = useState('')
+  const [limit, setLimit] = useState(PICKER_PAGE_SIZE)
+  useEffect(() => setLimit(PICKER_PAGE_SIZE), [filter])
+  const needle = filter.trim().toLowerCase()
+  const filtered = needle ? items.filter(one => one.name.toLowerCase().includes(needle)) : items
+  const visible = filtered.slice(0, limit)
+  return (
+    <div className="config-section">
+      <div className="config-section-head">
+        <span className="config-section-title">{title}</span>
+        {selectedIds.length > 0 && <span className="config-section-count">已选 {selectedIds.length}</span>}
+      </div>
+      {searchable && <input className="config-search" placeholder={`筛选${title}…`} aria-label={`筛选${title}`} value={filter} onChange={event => setFilter(event.target.value)} />}
+      {items.length === 0 ? (
+        <div className="config-empty">{empty}</div>
+      ) : filtered.length === 0 ? (
+        <div className="config-empty">没有匹配的项</div>
+      ) : (
+        <>
+          <div className="config-picker-list">
+            <div className="config-grid">
+              {visible.map(one => {
+                const checked = selectedIds.includes(one.id)
+                return (
+                  <label key={one.id} className={`config-card${checked ? ' checked' : ''}`}>
+                    <input type="checkbox" className="config-card-input" checked={checked} aria-label={one.name} onChange={event => onToggle(one.id, event.target.checked)} />
+                    <span className="config-card-body">
+                      <span className="config-card-name">{one.name}</span>
+                      <span className="config-card-meta">{one.meta}</span>
+                    </span>
+                    <span className="config-card-check" aria-hidden="true">{checked ? '✓' : ''}</span>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+          {filtered.length > limit && (
+            <button type="button" className="config-more" onClick={() => setLimit(current => current + PICKER_PAGE_SIZE)}>
+              加载更多（还剩 {filtered.length - limit} 个）
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+export function ChatInput({ isRunning = false, disabled = false, threadId, threadAgentConfig, initialAgentId, onSend, onStop }: ChatInputProps) {
   const [text, setText] = useState('')
   const [configOpen, setConfigOpen] = useState(Boolean(initialAgentId))
   const [mode, setMode] = useState<AgentConfigMode>(initialAgentId ? 'agent' : 'inherit')
@@ -45,6 +133,22 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
   const [sceneName, setSceneName] = useState('')
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // **会话配置回填**：只有用户还没动过配置时才应用，避免覆盖正在进行的编辑。
+  // 这是「重新打开同一个会话自动带出上次配置」的入口（kv cache 友好的前提）。
+  const configLoadedFromThread = useRef(Boolean(initialAgentId))
+  useEffect(() => {
+    if (configLoadedFromThread.current || !threadAgentConfig || Object.keys(threadAgentConfig).length === 0) return
+    if (mode !== 'inherit' || prompt || skillIds.length > 0 || subagentIds.length > 0 || mcpIds.length > 0) return
+    const restored = initialStateFromConfig(threadAgentConfig)
+    setMode(restored.mode)
+    setAgentId(restored.agentId)
+    setPrompt(restored.prompt)
+    setSkillIds(restored.skillIds)
+    setSubagentIds(restored.subagentIds)
+    setMcpIds(restored.mcpIds)
+    configLoadedFromThread.current = true
+  }, [threadAgentConfig, mode, prompt, skillIds, subagentIds, mcpIds])
 
   // 只在配置面板真的展开时拉目录 —— 大多数提问不碰配置。
   const agents = useQuery({ queryKey: agentKeys.available(), queryFn: listAvailableAgents, enabled: configOpen })
@@ -65,6 +169,15 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
   const duplicateSubagent = duplicateSubagentName(selectedAgent?.subagent_refs ?? [], selectedSubagents)
   const tooMany = mountedSkills.length > 10
   const tooManySubagents = mountedSubagents.length > 5
+
+  // 输入框随内容自动长高，封顶 180px
+  useEffect(() => {
+    const element = textareaRef.current
+    if (!element) return
+    element.style.height = 'auto'
+    element.style.height = `${Math.min(element.scrollHeight, 180)}px`
+  }, [text])
+
   const saveScene = useMutation({
     mutationFn: () => {
       const name = sceneName.trim()
@@ -92,8 +205,8 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
     },
   })
 
-  const toggleSubagent = (subagentId: string, checked: boolean) => {
-    setSubagentIds(current => checked ? [...current, subagentId] : current.filter(one => one !== subagentId))
+  const toggleSubagent = (subagentIdValue: string, checked: boolean) => {
+    setSubagentIds(current => checked ? [...current, subagentIdValue] : current.filter(one => one !== subagentIdValue))
     if (checked && mode === 'inherit') setMode('default')
     setConfigError('')
   }
@@ -110,19 +223,59 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
     setConfigError('')
   }
 
+  const combinedConfigError = (): string | null => {
+    if (mode === 'custom') return systemPromptError(prompt)
+    if (mode === 'agent') return agentChoiceError(agentId)
+    if (duplicateName) return `Skill 名称冲突：${duplicateName}`
+    if (duplicateSubagent) return `子智能体名称冲突：${duplicateSubagent}`
+    if (tooManySubagents) return '一次最多挂载 5 个子智能体'
+    if (tooManyMcps) return '一次最多挂载 3 个 MCP'
+    if (tooMany) return '一次最多挂载 10 个 Skill'
+    return null
+  }
+
+  // **配置持久化**：把本轮配置写回会话默认。会话级 agent_config 是下一次提问的
+  // 继承来源，也决定 system prompt 是否稳定（对 kv cache 命中率有直接影响）。
+  const persistThreadConfig = async (config: AgentConfig) => {
+    if (!threadId) return
+    try {
+      await updateThread(threadId, { agent_config: config })
+      await queryClient.invalidateQueries({ queryKey: threadKeys.detail(threadId) })
+    } catch (error) {
+      toast({ title: '会话配置保存失败', description: errorMessage(error), variant: 'error' })
+    }
+  }
+
+  const finishConfig = () => {
+    const error = combinedConfigError()
+    if (error) {
+      setConfigError(error)
+      setActiveTab(errorTab())
+      return
+    }
+    const config = buildRunAgentConfig(mode, prompt, agentId, skillIds, subagentIds, mcpIds)
+    setConfigError('')
+    // 立即关窗，持久化放后台 —— 失败有 toast，不挡用户继续输入
+    setConfigOpen(false)
+    if (config !== undefined) void persistThreadConfig(config)
+  }
+
   const handleSend = async () => {
     const content = text.trim()
     if (!content || disabled || isRunning || isSending || !onSend) return
-    const error = mode === 'custom' ? systemPromptError(prompt) : mode === 'agent' ? agentChoiceError(agentId) : null
-    if (error || duplicateName || tooMany || duplicateSubagent || tooManySubagents || tooManyMcps) {
-      setConfigError(error ?? (duplicateName ? `Skill 名称冲突：${duplicateName}` : duplicateSubagent ? `子智能体名称冲突：${duplicateSubagent}` : tooManySubagents ? '一次最多挂载 5 个子智能体' : tooManyMcps ? '一次最多挂载 3 个 MCP' : '一次最多挂载 10 个 Skill'))
+    const error = combinedConfigError()
+    if (error) {
+      setConfigError(error)
+      setActiveTab(errorTab())
       setConfigOpen(true)
       return
     }
     setConfigError('')
     setIsSending(true)
     try {
-      await onSend(content, buildRunAgentConfig(mode, prompt, agentId, skillIds, subagentIds, mcpIds))
+      const config = buildRunAgentConfig(mode, prompt, agentId, skillIds, subagentIds, mcpIds)
+      if (config !== undefined) await persistThreadConfig(config)
+      await onSend(content, config)
       setText('')
     } catch {
       // mutation 状态负责显示错误；保留输入供用户修改或重试。
@@ -131,107 +284,168 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
     }
   }
 
+  const configSummary = mode === 'agent'
+    ? (selectedAgent ? `智能体：${selectedAgent.name}` : '选择一个智能体')
+    : AGENT_CONFIG_MODE_LABEL[mode]
+  const additionsSummary = [
+    skillIds.length ? `${skillIds.length} 个 Skill` : '',
+    subagentIds.length ? `${subagentIds.length} 个子智能体` : '',
+    mountedMcpList.length ? `${mountedMcpList.length} 个 MCP` : '',
+  ].filter(Boolean).join(' · ')
+
+  // ── 配置面板：分页签，每类配置一页 ──
+  type ConfigTabId = 'agent' | 'skill' | 'subagent' | 'mcp'
+  const CONFIG_TABS: ReadonlyArray<{ id: ConfigTabId; label: string }> = [
+    { id: 'agent', label: '智能体' },
+    { id: 'skill', label: 'Skill' },
+    { id: 'subagent', label: '子智能体' },
+    { id: 'mcp', label: 'MCP' },
+  ]
+  const [activeTab, setActiveTab] = useState<ConfigTabId>('agent')
+  const tabBadge = (id: ConfigTabId): number | null => {
+    if (id === 'skill') return skillIds.length || null
+    if (id === 'subagent') return subagentIds.length || null
+    if (id === 'mcp') return mountedMcpList.length || null
+    return null
+  }
+  // 校验不过时跳到出问题的那一页，错误当场可见
+  const errorTab = (): ConfigTabId => {
+    if (mode === 'custom' || mode === 'agent') return 'agent'
+    if (duplicateName || tooMany) return 'skill'
+    if (duplicateSubagent || tooManySubagents) return 'subagent'
+    if (tooManyMcps) return 'mcp'
+    return 'agent'
+  }
+  const onTabsKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const index = CONFIG_TABS.findIndex(one => one.id === activeTab)
+    const next = event.key === 'ArrowRight' ? (index + 1) % CONFIG_TABS.length
+      : event.key === 'ArrowLeft' ? (index - 1 + CONFIG_TABS.length) % CONFIG_TABS.length
+      : event.key === 'Home' ? 0
+      : event.key === 'End' ? CONFIG_TABS.length - 1
+      : -1
+    if (next >= 0) {
+      event.preventDefault()
+      setActiveTab(CONFIG_TABS[next].id)
+      document.getElementById(`config-tab-${CONFIG_TABS[next].id}`)?.focus()
+    }
+  }
+
+  const skillItems: PickableItem[] = (skills.data ?? []).map(one => ({ id: one.id, name: one.name, meta: `${one.owner_name} · v${one.version}` }))
+  const subagentItems: PickableItem[] = (subagents.data ?? []).map(one => ({ id: one.id, name: one.name, meta: `${one.owner_name} · v${one.version}` }))
+  const mcpItems: PickableItem[] = (mcps.data ?? []).map(one => ({ id: one.id, name: one.name, meta: `${one.tool_names.length} 个工具 · 校外` }))
+
   return (
-    <div style={{ padding: '12px 24px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg)', flexShrink: 0 }}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px 12px', boxShadow: '0 2px 8px rgba(11,46,92,0.06)' }}>
-        <button type="button" aria-label="本轮智能体配置" aria-expanded={configOpen} onClick={() => setConfigOpen(open => !open)} style={{ border: 'none', background: 'transparent', color: 'var(--action)', fontSize: 12, padding: '2px 0 8px', cursor: 'pointer', fontFamily: 'inherit' }}>
-          配置智能体 · {AGENT_CONFIG_MODE_LABEL[mode]}{skillIds.length ? ` · ${skillIds.length} 个 Skill` : ''}{subagentIds.length ? ` · ${subagentIds.length} 个子智能体` : ''}{mountedMcpList.length ? ` · ${mountedMcpList.length} 个 MCP` : ''}
-        </button>
-        <Dialog.Root open={configOpen} onOpenChange={setConfigOpen}>
-          <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay dialog-overlay-strong" />
-            <Dialog.Content className="dialog-content dialog-content-wide" aria-describedby={undefined}>
-              <Dialog.Title className="dialog-title" style={{ marginBottom: 12 }}>本轮智能体配置</Dialog.Title>
+    <div className="chat-composer-area">
+      <div className="composer">
+        <textarea ref={textareaRef} className="composer-input" value={text} disabled={disabled || isSending} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSend() } }} placeholder="输入分析需求…（Enter 发送，Shift+Enter 换行）" rows={1} />
+        <div className="composer-footer">
+          <button type="button" className="composer-config" aria-label="本轮智能体配置" aria-expanded={configOpen} onClick={() => setConfigOpen(open => !open)}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+            <span className="composer-config-value">{configSummary}{additionsSummary ? ` · ${additionsSummary}` : ''}</span>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg>
+          </button>
+          <span className="composer-hint">Enter 发送 · Shift+Enter 换行</span>
+          {isRunning ? (
+            <button type="button" className="composer-stop" onClick={onStop} aria-label="停止分析" title="停止分析">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            </button>
+          ) : (
+            <button type="button" className="composer-send" disabled={disabled || isSending || !text.trim()} onClick={() => void handleSend()} aria-label="发送" title="发送">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            </button>
+          )}
+        </div>
+      </div>
+
+      <Dialog.Root open={configOpen} onOpenChange={setConfigOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay dialog-overlay-strong" />
+          <Dialog.Content className="dialog-content dialog-content-config">
+            <div className="config-header">
+              <Dialog.Title className="dialog-title" style={{ marginBottom: 2 }}>本轮智能体配置</Dialog.Title>
+              <Dialog.Description className="sr-only">分页签配置本轮使用的智能体、Skill、子智能体与 MCP，配置会保存为这个会话的默认。</Dialog.Description>
               <Dialog.Close asChild>
                 <button type="button" aria-label="关闭配置" className="dialog-close-x">×</button>
               </Dialog.Close>
-              <div style={{ padding: '10px 12px', border: '1px solid var(--action-border)', borderRadius: 7, background: 'var(--action-light)' }}>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: mode === 'inherit' ? 0 : 10 }}>
-            {AGENT_CONFIG_MODES.map(value => <label key={value} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
-              <input type="radio" name="agent-config-mode" value={value} checked={mode === value} onChange={() => { setMode(value); setConfigError('') }} />
-              {AGENT_CONFIG_MODE_LABEL[value]}
-            </label>)}
-          </div>
-          {mode === 'inherit' && <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
-            本轮不传 <code>agent_config</code>。会话当前默认：{describeAgentConfig(threadAgentConfig, agents.data ?? [])}
-          </div>}
-          {mode === 'default' && <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
-            本轮显式覆盖为平台默认角色；可以只挂下面选择的 Skill。
-          </div>}
-          {mode === 'agent' && <>
-            <select aria-label="选择智能体" value={agentId} onChange={event => { setAgentId(event.target.value); setConfigError('') }} style={selectStyle}>
-              <option value="">-- 请选择 --</option>
-              {(agents.data ?? []).map(one => <option key={one.id} value={one.id}>{one.name}（{listingCaption(one)}）</option>)}
-            </select>
-            <div style={hintStyle}>
-              {agents.isPending && '正在加载可用的智能体…'}
-              {agents.isError && <span style={{ color: 'var(--danger)' }}>{errorMessage(agents.error)}</span>}
-              {!agents.isPending && !agents.isError && (agents.data ?? []).length === 0 && '还没有你能引用的智能体。去「智能体广场」看看，或自己建一个。'}
-              {!agents.isPending && (agents.data ?? []).length > 0 && '提交时会冻结智能体版本及它自带的 Skill。'}
             </div>
-          </>}
-          {mode === 'custom' && <>
-            <textarea value={prompt} maxLength={MAX_SYSTEM_PROMPT_LENGTH} onChange={event => { setPrompt(event.target.value); setConfigError('') }} placeholder="例如：你是一名谨慎的金融风险分析师…" style={{ ...selectStyle, minHeight: 86, resize: 'vertical', lineHeight: 1.6 }} />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4, fontSize: 11, color: 'var(--text-muted)' }}>{prompt.length} / {MAX_SYSTEM_PROMPT_LENGTH}</div>
-          </>}
+            <div className="config-tabs" role="tablist" aria-label="配置分类" onKeyDown={onTabsKeyDown}>
+              {CONFIG_TABS.map(one => (
+                <button key={one.id} type="button" role="tab" id={`config-tab-${one.id}`} aria-selected={activeTab === one.id} aria-controls={`config-panel-${one.id}`} tabIndex={activeTab === one.id ? 0 : -1} className="config-tab" onClick={() => setActiveTab(one.id)}>
+                  {one.label}
+                  {tabBadge(one.id) !== null && <span className="config-tab-badge">{tabBadge(one.id)}</span>}
+                </button>
+              ))}
+            </div>
+            <div className="config-body">
+              <div role="tabpanel" id="config-panel-agent" aria-labelledby="config-tab-agent" className="config-tabpanel" hidden={activeTab !== 'agent'}>
+                <div className="config-modes" role="radiogroup" aria-label="配置模式">
+                  {AGENT_CONFIG_MODES.map(value => (
+                    <label key={value} className="config-mode">
+                      <input type="radio" name="agent-config-mode" className="config-mode-input" value={value} checked={mode === value} onChange={() => { setMode(value); setConfigError('') }} />
+                      <span className="config-mode-pill">{AGENT_CONFIG_MODE_LABEL[value]}</span>
+                    </label>
+                  ))}
+                </div>
+                {mode === 'inherit' && <div className="config-note">
+                  本轮不传 <code>agent_config</code>，沿用会话当前默认：{describeAgentConfig(threadAgentConfig, agents.data ?? [])}
+                </div>}
+                {mode === 'default' && <div className="config-note">
+                  本轮显式覆盖为平台默认角色；可以只在「Skill / 子智能体 / MCP」页签里加挂载。
+                </div>}
+                {mode === 'agent' && <div className="config-field">
+                  <label className="config-field-label" htmlFor="config-agent-select">选择智能体</label>
+                  <select id="config-agent-select" className="config-select" aria-label="选择智能体" value={agentId} onChange={event => { setAgentId(event.target.value); setConfigError('') }}>
+                    <option value="">-- 请选择 --</option>
+                    {(agents.data ?? []).map(one => <option key={one.id} value={one.id}>{one.name}（{listingCaption(one)}）</option>)}
+                  </select>
+                  <div className="config-hint">
+                    {agents.isPending && '正在加载可用的智能体…'}
+                    {agents.isError && <span style={{ color: 'var(--danger)' }}>{errorMessage(agents.error)}</span>}
+                    {!agents.isPending && !agents.isError && (agents.data ?? []).length === 0 && '还没有你能引用的智能体。去「智能体广场」看看，或自己建一个。'}
+                    {!agents.isPending && (agents.data ?? []).length > 0 && '提交时会冻结智能体版本及它自带的 Skill。'}
+                  </div>
+                  {selectedAgent && (
+                    <div className="config-agent-card">
+                      <div className="config-agent-card-name">{selectedAgent.name} <span>v{selectedAgent.version} · {selectedAgent.owner_name} · {listingCaption(selectedAgent)}</span></div>
+                      {selectedAgent.description && <div className="config-agent-card-desc">{selectedAgent.description}</div>}
+                    </div>
+                  )}
+                </div>}
+                {mode === 'custom' && <div className="config-field">
+                  <label className="config-field-label" htmlFor="config-custom-prompt">自定义提示词</label>
+                  <textarea id="config-custom-prompt" className="config-textarea" value={prompt} maxLength={MAX_SYSTEM_PROMPT_LENGTH} onChange={event => { setPrompt(event.target.value); setConfigError('') }} placeholder="例如：你是一名谨慎的金融风险分析师…" />
+                  <div className="config-hint" style={{ textAlign: 'right' }}>{prompt.length} / {MAX_SYSTEM_PROMPT_LENGTH}</div>
+                </div>}
+              </div>
 
-          <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--action-border)' }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 7 }}>本轮 Skill（可多选）</div>
-            {skills.isPending && <div style={hintStyle}>正在加载可用 Skill…</div>}
-            {skills.isError && <div role="alert" style={{ ...hintStyle, color: 'var(--danger)' }}>{errorMessage(skills.error)}</div>}
-            {!skills.isPending && !skills.isError && (skills.data ?? []).length === 0 && <div style={hintStyle}>还没有你能使用的 Skill。</div>}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
-              {(skills.data ?? []).map(one => <label key={one.id} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, color: 'var(--text-secondary)' }}>
-                <input type="checkbox" aria-label={one.name} checked={skillIds.includes(one.id)} onChange={event => toggleSkill(one.id, event.target.checked)} />
-                <span><strong>{one.name}</strong><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{one.owner_name} · v{one.version}</span></span>
-              </label>)}
+              <div role="tabpanel" id="config-panel-skill" aria-labelledby="config-tab-skill" className="config-tabpanel" hidden={activeTab !== 'skill'}>
+                <ConfigPicker title="本轮 Skill（可多选，最多 10 个）" searchable={(skills.data ?? []).length > 6} empty={skills.isError ? errorMessage(skills.error) : '还没有你能使用的 Skill。'} items={skillItems} selectedIds={skillIds} onToggle={toggleSkill} />
+                {mountedSkills.length > 0 && <div className="config-hint">最终挂载：{mountedSkills.join('、')}</div>}
+              </div>
+
+              <div role="tabpanel" id="config-panel-subagent" aria-labelledby="config-tab-subagent" className="config-tabpanel" hidden={activeTab !== 'subagent'}>
+                <ConfigPicker title="本轮子智能体（可多选，最多 5 个）" searchable={(subagents.data ?? []).length > 6} empty={subagents.isError ? errorMessage(subagents.error) : '还没有可挂载的子智能体。'} items={subagentItems} selectedIds={subagentIds} onToggle={toggleSubagent} />
+                {mountedSubagents.length > 0 && <div className="config-hint">最终挂载：{mountedSubagents.join('、')}</div>}
+              </div>
+
+              <div role="tabpanel" id="config-panel-mcp" aria-labelledby="config-tab-mcp" className="config-tabpanel" hidden={activeTab !== 'mcp'}>
+                <ConfigPicker title="本轮 MCP（可多选，最多 3 个）" searchable={(mcps.data ?? []).length > 6} empty={mcps.isError ? errorMessage(mcps.error) : '还没有放行的 MCP。'} items={mcpItems} selectedIds={mcpIds} onToggle={toggleMcp} />
+                {mountedMcpList.length > 0 && <div data-testid="mcp-outbound" className="config-warn">
+                  <div>最终挂载：{mountedMcpList.map(one => one.via ? `${one.name}（来自 ${one.via}）` : one.name).join('、')}</div>
+                </div>}
+              </div>
+
+              {configError && <div role="alert" className="config-error">{configError}</div>}
             </div>
-            {mountedSkills.length > 0 && <div style={{ ...hintStyle, marginTop: 8 }}>最终挂载：{mountedSkills.join('、')}</div>}
-          </div>
-          <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--action-border)' }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 7 }}>本轮子智能体（可多选）</div>
-            {subagents.isPending && <div style={hintStyle}>正在加载可用的子智能体…</div>}
-            {subagents.isError && <div role="alert" style={{ ...hintStyle, color: 'var(--danger)' }}>{errorMessage(subagents.error)}</div>}
-            {!subagents.isPending && !subagents.isError && (subagents.data ?? []).length === 0 && <div style={hintStyle}>还没有可挂载的子智能体。</div>}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
-              {(subagents.data ?? []).map(one => <label key={one.id} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, color: 'var(--text-secondary)' }}>
-                <input type="checkbox" aria-label={one.name} checked={subagentIds.includes(one.id)} onChange={event => toggleSubagent(one.id, event.target.checked)} />
-                <span><strong>{one.name}</strong><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{one.owner_name} · v{one.version}</span></span>
-              </label>)}
+            <div className="config-footer">
+              <input className="config-scene-input" value={sceneName} onChange={event => setSceneName(event.target.value)} placeholder="场景名称（可选）" aria-label="场景名称" />
+              <Button variant="outline" size="sm" onClick={() => saveScene.mutate()} disabled={saveScene.isPending}>{saveScene.isPending ? '保存中…' : '保存到我的场景库'}</Button>
+              <div style={{ flex: 1 }} />
+              <Button variant="primary" size="sm" onClick={() => void finishConfig()}>完成</Button>
             </div>
-            {mountedSubagents.length > 0 && <div style={{ ...hintStyle, marginTop: 8 }}>最终挂载：{mountedSubagents.join('、')}</div>}
-          </div>
-          <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--action-border)' }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 7 }}>本轮 MCP（可多选，最多 3 个）</div>
-            {mcps.isPending && <div style={hintStyle}>正在加载 MCP 目录…</div>}
-            {mcps.isError && <div role="alert" style={{ ...hintStyle, color: 'var(--danger)' }}>{errorMessage(mcps.error)}</div>}
-            {!mcps.isPending && !mcps.isError && (mcps.data ?? []).length === 0 && <div style={hintStyle}>还没有放行的 MCP。</div>}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
-              {(mcps.data ?? []).map(one => <label key={one.id} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, color: 'var(--text-secondary)' }}>
-                <input type="checkbox" aria-label={one.name} checked={mcpIds.includes(one.id)} onChange={event => toggleMcp(one.id, event.target.checked)} />
-                <span><strong>{one.name}</strong><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{one.tool_names.length} 个工具 · 校外</span></span>
-              </label>)}
-            </div>
-            {mountedMcpList.length > 0 && <div data-testid="mcp-outbound" style={outboundStyle}>
-              {/* <div style={{ fontWeight: 600, marginBottom: 4 }}>{DATA_LEAVES_CAMPUS}</div> */}
-              <div>最终挂载：{mountedMcpList.map(one => one.via ? `${one.name}（来自 ${one.via}）` : one.name).join('、')}</div>
-            </div>}
-          </div>
-          {configError && <div role="alert" style={{ marginTop: 6, fontSize: 11, color: 'var(--danger)' }}>{configError}</div>}
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <input value={sceneName} onChange={event => setSceneName(event.target.value)} placeholder="场景名称" style={{ ...selectStyle, flex: 1, minWidth: 180 }} />
-            <Button variant="outline" size="sm" onClick={() => saveScene.mutate()} disabled={saveScene.isPending}>{saveScene.isPending ? '保存中…' : '保存到我的场景库'}</Button>
-            <Button variant="primary" size="sm" onClick={() => setConfigOpen(false)}>完成</Button>
-          </div>
-        </div>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
-        <textarea value={text} disabled={disabled || isSending} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSend() } }} placeholder={disabled ? '请先新建一个分析对话' : '输入分析需求…（Enter 发送，Shift+Enter 换行）'} style={{ width: '100%', minHeight: 52, maxHeight: 160, border: 'none', fontSize: 14, color: 'var(--text-primary)', background: 'transparent', resize: 'none', fontFamily: 'inherit', lineHeight: 1.65, boxSizing: 'border-box' }} />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-light)' }}>
-          {isRunning ? <button type="button" onClick={onStop} aria-label="停止分析" style={{ width: 40, height: 40, borderRadius: 8, background: 'var(--danger)', border: 'none', color: '#fff', cursor: 'pointer', display: 'grid', placeItems: 'center' }}>■</button> : <button type="button" disabled={disabled || isSending || !text.trim()} onClick={() => void handleSend()} aria-label="发送" style={{ width: 40, height: 40, borderRadius: 8, background: 'var(--action)', border: 'none', color: '#fff', cursor: disabled || isSending || !text.trim() ? 'default' : 'pointer', opacity: disabled || isSending || !text.trim() ? 0.5 : 1, display: 'grid', placeItems: 'center' }}>↗</button>}
-        </div>
-      </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   )
 }
@@ -277,7 +491,3 @@ function duplicateSkillName(agentRefs: readonly SkillReference[], selected: read
   }
   return null
 }
-
-const selectStyle: React.CSSProperties = { width: '100%', padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-primary)', boxSizing: 'border-box' }
-const outboundStyle: React.CSSProperties = { marginTop: 8, padding: '8px 10px', border: '1px solid #FDE68A', borderRadius: 6, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 11, lineHeight: 1.6 }
-const hintStyle: React.CSSProperties = { marginTop: 6, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }

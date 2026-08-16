@@ -43,8 +43,8 @@ describe('WorkspaceSidebar', () => {
       </QueryClientProvider>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /张老师/ }))
-    fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: /用户菜单：张老师/ }), { key: 'ArrowDown' })
+    fireEvent.click(screen.getByRole('menuitem', { name: '退出登录' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('会话服务不可用')
     expect(screen.getByTestId('workspace-route')).toBeTruthy()

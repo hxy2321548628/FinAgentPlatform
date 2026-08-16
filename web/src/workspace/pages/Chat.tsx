@@ -1,14 +1,13 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { approveRun, cancelRun, getRun, listRuns, runKeys, submitRun } from '../../api/runs'
-import { getThread, threadKeys } from '../../api/threads'
+import { createThread, getThread, threadKeys, updateThread } from '../../api/threads'
 import { fileKeys } from '../../api/files'
 import { errorMessage } from '../../api/request'
 import type { AgentConfig, Decision, RunHistory, RunStatus } from '../../api/types'
 import { useRunEvents } from '../../hooks/useRunEvents'
 import { isTerminalStatus } from '../../api/events'
-import { describeAgentConfig } from '../config'
 import { takeHandedOffAgent } from '../pickedAgent'
 import { ThreadSidebar } from '../components/ThreadSidebar'
 import { MessageList } from '../components/MessageList'
@@ -16,9 +15,12 @@ import { ArtifactStrip } from '../components/ArtifactStrip'
 import { ChatInput } from '../components/ChatInput'
 import { WorkspaceFiles } from '../components/WorkspaceFiles'
 import { Button } from '../../components/ui/Button'
+import { Logo } from '../../components/Logo'
 
 const LIVE_STATUS: readonly RunStatus[] = ['queued', 'running', 'waiting_approval']
 const BOTTOM_FOLLOW_THRESHOLD = 32
+/** 距视口 600px 就开始回放，滚到历史轮次前内容已经就位。 */
+const REPLAY_ROOT_MARGIN = '600px 0px 600px 0px'
 
 function statusLabel(status: RunStatus): string {
   return {
@@ -31,11 +33,34 @@ function statusLabel(status: RunStatus): string {
   }[status]
 }
 
-function RunTurn({ run, threadId, autoReplay, onContentChange }: { run: RunHistory; threadId: string; autoReplay: boolean; onContentChange: () => void }) {
+function RunTurn({ run, threadId, onContentChange }: { run: RunHistory; threadId: string; onContentChange: () => void }) {
   const queryClient = useQueryClient()
+  const sectionRef = useRef<HTMLElement>(null)
   const [replayRequested, setReplayRequested] = useState(false)
+  const [reachedViewport, setReachedViewport] = useState(false)
+  // **历史轮次默认全部可见**：滚进视口即自动回放（粘住不回退），不再要求逐条点击。
+  // 运行中的那一轮始终在回放；IntersectionObserver 不可用时退化为立即回放。
+  const live = LIVE_STATUS.includes(run.status)
+  useEffect(() => {
+    if (live || reachedViewport) return
+    const node = sectionRef.current
+    if (!node) return
+    if (typeof IntersectionObserver === 'undefined') {
+      setReachedViewport(true)
+      return
+    }
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        setReachedViewport(true)
+        observer.disconnect()
+      }
+    }, { rootMargin: REPLAY_ROOT_MARGIN })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [live, reachedViewport])
+  const autoReplay = live || reachedViewport || replayRequested
   const view = useRunEvents(run.id, run.status, {
-    enabled: autoReplay || replayRequested,
+    enabled: autoReplay,
     resolveInterruptStatus: async () => (await getRun(run.id)).status,
     onTerminal() {
       void Promise.all([
@@ -52,16 +77,6 @@ function RunTurn({ run, threadId, autoReplay, onContentChange }: { run: RunHisto
       await queryClient.invalidateQueries({ queryKey: runKeys.all })
     },
   })
-  // **引用要说清是谁的哪一版**：只说「使用了一个智能体」的话，作者发了新版本之后，
-  // 历史那几轮到底按哪一版跑的就再也说不清了
-  const configuration = describeAgentConfig(run.agent_config)
-  const roleLabel = run.agent_config?.agent_id
-    ? configuration.split('\n', 1)[0]
-    : configuration === '平台默认配置'
-      ? configuration
-      : '自定义提示词'
-  const skillCount = run.agent_config?.skills?.length ?? 0
-  const configurationLabel = skillCount > 0 ? `${roleLabel} · ${skillCount} 个 Skill` : roleLabel
 
   useLayoutEffect(() => {
     onContentChange()
@@ -71,14 +86,10 @@ function RunTurn({ run, threadId, autoReplay, onContentChange }: { run: RunHisto
     await approve.mutateAsync(decisions)
   }
 
-  return <section className="run-turn" style={{ padding: '18px 0 22px', borderBottom: '1px solid var(--border-light)' }}>
+  return <section ref={sectionRef} data-run-id={run.id} className="run-turn" style={{ padding: '18px 0 22px', borderBottom: '1px solid var(--border-light)' }}>
     <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
       <div style={{ maxWidth: 620 }}>
         <div style={{ padding: '11px 15px', borderRadius: '12px 12px 2px 12px', background: 'var(--brand)', color: '#fff', fontSize: 14, lineHeight: 1.65 }}>{run.content ?? '（这条历史提问未保留原文）'}</div>
-        <details style={{ marginTop: 5, textAlign: 'right', color: 'var(--text-muted)', fontSize: 11 }}>
-          <summary style={{ cursor: 'pointer' }}>本轮配置：{configurationLabel}</summary>
-          <div style={{ marginTop: 5, padding: 8, maxWidth: 500, whiteSpace: 'pre-wrap', textAlign: 'left', border: '1px solid var(--border)', borderRadius: 5, background: 'var(--surface)' }}>{configuration}</div>
-        </details>
       </div>
     </div>
     <MessageList items={view.items} pendingActions={view.pendingActions} onApprove={submitDecisions} threadId={threadId} live={LIVE_STATUS.includes(view.status)} />
@@ -95,9 +106,10 @@ function RunTurn({ run, threadId, autoReplay, onContentChange }: { run: RunHisto
 
 export function Chat() {
   const { threadId } = useParams()
+  const navigate = useNavigate()
   // 广场「用它开始分析」交接过来的那个 agent，配置面板据此预设成引用它。
-  // **要等有会话了才取**：从广场跳过来时多半还没有会话，那时取走就白丢了
-  const [pickedAgentId, setPickedAgentId] = useState<string | undefined>(undefined)
+  // 挂载时即取走：懒创建下这时可能还没有会话，取走正好让欢迎页的输入区带着它
+  const [pickedAgentId] = useState<string | undefined>(() => takeHandedOffAgent() ?? undefined)
   const queryClient = useQueryClient()
   const [panelVisible, setPanelVisible] = useState(true)
   const scrollRegion = useRef<HTMLDivElement>(null)
@@ -117,13 +129,6 @@ export function Chat() {
   })
   const chronological = (runs.data?.pages.flatMap(page => page.items) ?? []).toReversed()
   const latestLive = chronological.findLast(run => LIVE_STATUS.includes(run.status))
-  const autoReplayRun = latestLive ?? chronological.at(-1)
-
-  useEffect(() => {
-    if (!threadId) return
-    const handed = takeHandedOffAgent()
-    if (handed) setPickedAgentId(handed)
-  }, [threadId])
 
   const scrollToLatest = useCallback((force = false) => {
     const element = scrollRegion.current
@@ -144,13 +149,29 @@ export function Chat() {
   }, [runs.isPending, scrollToLatest, threadId])
 
   const submit = useMutation({
-    mutationFn: ({ text, agentConfig }: { text: string; agentConfig: AgentConfig | undefined }) => {
-      if (!threadId) throw new Error('请先新建一个分析对话')
+    mutationFn: async ({ text, agentConfig }: { text: string; agentConfig: AgentConfig | undefined }) => {
+      // **欢迎页懒创建**：进入 /workspace/chat 不建会话，第一次发送才建 —— 点
+      // 「新建分析」只是导航，天然幂等，也不会留下一堆空会话。提交成功才跳转，
+      // 失败时留在欢迎页保住草稿。会话级配置在创建时一并写入（ChatInput 在有
+      // 会话时自己写，欢迎页这条路径由这里补上）
+      if (!threadId) {
+        const created = await createThread()
+        if (agentConfig !== undefined) {
+          try {
+            await updateThread(created.id, { agent_config: agentConfig })
+          } catch {
+            // 本轮仍带着这份配置提交，只是会话默认没存上 —— 不阻断发送
+          }
+        }
+        const run = await submitRun(created.id, text, agentConfig)
+        navigate(`/workspace/chat/${created.id}`, { replace: true })
+        return run
+      }
       return submitRun(threadId, text, agentConfig)
     },
     async onSuccess() {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: runKeys.list(threadId ?? '') }),
+        queryClient.invalidateQueries({ queryKey: runKeys.all }),
         queryClient.invalidateQueries({ queryKey: threadKeys.all }),
       ])
     },
@@ -166,23 +187,35 @@ export function Chat() {
     <ThreadSidebar />
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
       <header style={{ minHeight: 54, padding: '10px 24px', boxSizing: 'border-box', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-        <div style={{ minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{threadId ? thread.data?.title || '新分析' : '选择或新建分析'}</div></div>
+        <div style={{ minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{threadId ? thread.data?.title || '新分析' : '新分析'}</div></div>
         {threadId && <Button variant="secondary" size="sm" onClick={() => setPanelVisible(value => !value)}>{panelVisible ? '收起工作目录' : '展开工作目录'}</Button>}
       </header>
       <div ref={scrollRegion} data-testid="chat-scroll-region" onScroll={event => {
         const element = event.currentTarget
         followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_FOLLOW_THRESHOLD
-      }} style={{ flex: 1, overflowY: 'auto', padding: '0 28px' }}>
-        {!threadId && <div style={{ height: '100%', display: 'grid', placeItems: 'center', color: 'var(--text-muted)', fontSize: 14 }}>点击左侧“新建分析”开始。</div>}
+      }} style={{ flex: 1, overflowY: 'auto', padding: threadId ? '0 28px' : 0, display: 'flex', flexDirection: 'column' }}>
+        {!threadId && (
+          <div className="chat-welcome">
+            <Logo height={54} />
+            <h1>开始一次新的分析</h1>
+            <p>输入你的分析需求，智能体将自行编写 Python、在隔离沙箱中执行，并返回结论与图表 —— 不需要你会写代码。</p>
+          </div>
+        )}
         {thread.isError && <div role="alert" style={{ padding: 24, color: 'var(--danger)' }}>{errorMessage(thread.error)}</div>}
         {runs.isPending && threadId && <div style={{ padding: 24, color: 'var(--text-muted)' }}>正在加载对话历史…</div>}
         {runs.isError && <div role="alert" style={{ padding: 24, color: 'var(--danger)' }}>{errorMessage(runs.error)}</div>}
         {runs.hasNextPage && <button type="button" disabled={runs.isFetchingNextPage} onClick={() => void runs.fetchNextPage()} style={{ display: 'block', margin: '12px auto', border: 'none', background: 'transparent', color: 'var(--action)', cursor: 'pointer' }}>{runs.isFetchingNextPage ? '正在加载…' : '加载更早记录'}</button>}
         {threadId && !runs.isPending && chronological.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>这个对话还没有提问。</div>}
-        {chronological.map(run => <RunTurn key={run.id} run={run} threadId={threadId ?? ''} autoReplay={run.id === autoReplayRun?.id} onContentChange={scrollToLatest} />)}
+        {threadId && chronological.map(run => <RunTurn key={run.id} run={run} threadId={threadId} onContentChange={scrollToLatest} />)}
         {submit.isError && <div role="alert" style={{ padding: '8px 0', color: 'var(--danger)', fontSize: 12 }}>{errorMessage(submit.error)}</div>}
       </div>
-      <ChatInput key={pickedAgentId ?? 'default'} disabled={!threadId || submit.isPending} isRunning={Boolean(latestLive)} threadAgentConfig={thread.data?.agent_config} initialAgentId={pickedAgentId} onSend={async (text, agentConfig) => { await submit.mutateAsync({ text, agentConfig }) }} onStop={() => latestLive && cancel.mutate(latestLive.id)} />
+      {threadId ? (
+        <ChatInput key={`${threadId}:${pickedAgentId ?? ''}`} disabled={submit.isPending} isRunning={Boolean(latestLive)} threadId={threadId} threadAgentConfig={thread.data?.agent_config} initialAgentId={pickedAgentId} onSend={async (text, agentConfig) => { await submit.mutateAsync({ text, agentConfig }) }} onStop={() => latestLive && cancel.mutate(latestLive.id)} />
+      ) : (
+        <div className="chat-welcome-composer">
+          <ChatInput key={`welcome:${pickedAgentId ?? ''}`} disabled={submit.isPending} isRunning={Boolean(latestLive)} threadAgentConfig={thread.data?.agent_config} initialAgentId={pickedAgentId} onSend={async (text, agentConfig) => { await submit.mutateAsync({ text, agentConfig }) }} onStop={() => latestLive && cancel.mutate(latestLive.id)} />
+        </div>
+      )}
     </div>
     {panelVisible && threadId && <aside className="chat-files-panel" style={{ flexShrink: 0, borderLeft: '1px solid var(--border)', overflow: 'hidden' }}><WorkspaceFiles threadId={threadId} title={thread.data?.title || '新分析'} compact /></aside>}
   </div>
