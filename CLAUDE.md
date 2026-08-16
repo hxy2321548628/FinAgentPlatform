@@ -126,16 +126,16 @@ docker compose -f deploy/compose.yml up -d --build
 # 排障入口是日志，不再有看板。三个进程都打 JSON 行，一条 run 的全过程这样捞：
 docker compose -f deploy/compose.yml logs worker | jq -c 'select(.run_id == "…")'
 
-# P0–P10 的回归验收，**54 条判据一个脚本跑完**。2026-08-13 由 p1/p2/p3/p4 +
+# P0–P11 的回归验收，**61 条判据一个脚本跑完**。2026-08-13 由 p1/p2/p3/p4 +
 # acceptance + hostile + session 七个合并而来，理由与一并修掉的漂移写在文件头；
 # P5 那四条是 2026-08-14 补的（P5 期是唯一一期没留下验收脚本的），
 # 之后 P6 三条、P7 六条、P8 六条、P9 六条、P10 七条依次跟在它们后面
 bash deploy/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
-SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 37 条，约 30 分钟
+SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 42 条，约 30 分钟
 ```
 
 **默认全跑，没有「只跑某一期」的参数**（P6 决策 §L2 定案）。两个开关分的是**成本**
-不是期次：54 条里 17 条要花钱或要 root，其余 37 条免费。
+不是期次：61 条里 19 条要花钱或要 root，其余 42 条免费。
 
 **四条判据要浏览器**（`P7⑥` `P8⑥` `P9⑥` `P10⑥`，playwright）。它们**不进 `make all`**
 —— 那是纯本地门禁，跑它不需要任何服务起着，而这四条要六个服务、真账号、真库。

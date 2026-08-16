@@ -28,7 +28,10 @@ def threads(live_engine: AsyncEngine) -> ThreadRepository:
 async def stranger(live_engine: AsyncEngine) -> User:
     """另一个账号。越权那几条用它，而不是编一个不存在的 uuid。"""
     return await UserRepository(live_engine).create(
-        name=f"stranger-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.TEACHER
+        name=f"stranger-{uuid4().hex[:8]}",
+        email=f"{uuid4().hex[:8]}@zuel.edu.cn",
+        password_hash=FAKE_HASH,
+        role=UserRole.TEACHER,
     )
 
 

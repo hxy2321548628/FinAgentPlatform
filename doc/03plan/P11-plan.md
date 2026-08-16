@@ -291,4 +291,78 @@ broker 出 `GET /stat`（`pool.size()` / `max_container`），api 出 `GET /api/
 
 ## 8. 实施记录
 
-> 开工后回填。
+### 8.1 步骤一：修法是外层再套一次上下文
+
+**先复现，再改。** 写了个最小复现脚本，用同一个回调、同一份 `attribution()`，把三条路径并排跑一遍（真实 `ChatDeepSeek`，三次最便宜的调用）：
+
+| 路径 | 结果 |
+|---|---|
+| ① 裸模型 `model.ainvoke` | ✅ GENERATION 带得上 `user_id` |
+| ② `create_agent` 建图后 `ainvoke` | ❌ **只有 CHAIN 带得上**，GENERATION 是空的 |
+| ③ 外层套 `propagate_attributes` 再走图 | ✅ GENERATION 也带上了（3 条 observation，含 1 条 GENERATION） |
+
+②确认了 §2.2 的判断：机制没坏，是在真实 async 路径上丢的。`CallbackHandler` 只在
+`on_chain_start` 的 `parent_run_id is None` 那一支 `__enter__()`，而 LangGraph 随后
+在别的 async 任务里调模型 —— 根上进的 OTel 上下文传不进去。
+
+落点是 `agent/factory.py` 的 `_astream`：把整个 `graph.astream` 包进
+`propagation(thread_id, user_id)`。没配 Langfuse 时不进（`propagate_attributes`
+要一个构造过的全局客户端）。
+
+> `as_baggage=True` 试都不必试：它是给跨进程用的，会把值塞进所有出站请求的 HTTP
+> 头，SDK 为此专门标了安全警告。我们是单进程内的 async 边界问题。
+
+### 8.2 步骤三：两处与计划写的不一样
+
+**一、MCP 那 24 条是夹具，不是资产。** 计划 §5 写的是「置空而不是删行 —— MCP 目录是
+平台资产」。实际查下来，24 条全是 P10 验收造的，URL 都指向 `host.docker.internal:8931`；
+何况 `submitted_by` 是 `NOT NULL`，本来也置不成空。改为整行删，只有 `reviewed_by`
+那一侧留行抹人。
+
+**二、checkpoint 的 `thread_id` 格式对不上，第一次跑漏了 5766 条。**
+它存的是 32 位无连字符 hex，而 `uuid::text` 出来是 36 位带连字符 —— 直接比一条都
+匹配不上，**而 `DELETE 0` 不报错**。回头按「主人还在不在」反向清才补上。
+`deploy/purge-test-account.sql` 里已改成一次写对的形式。
+
+实删：635 账号、2248 会话、734 run、277610 事件、179 agent、40 skill、84 组、24 条 MCP。
+删前两次全库备份（各 118M）。
+
+### 8.3 计划里没写、实际必须做的一步
+
+**Langfuse 用量查询模块（`app/usage/langfuse.py`）。** 计划 §5 步骤七只说了「前端接
+Langfuse 聚合」，但前端拿不到凭据也跨不了域 —— 中间必须有一层。补了 `app/usage/`
+与 `GET /api/usage/me` / `GET /api/usage/ranking` 两个端点。
+
+`GET /api/admin/usage` 曾在 2026-08-13 撤除，这次回来的**不是同一个东西**：数据源是
+Langfuse 而不是本地账本，路径也换到了 `/api/usage/ranking`。
+
+其中一条实现细节值得记：**按 `userId` 分组必须同时给 `config.row_limit` 与降序的
+`orderBy`**，缺任一样 Langfuse 直接 400。它的文档写的是「不能用它分组」，而错误信息
+说的是「要多带两个参数」—— 照文档写会白白砍掉一个做得到的功能。单测里锁住了这一条。
+
+### 8.4 顺带清掉的三处假数据
+
+计划只列了五个页面，实施时又发现三处同类问题：
+
+- **`Settings.tsx` 的「模型配置」整节**：假的 API key（`sk-••••…Ax1m`）、假的单价、
+  点了没有任何效果的「保存」与「测试连接」。模型是平台级配置（`.env`），教师既改不了
+  也不该看见 key。整节删掉，Settings 只留用量与账号两块。
+- **`AdminSystem.tsx` 的「服务状态」四行**：写死的「● 在线」，其中 MinIO 已于
+  2026-08-13 撤除。四行都删了 —— 它们真挂了的时候这一页本身也打不开，一个恒为真的
+  绿点回答不了任何问题。改成指向 `docker logs` 的排障入口。
+- **`Register.tsx` 缺邮箱字段**：后端 `email` 一旦 `NOT NULL`，不改前端就是注册直接坏掉。
+
+### 8.5 打穿的历史用例，与它们说明的事
+
+后端 54 处、前端 4 处测试因为签名变化而红，全部是「加了必填字段」的机械适配。
+其中两处值得记：
+
+- **`verify.sh` 的 `make_user()` 直接写 SQL 插 `users`**，不走任何端点。加了 `NOT NULL`
+  的 `email` 之后那条 INSERT 会失败，**而症状出现在后面的登录那一步**（「登不进去」），
+  不指向造号。已补上。这正是 §6 回归关系里预判到的那一条。
+- **`app_test.py` 锁着完整的 API 路径清单**，加三个端点就红。这是个好设计 ——
+  它逼着每一次 API 表面的变化都被看见一次。
+
+### 8.6 收尾
+
+> 待验收跑完后回填。

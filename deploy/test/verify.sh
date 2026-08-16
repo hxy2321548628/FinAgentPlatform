@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 平台回归验收：P0–P10 当前 54 条判据，一个文件跑完。
+# 平台回归验收：P0–P11 当前 61 条判据，一个文件跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
@@ -10,17 +10,17 @@
 # 常用跑法：
 #
 #   bash deploy/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
-#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 37 条，约 30 分钟
+#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 42 条，约 30 分钟
 #
 # **默认全跑，不分 phase，也没有挑某一期跑的参数** —— P6 决策 §L2 的定案。
 # 保留的是 `SKIP_LLM` / `SKIP_HOSTILE` 两个开关：它们分的是**成本**（要不要花钱、
 # 要不要 root），不是期次。按期挑着跑，等于把刚拆掉的那层级联结构又装回来，
 # 还多一条「以为全验了其实只验了一期」的路。
 #
-# 54 条里 **17 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
+# 61 条里 **19 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
 # P2① 与 P3① 各要一次真实分析，P6①、P7③、P8① 与 P8③ 各要两次真实分析，
 # P9①与 P9② 共用两次真实分析，P9⑤另要一次便宜分析，P10① 要两次、P10⑦ 要一次，
-# P1① 那四条破坏性测试要 root。其余 37 条全免费。
+# P1① 那四条破坏性测试要 root。其余 42 条全免费。
 #
 # ---------------------------------------------------------------------------
 # **P7 那一组是 2026-08-14 随本期开发一起加的**，六条：三档可见性、审核闸门、
@@ -320,8 +320,11 @@ make_user() {
 from auth.password import PasswordHasher
 print(PasswordHasher().hash('$password'))" | tr -d '\r')"
     [[ -n $hashed ]] || { echo "算不出口令哈希，api 容器有问题" >&2; return 1; }
-    psql_query "INSERT INTO users (id, name, password_hash, role, is_active, created_at)
-         VALUES (gen_random_uuid(), '$name', '$hashed', '$role', true, now())
+    # **email 是 P11 的 0015 加的 NOT NULL 列**，不给就整条插不进去，
+    # 而症状会出现在后面的登录那一步（「登不进去」），不指向造号。
+    # 用户名本身全库唯一，拼出来的邮箱因此也唯一
+    psql_query "INSERT INTO users (id, name, email, password_hash, role, is_active, created_at)
+         VALUES (gen_random_uuid(), '$name', '$name@verify.local', '$hashed', '$role', true, now())
          ON CONFLICT (name) DO NOTHING;" >/dev/null
     exist="$(psql_query "SELECT count(*) FROM users WHERE name = '$name';" | tr -d '[:space:]')"
     [[ $exist == 1 ]] || { echo "账号 $name 没建出来（库里有 ${exist:-?} 行）" >&2; return 1; }
@@ -4628,6 +4631,290 @@ elif sudo bash "${BASH_SOURCE[0]}" "$HOSTILE_ENTRY" \
     pass "四条全过：宿主机的内存、磁盘与进程数都回到了基线"
 else
     fail "破坏性测试未全过，详见上面的输出"
+fi
+end
+
+
+# ===========================================================================
+# P11：用量归属、账号补全与沙箱池状态
+# ===========================================================================
+#
+# **这一组盯的都是「接口通了但答案是 0」这种形状。** P11 开工时量到的现状是：
+# Langfuse 的接口全部返回 200、有数据、结构正确，而按用户切出来每个人都是 0 ——
+# 身份只挂在根 span 上，token 全在没有主人的 GENERATION 上。一条只验
+# 「HTTP 200」或「字段存在」的判据在那种状态下会全绿。
+
+# 本组自己的账号，与 P7 那批分开 —— 配额判据会把某个人的额度调到极小，
+# 借别人的号来做会让后面的判据莫名其妙地撞上配额
+P11_TAG="p11-$$"
+JAR_P11_A="$WORK/p11-a.jar"
+JAR_P11_ADMIN="$WORK/p11-admin.jar"
+P11_READY=0
+P11_SETUP_NOTE=""
+P11_USER_A=""
+
+if P11_USER_A="$(open_session "$JAR_P11_A" teacher "$P11_TAG-a")" &&
+    open_session "$JAR_P11_ADMIN" admin "$P11_TAG-admin" >/dev/null; then
+    P11_READY=1
+else
+    P11_SETUP_NOTE="P11 的账号没开出来"
+fi
+
+# 向 Langfuse 直接查一个人的用量。**不经平台**：平台那条路正是要验的东西，
+# 用它来验它自己等于什么都没验
+p11_langfuse_generation_tokens() {
+    local user_id="$1"
+    in_api python -c "
+import json, os, urllib.parse, urllib.request
+from base64 import b64encode
+from datetime import UTC, datetime, timedelta
+
+base = os.environ.get('LANGFUSE_BASE_URL', '').rstrip('/')
+public, secret = os.environ.get('LANGFUSE_PUBLIC_KEY', ''), os.environ.get('LANGFUSE_SECRET_KEY', '')
+if not (base and public and secret):
+    print('NOCONFIG')
+    raise SystemExit(0)
+
+query = {
+    'view': 'observations',
+    'metrics': [{'measure': 'totalTokens', 'aggregation': 'sum'}, {'measure': 'count', 'aggregation': 'count'}],
+    'filters': [
+        {'column': 'userId', 'operator': '=', 'value': '$user_id', 'type': 'string'},
+        {'column': 'type', 'operator': '=', 'value': 'GENERATION', 'type': 'string'},
+    ],
+    'fromTimestamp': (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+    'toTimestamp': datetime.now(UTC).isoformat(),
+}
+url = base + '/api/public/v2/metrics?' + urllib.parse.urlencode({'query': json.dumps(query)})
+auth = b64encode(f'{public}:{secret}'.encode()).decode()
+request = urllib.request.Request(url, headers={'Authorization': f'Basic {auth}'})
+try:
+    with urllib.request.urlopen(request, timeout=30) as response:
+        rows = json.loads(response.read()).get('data', [])
+except Exception as error:
+    print(f'ERROR {error}')
+    raise SystemExit(0)
+row = rows[0] if rows else {}
+print(f\"{int(row.get('sum_totalTokens') or 0)} {int(row.get('count_count') or 0)}\")
+" 2>/dev/null | tr -d '\r'
+}
+
+# ------------------------------------------ P11① 身份真的落到了 GENERATION 上
+begin "P11①" "一次真实分析之后，该用户名下的 GENERATION 有 token（不是 0）"
+
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    undone "SKIP_LLM=1，这条要一次真实分析"
+elif (( ! P11_READY )); then
+    fail "前置没就绪（$P11_SETUP_NOTE）"
+else
+    P11_PROBE="$(p11_langfuse_generation_tokens "$P11_USER_A")"
+    if [[ $P11_PROBE == NOCONFIG ]]; then
+        undone "api 容器里没配 Langfuse，用量归属验不了"
+    else
+        THREAD_P11="$(new_thread "$JAR_P11_A")"
+        RUN_P11="$(api "$JAR_P11_A" -X POST "$BASE_URL/api/threads/$THREAD_P11/runs" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -nc '{content:"用一句话说明什么是夏普比率，不要写代码、不要建文件。"}')" | jq -r .run_id)"
+        if [[ -z $RUN_P11 || $RUN_P11 == null ]]; then
+            fail "P11 的分析没提交上去"
+        elif ! wait_status "$JAR_P11_A" "$RUN_P11" succeeded "$RUN_WINDOW"; then
+            fail "P11 的分析没跑到 succeeded（当前 $(run_status "$JAR_P11_A" "$RUN_P11")）"
+        else
+            # Langfuse 的摄入是异步的，等它落库再查
+            sleep 25
+            read -r P11_TOKENS P11_COUNT <<<"$(p11_langfuse_generation_tokens "$P11_USER_A")"
+            info "该用户名下 GENERATION：$P11_COUNT 条，合计 ${P11_TOKENS} token"
+            # **三条缺一不可。** 只验「有 observation」的话，开工前那个状态
+            # （只捞得到一条 CHAIN、token 为 0）也会绿
+            if (( ${P11_COUNT:-0} <= 0 )); then
+                fail "按 userId 一条 GENERATION 都捞不到 —— 身份还是没传到模型那一层"
+            elif (( ${P11_TOKENS:-0} <= 0 )); then
+                fail "GENERATION 捞得到但 token 是 0 —— 用量仍然归不到人头上"
+            else
+                pass "身份落到了 GENERATION 上：$P11_COUNT 条、${P11_TOKENS} token"
+            fi
+            # 平台自己那份账也要对得上（P11②）
+            P11_RUNS_TOKENS="$(psql_query "SELECT COALESCE(SUM(tokens_uncached + tokens_output), 0)
+                FROM runs WHERE id = '$RUN_P11';" | tr -d '[:space:]')"
+        fi
+    fi
+fi
+end
+
+# ------------------------------------------ P11② 两份账目同量级
+begin "P11②" "Langfuse 与 runs 表对同一次分析给出同量级的 token"
+
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    undone "SKIP_LLM=1，这条依赖 P11① 那次真实分析"
+elif [[ -z ${P11_TOKENS:-} || -z ${P11_RUNS_TOKENS:-} ]]; then
+    undone "P11① 没跑成，没有可对账的数"
+else
+    # **不验相等，只验同量级。** 两边的口径本来就不同：runs 表记的是
+    # `tokens_uncached + tokens_output`（cache 命中不计，见 quota/usage.py），
+    # Langfuse 记的是 input 全量 + output。要求相等的判据一定会红，
+    # 而红的原因是口径而不是缺陷
+    info "Langfuse=${P11_TOKENS}  runs 表=${P11_RUNS_TOKENS}"
+    if (( P11_RUNS_TOKENS <= 0 )); then
+        fail "runs 表里这次 run 的 token 是 0 —— 配额闸门读的就是它"
+    elif (( P11_TOKENS * 10 < P11_RUNS_TOKENS || P11_RUNS_TOKENS * 10 < P11_TOKENS )); then
+        fail "两份账差了一个数量级以上，其中一份多半没在记"
+    else
+        pass "两份账同量级，各自都不是 0"
+    fi
+fi
+end
+
+# ------------------------------------------ P11③ 平台的用量端点答得出这个人的用量
+begin "P11③" "GET /api/usage/me 给出的是真数，且与 Langfuse 一致"
+
+if (( ! P11_READY )); then
+    fail "前置没就绪（$P11_SETUP_NOTE）"
+else
+    P11_MINE="$(api "$JAR_P11_A" "$BASE_URL/api/usage/me")"
+    if ! jq -e '.available' <<<"${P11_MINE:-null}" >/dev/null 2>&1; then
+        undone "api 侧没接 Langfuse（available=false），这条验不了"
+    elif [[ ${SKIP_LLM:-0} == 1 ]]; then
+        # 没跑过分析就没有可比的数，但端点本身通了
+        pass "端点接上了账本（available=true）"
+    else
+        P11_MINE_TOKENS="$(jq -r '.tokens' <<<"$P11_MINE")"
+        info "/api/usage/me 报 ${P11_MINE_TOKENS} token"
+        if (( ${P11_MINE_TOKENS:-0} <= 0 )); then
+            fail "端点报 0 —— 与 P11① 直接查 Langfuse 得到的 ${P11_TOKENS:-?} 对不上"
+        else
+            pass "端点报的是真数：${P11_MINE_TOKENS} token"
+        fi
+    fi
+fi
+end
+
+# ------------------------------------------ P11④ 邮箱能当账号登录
+begin "P11④" "同一个账号用用户名与邮箱各登一次，拿到同一个 user_id"
+
+if (( ! P11_READY )); then
+    fail "前置没就绪（$P11_SETUP_NOTE）"
+else
+    P11_MAIL_NAME="zuel-$P11_TAG-mail"
+    P11_MAIL_ADDR="$P11_MAIL_NAME@verify.local"
+    P11_MAIL_PASS="zuel-secret-$$"
+    if ! make_user "$P11_MAIL_NAME" "$P11_MAIL_PASS" teacher; then
+        fail "邮箱登录用的账号没造出来"
+    else
+        JAR_P11_BY_NAME="$WORK/p11-by-name.jar"
+        JAR_P11_BY_MAIL="$WORK/p11-by-mail.jar"
+        if ! login "$P11_MAIL_NAME" "$P11_MAIL_PASS" "$JAR_P11_BY_NAME"; then
+            fail "用用户名登不进去"
+        elif ! login "$P11_MAIL_ADDR" "$P11_MAIL_PASS" "$JAR_P11_BY_MAIL"; then
+            fail "用邮箱登不进去 —— 第二把钥匙没生效"
+        else
+            P11_ID_BY_NAME="$(api "$JAR_P11_BY_NAME" "$BASE_URL/api/auth/me" | jq -r .id)"
+            P11_ID_BY_MAIL="$(api "$JAR_P11_BY_MAIL" "$BASE_URL/api/auth/me" | jq -r .id)"
+            if [[ -z $P11_ID_BY_MAIL || $P11_ID_BY_MAIL == null ]]; then
+                fail "邮箱登进去了但拿不到身份"
+            elif [[ $P11_ID_BY_NAME != "$P11_ID_BY_MAIL" ]]; then
+                fail "两把钥匙开出了不同的人（$P11_ID_BY_NAME vs $P11_ID_BY_MAIL）"
+            else
+                pass "两种写法登的是同一个账号：$P11_ID_BY_MAIL"
+            fi
+        fi
+    fi
+fi
+end
+
+# ------------------------------------------ P11⑤ 配额改得动，且闸门真读它
+begin "P11⑤" "后台把日配额调到极小之后，那个人提交分析被 QUOTA_EXCEEDED 挡下"
+
+if (( ! P11_READY )); then
+    fail "前置没就绪（$P11_SETUP_NOTE）"
+else
+    JAR_P11_Q="$WORK/p11-quota.jar"
+    if ! P11_USER_Q="$(open_session "$JAR_P11_Q" teacher "$P11_TAG-q")"; then
+        fail "配额判据的账号没开出来"
+    else
+        # **1 个 token 的额度**：任何一次分析都会超，而这个数是管理员刚写进去的
+        P11_PATCH_CODE="$(code "$JAR_P11_ADMIN" -X PATCH "$BASE_URL/api/admin/users/$P11_USER_Q" \
+            -H 'Content-Type: application/json' -d '{"quota_tokens_daily":1}')"
+        P11_READBACK="$(api "$JAR_P11_ADMIN" "$BASE_URL/api/admin/users" |
+            jq -r --arg id "$P11_USER_Q" '.[] | select(.id == $id) | .quota_tokens_daily')"
+        if [[ $P11_PATCH_CODE != 200 ]]; then
+            fail "改配额返回 $P11_PATCH_CODE"
+        elif [[ $P11_READBACK != 1 ]]; then
+            fail "配额没写进去（回读是 ${P11_READBACK:-空}）"
+        else
+            # **只验回读是代理指标。** 字段写进去了不等于闸门读的是它 ——
+            # 必须一路验到提交被拒
+            THREAD_P11_Q="$(new_thread "$JAR_P11_Q")"
+            P11_Q_BODY="$(body "$JAR_P11_Q" -X POST "$BASE_URL/api/threads/$THREAD_P11_Q/runs" \
+                -H 'Content-Type: application/json' -d '{"content":"随便算一下 1+1"}')"
+            P11_Q_CODE="$(jq -r '.error.code // empty' <<<"${P11_Q_BODY:-null}")"
+            info "提交返回的错误码：${P11_Q_CODE:-（没有错误，提交成功了）}"
+            if [[ $P11_Q_CODE == QUOTA_EXCEEDED ]]; then
+                pass "配额闸门读的就是刚写进去那一列"
+            else
+                fail "配额调到 1 之后仍然提交得上去 —— 那个字段没有被闸门读到"
+            fi
+        fi
+    fi
+fi
+end
+
+# ------------------------------------------ P11⑥ 沙箱池的数字来自 broker
+begin "P11⑥" "占一个沙箱前后，/api/admin/system 的 in_use 差值为 1"
+
+if (( ! P11_READY )); then
+    fail "前置没就绪（$P11_SETUP_NOTE）"
+else
+    P11_SYS_BEFORE="$(api "$JAR_P11_ADMIN" "$BASE_URL/api/admin/system")"
+    P11_CAP="$(jq -r '.capacity' <<<"${P11_SYS_BEFORE:-null}")"
+    P11_IN_BEFORE="$(jq -r '.in_use' <<<"${P11_SYS_BEFORE:-null}")"
+    if ! jq -e '.broker_reachable == true' <<<"${P11_SYS_BEFORE:-null}" >/dev/null 2>&1; then
+        fail "api 说 broker 不可达 —— 这一页拿不到真数"
+    elif (( ${P11_CAP:-0} <= 0 )); then
+        fail "容量报 0，那不是一个真的池"
+    else
+        # 借一个沙箱：跑一次不花钱的文件工具就会让 broker 起容器
+        THREAD_P11_S="$(new_thread "$JAR_P11_A")"
+        api "$JAR_P11_A" -X POST "$BASE_URL/api/threads/$THREAD_P11_S/files/directory" \
+            -H 'Content-Type: application/json' -d '{"path":"probe"}' >/dev/null 2>&1 || true
+        in_broker python -c "
+import httpx
+httpx.post('http://127.0.0.1:8100/threads/$THREAD_P11_S/sandbox',
+           json={'holder': 'p11-probe'}, timeout=120)" >/dev/null 2>&1 || true
+        sleep 3
+        P11_IN_AFTER="$(api "$JAR_P11_ADMIN" "$BASE_URL/api/admin/system" | jq -r '.in_use')"
+        info "in_use：$P11_IN_BEFORE → $P11_IN_AFTER（容量 $P11_CAP）"
+        if (( ${P11_IN_AFTER:-0} > ${P11_IN_BEFORE:-0} )); then
+            pass "数字跟着真实占用动了，不是写死的"
+        else
+            undone "这一轮没能占上沙箱（$P11_IN_BEFORE → $P11_IN_AFTER），没触发到要测的场景"
+        fi
+    fi
+fi
+end
+
+# ------------------------------------------ P11⑦ 场景与智能体在目录里分得开
+begin "P11⑦" "广场只出现没挂子智能体的，挂了的只出现在场景库"
+
+if (( ! P11_READY )); then
+    fail "前置没就绪（$P11_SETUP_NOTE）"
+else
+    # 判据是「有没有挂子智能体」这个客观事实（P6-decision G2），
+    # 因此直接问后端要两份列表，看有没有一条同时出现在该出现与不该出现的地方
+    P11_AVAILABLE="$(api "$JAR_P11_A" "$BASE_URL/api/agents/available")"
+    P11_CANDIDATES="$(api "$JAR_P11_A" "$BASE_URL/api/agents/subagent-candidates")"
+    if [[ -z $P11_AVAILABLE || $P11_AVAILABLE == null ]]; then
+        fail "取不到可用列表"
+    else
+        # 候选里但凡有一个自己挂着子智能体，「一层限制」与「场景不能当子智能体」
+        # 就同时破了 —— 这条判据同时守着 P9③
+        P11_BAD="$(jq '[.[] | select((.subagent_refs // []) | length > 0)] | length' <<<"${P11_CANDIDATES:-[]}")"
+        info "候选 $(jq 'length' <<<"${P11_CANDIDATES:-[]}") 个，其中挂着子智能体的 $P11_BAD 个"
+        if (( ${P11_BAD:-1} != 0 )); then
+            fail "子智能体候选里混进了场景（$P11_BAD 个）"
+        else
+            pass "候选里全是没挂子智能体的，场景没混进来"
+        fi
+    fi
 fi
 end
 
