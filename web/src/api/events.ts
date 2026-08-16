@@ -190,15 +190,29 @@ function isSupportedEventName(value: unknown): value is SupportedEventName {
   return typeof value === 'string' && (SUPPORTED_EVENT_NAMES as readonly string[]).includes(value)
 }
 
+/**
+ * 校验一个已经解析好的事件对象。
+ *
+ * 事件流给的是 SSE 报文里的一行文本，一次性回放给的是 JSON 里的一个对象 ——
+ * 两条路的载荷形状是同一份契约，因此校验只有这一处。
+ */
+export function validateRunEvent(value: unknown): RunEvent | null {
+  if (!isRecord(value)) return null
+  const eventName = value.type
+  if (!isSupportedEventName(eventName)) return null
+  if (!isInteger(value.ts) || !isNonEmptyString(value.run_id)) return null
+  if (!isStringArray(value.path) || !isRecord(value.data)) return null
+  if (!isSupportedEventData(eventName, value.data)) return null
+  return value as unknown as RunEvent
+}
+
 export function parseRunEvent(message: NamedRunEventMessage): RunEvent | null {
   if (!isSupportedEventName(message.eventName)) return null
   try {
     const parsed: unknown = JSON.parse(message.data)
+    // event 行与 data 里的 type 必须一致：不一致时按哪一个渲染都是猜
     if (!isRecord(parsed) || parsed.type !== message.eventName) return null
-    if (!isInteger(parsed.ts) || !isNonEmptyString(parsed.run_id)) return null
-    if (!isStringArray(parsed.path) || !isRecord(parsed.data)) return null
-    if (!isSupportedEventData(message.eventName, parsed.data)) return null
-    return parsed as unknown as RunEvent
+    return validateRunEvent(parsed)
   } catch {
     return null
   }

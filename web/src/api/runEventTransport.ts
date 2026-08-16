@@ -6,6 +6,13 @@ import {
 import type { RunEventTransport } from './events'
 import { notifyUnauthorized } from './request'
 
+// 重连间隔的起点与上限。**必须自己给，不能用库的默认值** —— fetch-event-source
+// 的 DefaultRetryInterval 是固定 1000ms，而每次重连都消耗一个频率限流名额：
+// 一旦撞上 429，它每秒撞一次，60 秒的滑动窗口就再也清不空，闸门自己把自己锁死。
+// 上限取 30 秒，压在限流窗口的量级上，重连仍然及时而不再喂饱计数器。
+const INITIAL_RETRY_MS = 1000
+const MAX_RETRY_MS = 30_000
+
 class RunEventTransportError extends Error {
   readonly retryable: boolean
   readonly status: number
@@ -51,6 +58,7 @@ export const runEventTransport: RunEventTransport = {
     const eventNames = new Set<string>(options.eventNames)
     let cursor = options.cursor
     let sawEventFrame = false
+    let retryDelay = INITIAL_RETRY_MS
 
     const headers: Record<string, string> = { accept: EventStreamContentType }
     if (cursor) headers['last-event-id'] = cursor
@@ -81,6 +89,9 @@ export const runEventTransport: RunEventTransport = {
           )
         }
         sawEventFrame = false
+        // 连上了就把退避清零：这一条是「网络抖了一下」与「持续被拒」的分界，
+        // 不清的话一次偶发失败会让后续每次重连都背着上一轮攒下的间隔
+        retryDelay = INITIAL_RETRY_MS
         options.onOpen?.()
       },
       onmessage(message) {
@@ -102,6 +113,9 @@ export const runEventTransport: RunEventTransport = {
       onerror(error) {
         options.onError?.(error)
         if (error instanceof RunEventTransportError && !error.retryable) throw error
+        const interval = retryDelay
+        retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS)
+        return interval
       },
     }).catch(() => undefined)
 

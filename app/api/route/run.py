@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from api.error import invalid, not_found
 from api.platform import Platform, get_platform
-from api.schema import ApproveRequest, RunResponse
+from api.schema import ApproveRequest, ReplayedEvent, RunReplayResponse, RunResponse
 from api.security import CurrentUser
 from api.sse import heartbeat_stream
 from event.model import (
@@ -22,11 +22,16 @@ from event.model import (
 from log import run_context
 from run.decision import DecisionError, check
 from run.log import InvalidEventIdError, parse_event_id
+from run.replay import collapse
 from run.repository import Run
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/runs", tags=["run"])
+
+# 事件流单独一个路由器，**只为换掉限流那一道依赖**（登录仍然要求，见 `api/app.py`）。
+# 不能靠在端点里判断路径来豁免：那种写法是隐式的，加一条流式端点就会漏掉一个。
+stream_router = APIRouter(prefix="/runs", tags=["run"])
 
 SSE_MEDIA_TYPE = "text/event-stream"
 
@@ -55,7 +60,7 @@ async def get_run(
     )
 
 
-@router.get("/{run_id}/events")
+@stream_router.get("/{run_id}/events")
 async def stream_events(
     run_id: str,
     current: CurrentUser,
@@ -87,6 +92,31 @@ async def stream_events(
 
     body = heartbeat_stream(platform.log.follow(run_id, after=cursor, terminal=run.status in TERMINAL_STATUS))
     return StreamingResponse(body, media_type=SSE_MEDIA_TYPE, headers=SSE_HEADER)
+
+
+@router.get("/{run_id}/replay")
+async def replay_run(
+    run_id: str,
+    current: CurrentUser,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> RunReplayResponse:
+    """一次取回一个 run 的全部过程。
+
+    **给已经结束的那些 run 用。** 它们不会再产生事件，而 SSE 是为「新事件一产生
+    就推过来」建的：拿一条长连接去读一份不再变化的历史，断了还要重连，重连又要过
+    一次频率闸 —— 一条反复重连的流足以把整个界面的额度吃光。这条端点读完即止，
+    失败就是失败，前端还能按普通请求缓存它。正在跑的那一条仍旧走 `/events`。
+
+    **相邻的同类增量已经合并**：一轮实测 10873 条、2.4 MB，逐条给既慢又要让前端
+    把同一段文本追加上万次。合并只动 `token` 与 `reasoning`，且只合并相邻的同 path
+    同类那些，前端拼出来的结果与合并前完全一样。
+
+    事件有 180 天保留期而 `runs` 那一行没有，**过期之后这里是空列表而不是错误** ——
+    那是「太久远了」，不是「出问题了」。
+    """
+    await _require_run(platform, run_id, current.user_id)
+    logged = collapse(await platform.log.read(run_id))
+    return RunReplayResponse(items=[ReplayedEvent(id=one.id, event=one.event) for one in logged])
 
 
 @router.post("/{run_id}/cancel", status_code=status.HTTP_202_ACCEPTED)

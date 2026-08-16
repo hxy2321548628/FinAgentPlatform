@@ -162,7 +162,7 @@ describe('runEventTransport', () => {
 
     const responseError = await init.onopen(new Response(null, { status: 503 })).catch(caught => caught)
     expect(responseError).toMatchObject({ status: 503, retryable: true })
-    expect(init.onerror(responseError)).toBeUndefined()
+    expect(init.onerror(responseError)).toBe(1000)
 
     let closeError: unknown
     try {
@@ -171,8 +171,38 @@ describe('runEventTransport', () => {
       closeError = caught
     }
     expect(closeError).toMatchObject({ status: 0, retryable: true })
-    expect(init.onerror(closeError)).toBeUndefined()
+    expect(init.onerror(closeError)).toBe(2000)
     expect(onError).toHaveBeenCalledTimes(2)
+  })
+
+  // 每次重连都消耗一个限流名额，而库的默认间隔是固定 1000ms —— 撞上 429 之后
+  // 它每秒撞一次，60 秒滑动窗口就再也清不空，闸门自己把自己锁死。
+  it('backs off exponentially so a rate-limited stream stops feeding the limiter', async () => {
+    connect()
+    const init = capturedInit()
+    const refused = async () => init.onopen(new Response(null, { status: 429 })).catch(caught => caught)
+
+    const delays: unknown[] = []
+    for (let attempt = 0; attempt < 7; attempt += 1) {
+      delays.push(init.onerror(await refused()))
+    }
+
+    expect(delays).toEqual([1000, 2000, 4000, 8000, 16000, 30000, 30000])
+  })
+
+  it('resets the backoff once a connection opens successfully', async () => {
+    connect()
+    const init = capturedInit()
+
+    init.onerror(await init.onopen(new Response(null, { status: 429 })).catch(caught => caught))
+    expect(init.onerror(await init.onopen(new Response(null, { status: 429 })).catch(caught => caught))).toBe(2000)
+
+    await init.onopen(new Response(null, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    }))
+
+    expect(init.onerror(await init.onopen(new Response(null, { status: 429 })).catch(caught => caught))).toBe(1000)
   })
 
   it('retries a non-empty clean close then accepts an empty retry attempt', async () => {

@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI
 from api.error import install_handler
 from api.platform import Platform, build_platform
 from api.route import admin, agent, auth, file, group, mcp, review, run, skill, thread, usage
-from api.security import limit_by_user, require_user
+from api.security import limit_by_user, limit_stream_by_user, require_user
 from auth.bootstrap import ensure_first_admin
 from config import get_settings
 from log import configure
@@ -89,6 +89,13 @@ def create_app(platform: Platform | None = None) -> FastAPI:
             prefix=API_PREFIX,
             dependencies=[Depends(require_user), Depends(limit_by_user)],
         )
+    # 事件流：**登录照旧要求，只把限流换成它自己那本账**。长连接靠重连维持，
+    # 而每次重连都过一次闸 —— 与普通请求共用计数器时它会把界面的额度吃光
+    app.include_router(
+        run.stream_router,
+        prefix=API_PREFIX,
+        dependencies=[Depends(require_user), Depends(limit_stream_by_user)],
+    )
     return app
 
 

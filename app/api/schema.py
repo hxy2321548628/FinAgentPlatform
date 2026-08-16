@@ -5,8 +5,9 @@
 """
 
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Discriminator, EmailStr, Field
 
 from agent.config import (
     MAX_SYSTEM_PROMPT_LENGTH,
@@ -15,7 +16,7 @@ from agent.config import (
     SkillReference,
     SubagentReference,
 )
-from event.model import RunErrorCode, RunStatus
+from event.model import Event, RunErrorCode, RunStatus
 from group.model import JoinRequestStatus
 from preset.mcp import McpStatus, McpTransport
 from preset.model import ResourceKind, ReviewStatus, VersionStatus, Visibility
@@ -360,6 +361,25 @@ class RunPageResponse(BaseModel):
 
     items: list[RunHistoryResponse] = Field(description="按提交时间**从近到远**排，前端倒过来渲染")
     next_cursor: str | None = Field(description="取下一页（更早那些）要原样带回来的游标；为空表示翻到头了")
+
+
+class ReplayedEvent(BaseModel):
+    """回放里的一条事件：事件本身，加上它在日志里的位置。"""
+
+    id: str = Field(min_length=1, description="事件在日志里的位置，与 SSE 的 `id:` 行同源")
+    # 形状就是事件契约本身，**不在这里复述** —— 两条端点给的形状一旦分叉，
+    # 前端就得为同一种事件写两套校验
+    event: Annotated[Event, Discriminator("type")] = Field(description="事件本身，与 SSE 的 `data:` 行一模一样")
+
+
+class RunReplayResponse(BaseModel):
+    """一个 run 的全部过程，一次给完。
+
+    **相邻的同类增量已经合并**：实时流里 token 是逐个推的（打字机效果的前提），
+    翻旧账没有这个前提，而一轮实测上万条。合并后前端拼出来的文本完全一样。
+    """
+
+    items: list[ReplayedEvent] = Field(description="按发生顺序排列；事件已过保留期时为空列表")
 
 
 class UploadResponse(BaseModel):

@@ -1,8 +1,8 @@
 """三道闸在端点上的测试：各触发一次，三个 `code` 都要出现过。
 
-**只给 HTTP 429 是不够的**：三者的前端行为完全不同 —— 频率限制该自动退避重试，
-配额耗尽该提示明天再来，并发超限该提示先等已有任务跑完。因此这个文件断言的是
-`code`，不是状态码。
+**只给 HTTP 429 是不够的**：三者的前端行为完全不同 —— 频率限制该提示慢一点并
+**停手**（自动重试只会把一次误触发放大成三倍流量，而窗口是滑动的），配额耗尽该提示
+明天再来，并发超限该提示先等已有任务跑完。因此这个文件断言的是 `code`，不是状态码。
 
 **token 那道闸用「预置用量」触发，不靠真烧**：把当日已用量直接写到上限之上再提交
 一次。烧满一个真实日配额又慢又贵，而这里要验的是闸门与扣减口径，不是模型。
@@ -205,6 +205,36 @@ def test_rate_limit_reports_its_own_code(client: TestClient, live_cache: Redis) 
 
     assert response.status_code == 429
     assert response.json()["error"]["code"] == "RATE_LIMITED"
+
+
+def test_the_event_stream_spends_a_separate_allowance(client: TestClient, live_cache: Redis) -> None:
+    """事件流与普通请求各记各的账。
+
+    **断线重连是长连接的常态，而每次重连都要过这道闸。** 与普通请求共用一个计数器时，
+    一条反复重连的流就能把整个界面的额度吃光 —— 更糟的是它自持：重连速率高于窗口
+    清空的速度，闸门再也开不了，而症状是「点什么都是 429」，看不出源头在一条流上。
+
+    仍然给它一道闸（只是各算各的），否则开无限条流就没有任何东西拦得住。
+    """
+    _tighten_rate(client, live_cache, limit=1)
+
+    client.get(f"/api/runs/{uuid4().hex}/events")
+    refused = client.get(f"/api/runs/{uuid4().hex}/events")
+
+    assert refused.status_code == 429
+    assert refused.json()["error"]["code"] == "RATE_LIMITED"
+    # 流那边打满了，普通端点照常放行：不存在的 run 给 404 才说明它走到了越权检查
+    assert client.get(f"/api/runs/{uuid4().hex}").status_code == 404
+
+
+def test_ordinary_requests_do_not_starve_the_event_stream(client: TestClient, live_cache: Redis) -> None:
+    """反过来也要成立 —— 界面点得勤不该让正在跑的分析断掉画面。"""
+    _tighten_rate(client, live_cache, limit=1)
+
+    client.get(f"/api/runs/{uuid4().hex}")
+    assert client.get(f"/api/runs/{uuid4().hex}").status_code == 429
+
+    assert client.get(f"/api/runs/{uuid4().hex}/events").status_code == 404
 
 
 def test_login_is_rate_limited_too(

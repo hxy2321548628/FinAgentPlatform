@@ -28,7 +28,6 @@ describe('runEventTransport with the real fetch-event-source library', () => {
             if (!pulled) {
               pulled = true
               controller.enqueue(encoder.encode([
-                'retry: 0',
                 'id: 100-0',
                 'event: token',
                 'data: {"complete":true}',
@@ -65,7 +64,8 @@ describe('runEventTransport with the real fetch-event-source library', () => {
       onMessage,
     })
 
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    // 重连要先走完一轮退避（起点 1000ms），waitFor 的默认超时正好卡在那个边界上
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 3000 })
     expect(onMessage).toHaveBeenCalledOnce()
     expect(onMessage).toHaveBeenCalledWith({
       eventName: 'token',
@@ -86,7 +86,6 @@ describe('runEventTransport with the real fetch-event-source library', () => {
         start(controller) {
           if (requests.length === 1) {
             controller.enqueue(encoder.encode([
-              'retry: 0',
               'id: 200-0',
               'event: token',
               'data: {"prefix":true}',
@@ -110,8 +109,10 @@ describe('runEventTransport with the real fetch-event-source library', () => {
       onMessage,
     })
 
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-    await new Promise(resolve => window.setTimeout(resolve, 20))
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    // 第二次连接是正常收尾，不该再有第三次。**要等过一整轮退避才证明得了** ——
+    // 那次 onopen 成功已经把间隔清回 1000ms，等 20ms 什么都说明不了
+    await new Promise(resolve => window.setTimeout(resolve, 1200))
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(onError).toHaveBeenCalledOnce()
     expect(onMessage).toHaveBeenCalledOnce()

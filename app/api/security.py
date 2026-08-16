@@ -34,6 +34,13 @@ REVIEWER_ROLE = frozenset({UserRole.ADMIN, UserRole.REVIEWER})
 USER_RATE_KEY = "user"
 ADDRESS_RATE_KEY = "address"
 
+# 事件流单独一本账。**断线重连是长连接的常态，而每次重连都要过这道闸** ——
+# 与普通请求共用计数器时，一条反复重连的流会把整个界面的额度吃光，且它自持：
+# 重连快过窗口清空的速度，闸门就再也开不了。症状是「点什么都是 429」，
+# 而没有一处指得出源头是一条流。**仍旧限它**，只是各算各的 ——
+# 不限的话，开无限条流就没有任何东西拦得住。
+STREAM_RATE_KEY = "stream"
+
 # 拿不到来源地址时的兜底键。宁可把这一小撮请求算作同一个来源，也不放行不限流
 UNKNOWN_ADDRESS = "unknown"
 
@@ -136,6 +143,23 @@ async def limit_by_user(
         ApiError: 这个窗口内已经超限。
     """
     if not await platform.rate.allow(f"{USER_RATE_KEY}:{current.user_id}"):
+        raise rate_limited(RATE_LIMITED_MESSAGE)
+
+
+async def limit_stream_by_user(
+    current: CurrentUser,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> None:
+    """给事件流订阅限一次频率，走的是与普通请求分开的那本账。
+
+    Args:
+        current: 当前用户。
+        platform: 运行时。
+
+    Raises:
+        ApiError: 这个窗口内已经超限。
+    """
+    if not await platform.rate.allow(f"{STREAM_RATE_KEY}:{current.user_id}"):
         raise rate_limited(RATE_LIMITED_MESSAGE)
 
 

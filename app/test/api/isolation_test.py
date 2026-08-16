@@ -30,6 +30,7 @@ BORROWED_PATH = (
     "/api/threads/{thread_id}/files/raw?path=holdings.csv",
     "/api/runs/{run_id}",
     "/api/runs/{run_id}/events",
+    "/api/runs/{run_id}/replay",
     "/api/artifacts/{thread_id}/chart.png",
 )
 
