@@ -252,8 +252,6 @@ function Field({ label, required, hint, children }: { label: string; required?: 
   )
 }
 
-const outboundStyle: React.CSSProperties = { marginBottom: 10, padding: '9px 11px', border: '1px solid #FDE68A', borderRadius: 7, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 12, lineHeight: 1.6 }
-
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7,
   fontSize: 13, color: 'var(--text-primary)', background: 'var(--input-bg)',

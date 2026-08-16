@@ -114,7 +114,6 @@ export function McpLibrary() {
   return (
     <LibraryPage eyebrow="// MCP LIBRARY" title="MCP 库" description={`浏览管理员放行的外部 MCP Server，共 ${items.length} 个目录项`}>
       {/* <div style={{ padding: '0 36px' }}> */}
-        {/* <div role="note" style={outboundBannerStyle}>{DATA_LEAVES_CAMPUS}</div> */}
       {/* </div> */}
       <CatalogControls search={search} onSearch={setSearch} placeholder="搜索 MCP Server 名称、描述或工具名…" filters={[]} activeFilter="" onFilter={() => undefined} />
       <div style={{ padding: '0 36px 12px' }}>
@@ -153,7 +152,6 @@ export function McpLibrary() {
 function McpDetail({ item, onClose }: { item: McpServer; onClose: () => void }) {
   return (
     <Drawer title={item.name} subtitle={item.url} onClose={onClose}>
-      {/* <div role="note" style={{ ...outboundBannerStyle, marginBottom: 20 }}>{DATA_LEAVES_CAMPUS}</div> */}
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.75, marginBottom: 20 }}>{item.description || '（申请人没有写说明）'}</p>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
         <Info label="传输方式" value={item.transport === 'sse' ? 'SSE' : 'Streamable HTTP'} />
@@ -291,7 +289,6 @@ function formatBytes(bytes: number): string {
 const sectionTitle: React.CSSProperties = { fontSize: 12, fontWeight: 650, color: 'var(--text-primary)', marginBottom: 8 }
 const gridStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }
 const countStyle: React.CSSProperties = { padding: '20px 0 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }
-const outboundBannerStyle: React.CSSProperties = { padding: '10px 12px', border: '1px solid #FDE68A', borderRadius: 7, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 12, lineHeight: 1.6 }
 const applyButtonStyle: React.CSSProperties = { padding: '8px 14px', border: '1px solid var(--action-border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--action)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }
 const fieldStyle: React.CSSProperties = { width: '100%', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: 'var(--input-bg)', color: 'var(--text-primary)', boxSizing: 'border-box' }
 const hintTextStyle: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }

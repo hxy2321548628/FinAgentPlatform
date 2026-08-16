@@ -403,7 +403,7 @@ body {
   font-size: 0.9em;
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--code-bg, #F0F3F8);
+  background: var(--code-surface);
   border: 1px solid var(--border-light);
   color: var(--text-primary);
 }
@@ -413,7 +413,7 @@ body {
   margin: 10px 0;
   border: 1px solid var(--border-light);
   border-radius: 8px;
-  background: var(--code-bg, #F0F3F8);
+  background: var(--code-surface);
   overflow: hidden;
 }
 .code-block .shiki {
