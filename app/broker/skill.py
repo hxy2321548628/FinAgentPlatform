@@ -21,6 +21,14 @@ class SkillFile:
 
 
 @dataclass(frozen=True)
+class SkillVersionFile:
+    """Skill 发布版本里一个可浏览文件的元数据。"""
+
+    path: str
+    size: int
+
+
+@dataclass(frozen=True)
 class SkillReference:
     """一次 run 快照里冻结的 Skill 版本。"""
 
@@ -46,6 +54,30 @@ class SkillStore:
             destination = target.joinpath(*relative.parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
+
+    def list_version(self, skill_id: str, version: int) -> tuple[SkillVersionFile, ...]:
+        """列出一版 Skill 中的全部普通文件，不跟随符号链接。"""
+        root = self._existing_version(skill_id, version)
+        return tuple(
+            SkillVersionFile(path=source.relative_to(root).as_posix(), size=source.stat().st_size)
+            for source in sorted(root.rglob("*"))
+            if source.is_file() and not source.is_symlink()
+        )
+
+    def read_version_file(self, skill_id: str, version: int, path: str) -> bytes:
+        """读取一版 Skill 中的普通文件；路径只能位于该版本目录内。"""
+        root = self._existing_version(skill_id, version)
+        relative = _relative_file(path)
+        target = root.joinpath(*relative.parts)
+        if target.is_symlink() or not target.is_file():
+            raise FileNotFoundError(f"Skill 文件不存在：{path}")
+        return target.read_bytes()
+
+    def _existing_version(self, skill_id: str, version: int) -> Path:
+        root = self._version_path(skill_id, version)
+        if not root.is_dir():
+            raise FileNotFoundError(f"Skill 版本不存在：{skill_id}/{version}")
+        return root
 
     def align(self, workspace: Path, references: tuple[SkillReference, ...]) -> None:
         """把快照指定的版本全量对齐到 ``workspace/skill``。
@@ -118,6 +150,15 @@ class SkillStore:
         if version < 1:
             raise ValueError(f"Skill 版本必须大于 0：{version}")
         return self._root / identifier / str(version)
+
+
+def _relative_file(path: str) -> PurePosixPath:
+    relative = PurePosixPath(path)
+    if relative.is_absolute() or not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise ValueError(f"Skill 文件路径不合法：{path!r}")
+    if "\\" in path:
+        raise ValueError(f"Skill 文件路径不合法：{path!r}")
+    return relative
 
 
 def _normalized_files(files: tuple[SkillFile, ...]) -> tuple[tuple[PurePosixPath, bytes], ...]:

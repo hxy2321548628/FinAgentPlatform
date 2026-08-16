@@ -116,3 +116,32 @@ def test_align_fails_closed_when_a_stored_version_is_missing(tmp_path: Path) -> 
 
     with pytest.raises(FileNotFoundError):
         store.align(workspace.path(thread_id), _reference())
+
+
+def test_list_version_returns_recursive_file_metadata(tmp_path: Path) -> None:
+    store = SkillStore(tmp_path / "catalog")
+    _stored(store)
+
+    assert [(one.path, one.size) for one in store.list_version(SKILL_ID, VERSION)] == [
+        ("SKILL.md", len(SKILL_MD)),
+        ("notes/rule.txt", len(b"252 trading days")),
+    ]
+
+
+def test_read_version_file_returns_bytes_and_rejects_escape(tmp_path: Path) -> None:
+    store = SkillStore(tmp_path / "catalog")
+    _stored(store)
+
+    assert store.read_version_file(SKILL_ID, VERSION, "notes/rule.txt") == b"252 trading days"
+    with pytest.raises(ValueError, match="路径"):
+        store.read_version_file(SKILL_ID, VERSION, "../outside.txt")
+
+
+def test_read_version_file_does_not_follow_symlink(tmp_path: Path) -> None:
+    store = SkillStore(tmp_path / "catalog")
+    _stored(store)
+    root = tmp_path / "catalog" / SKILL_ID / str(VERSION)
+    (root / "escape").symlink_to(tmp_path / "outside.txt")
+
+    with pytest.raises(FileNotFoundError, match="文件不存在"):
+        store.read_version_file(SKILL_ID, VERSION, "escape")

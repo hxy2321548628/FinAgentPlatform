@@ -23,7 +23,7 @@ import { AGENT_TABS, AGENT_TAB_EMPTY, AGENT_TAB_LABEL, agentState, visibilityBad
  * **软删掉的不在这里显示。** 行还留在库里（run 快照指着它），但作者已经删过一次，
  * 再列出来只会让「我删掉的东西怎么还在」变成一通电话。
  */
-export function MyAgents() {
+export function MyAgents({ kind = 'agent' }: { kind?: 'agent' | 'scenario' }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [tab, setTab] = useState<AgentTab>('published')
@@ -31,12 +31,16 @@ export function MyAgents() {
   const [reviewingId, setReviewingId] = useState<string | null>(null)
 
   const mine = useQuery({ queryKey: agentKeys.mine(), queryFn: listMine })
-  // **这一页只管智能体，挂了子智能体的归「我的场景」** —— 同一批数据两个入口
+  const scenarioMode = kind === 'scenario'
+  const noun = scenarioMode ? '场景' : '智能体'
+  const createPath = scenarioMode ? '/workspace/my-scenarios/create' : '/workspace/my-agents/create'
+  const editPath = (id: string) => scenarioMode ? `/workspace/my-scenarios/${id}/edit` : `/workspace/my-agents/${id}/edit`
+  // **两个页面共用同一批数据**：挂了子智能体的是场景，否则是智能体。
   // 各看一半，判据是 P6-decision G2 那条客观事实
   const agents = (mine.data ?? []).filter(one => {
     if (one.is_deleted) return false
     const latest = one.versions.at(-1)
-    return latest === undefined || !isScenario(latest)
+    return latest === undefined ? !scenarioMode : isScenario(latest) === scenarioMode
   })
   const refresh = () => queryClient.invalidateQueries({ queryKey: agentKeys.all })
 
@@ -52,11 +56,11 @@ export function MyAgents() {
     <div style={{ flex: 1, overflowY: 'auto', padding: '32px 36px', background: 'var(--bg)' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28 }}>
         <div>
-          <div className="page-eyebrow">// MY AGENTS</div>
-          <h1 className="page-title">我的智能体</h1>
-          <p className="page-desc">发布一版之后组内才看得见；进广场要审核通过</p>
+          <div className="page-eyebrow">// {scenarioMode ? 'MY SCENARIOS' : 'MY AGENTS'}</div>
+          <h1 className="page-title">我的{noun}</h1>
+          <p className="page-desc">发布一版之后组内才看得见；进入{scenarioMode ? '场景库' : '广场'}要审核通过</p>
         </div>
-        <Button onClick={() => navigate('/workspace/my-agents/create')}>+ 创建智能体</Button>
+        <Button onClick={() => navigate(createPath)}>+ 创建{noun}</Button>
       </div>
 
       {mine.isPending && <div style={{ color: 'var(--text-muted)' }}>正在加载…</div>}
@@ -82,7 +86,7 @@ export function MyAgents() {
       {!mine.isPending && shown.length === 0 ? (
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '48px 20px', textAlign: 'center' }}>
           <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }}>{AGENT_TAB_EMPTY[tab]}</div>
-          <Button style={{ marginTop: 8 }} onClick={() => navigate('/workspace/my-agents/create')}>+ 创建智能体</Button>
+          <Button style={{ marginTop: 8 }} onClick={() => navigate(createPath)}>+ 创建{noun}</Button>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -112,7 +116,7 @@ export function MyAgents() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                  <Button variant="secondary" size="sm" onClick={() => navigate(`/workspace/my-agents/${agent.id}/edit`)}>编辑</Button>
+                  <Button variant="secondary" size="sm" onClick={() => navigate(editPath(agent.id))}>编辑</Button>
                   {state.draft && <Button variant="outline" size="sm" onClick={() => release.mutate(agent.id)} disabled={release.isPending}>发布 v{state.draft.version}</Button>}
                   {state.released && <Button variant="outline" size="sm" onClick={() => setSharingId(agent.id)}>共享设置</Button>}
                   {state.released && state.reviewStatus !== 'pending' && (
@@ -129,7 +133,7 @@ export function MyAgents() {
       )}
 
       {sharingAgent && <SharingDialog agent={sharingAgent} onClose={() => setSharingId(null)} onDone={() => { setSharingId(null); void refresh() }} />}
-      {reviewingAgent && <ReviewDialog agent={reviewingAgent} onClose={() => setReviewingId(null)} onDone={() => { setReviewingId(null); setTab('reviewing'); void refresh() }} />}
+      {reviewingAgent && <ReviewDialog agent={reviewingAgent} noun={noun} catalogName={scenarioMode ? '场景库' : '广场'} onClose={() => setReviewingId(null)} onDone={() => { setReviewingId(null); setTab('reviewing'); void refresh() }} />}
     </div>
   )
 }
@@ -183,16 +187,16 @@ function SharingDialog({ agent, onClose, onDone }: { agent: MyAgent; onClose: ()
 }
 
 /** 提审：**责任确认没勾就发不出去**，后端也拦一道。 */
-function ReviewDialog({ agent, onClose, onDone }: { agent: MyAgent; onClose: () => void; onDone: () => void }) {
+function ReviewDialog({ agent, noun, catalogName, onClose, onDone }: { agent: MyAgent; noun: string; catalogName: string; onClose: () => void; onDone: () => void }) {
   const [confirmed, setConfirmed] = useState(false)
   const state = agentState(agent)
   const submit = useMutation({ mutationFn: () => submitForReview(agent.id, confirmed), onSuccess: onDone })
 
   return (
-    <Dialog title={`提交「${agent.name}」审核`} onClose={onClose}>
+    <Dialog title={`提交${noun}「${agent.name}」审核`} onClose={onClose}>
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: 14 }}>
-        提交的是当前已发布的 <strong>v{state.released?.version}</strong>。审核通过之后这一版出现在广场上；
-        之后每改一版都要重新提审 —— 没审过的新版本不会自动上广场。
+        提交的是当前已发布的 <strong>v{state.released?.version}</strong>。审核通过之后这一版出现在{catalogName}；
+        之后每改一版都要重新提审 —— 没审过的新版本不会自动进入{catalogName}。
       </p>
       <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 14 }}>
         被拒不影响组内使用：审核管的是别人能不能看见，不是你能不能用。

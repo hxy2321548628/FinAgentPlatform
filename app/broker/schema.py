@@ -158,6 +158,26 @@ class StoreSkillVersionRequest(BaseModel):
     files: list[StoreSkillFile] = Field(min_length=1, description="已通过上传校验的文件清单")
 
 
+class SkillVersionFileResponse(BaseModel):
+    """Skill 版本中一个可浏览文件。"""
+
+    path: str = Field(min_length=1)
+    size: int = Field(ge=0)
+
+
+class SkillVersionFilesResponse(BaseModel):
+    """Skill 版本文件清单。"""
+
+    files: list[SkillVersionFileResponse]
+
+
+class SkillVersionFileContentResponse(BaseModel):
+    """Skill 版本文件的原始字节。"""
+
+    path: str = Field(min_length=1)
+    content: str = Field(description="base64 编码的文件内容")
+
+
 class AlignSkillReference(BaseModel):
     """run 快照里冻结的一版 Skill。"""
 

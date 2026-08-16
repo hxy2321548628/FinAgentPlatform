@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { MySkill, SkillListing, Visibility } from './types'
+import type { MySkill, SkillFileContent, SkillFileEntry, SkillListing, Visibility } from './types'
 
 export const skillKeys = {
   all: ['skills'] as const,
@@ -7,6 +7,8 @@ export const skillKeys = {
   available: () => ['skills', 'available'] as const,
   mine: () => ['skills', 'mine'] as const,
   detail: (skillId: string) => ['skills', 'mine', skillId] as const,
+  files: (skillId: string, version: number) => ['skills', skillId, 'versions', version, 'files'] as const,
+  file: (skillId: string, version: number, path: string) => ['skills', skillId, 'versions', version, 'files', path] as const,
 }
 
 export function listCatalog(): Promise<SkillListing[]> {
@@ -15,6 +17,15 @@ export function listCatalog(): Promise<SkillListing[]> {
 
 export function listAvailable(): Promise<SkillListing[]> {
   return request('/api/skills/available')
+}
+
+export function listVersionFiles(skillId: string, version: number): Promise<SkillFileEntry[]> {
+  return request(`/api/skills/${encodeURIComponent(skillId)}/versions/${version}/files`)
+}
+
+export function readVersionFile(skillId: string, version: number, path: string): Promise<SkillFileContent> {
+  const params = new URLSearchParams({ path })
+  return request(`/api/skills/${encodeURIComponent(skillId)}/versions/${version}/files/content?${params}`)
 }
 
 export function listMine(): Promise<MySkill[]> {

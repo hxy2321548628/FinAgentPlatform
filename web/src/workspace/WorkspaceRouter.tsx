@@ -20,6 +20,8 @@ export function WorkspaceRouter() {
       <Route path="agents" element={<AgentPlaza />} />
       <Route path="scenarios" element={<ScenarioLibrary />} />
       <Route path="my-scenarios" element={<MyScenarios />} />
+      <Route path="my-scenarios/create" element={<CreateAgent />} />
+      <Route path="my-scenarios/:agentId/edit" element={<CreateAgent />} />
       <Route path="skills" element={<SkillsLibrary />} />
       <Route path="mcp" element={<McpLibrary />} />
       <Route path="data" element={<MyData />} />

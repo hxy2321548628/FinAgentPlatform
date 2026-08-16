@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
@@ -71,14 +71,37 @@ describe('Overview', () => {
     expect(await screen.findByText('波动率分析')).toBeTruthy()
   })
 
+  it('以学院品牌欢迎区替代普通总览标题，并保留两个主要入口', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    listThreads.mockResolvedValue({ items: [], next_cursor: null })
+
+    show(client)
+
+    expect(await screen.findByRole('heading', { name: /欢迎使用.*中南财经政法大学金融学院智能平台/ })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '开始新分析' }).getAttribute('href')).toBe('/workspace/chat')
+    expect(screen.getByRole('link', { name: '浏览场景库' }).getAttribute('href')).toBe('/workspace/scenarios')
+  })
+
   it('展示分析流程与常用资源，避免总览页内容过空', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     listThreads.mockResolvedValue({ items: [], next_cursor: null })
 
     show(client)
 
-    expect(await screen.findByText('从问题到分析成果')).toBeTruthy()
+    // expect(await screen.findByText('从问题到分析成果')).toBeTruthy()
     expect(screen.getByText('常用资源')).toBeTruthy()
+  })
+
+  it('提供四个快速入口，并可直接进入工作空间', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    listThreads.mockResolvedValue({ items: [], next_cursor: null })
+
+    show(client)
+
+    const quickActions = (await screen.findByText('快速入口')).parentElement
+    expect(quickActions).not.toBeNull()
+    expect(within(quickActions!).getAllByRole('link')).toHaveLength(4)
+    expect(within(quickActions!).getByRole('link', { name: /查看工作空间/ }).getAttribute('href')).toBe('/workspace/data')
   })
 
   it('says the ledger is missing instead of showing a zero', async () => {

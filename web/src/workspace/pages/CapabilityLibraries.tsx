@@ -1,15 +1,22 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { applyForMcp, listCatalog as listMcpCatalog, mcpKeys } from '../../api/mcp'
-import { errorMessage } from '../../api/request'
-import { listCatalog, skillKeys } from '../../api/skills'
-import type { McpServer, SkillListing } from '../../api/types'
+import { ApiError, errorMessage } from '../../api/request'
+import { listCatalog, listVersionFiles, readVersionFile, skillKeys } from '../../api/skills'
+import type { McpServer, SkillFileEntry, SkillListing } from '../../api/types'
 import { CatalogCard, CatalogControls, type CatalogFilter } from '../components/Catalog'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Button } from '../../components/ui/Button'
+import { handOffConfig } from '../pickedAgent'
+import { CodeSurface } from '../components/CodeSurface'
+import { highlightCode, languageForPath, languageLabel } from '../components/codeHighlight'
+import { ChevronDown, ChevronRight, FileText, Folder } from 'lucide-react'
 
 export function SkillsLibrary() {
   const catalog = useQuery({ queryKey: skillKeys.catalog(), queryFn: listCatalog })
+  const navigate = useNavigate()
+  const handleUseSkill = (skillId: string) => { handOffConfig({ skills: [skillId] }); navigate('/workspace/chat') }
   const [activeFilter, setActiveFilter] = useState('全部')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<SkillListing | null>(null)
@@ -27,13 +34,13 @@ export function SkillsLibrary() {
       <CatalogControls search={search} onSearch={setSearch} placeholder="搜索 Skill 名称、描述或作者…" filters={filters} activeFilter={activeFilter} onFilter={setActiveFilter} />
       {catalog.isPending && <Notice>正在加载 Skills…</Notice>}
       {catalog.isError && <Notice error>{errorMessage(catalog.error)}</Notice>}
-      {!catalog.isPending && !catalog.isError && <SkillCards items={filtered} search={search} onSelect={setSelected} />}
-      {selected && <SkillDetail item={selected} onClose={() => setSelected(null)} />}
+      {!catalog.isPending && !catalog.isError && <SkillCards items={filtered} search={search} onSelect={setSelected} onUse={handleUseSkill} />}
+      {selected && <SkillDetail item={selected} onUse={() => handleUseSkill(selected.id)} onClose={() => setSelected(null)} />}
     </LibraryPage>
   )
 }
 
-function SkillCards({ items, search, onSelect }: { items: SkillListing[]; search: string; onSelect: (item: SkillListing) => void }) {
+function SkillCards({ items, search, onSelect, onUse }: { items: SkillListing[]; search: string; onSelect: (item: SkillListing) => void; onUse: (skillId: string) => void }) {
   if (items.length === 0) return <Notice>{search ? `未找到与「${search}」相关的 Skill` : '该分类暂时没有 Skill'}</Notice>
   return (
     <div style={{ padding: '0 36px 32px' }}>
@@ -50,6 +57,7 @@ function SkillCards({ items, search, onSelect }: { items: SkillListing[]; search
             badges={[sourceLabel(item.source)]}
             metric={`${item.call_count} 次调用`}
             secondaryAction={{ label: '查看详情', onClick: () => onSelect(item) }}
+            primaryAction={{ label: '使用 Skill', onClick: () => onUse(item.id) }}
           />
         ))}
       </div>
@@ -59,14 +67,14 @@ function SkillCards({ items, search, onSelect }: { items: SkillListing[]; search
 }
 
 /** 右侧抽屉（DSD 第二章 §2.7 的抽屉变体）：Radix Dialog 承担焦点陷阱/Esc/aria-modal。 */
-function Drawer({ title, subtitle, onClose, children }: { title: string; subtitle?: string; onClose: () => void; children: React.ReactNode }) {
+function Drawer({ title, subtitle, onClose, children, wide = false }: { title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   return (
     <Dialog.Root defaultOpen onOpenChange={open => {
       if (!open) onClose()
     }}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" onClick={onClose} />
-        <Dialog.Content className="dialog-content dialog-drawer" aria-describedby={undefined}>
+        <Dialog.Content className={`dialog-content dialog-drawer${wide ? ' skill-browser-drawer' : ''}`} aria-describedby={undefined}>
           <div className="dialog-drawer-header">
             <Dialog.Title className="dialog-title" style={{ marginBottom: 0 }}>
               {title}
@@ -76,23 +84,168 @@ function Drawer({ title, subtitle, onClose, children }: { title: string; subtitl
               <button aria-label="关闭" className="dialog-close-x" style={{ position: 'static' }}>×</button>
             </Dialog.Close>
           </div>
-          <div className="dialog-drawer-body">{children}</div>
+          <div className={`dialog-drawer-body${wide ? ' skill-browser-drawer-body' : ''}`}>{children}</div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
   )
 }
 
-function SkillDetail({ item, onClose }: { item: SkillListing; onClose: () => void }) {
+function SkillDetail({ item, onUse, onClose }: { item: SkillListing; onUse: () => void; onClose: () => void }) {
+  const files = useQuery({
+    queryKey: skillKeys.files(item.id, item.version),
+    queryFn: () => listVersionFiles(item.id, item.version),
+  })
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  useEffect(() => {
+    if (!files.data?.length) return
+    setSelectedPath(current => current && files.data.some(file => file.path === current)
+      ? current
+      : files.data.find(file => file.path === 'SKILL.md')?.path ?? files.data[0].path)
+  }, [files.data])
+  const content = useQuery({
+    queryKey: skillKeys.file(item.id, item.version, selectedPath ?? ''),
+    queryFn: () => readVersionFile(item.id, item.version, selectedPath ?? ''),
+    enabled: selectedPath !== null,
+  })
+  const previewText = content.data && !content.data.is_binary ? content.data.content : null
+  const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null)
+  useEffect(() => {
+    if (!selectedPath || previewText === null) {
+      setHighlightedHtml(null)
+      return
+    }
+    const language = languageForPath(selectedPath)
+    if (!language) {
+      setHighlightedHtml(null)
+      return
+    }
+    let cancelled = false
+    setHighlightedHtml(null)
+    void highlightCode(previewText, language).then(result => {
+      if (!cancelled) setHighlightedHtml(result)
+    })
+    return () => { cancelled = true }
+  }, [previewText, selectedPath])
+
   return (
-    <Drawer title={item.name} subtitle={`${item.owner_name} · ${item.subject || '未分类'} · v${item.version}`} onClose={onClose}>
-      <div style={{ marginBottom: 20 }}><div style={sectionTitle}>功能描述</div><p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.75 }}>{item.description || '（作者没有写说明）'}</p></div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
-        <Info label="文件数量" value={`${item.file_count} 个`} /><Info label="体积" value={formatBytes(item.total_bytes)} /><Info label="调用次数" value={`${item.call_count} 次`} /><Info label="可见范围" value={item.source === 'catalog' ? '广场可见' : item.source === 'group' ? '组内共享' : '我创建的'} />
+    <Drawer wide title={item.name} subtitle={`${item.owner_name} · ${item.subject || '未分类'} · v${item.version}`} onClose={onClose}>
+      <div className="skill-browser-summary">
+        <div>
+          <div style={sectionTitle}>功能描述</div>
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>{item.description || '（作者没有写说明）'}</p>
+        </div>
+        <div className="skill-browser-meta">
+          <span>{item.file_count} 个文件</span><span>{formatBytes(item.total_bytes)}</span><span>{item.call_count} 次调用</span>
+        </div>
+        <Button onClick={onUse}>使用 Skill</Button>
       </div>
-      <div><div style={sectionTitle}>使用说明</div><p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.75 }}>该 Skill 已通过平台审核，可在聊天页的智能体配置中选择。实际可用文件以发布版本为准。</p></div>
+      <div className="skill-browser-workbench">
+        <aside className="skill-browser-tree-panel">
+          <div className="skill-browser-panel-title">发布版本文件</div>
+          {files.isPending && <div className="skill-browser-state">正在读取文件清单…</div>}
+          {files.isError && <div className="skill-browser-state error">{skillBrowserErrorMessage(files.error)}</div>}
+          {files.data && files.data.length === 0 && <div className="skill-browser-state">该版本没有可预览文件</div>}
+          {files.data && files.data.length > 0 && <SkillFileTree files={files.data} selectedPath={selectedPath} onSelect={setSelectedPath} />}
+        </aside>
+        <section className="skill-browser-preview">
+          <div className="skill-browser-preview-header">
+            <FileText size={14} strokeWidth={1.8} />
+            <span>{selectedPath ?? '选择一个文件'}</span>
+            <span className="skill-browser-readonly">只读</span>
+          </div>
+          <div className={`skill-browser-preview-body${previewText !== null ? ' code' : ''}`}>
+            {!selectedPath && <div className="skill-browser-state">从左侧选择文件查看内容</div>}
+            {content.isPending && selectedPath && <div className="skill-browser-state">正在读取文件…</div>}
+            {content.isError && <div className="skill-browser-state error">{errorMessage(content.error)}</div>}
+            {content.data?.is_binary && <div className="skill-browser-state">该文件无法进行文本预览。</div>}
+            {previewText !== null && <CodeSurface path={selectedPath ?? ''} value={previewText} highlightedHtml={highlightedHtml} />}
+          </div>
+          {previewText !== null && selectedPath && (
+            <div className="workspace-editor-status">
+              <span>{languageLabel(selectedPath)}</span><span>UTF-8</span><span>{previewText.split('\n').length} 行</span><span>只读预览</span>
+            </div>
+          )}
+        </section>
+      </div>
     </Drawer>
   )
+}
+
+function skillBrowserErrorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.status === 404 && error.message === 'Not Found') {
+    return '文件浏览服务尚未加载，请刷新页面后重试'
+  }
+  return errorMessage(error)
+}
+
+interface SkillTreeNode {
+  name: string
+  path: string
+  file?: SkillFileEntry
+  children: SkillTreeNode[]
+}
+
+function SkillFileTree({ files, selectedPath, onSelect }: { files: SkillFileEntry[]; selectedPath: string | null; onSelect: (path: string) => void }) {
+  const roots = useMemo(() => buildSkillTree(files), [files])
+  const [openDirectories, setOpenDirectories] = useState(() => new Set(files.flatMap(file => parentPaths(file.path))))
+  const toggle = (path: string) => setOpenDirectories(current => {
+    const next = new Set(current)
+    if (next.has(path)) next.delete(path)
+    else next.add(path)
+    return next
+  })
+  return <div className="skill-file-tree" role="tree">{roots.map(node => <SkillTreeBranch key={node.path} node={node} depth={0} openDirectories={openDirectories} selectedPath={selectedPath} onToggle={toggle} onSelect={onSelect} />)}</div>
+}
+
+function SkillTreeBranch({ node, depth, openDirectories, selectedPath, onToggle, onSelect }: { node: SkillTreeNode; depth: number; openDirectories: Set<string>; selectedPath: string | null; onToggle: (path: string) => void; onSelect: (path: string) => void }) {
+  const directory = node.file === undefined
+  const open = directory && openDirectories.has(node.path)
+  return (
+    <div role="treeitem" aria-expanded={directory ? open : undefined}>
+      <button
+        type="button"
+        className={`skill-tree-row${node.path === selectedPath ? ' active' : ''}`}
+        style={{ paddingLeft: 8 + depth * 16 }}
+        aria-label={node.name}
+        onClick={() => directory ? onToggle(node.path) : onSelect(node.path)}
+      >
+        {directory ? (open ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span className="skill-tree-spacer" />}
+        {directory ? <Folder size={14} /> : <FileText size={14} />}
+        <span>{node.name}</span>
+      </button>
+      {open && node.children.map(child => <SkillTreeBranch key={child.path} node={child} depth={depth + 1} openDirectories={openDirectories} selectedPath={selectedPath} onToggle={onToggle} onSelect={onSelect} />)}
+    </div>
+  )
+}
+
+function buildSkillTree(files: SkillFileEntry[]): SkillTreeNode[] {
+  const roots: SkillTreeNode[] = []
+  for (const file of files) {
+    let children = roots
+    const parts = file.path.split('/')
+    let path = ''
+    parts.forEach((name, index) => {
+      path = path ? `${path}/${name}` : name
+      let node = children.find(item => item.name === name)
+      if (!node) {
+        node = { name, path, children: [], file: index === parts.length - 1 ? file : undefined }
+        children.push(node)
+      }
+      children = node.children
+    })
+  }
+  const sort = (nodes: SkillTreeNode[]) => {
+    nodes.sort((a, b) => Number(a.file !== undefined) - Number(b.file !== undefined) || a.name.localeCompare(b.name, 'zh-CN'))
+    nodes.forEach(node => sort(node.children))
+  }
+  sort(roots)
+  return roots
+}
+
+function parentPaths(path: string): string[] {
+  const parts = path.split('/')
+  return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/'))
 }
 
 function Info({ label, value }: { label: string; value: string }) {
@@ -101,6 +254,8 @@ function Info({ label, value }: { label: string; value: string }) {
 
 export function McpLibrary() {
   const catalog = useQuery({ queryKey: mcpKeys.catalog(), queryFn: listMcpCatalog })
+  const navigate = useNavigate()
+  const handleUseMcp = (serverId: string) => { handOffConfig({ mcps: [serverId] }); navigate('/workspace/chat') }
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<McpServer | null>(null)
   const [applying, setApplying] = useState(false)
@@ -137,19 +292,20 @@ export function McpLibrary() {
                   badges={item.tool_names.slice(0, 3)}
                   metric="校外"
                   secondaryAction={{ label: '查看 MCP 能力', onClick: () => setSelected(item) }}
+                  primaryAction={{ label: '使用 MCP', onClick: () => handleUseMcp(item.id) }}
                 />
               ))}
             </div>
             <div style={countStyle}>共 {filtered.length} 个目录项</div>
           </div>
         ))}
-      {selected && <McpDetail item={selected} onClose={() => setSelected(null)} />}
+      {selected && <McpDetail item={selected} onUse={() => handleUseMcp(selected.id)} onClose={() => setSelected(null)} />}
       {applying && <McpApplyDialog onClose={() => setApplying(false)} />}
     </LibraryPage>
   )
 }
 
-function McpDetail({ item, onClose }: { item: McpServer; onClose: () => void }) {
+function McpDetail({ item, onUse, onClose }: { item: McpServer; onUse: () => void; onClose: () => void }) {
   return (
     <Drawer title={item.name} subtitle={item.url} onClose={onClose}>
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.75, marginBottom: 20 }}>{item.description || '（申请人没有写说明）'}</p>
@@ -169,6 +325,7 @@ function McpDetail({ item, onClose }: { item: McpServer; onClose: () => void }) 
           不一致只记日志、不拦截 —— 而与平台内置文件工具重名的外部工具一律被剔除。
         </p>
       </section>
+      <Button onClick={onUse} style={{ marginTop: 18 }}>使用 MCP 开始分析</Button>
     </Drawer>
   )
 }

@@ -54,6 +54,9 @@ from broker.schema import (
     ReadRequest,
     SaveRequest,
     SaveResponse,
+    SkillVersionFileContentResponse,
+    SkillVersionFileResponse,
+    SkillVersionFilesResponse,
     StoreSkillVersionRequest,
     ThreadResponse,
     ToolRequest,
@@ -110,6 +113,39 @@ async def save_skill_version(
         await asyncio.to_thread(broker.skills.save_version, skill_id, version, files)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@skill_router.get("/{skill_id}/versions/{version}/files")
+async def list_skill_version_files(
+    skill_id: str,
+    version: int,
+    broker: BrokerDep,
+) -> SkillVersionFilesResponse:
+    """列出一版 Skill 的全部普通文件。"""
+    try:
+        files = await asyncio.to_thread(broker.skills.list_version, skill_id, version)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SkillVersionFilesResponse(files=[SkillVersionFileResponse(path=one.path, size=one.size) for one in files])
+
+
+@skill_router.get("/{skill_id}/versions/{version}/files/content")
+async def read_skill_version_file(
+    skill_id: str,
+    version: int,
+    broker: BrokerDep,
+    path: str = Query(min_length=1),
+) -> SkillVersionFileContentResponse:
+    """读取一版 Skill 中一个文件的原始字节。"""
+    try:
+        content = await asyncio.to_thread(broker.skills.read_version_file, skill_id, version, path)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SkillVersionFileContentResponse(path=path, content=base64.b64encode(content).decode("ascii"))
 
 
 @router.post("/{thread_id}/skill/align", status_code=status.HTTP_204_NO_CONTENT)

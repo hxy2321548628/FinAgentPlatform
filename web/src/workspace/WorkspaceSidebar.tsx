@@ -4,7 +4,6 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { AUTH_QUERY_KEY, logout, me } from '../api/auth'
 import { Logo } from '../components/Logo'
 import { errorMessage } from '../api/request'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 
 interface NavItem {
   to: string
@@ -41,8 +40,8 @@ const BACKEND_ENTRY = { admin: '/admin/users', reviewer: '/admin/agents' } as co
 function NavItemRow({ item }: { item: NavItem }) {
   const [hovered, setHovered] = useState(false)
   return (
-    <NavLink to={item.to} end={item.end} title={item.label} className="nav-row" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, fontWeight: isActive ? 600 : 400, color: isActive ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)', background: isActive ? 'var(--ws-sidebar-accent)' : hovered ? 'var(--ws-sidebar-hover)' : 'transparent', textDecoration: 'none', cursor: 'pointer', transition: 'background 0.15s, color 0.15s' })}>
-      <span style={{ flexShrink: 0, display: 'grid', placeItems: 'center' }}>{item.icon()}</span><span className="nav-label">{item.label}</span>
+    <NavLink to={item.to} end={item.end} aria-label={item.label} title={item.label} className="nav-row" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, fontWeight: isActive ? 600 : 400, color: isActive ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)', background: isActive ? 'var(--ws-sidebar-accent)' : hovered ? 'var(--ws-sidebar-hover)' : 'transparent', textDecoration: 'none', cursor: 'pointer', transition: 'background 0.15s, color 0.15s' })}>
+      <span className="nav-icon">{item.icon()}</span><span className="nav-label">{item.label}</span>
     </NavLink>
   )
 }
@@ -63,63 +62,53 @@ export function WorkspaceSidebar() {
   const backendTo = user && user.role in BACKEND_ENTRY ? BACKEND_ENTRY[user.role as keyof typeof BACKEND_ENTRY] : null
 
   return (
-    <aside className={`ws-sidebar${collapsed ? ' collapsed' : ''}`} style={{ flexShrink: 0, background: 'var(--ws-sidebar-bg)', display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-      <div className="ws-header">
-        <Logo height={22} color="#fff" />
-        <div className="ws-brand"><div style={{ fontSize: 14, fontWeight: 700, color: '#fff', lineHeight: 1.2 }}>FinAgentPlatform</div><div style={{ fontSize: 10, color: 'var(--ws-sidebar-text)', marginTop: 2 }}>工作台</div></div>
-        <button type="button" className="ws-collapse" aria-label={collapsed ? '展开侧栏' : '折叠侧栏'} aria-expanded={!collapsed} onClick={() => setCollapsed(value => !value)}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points={collapsed ? '13 17 18 12 13 7' : '11 17 6 12 11 7'} /></svg>
-        </button>
-      </div>
-      <nav style={{ flex: 1, overflowY: 'auto', padding: '8px 0 12px' }}>
-        {NAV_GROUPS.map((group, index) => (
-          <div key={group.label}>
-            {index > 0 && <div style={{ height: 1, background: 'var(--ws-sidebar-border)', margin: '6px 16px' }} />}
-            <div className="ws-group-label">{group.label}</div>
-            {group.items.map(item => <NavItemRow key={item.to} item={item} />)}
-          </div>
-        ))}
-        {backendTo && (
-          <div>
-            <div style={{ height: 1, background: 'var(--ws-sidebar-border)', margin: '6px 16px' }} />
-            <div className="ws-group-label">管理</div>
-            <NavItemRow item={{
-              to: backendTo,
-              label: '管理后台',
-              icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2 3 6v6c0 5 3.8 9.2 9 10 5.2-.8 9-5 9-10V6z"/><path d="m9 12 2 2 4-4"/></svg>,
-            }} />
-          </div>
-        )}
-      </nav>
-      <div style={{ borderTop: '1px solid var(--ws-sidebar-border)' }}>
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <button
-              type="button"
-              className="ws-userbar"
-              aria-label={`用户菜单：${user?.name ?? '正在加载'}`}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
-            >
-              <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--action)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{user?.name.at(0) ?? '·'}</div>
-              <div className="ws-user-info" style={{ minWidth: 0, flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.name ?? '正在加载…'}</div><div style={{ fontSize: 11, color: 'var(--ws-sidebar-text)', marginTop: 1 }}>{user ? ROLE_LABEL[user.role] : ''}</div></div>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="ws-userbar-chevron" style={{ color: 'var(--ws-sidebar-text)' }} aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg>
+    <aside className={`ws-sidebar${collapsed ? ' collapsed' : ''}`} style={{ flexShrink: 0, height: '100vh' }}>
+      <div className="ws-sidebar-content">
+        <div className="ws-header">
+          <Logo height={22} color="#fff" />
+          <div className="ws-brand"><div style={{ fontSize: 14, fontWeight: 700, color: '#fff', lineHeight: 1.2 }}>FinAgentPlatform</div><div style={{ fontSize: 10, color: 'var(--ws-sidebar-text)', marginTop: 2 }}>工作台</div></div>
+        </div>
+        <nav className="ws-nav">
+          {NAV_GROUPS.map((group, index) => (
+            <div key={group.label}>
+              {index > 0 && <div className="ws-nav-divider" />}
+              <div className="ws-group-label">{group.label}</div>
+              {group.items.map(item => <NavItemRow key={item.to} item={item} />)}
+            </div>
+          ))}
+          {backendTo && (
+            <div>
+              <div className="ws-nav-divider" />
+              <div className="ws-group-label">管理</div>
+              <NavItemRow item={{
+                to: backendTo,
+                label: '管理后台',
+                icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2 3 6v6c0 5 3.8 9.2 9 10 5.2-.8 9-5 9-10V6z"/><path d="m9 12 2 2 4-4"/></svg>,
+              }} />
+            </div>
+          )}
+        </nav>
+        <div className="ws-sidebar-footer">
+          <div className="ws-sidebar-actions">
+            <NavLink to="/" className="ws-sidebar-action" aria-label="返回首页" title="返回首页">
+              <span className="ws-sidebar-action-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5M9 21v-7h6v7"/></svg></span>
+              <span className="ws-menu-label">返回首页</span>
+            </NavLink>
+            <button type="button" className="ws-sidebar-action danger" aria-label="退出登录" title="退出登录" disabled={logoutMutation.isPending} onClick={() => logoutMutation.mutate()}>
+              <span className="ws-sidebar-action-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></span>
+              <span className="ws-menu-label">{logoutMutation.isPending ? '正在退出…' : '退出登录'}</span>
             </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content className="theme-menu" align="start" side="top" sideOffset={6}>
-              <DropdownMenu.Item className="theme-menu-item" onSelect={() => navigate('/')}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                返回首页
-              </DropdownMenu.Item>
-              <DropdownMenu.Item className="theme-menu-item thread-menu-danger" disabled={logoutMutation.isPending} onSelect={() => logoutMutation.mutate()}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-                {logoutMutation.isPending ? '正在退出…' : '退出登录'}
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
-        {logoutMutation.isError && <div role="alert" style={{ padding: '2px 16px 8px', color: '#FCA5A5', fontSize: 11 }}>{errorMessage(logoutMutation.error, '退出失败，请重试')}</div>}
+          </div>
+          {logoutMutation.isError && <div role="alert" style={{ padding: '2px 16px 8px', color: '#FCA5A5', fontSize: 11 }}>{errorMessage(logoutMutation.error, '退出失败，请重试')}</div>}
+          <div className="ws-userbar" aria-label={`当前用户：${user?.name ?? '正在加载'}`} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--action)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{user?.name.at(0) ?? '·'}</div>
+            <div className="ws-user-info" style={{ minWidth: 0, flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.name ?? '正在加载…'}</div><div style={{ fontSize: 11, color: 'var(--ws-sidebar-text)', marginTop: 1 }}>{user ? ROLE_LABEL[user.role] : ''}</div></div>
+          </div>
+        </div>
       </div>
+      <button type="button" className="ws-collapse" aria-label={collapsed ? '展开侧栏' : '折叠侧栏'} aria-expanded={!collapsed} onClick={() => setCollapsed(value => !value)}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points={collapsed ? '13 17 18 12 13 7' : '11 17 6 12 11 7'} /></svg>
+      </button>
     </aside>
   )
 }

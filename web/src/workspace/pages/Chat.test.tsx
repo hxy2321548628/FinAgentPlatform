@@ -78,7 +78,9 @@ vi.mock('../components/ChatInput', () => ({
     return null
   },
 }))
-vi.mock('../components/WorkspaceFiles', () => ({ WorkspaceFiles: () => null }))
+vi.mock('../components/WorkspaceFiles', () => ({
+  WorkspaceFiles: ({ threadId }: { threadId: string }) => <div data-testid="workspace-files" data-thread-id={threadId} />,
+}))
 
 import { Chat } from './Chat'
 
@@ -119,6 +121,7 @@ beforeEach(() => {
   mocks.navigate.mockReset()
   FakeIntersectionObserver.instances = []
   vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
+  vi.stubGlobal('PointerEvent', MouseEvent)
   mocks.useRunEvents.mockImplementation((runId: string, status: RunHistory['status']) => ({
     status,
     items: mocks.loadedRuns.has(runId) ? [{ kind: 'answer', path: [], text: '已回放' }] : [],
@@ -246,6 +249,73 @@ describe('Chat 工作区面板', () => {
 
     fireEvent.click(expand)
     expect(screen.getByRole('button', { name: '收起工作区' }).getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('separator', { name: '调整工作区宽度' })).toBeTruthy()
+  })
+
+  it('同一会话收起再展开时保留工作区实例', () => {
+    render(<Chat />)
+
+    fireEvent.click(screen.getByRole('button', { name: '展开工作区' }))
+    const workspace = screen.getByTestId('workspace-files')
+    const content = workspace.parentElement as HTMLDivElement
+
+    fireEvent.click(screen.getByRole('button', { name: '收起工作区' }))
+    expect(screen.getByTestId('workspace-files')).toBe(workspace)
+    expect(content.hidden).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: '展开工作区' }))
+    expect(screen.getByTestId('workspace-files')).toBe(workspace)
+    expect(content.hidden).toBe(false)
+  })
+
+  it('切换会话时清空旧工作区状态并恢复默认折叠', async () => {
+    const view = render(<Chat />)
+
+    fireEvent.click(screen.getByRole('button', { name: '展开工作区' }))
+    const oldWorkspace = screen.getByTestId('workspace-files')
+
+    routeState.threadId = 'thread-2'
+    view.rerender(<Chat />)
+
+    await waitFor(() => expect(screen.queryByTestId('workspace-files')).toBeNull())
+    expect(screen.getByRole('button', { name: '展开工作区' }).getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.click(screen.getByRole('button', { name: '展开工作区' }))
+    const newWorkspace = screen.getByTestId('workspace-files')
+    expect(newWorkspace).not.toBe(oldWorkspace)
+    expect(newWorkspace.getAttribute('data-thread-id')).toBe('thread-2')
+  })
+
+  it('首次展开占满聊天内容区，并可拖动或键盘调整后保留宽度', () => {
+    render(<Chat />)
+    const root = document.querySelector('.chat-root') as HTMLDivElement
+    vi.spyOn(root, 'getBoundingClientRect').mockReturnValue({
+      width: 1000, height: 800, top: 0, right: 1000, bottom: 800, left: 0, x: 0, y: 0, toJSON: () => ({}),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '展开工作区' }))
+    const panel = screen.getByRole('complementary', { name: '会话工作区' })
+    const separator = screen.getByRole('separator', { name: '调整工作区宽度' })
+    expect(panel.style.getPropertyValue('--chat-files-width')).toBe('760px')
+    expect(separator.getAttribute('aria-valuemax')).toBe('760')
+
+    fireEvent.pointerDown(separator, { button: 0, clientX: 240 })
+    fireEvent.pointerMove(window, { clientX: 440 })
+    fireEvent.pointerUp(window)
+    expect(panel.style.getPropertyValue('--chat-files-width')).toBe('560px')
+
+    fireEvent.keyDown(separator, { key: 'ArrowLeft' })
+    expect(panel.style.getPropertyValue('--chat-files-width')).toBe('592px')
+
+    fireEvent.doubleClick(separator)
+    expect(panel.style.getPropertyValue('--chat-files-width')).toBe('760px')
+
+    fireEvent.keyDown(separator, { key: 'ArrowRight' })
+    expect(panel.style.getPropertyValue('--chat-files-width')).toBe('728px')
+
+    fireEvent.click(screen.getByRole('button', { name: '收起工作区' }))
+    fireEvent.click(screen.getByRole('button', { name: '展开工作区' }))
+    expect(panel.style.getPropertyValue('--chat-files-width')).toBe('728px')
   })
 
   it('欢迎页不显示会话工作区把手', () => {

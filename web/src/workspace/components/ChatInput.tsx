@@ -32,7 +32,9 @@ interface ChatInputProps {
   /** 所属会话；欢迎页（懒创建）下为 undefined，此时持久化推迟到首次发送建会话时。 */
   threadId?: string
   threadAgentConfig?: AgentConfig
-  /** 从广场「用它开始分析」跳过来时带的那个 agent，直接把配置面板预设成引用它。 */
+  /** 从能力目录「使用」跳过来时带的配置，直接预填并展开配置面板。 */
+  initialAgentConfig?: AgentConfig
+  /** 兼容智能体广场的旧调用。 */
   initialAgentId?: string
   onSend?: (text: string, agentConfig: AgentConfig | undefined) => Promise<void>
   onStop?: () => void
@@ -123,15 +125,17 @@ function ConfigPicker({ title, empty, items, selectedIds, onToggle, searchable }
   )
 }
 
-export function ChatInput({ isRunning = false, disabled = false, threadId, threadAgentConfig, initialAgentId, onSend, onStop }: ChatInputProps) {
+export function ChatInput({ isRunning = false, disabled = false, threadId, threadAgentConfig, initialAgentConfig, initialAgentId, onSend, onStop }: ChatInputProps) {
+  const handedConfig = initialAgentConfig ?? (initialAgentId ? { agent_id: initialAgentId } : undefined)
+  const initialConfigState = useRef(initialStateFromConfig(handedConfig)).current
   const [text, setText] = useState('')
-  const [configOpen, setConfigOpen] = useState(Boolean(initialAgentId))
-  const [mode, setMode] = useState<AgentConfigMode>(initialAgentId ? 'agent' : 'inherit')
-  const [prompt, setPrompt] = useState('')
-  const [agentId, setAgentId] = useState(initialAgentId ?? '')
-  const [skillIds, setSkillIds] = useState<string[]>([])
-  const [subagentIds, setSubagentIds] = useState<string[]>([])
-  const [mcpIds, setMcpIds] = useState<string[]>([])
+  const [configOpen, setConfigOpen] = useState(Boolean(handedConfig))
+  const [mode, setMode] = useState<AgentConfigMode>(initialConfigState.mode)
+  const [prompt, setPrompt] = useState(initialConfigState.prompt)
+  const [agentId, setAgentId] = useState(initialConfigState.agentId)
+  const [skillIds, setSkillIds] = useState<string[]>(initialConfigState.skillIds)
+  const [subagentIds, setSubagentIds] = useState<string[]>(initialConfigState.subagentIds)
+  const [mcpIds, setMcpIds] = useState<string[]>(initialConfigState.mcpIds)
   const [configError, setConfigError] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [sceneName, setSceneName] = useState('')
@@ -140,7 +144,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadId, threa
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   // **会话配置回填**：只有用户还没动过配置时才应用，避免覆盖正在进行的编辑。
   // 这是「重新打开同一个会话自动带出上次配置」的入口（kv cache 友好的前提）。
-  const configLoadedFromThread = useRef(Boolean(initialAgentId))
+  const configLoadedFromThread = useRef(Boolean(handedConfig))
   useEffect(() => {
     if (configLoadedFromThread.current || !threadAgentConfig || Object.keys(threadAgentConfig).length === 0) return
     if (mode !== 'inherit' || prompt || skillIds.length > 0 || subagentIds.length > 0 || mcpIds.length > 0) return
@@ -419,6 +423,10 @@ export function ChatInput({ isRunning = false, disabled = false, threadId, threa
                     <div className="config-agent-card">
                       <div className="config-agent-card-name">{selectedAgent.name} <span>v{selectedAgent.version} · {selectedAgent.owner_name} · {listingCaption(selectedAgent)}</span></div>
                       {selectedAgent.description && <div className="config-agent-card-desc">{selectedAgent.description}</div>}
+                      <div className="config-agent-prompt">
+                        <div className="config-agent-prompt-label">系统提示词</div>
+                        <div className="config-agent-prompt-content">{selectedAgent.system_prompt}</div>
+                      </div>
                     </div>
                   )}
                 </div>}

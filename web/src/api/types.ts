@@ -291,6 +291,18 @@ export interface SkillListing {
   updated_at: string
 }
 
+export interface SkillFileEntry {
+  path: string
+  size: number
+}
+
+export interface SkillFileContent {
+  path: string
+  size: number
+  content: string | null
+  is_binary: boolean
+}
+
 export interface ThreadSummary {
   id: string
   title: string

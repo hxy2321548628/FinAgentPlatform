@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { errorMessage } from '../../api/request'
 import { listThreads, threadKeys } from '../../api/threads'
 import { WorkspaceFiles } from '../components/WorkspaceFiles'
+import { ExternalLink, MessageSquarePlus } from 'lucide-react'
 
 export function MyData() {
   const navigate = useNavigate()
@@ -15,47 +16,50 @@ export function MyData() {
     getNextPageParam: page => page.next_cursor ?? undefined,
   })
   const threads = threadsQuery.data?.pages.flatMap(page => page.items) ?? []
-
   const selected = threads.find(thread => thread.id === selectedId) ?? threads[0]
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: '28px 32px', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, flexShrink: 0 }}>
+    <div className="workspace-data-page">
+      <header className="workspace-data-header">
         <div>
           <div className="page-eyebrow">// THREAD WORKSPACES</div>
           <h1 className="page-title">工作空间</h1>
-          <p className="page-desc">每个分析对话拥有独立目录；选择 thread 后管理其中的文件。</p>
+          <p className="page-desc">选择一个分析会话，在文件树中管理它的独立工作目录。</p>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          {selected && <button type="button" onClick={() => navigate(`/workspace/chat/${encodeURIComponent(selected.id)}`)} style={{ padding: '9px 18px', border: '1px solid var(--border)', borderRadius: 7, background: 'var(--surface)', color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>进入对话 →</button>}
-          <button type="button" onClick={() => navigate('/workspace/chat')} style={{ padding: '9px 18px', border: 'none', borderRadius: 7, background: 'var(--action)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>＋ 新建分析</button>
-        </div>
-      </div>
-
-      <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)', gap: 16 }}>
-        <aside style={{ minHeight: 0, overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
-          <div style={{ padding: '11px 16px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.12em' }}>THREAD 列表</div>
-          {threadsQuery.isPending && <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>正在加载会话…</div>}
-          {threadsQuery.isError && <div role="alert" style={{ padding: 16, color: 'var(--danger)', fontSize: 12 }}>{errorMessage(threadsQuery.error)}</div>}
-          {!threadsQuery.isPending && !threadsQuery.isError && threads.length === 0 && <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>还没有可管理的工作空间</div>}
-          {threads.map(thread => {
-            const active = thread.id === selected?.id
-            return (
-              <button key={thread.id} type="button" onClick={() => setSelectedId(thread.id)} style={{ width: '100%', padding: '14px 16px', border: 'none', borderBottom: '1px solid var(--border-light)', borderLeft: active ? '3px solid var(--action)' : '3px solid transparent', background: active ? 'var(--action-light)' : 'transparent', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}>
-                <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: active ? 'var(--action)' : 'var(--text-primary)', marginBottom: 5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{thread.title || '新对话'}</span>
-                <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(thread.updated_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
-              </button>
-            )
-          })}
-          {threadsQuery.hasNextPage && <button type="button" disabled={threadsQuery.isFetchingNextPage} onClick={() => void threadsQuery.fetchNextPage()} style={{ width: '100%', padding: 10, border: 'none', background: 'transparent', color: 'var(--action)', cursor: 'pointer', fontSize: 12 }}>
-            {threadsQuery.isFetchingNextPage ? '正在加载…' : '加载更早会话'}
+        <div className="workspace-data-actions">
+          <label className="workspace-thread-picker">
+            <span>当前会话</span>
+            <select
+              aria-label="选择工作空间会话"
+              value={selected?.id ?? ''}
+              onChange={event => setSelectedId(event.target.value)}
+              disabled={threads.length === 0}
+            >
+              {threads.length === 0 && <option value="">暂无会话</option>}
+              {threads.map(thread => <option key={thread.id} value={thread.id}>{thread.title || '新对话'}</option>)}
+            </select>
+          </label>
+          {threadsQuery.hasNextPage && <button type="button" className="workspace-data-secondary" disabled={threadsQuery.isFetchingNextPage} onClick={() => void threadsQuery.fetchNextPage()}>
+            {threadsQuery.isFetchingNextPage ? '加载中…' : '加载更早会话'}
           </button>}
-        </aside>
+          {selected && <button type="button" className="workspace-data-icon" onClick={() => navigate(`/workspace/chat/${encodeURIComponent(selected.id)}`)} aria-label="进入当前对话" title="进入当前对话"><ExternalLink size={16} /></button>}
+          <button type="button" className="workspace-data-primary" onClick={() => navigate('/workspace/chat')}><MessageSquarePlus size={15} />新建分析</button>
+        </div>
+      </header>
 
-        <section style={{ minWidth: 0, minHeight: 0, overflow: 'hidden', border: '1px solid var(--border)', borderRadius: 10 }}>
-          {selected ? <WorkspaceFiles threadId={selected.id} title={selected.title || '新对话'} /> : <div style={{ padding: 40, color: 'var(--text-muted)' }}>暂无工作空间</div>}
-        </section>
-      </div>
+      <main className="workspace-data-content">
+        {threadsQuery.isPending && <div className="workspace-data-state">正在加载工作空间…</div>}
+        {threadsQuery.isError && <div role="alert" className="workspace-data-state error">{errorMessage(threadsQuery.error)}</div>}
+        {!threadsQuery.isPending && !threadsQuery.isError && selected && <WorkspaceFiles threadId={selected.id} title={selected.title || '新对话'} />}
+        {!threadsQuery.isPending && !threadsQuery.isError && !selected && (
+          <div className="workspace-data-empty">
+            <MessageSquarePlus size={30} strokeWidth={1.3} />
+            <strong>还没有可管理的工作空间</strong>
+            <span>发起一次分析后，对话产生的脚本、数据和图表会出现在这里。</span>
+            <button type="button" className="workspace-data-primary" onClick={() => navigate('/workspace/chat')}>新建分析</button>
+          </div>
+        )}
+      </main>
     </div>
   )
 }

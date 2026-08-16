@@ -1,6 +1,7 @@
 """Skill 目录端点：上传、版本、共享、可见性与提审。"""
 
 import logging
+from pathlib import PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
@@ -10,6 +11,8 @@ from api.platform import Platform, get_platform
 from api.schema import (
     MySkillResponse,
     SetSharingRequest,
+    SkillFileContentResponse,
+    SkillFileEntryResponse,
     SkillListingResponse,
     SkillVersionResponse,
     SubmitReviewRequest,
@@ -52,6 +55,45 @@ async def list_available(
 ) -> list[SkillListingResponse]:
     """当前用户可挂到运行配置里的全部 Skill。"""
     return [_to_listing(one) for one in await platform.skill.list_available(current.user_id)]
+
+
+@router.get("/{skill_id}/versions/{version}/files")
+async def list_version_files(
+    skill_id: str,
+    version: int,
+    current: CurrentUser,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> list[SkillFileEntryResponse]:
+    """列出当前用户可见的一版 Skill 文件。"""
+    await _require_available_version(platform, skill_id, version, current.user_id)
+    return [
+        SkillFileEntryResponse(path=one.path, size=one.size)
+        for one in await platform.skill_store.list_version(skill_id, version)
+    ]
+
+
+@router.get("/{skill_id}/versions/{version}/files/content")
+async def read_version_file(
+    skill_id: str,
+    version: int,
+    path: str,
+    current: CurrentUser,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> SkillFileContentResponse:
+    """读取当前用户可见的一版 Skill 文件，二进制只返回元数据。"""
+    relative = _valid_file_path(path)
+    await _require_available_version(platform, skill_id, version, current.user_id)
+    content = await platform.skill_store.read_version_file(skill_id, version, relative.as_posix())
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        text = None
+    return SkillFileContentResponse(
+        path=relative.as_posix(),
+        size=len(content),
+        content=text,
+        is_binary=text is None,
+    )
 
 
 @router.get("/mine")
@@ -214,6 +256,27 @@ async def delete_skill(
     """软删 Skill。"""
     if not await platform.skill.delete(skill_id, owner_id=current.user_id):
         raise not_found(SKILL_NOT_FOUND_MESSAGE)
+
+
+async def _require_available_version(platform: Platform, skill_id: str, version: int, user_id: str) -> None:
+    available = await platform.skill.list_available(user_id)
+    if any(one.id == skill_id and one.version == version for one in available):
+        return
+    catalog = await platform.skill.list_catalog()
+    if not any(one.id == skill_id and one.version == version for one in catalog):
+        raise not_found("没有这个 Skill 版本，或者你无权查看")
+
+
+def _valid_file_path(path: str) -> PurePosixPath:
+    relative = PurePosixPath(path)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+        or "\\" in path
+    ):
+        raise invalid("Skill 文件路径不合法")
+    return relative
 
 
 async def _validated(file: UploadFile, upload_max_byte: int) -> ValidatedSkillPackage:

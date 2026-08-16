@@ -346,3 +346,55 @@ def test_more_than_ten_skills_are_rejected_before_resolution(client: TestClient,
     assert response.status_code == 422
     assert "10" in response.json()["error"]["message"]
     assert client.get(f"/api/threads/{thread_id}/runs").json()["items"] == []
+
+
+def test_visible_skill_version_files_can_be_browsed_read_only(client: TestClient) -> None:
+    name = f"browse-skill-{uuid4().hex[:8]}"
+    response = client.post(
+        SKILL_PATH,
+        data={"subject": "金融学"},
+        files={
+            "file": (
+                f"{name}.zip",
+                zipped(name, extra={"notes/rule.txt": "252 个交易日".encode()}),
+                "application/zip",
+            )
+        },
+    )
+    assert response.status_code == 201, response.text
+    skill_id = response.json()["id"]
+    release(client, skill_id)
+
+    files = client.get(f"{SKILL_PATH}/{skill_id}/versions/1/files")
+    assert files.status_code == 200, files.text
+    assert files.json() == [
+        {"path": "SKILL.md", "size": len(markdown(name))},
+        {"path": "notes/rule.txt", "size": len("252 个交易日".encode())},
+    ]
+
+    content = client.get(
+        f"{SKILL_PATH}/{skill_id}/versions/1/files/content",
+        params={"path": "notes/rule.txt"},
+    )
+    assert content.status_code == 200, content.text
+    assert content.json() == {
+        "path": "notes/rule.txt",
+        "size": len("252 个交易日".encode()),
+        "content": "252 个交易日",
+        "is_binary": False,
+    }
+
+
+def test_invisible_skill_files_are_hidden_and_paths_cannot_escape(client: TestClient, outsider: User) -> None:
+    created = create_skill(client)
+    skill_id = str(created["id"])
+    release(client, skill_id)
+
+    escaped = client.get(
+        f"{SKILL_PATH}/{skill_id}/versions/1/files/content",
+        params={"path": "../outside.txt"},
+    )
+    assert escaped.status_code == 422
+
+    as_user(client, outsider)
+    assert client.get(f"{SKILL_PATH}/{skill_id}/versions/1/files").status_code == 404

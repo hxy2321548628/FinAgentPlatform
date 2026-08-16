@@ -8,7 +8,7 @@ import { errorMessage } from '../../api/request'
 import type { AgentConfig, Decision, RunHistory, RunStatus } from '../../api/types'
 import { useRunEvents } from '../../hooks/useRunEvents'
 import { isTerminalStatus } from '../../api/events'
-import { takeHandedOffAgent } from '../pickedAgent'
+import { takeHandedOffConfig } from '../pickedAgent'
 import { ThreadSidebar } from '../components/ThreadSidebar'
 import { MessageList } from '../components/MessageList'
 import { ArtifactStrip } from '../components/ArtifactStrip'
@@ -18,6 +18,10 @@ import { Logo } from '../../components/Logo'
 
 const LIVE_STATUS: readonly RunStatus[] = ['queued', 'running', 'waiting_approval']
 const BOTTOM_FOLLOW_THRESHOLD = 32
+const CHAT_HISTORY_WIDTH = 240
+const FILES_PANEL_MIN_WIDTH = 320
+const FILES_PANEL_INITIAL_WIDTH = 380
+const FILES_PANEL_RESIZE_STEP = 32
 /** 距视口 600px 就开始回放，滚到历史轮次前内容已经就位。 */
 const REPLAY_ROOT_MARGIN = '600px 0px 600px 0px'
 
@@ -106,11 +110,19 @@ function RunTurn({ run, threadId, onContentChange }: { run: RunHistory; threadId
 export function Chat() {
   const { threadId } = useParams()
   const navigate = useNavigate()
-  // 广场「用它开始分析」交接过来的那个 agent，配置面板据此预设成引用它。
-  // 挂载时即取走：懒创建下这时可能还没有会话，取走正好让欢迎页的输入区带着它
-  const [pickedAgentId] = useState<string | undefined>(() => takeHandedOffAgent() ?? undefined)
+  // 能力目录「使用」交接过来的配置。挂载时即取走，让欢迎页输入区直接预填。
+  const [pickedAgentConfig] = useState<AgentConfig | undefined>(() => takeHandedOffConfig())
+  const pickedConfigKey = JSON.stringify(pickedAgentConfig ?? {})
   const queryClient = useQueryClient()
   const [panelVisible, setPanelVisible] = useState(false)
+  const [panelMountedThread, setPanelMountedThread] = useState<string | null>(null)
+  const [panelWidth, setPanelWidth] = useState(FILES_PANEL_INITIAL_WIDTH)
+  const [panelResizing, setPanelResizing] = useState(false)
+  const chatRoot = useRef<HTMLDivElement>(null)
+  const panelWidthRef = useRef(FILES_PANEL_INITIAL_WIDTH)
+  const panelResizeStart = useRef({ x: 0, width: FILES_PANEL_INITIAL_WIDTH })
+  const panelWidthAdjusted = useRef(false)
+  const panelThread = useRef(threadId)
   const scrollRegion = useRef<HTMLDivElement>(null)
   const followLatest = useRef(true)
   const initializedThread = useRef<string | undefined>(undefined)
@@ -134,6 +146,82 @@ export function Chat() {
     if (!element || (!force && !followLatest.current)) return
     element.scrollTop = element.scrollHeight
   }, [])
+
+  const panelWidthBounds = useCallback(() => {
+    const rootWidth = chatRoot.current?.getBoundingClientRect().width || window.innerWidth
+    const max = Math.max(24, rootWidth - CHAT_HISTORY_WIDTH)
+    return { min: Math.min(FILES_PANEL_MIN_WIDTH, max), max }
+  }, [])
+
+  const updatePanelWidth = useCallback((width: number, adjusted = false) => {
+    const { min, max } = panelWidthBounds()
+    const next = Math.min(max, Math.max(min, width))
+    panelWidthRef.current = next
+    setPanelWidth(next)
+    if (adjusted) panelWidthAdjusted.current = true
+  }, [panelWidthBounds])
+
+  useEffect(() => {
+    if (!panelResizing) return
+    const handlePointerMove = (event: PointerEvent) => {
+      event.preventDefault()
+      updatePanelWidth(panelResizeStart.current.width + panelResizeStart.current.x - event.clientX, true)
+    }
+    const handlePointerUp = () => setPanelResizing(false)
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('pointercancel', handlePointerUp)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('pointercancel', handlePointerUp)
+    }
+  }, [panelResizing, updatePanelWidth])
+
+  useEffect(() => {
+    const handleResize = () => updatePanelWidth(panelWidthRef.current)
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [updatePanelWidth])
+
+  useEffect(() => {
+    if (panelThread.current === threadId) return
+    panelThread.current = threadId
+    setPanelVisible(false)
+    setPanelMountedThread(null)
+    setPanelResizing(false)
+    setPanelWidth(FILES_PANEL_INITIAL_WIDTH)
+    panelWidthRef.current = FILES_PANEL_INITIAL_WIDTH
+    panelWidthAdjusted.current = false
+  }, [threadId])
+
+  const togglePanel = () => {
+    if (panelVisible) {
+      setPanelVisible(false)
+      return
+    }
+    setPanelMountedThread(threadId ?? null)
+    if (panelWidthAdjusted.current) updatePanelWidth(panelWidthRef.current)
+    else updatePanelWidth(panelWidthBounds().max)
+    setPanelVisible(true)
+  }
+
+  useLayoutEffect(() => {
+    if (!panelVisible || panelWidthAdjusted.current) return
+    updatePanelWidth(panelWidthBounds().max)
+  }, [panelVisible, panelWidthBounds, updatePanelWidth])
+
+  const handlePanelResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const { min, max } = panelWidthBounds()
+    const target = event.key === 'ArrowLeft' ? panelWidthRef.current + FILES_PANEL_RESIZE_STEP
+      : event.key === 'ArrowRight' ? panelWidthRef.current - FILES_PANEL_RESIZE_STEP
+        : event.key === 'Home' ? min
+          : event.key === 'End' ? max
+            : null
+    if (target === null) return
+    event.preventDefault()
+    updatePanelWidth(target, true)
+  }
 
   useLayoutEffect(() => {
     if (!threadId) {
@@ -182,7 +270,7 @@ export function Chat() {
     },
   })
 
-  return <div className="chat-root" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+  return <div ref={chatRoot} className={`chat-root${panelResizing ? ' resizing-files' : ''}`} style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
     <ThreadSidebar />
     <div className="chat-main">
       {threadId && <Logo className="chat-watermark" height={250} />}
@@ -206,26 +294,55 @@ export function Chat() {
         {submit.isError && <div role="alert" style={{ padding: '8px 0', color: 'var(--danger)', fontSize: 12 }}>{errorMessage(submit.error)}</div>}
       </div>
       {threadId ? (
-        <ChatInput key={`${threadId}:${pickedAgentId ?? ''}`} disabled={submit.isPending} isRunning={Boolean(latestLive)} threadId={threadId} threadAgentConfig={thread.data?.agent_config} initialAgentId={pickedAgentId} onSend={async (text, agentConfig) => { await submit.mutateAsync({ text, agentConfig }) }} onStop={() => latestLive && cancel.mutate(latestLive.id)} />
+        <ChatInput key={`${threadId}:${pickedConfigKey}`} disabled={submit.isPending} isRunning={Boolean(latestLive)} threadId={threadId} threadAgentConfig={thread.data?.agent_config} initialAgentConfig={pickedAgentConfig} onSend={async (text, agentConfig) => { await submit.mutateAsync({ text, agentConfig }) }} onStop={() => latestLive && cancel.mutate(latestLive.id)} />
       ) : (
         <div className="chat-welcome-composer">
-          <ChatInput key={`welcome:${pickedAgentId ?? ''}`} disabled={submit.isPending} isRunning={Boolean(latestLive)} threadAgentConfig={thread.data?.agent_config} initialAgentId={pickedAgentId} onSend={async (text, agentConfig) => { await submit.mutateAsync({ text, agentConfig }) }} onStop={() => latestLive && cancel.mutate(latestLive.id)} />
+          <ChatInput key={`welcome:${pickedConfigKey}`} disabled={submit.isPending} isRunning={Boolean(latestLive)} threadAgentConfig={thread.data?.agent_config} initialAgentConfig={pickedAgentConfig} onSend={async (text, agentConfig) => { await submit.mutateAsync({ text, agentConfig }) }} onStop={() => latestLive && cancel.mutate(latestLive.id)} />
         </div>
       )}
     </div>
     {threadId && (
-      <aside className={`chat-files-panel${panelVisible ? '' : ' collapsed'}`} aria-label="会话工作区">
+      <aside
+        className={`chat-files-panel${panelVisible ? '' : ' collapsed'}${panelResizing ? ' resizing' : ''}`}
+        aria-label="会话工作区"
+        style={{ '--chat-files-width': `${panelWidth}px` } as React.CSSProperties}
+      >
+        {panelVisible && (
+          <div
+            className="chat-files-resizer"
+            role="separator"
+            aria-label="调整工作区宽度"
+            aria-orientation="vertical"
+            aria-valuemin={Math.round(panelWidthBounds().min)}
+            aria-valuemax={Math.round(panelWidthBounds().max)}
+            aria-valuenow={Math.round(panelWidth)}
+            tabIndex={0}
+            title="拖动调整宽度；双击展开到最大"
+            onDoubleClick={() => updatePanelWidth(panelWidthBounds().max, true)}
+            onPointerDown={event => {
+              if (event.button !== 0) return
+              event.preventDefault()
+              panelResizeStart.current = { x: event.clientX, width: panelWidthRef.current }
+              setPanelResizing(true)
+            }}
+            onKeyDown={handlePanelResizeKeyDown}
+          />
+        )}
         <button
           type="button"
           className="chat-files-toggle"
           aria-label={panelVisible ? '收起工作区' : '展开工作区'}
           aria-expanded={panelVisible}
-          onClick={() => setPanelVisible(value => !value)}
+          onClick={togglePanel}
           title={panelVisible ? '收起工作区' : '展开工作区'}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><polyline points={panelVisible ? '9 18 15 12 9 6' : '15 18 9 12 15 6'} /></svg>
         </button>
-        {panelVisible && <div className="chat-files-content"><WorkspaceFiles threadId={threadId} title={thread.data?.title || '新分析'} compact /></div>}
+        {panelMountedThread === threadId && (
+          <div className="chat-files-content" hidden={!panelVisible}>
+            <WorkspaceFiles threadId={threadId} title={thread.data?.title || '新分析'} compact />
+          </div>
+        )}
       </aside>
     )}
   </div>

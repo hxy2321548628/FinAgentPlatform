@@ -6,6 +6,7 @@ import { errorMessage } from '../../api/request'
 import { listThreads, threadKeys } from '../../api/threads'
 import { myUsage, usageKeys } from '../../api/usage'
 import type { ThreadSummary } from '../../api/types'
+import { Logo } from '../../components/Logo'
 import { Skeleton } from '../../components/ui/Skeleton'
 
 const QUICK_ACTIONS = [
@@ -15,12 +16,8 @@ const QUICK_ACTIONS = [
     icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> },
   { label: '配置我的智能体', desc: '组合提示词、Skills 与 MCP 能力', to: '/workspace/my-agents',
     icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/><circle cx="12" cy="8" r="1" fill="currentColor"/></svg> },
-]
-
-const WORKFLOW_STEPS = [
-  { number: '01', title: '描述分析问题', desc: '直接说明数据、指标与期望结果，不需要先整理成代码需求。' },
-  { number: '02', title: '智能体执行', desc: '自动编写 Python，在隔离沙箱运行，并保留过程与生成文件。' },
-  { number: '03', title: '复用分析成果', desc: '下载图表与文件，或把成熟配置保存为场景和专属智能体。' },
+  { label: '查看工作空间', desc: '浏览会话文件与分析产物', to: '/workspace/data',
+    icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg> },
 ]
 
 const RESOURCE_LINKS = [
@@ -56,25 +53,6 @@ function StatCard({ label, value, unit, hint }: { label: string; value: string; 
       <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: 'tabular-nums', lineHeight: 1, marginBottom: 4 }}>{value}</div>
       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{unit}</div>
       {hint && <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>{hint}</div>}
-    </div>
-  )
-}
-
-function ActionBanner() {
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      background: 'var(--bg)', border: '1px solid var(--border)',
-      borderLeft: '4px solid var(--border)',
-      borderRadius: 8, padding: '14px 20px', marginBottom: 20,
-    }}>
-      <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>从场景库开始你的下一次分析</span>
-      <Link
-        to="/workspace/scenarios"
-        style={{ padding: '7px 16px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, textDecoration: 'none' }}
-      >
-        浏览场景库 →
-      </Link>
     </div>
   )
 }
@@ -118,18 +96,40 @@ export function Overview() {
 
   return (
     <div className="overview-page">
-      {/* 页头 */}
-      <div style={{ marginBottom: 24 }}>
-        <div className="page-eyebrow">
-          // OVERVIEW
+      <section className="overview-hero" aria-labelledby="overview-welcome-title">
+        <div className="overview-hero-copy">
+          <div className="overview-hero-meta">
+            <span className="overview-hero-eyebrow"><i aria-hidden="true" /> FINANCE INTELLIGENCE WORKSPACE</span>
+            <time dateTime={new Date().toISOString().slice(0, 10)}>
+              {new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}
+            </time>
+          </div>
+          <h1 id="overview-welcome-title" className="overview-hero-title">
+            <span>欢迎使用</span>
+            中南财经政法大学金融学院智能平台
+          </h1>
+          <p className="overview-hero-desc">
+            用自然语言描述金融分析问题，让智能体完成数据处理、代码执行与成果沉淀。
+          </p>
+          <div className="overview-hero-actions">
+            <Link className="overview-hero-primary" to="/workspace/chat">
+              开始新分析
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            </Link>
+            <Link className="overview-hero-secondary" to="/workspace/scenarios">浏览场景库</Link>
+          </div>
         </div>
-        <h1 className="page-title">总览</h1>
-        <p className="page-desc">
-          {new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}
-        </p>
-      </div>
 
-      <ActionBanner />
+        <div className="overview-hero-visual" aria-hidden="true">
+          <div className="overview-hero-orbit overview-hero-orbit-outer" />
+          <div className="overview-hero-orbit overview-hero-orbit-inner" />
+          <div className="overview-hero-logo"><Logo height={70} /></div>
+          <span className="overview-hero-capability overview-hero-capability-data">数据分析</span>
+          <span className="overview-hero-capability overview-hero-capability-execute">智能执行</span>
+          <span className="overview-hero-capability overview-hero-capability-reuse">成果复用</span>
+          <div className="overview-hero-monogram">FIN · AI</div>
+        </div>
+      </section>
 
       {/* 统计卡片。**四张都有真实来源** —— 配额进度条去掉了：配额按天算，
           这一排看的是本月，两个口径凑成一个百分比只会得出一个没有意义的数 */}
@@ -210,7 +210,7 @@ export function Overview() {
 
       </div>
 
-      <section className="overview-section" aria-labelledby="overview-workflow-title">
+      {/* <section className="overview-section" aria-labelledby="overview-workflow-title">
         <div className="overview-section-heading">
           <div>
             <div className="page-eyebrow">// WORKFLOW</div>
@@ -229,7 +229,7 @@ export function Overview() {
             </div>
           ))}
         </div>
-      </section>
+      </section> */}
 
       <section className="overview-section" aria-labelledby="overview-resources-title">
         <div className="overview-section-heading">

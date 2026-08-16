@@ -43,8 +43,7 @@ describe('WorkspaceSidebar', () => {
       </QueryClientProvider>,
     )
 
-    fireEvent.keyDown(screen.getByRole('button', { name: /用户菜单：张老师/ }), { key: 'ArrowDown' })
-    fireEvent.click(screen.getByRole('menuitem', { name: '退出登录' }))
+    fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('会话服务不可用')
     expect(screen.getByTestId('workspace-route')).toBeTruthy()
@@ -88,11 +87,29 @@ describe('WorkspaceSidebar', () => {
     )
     const aside = container.querySelector('.ws-sidebar')!
     expect(aside.className).toContain('collapsed')
+    const navRows = Array.from(aside.querySelectorAll('.nav-row'))
+    const navGroups = Array.from(aside.querySelectorAll('.ws-group-label'))
+    expect(navRows.length).toBeGreaterThan(0)
+    expect(navGroups.length).toBeGreaterThan(0)
+    expect(navRows.every(row => row.querySelector('.nav-icon > svg'))).toBe(true)
+    const actions = aside.querySelector('.ws-sidebar-actions')!
+    const profile = aside.querySelector('.ws-userbar')!
+    expect(actions.compareDocumentPosition(profile) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+    const homeAction = screen.getByRole('link', { name: '返回首页' })
+    const logoutAction = screen.getByRole('button', { name: '退出登录' })
+    expect(homeAction.getAttribute('href')).toBe('/')
+    expect(homeAction.querySelector('.ws-sidebar-action-icon > svg')).toBeTruthy()
+    expect(logoutAction.querySelector('.ws-sidebar-action-icon > svg')).toBeTruthy()
+    expect(navRows.every(row => row.getAttribute('aria-label') && row.getAttribute('title'))).toBe(true)
     const expand = screen.getByRole('button', { name: '展开侧栏' }) as HTMLButtonElement
     expect(expand.getAttribute('aria-expanded')).toBe('false')
+    expect(expand.closest('.ws-header')).toBeNull()
+    expect(expand.parentElement).toBe(aside)
 
     fireEvent.click(expand)
     expect(aside.className).not.toContain('collapsed')
+    expect(Array.from(aside.querySelectorAll('.nav-row')).every((row, index) => row === navRows[index])).toBe(true)
+    expect(Array.from(aside.querySelectorAll('.ws-group-label')).every((label, index) => label === navGroups[index])).toBe(true)
     const collapse = screen.getByRole('button', { name: '折叠侧栏' }) as HTMLButtonElement
     expect(collapse.getAttribute('aria-expanded')).toBe('true')
 

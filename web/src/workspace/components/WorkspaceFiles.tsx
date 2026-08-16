@@ -6,8 +6,10 @@ import type { WorkspaceEntry } from '../../api/types'
 import { ConfirmDialog } from './ConfirmDialog'
 import { useToast } from '../../components/ui/toast-context'
 import { Button } from '../../components/ui/Button'
+import { highlightCode, languageForPath, languageLabel } from './codeHighlight'
+import { CodeSurface } from './CodeSurface'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Copy, Download, FilePlus2, FolderPlus, Pencil, RefreshCw, Save, Trash2, Upload, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Copy, Download, File, FilePlus2, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Save, Trash2, Upload, X } from 'lucide-react'
 
 interface FilePreview {
   path: string
@@ -21,6 +23,11 @@ interface WorkspaceFilesProps {
   threadId: string
   title?: string
   compact?: boolean
+}
+
+interface WorkspaceTreeNode {
+  entry: WorkspaceEntry
+  children: WorkspaceTreeNode[]
 }
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
@@ -46,23 +53,19 @@ function formatSize(size: number) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
-function EntryIcon({ entry }: { entry: WorkspaceEntry }) {
-  if (entry.is_dir) {
-    return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-  }
-  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-}
-
 export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFilesProps) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const tree = useQuery({ queryKey: fileKeys.tree(threadId), queryFn: () => listFiles(threadId) })
   const entries = tree.data?.entries ?? EMPTY_ENTRIES
+  const treeNodes = useMemo(() => buildWorkspaceTree(entries), [entries])
   const [currentDir, setCurrentDir] = useState('')
+  const [openDirectories, setOpenDirectories] = useState<Set<string>>(new Set())
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editorText, setEditorText] = useState('')
+  const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null)
   const [dialog, setDialog] = useState<'file' | 'directory' | null>(null)
   const [dialogName, setDialogName] = useState('')
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
@@ -70,27 +73,27 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
 
   useEffect(() => {
     setCurrentDir('')
+    setOpenDirectories(new Set())
     setPreview(null)
     setEditing(false)
+    setHighlightedHtml(null)
     setDialog(null)
   }, [threadId])
-
-  const visibleEntries = useMemo(() => entries.filter(entry => {
-    const parent = directoryName(entry.path)
-    return parent === currentDir
-  }).sort((a, b) => Number(b.is_dir) - Number(a.is_dir) || a.path.localeCompare(b.path, 'zh-CN')), [currentDir, entries])
 
   const openFile = async (entry: WorkspaceEntry) => {
     if (entry.is_dir) {
       setCurrentDir(entry.path)
-      setPreview(null)
+      setOpenDirectories(current => toggled(current, entry.path))
       return
     }
 
+    setCurrentDir(directoryName(entry.path))
     const ext = extension(entry.path)
     const rawUrl = rawFileUrl(threadId, entry.path)
     if (IMAGE_EXTENSIONS.has(ext)) {
       setPreview({ path: entry.path, text: '', isBinary: true, truncated: false, rawUrl })
+      setEditing(false)
+      setHighlightedHtml(null)
       return
     }
 
@@ -109,16 +112,36 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
     }
   }
 
+  const codeText = editing ? editorText : preview?.text ?? ''
+  const previewPath = preview?.path ?? null
+  const previewIsBinary = preview?.isBinary ?? false
+
+  useEffect(() => {
+    if (!previewPath || previewIsBinary) {
+      setHighlightedHtml(null)
+      return
+    }
+    const language = languageForPath(previewPath)
+    if (!language) {
+      setHighlightedHtml(null)
+      return
+    }
+    let cancelled = false
+    setHighlightedHtml(null)
+    void highlightCode(codeText, language).then(result => {
+      if (!cancelled) setHighlightedHtml(result)
+    })
+    return () => { cancelled = true }
+  }, [codeText, previewIsBinary, previewPath])
+
   const uploadFiles = async (files: FileList | File[], directory = currentDir) => {
     setBusy(true)
     try {
-      for (const file of Array.from(files)) {
-        await uploadFile(threadId, file, directory)
-      }
+      for (const file of Array.from(files)) await uploadFile(threadId, file, directory)
       toast({ title: '文件已上传', variant: 'success' })
       await queryClient.invalidateQueries({ queryKey: fileKeys.tree(threadId) })
     } catch (error) {
-      toast({ title: '上传失败', description: error instanceof Error ? error.message : '请重试', variant: 'error' })
+      toast({ title: '上传失败', description: errorMessage(error), variant: 'error' })
     } finally {
       setBusy(false)
       if (uploadRef.current) uploadRef.current.value = ''
@@ -133,7 +156,7 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
       if (preview?.path === path) setPreview(null)
       toast({ title: '文件已删除', variant: 'success' })
     } catch (error) {
-      toast({ title: '删除失败', description: error instanceof Error ? error.message : '请重试', variant: 'error' })
+      toast({ title: '删除失败', description: errorMessage(error), variant: 'error' })
     } finally {
       setBusy(false)
     }
@@ -154,6 +177,11 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
     } finally {
       setBusy(false)
     }
+  }
+
+  const cancelEditing = () => {
+    if (preview) setEditorText(preview.text)
+    setEditing(false)
   }
 
   const createEntry = async () => {
@@ -183,92 +211,103 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
     toast({ title: '已复制工作路径', variant: 'success' })
   }
 
-  const crumbs = currentDir ? currentDir.split('/') : []
-
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: compact ? 0 : 560, background: 'var(--surface)', overflow: 'hidden' }}>
-      <div className="workspace-files-header" style={{ padding: compact ? '14px 16px 12px' : '16px 18px' }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.16em', color: 'var(--text-muted)' }}>THREAD WORKSPACE</div>
-          <div style={{ marginTop: 4, fontSize: compact ? 13 : 14, color: 'var(--text-primary)', fontWeight: 650, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title ?? '工作目录'}</div>
-        </div>
-        <div className="workspace-files-actions" role="toolbar" aria-label="工作区文件操作">
-          <button type="button" className="workspace-icon-button" disabled={busy} onClick={() => { setDialogName(''); setDialog('file') }} aria-label="新建文件" title="新建文件"><FilePlus2 size={16} strokeWidth={1.8} /></button>
-          <button type="button" className="workspace-icon-button" disabled={busy} onClick={() => { setDialogName(''); setDialog('directory') }} aria-label="新建文件夹" title="新建文件夹"><FolderPlus size={16} strokeWidth={1.8} /></button>
-          <input ref={uploadRef} type="file" multiple style={{ display: 'none' }} onChange={event => event.target.files && void uploadFiles(event.target.files)} />
-          <button type="button" className="workspace-icon-button primary" disabled={busy} onClick={() => uploadRef.current?.click()} aria-label="上传文件" title="上传文件"><Upload size={16} strokeWidth={1.8} /></button>
-          <button type="button" className="workspace-icon-button" disabled={tree.isFetching} onClick={() => void tree.refetch()} aria-label="刷新文件列表" title="刷新文件列表"><RefreshCw size={16} strokeWidth={1.8} /></button>
-        </div>
-      </div>
+    <div className={`workspace-explorer${compact ? ' compact' : ''}`}>
+      <div className="workspace-explorer-main">
+        <aside className="workspace-tree-pane">
+          <div className="workspace-tree-header">
+            <div className="workspace-tree-heading">
+              <span>EXPLORER</span>
+              <strong title={title}>{title ?? '工作目录'}</strong>
+            </div>
+            <div className="workspace-files-actions" role="toolbar" aria-label="工作区文件操作">
+              <button type="button" className="workspace-entry-icon" disabled={busy} onClick={() => { setDialogName(''); setDialog('file') }} aria-label="新建文件" title="新建文件"><FilePlus2 size={14} strokeWidth={1.8} /></button>
+              <button type="button" className="workspace-entry-icon" disabled={busy} onClick={() => { setDialogName(''); setDialog('directory') }} aria-label="新建文件夹" title="新建文件夹"><FolderPlus size={14} strokeWidth={1.8} /></button>
+              <button type="button" className="workspace-entry-icon" disabled={busy} onClick={() => uploadRef.current?.click()} aria-label="上传文件" title="上传文件"><Upload size={14} strokeWidth={1.8} /></button>
+              <button type="button" className="workspace-entry-icon" disabled={tree.isFetching} onClick={() => void tree.refetch()} aria-label="刷新文件" title="刷新文件"><RefreshCw size={14} strokeWidth={1.8} /></button>
+              <input ref={uploadRef} type="file" multiple hidden onChange={event => { if (event.target.files?.length) void uploadFiles(event.target.files) }} />
+            </div>
+          </div>
+          <button type="button" className={`workspace-root-row${currentDir === '' ? ' active' : ''}`} onClick={() => setCurrentDir('')}>
+            <FolderOpen size={14} />
+            <span>工作区根目录</span>
+          </button>
+          {currentDir && <div className="workspace-target-directory" title={currentDir}>新内容将创建在 /{currentDir}</div>}
+          <div className="workspace-tree-scroll" role="tree" aria-label="工作区文件树">
+            {tree.isPending && <div className="workspace-tree-state">正在加载文件…</div>}
+            {tree.isError && <div role="alert" className="workspace-tree-state error">{errorMessage(tree.error)}</div>}
+            {!tree.isPending && !tree.isError && treeNodes.length === 0 && <div className="workspace-tree-state">这里还没有文件。可用上方图标新建或上传。</div>}
+            {treeNodes.map(node => (
+              <WorkspaceTreeBranch
+                key={node.entry.path}
+                node={node}
+                depth={0}
+                busy={busy}
+                openDirectories={openDirectories}
+                selectedPath={preview?.path ?? null}
+                selectedDirectory={currentDir}
+                threadId={threadId}
+                onOpen={entry => void openFile(entry)}
+                onCopy={path => void copyPath(path)}
+                onDelete={setPendingDelete}
+              />
+            ))}
+            {tree.data?.truncated && <div className="workspace-tree-state">文件较多，仅展示前一部分。</div>}
+          </div>
+        </aside>
 
-      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: 5, minHeight: 38, fontSize: 11, color: 'var(--text-muted)', overflowX: 'auto' }}>
-        <button type="button" onClick={() => { setCurrentDir(''); setPreview(null) }} style={{ border: 'none', background: 'none', color: currentDir ? 'var(--action)' : 'var(--text-primary)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11 }}>/workspace</button>
-        {crumbs.map((crumb, index) => {
-          const path = crumbs.slice(0, index + 1).join('/')
-          return <span key={path} style={{ display: 'inline-flex', gap: 5 }}><span>/</span><button type="button" onClick={() => { setCurrentDir(path); setPreview(null) }} style={{ border: 'none', background: 'none', color: index === crumbs.length - 1 ? 'var(--text-primary)' : 'var(--action)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11 }}>{crumb}</button></span>
-        })}
-      </div>
-
-      <div style={{ flex: preview ? '0 0 auto' : 1, maxHeight: preview ? (compact ? 250 : 300) : undefined, overflowY: 'auto' }}>
-        {tree.isPending && <div style={{ padding: 28, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>正在加载工作目录…</div>}
-        {tree.isError && <div role="alert" style={{ padding: 20, color: 'var(--danger)', fontSize: 12 }}>{errorMessage(tree.error, '工作目录读取失败')}</div>}
-        {tree.data?.truncated && <div style={{ padding: '7px 12px', background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 11 }}>文件过多，当前只显示部分条目。</div>}
-        {currentDir && (
-          <button type="button" onClick={() => { setCurrentDir(directoryName(currentDir)); setPreview(null) }} style={{ width: '100%', padding: '9px 14px', border: 'none', borderBottom: '1px solid var(--border-light)', background: 'transparent', color: 'var(--text-secondary)', textAlign: 'left', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>← 返回上一级</button>
-        )}
-        {!tree.isPending && !tree.isError && visibleEntries.length === 0 ? (
-          <div style={{ padding: 28, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>目录为空，可上传文件到这里</div>
-        ) : visibleEntries.map(entry => (
-          <div key={entry.path} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: compact ? '9px 12px' : '11px 16px', borderBottom: '1px solid var(--border-light)', background: preview?.path === entry.path ? 'var(--action-light)' : 'transparent' }}>
-            <button type="button" onClick={() => void openFile(entry)} style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 9, border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', color: entry.is_dir ? 'var(--action)' : 'var(--text-primary)' }}>
-              <span style={{ display: 'flex', flexShrink: 0 }}><EntryIcon entry={entry} /></span>
-              <span style={{ minWidth: 0, flex: 1 }}>
-                <span style={{ display: 'block', fontSize: 12, fontWeight: entry.is_dir ? 600 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName(entry.path)}</span>
-                {!entry.is_dir && <span style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>{formatSize(entry.size)}</span>}
-              </span>
-            </button>
-            {!entry.is_dir && (
-              <div className="workspace-entry-actions">
-                <button type="button" className="workspace-entry-icon" title="复制路径" aria-label={`复制路径：${fileName(entry.path)}`} onClick={() => void copyPath(entry.path)}><Copy size={13} strokeWidth={1.8} /></button>
-                <a className="workspace-entry-icon" title="下载" aria-label={`下载：${fileName(entry.path)}`} href={rawFileUrl(threadId, entry.path, true)}><Download size={13} strokeWidth={1.8} /></a>
-                <button type="button" className="workspace-entry-icon danger" title="删除" aria-label={`删除：${fileName(entry.path)}`} disabled={busy} onClick={() => setPendingDelete(entry.path)}><Trash2 size={13} strokeWidth={1.8} /></button>
+        <section className="workspace-editor-pane">
+          {preview ? (
+            <>
+              <div className="workspace-editor-header">
+                <File size={14} />
+                <span className="workspace-editor-path" title={preview.path}>{preview.path}</span>
+                <span className="workspace-editor-language">{languageLabel(preview.path)}</span>
+                {!preview.isBinary && !preview.truncated && !editing && <button type="button" className="workspace-entry-icon" disabled={busy} onClick={() => setEditing(true)} aria-label="编辑文件" title="编辑文件"><Pencil size={13} /></button>}
+                {editing && <button type="button" className="workspace-entry-icon" disabled={busy} onClick={cancelEditing} aria-label="取消编辑" title="取消编辑"><X size={13} /></button>}
+                {editing && <button type="button" className="workspace-entry-icon primary" disabled={busy || editorText === preview.text} onClick={() => void saveEditedFile()} aria-label="保存文件" title="保存文件"><Save size={13} /></button>}
+                <button type="button" className="workspace-entry-icon" onClick={() => void copyPath(preview.path)} aria-label="复制文件路径" title="复制文件路径"><Copy size={13} /></button>
+                <a className="workspace-entry-icon" href={rawFileUrl(threadId, preview.path, true)} aria-label="下载文件" title="下载文件"><Download size={13} /></a>
+                <button type="button" className="workspace-entry-icon" onClick={() => { setPreview(null); setEditing(false) }} aria-label="关闭预览" title="关闭预览"><X size={13} /></button>
               </div>
-            )}
-          </div>
-        ))}
+              <div
+                className={`workspace-editor-content${!preview.isBinary && !IMAGE_EXTENSIONS.has(extension(preview.path)) ? ' code' : ''}`}
+                style={!preview.isBinary && !IMAGE_EXTENSIONS.has(extension(preview.path)) ? { display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 } : undefined}
+              >
+                {preview.truncated && <div className="workspace-preview-warning">文件较长，当前仅展示开头部分；为避免覆盖未加载内容，该文件仅可预览或下载。</div>}
+                {IMAGE_EXTENSIONS.has(extension(preview.path)) ? (
+                  <img src={preview.rawUrl} alt={fileName(preview.path)} className="workspace-image-preview" />
+                ) : preview.isBinary ? (
+                  <div className="workspace-editor-empty">该文件不支持文本预览，请点击下载查看。</div>
+                ) : (
+                  <CodeSurface
+                    path={preview.path}
+                    value={editing ? editorText : preview.text}
+                    highlightedHtml={highlightedHtml}
+                    editing={editing}
+                    onChange={setEditorText}
+                    onSave={() => void saveEditedFile()}
+                  />
+                )}
+              </div>
+              {!preview.isBinary && <div className="workspace-editor-status"><span>{languageLabel(preview.path)}</span><span>UTF-8</span><span>{(editing ? editorText : preview.text).split('\n').length} 行</span><span>{editing ? editorText === preview.text ? '已保存' : '有未保存修改' : '只读预览'}</span></div>}
+            </>
+          ) : (
+            <div className="workspace-editor-empty">
+              <File size={28} strokeWidth={1.3} />
+              <strong>选择文件进行预览</strong>
+              <span>文本文件默认只读预览，可通过编辑按钮修改；图片可预览，其他文件可下载。</span>
+            </div>
+          )}
+        </section>
       </div>
 
-      {preview && (
-        <div style={{ flex: 1, minHeight: compact ? 220 : 300, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--border-light)', background: 'var(--bg)' }}>
-            <span style={{ flex: 1, minWidth: 0, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview.path}</span>
-            {!preview.isBinary && <button type="button" className="workspace-entry-icon" disabled={busy} onClick={() => setEditing(value => !value)} aria-label={editing ? '取消编辑' : '编辑文件'} title={editing ? '取消编辑' : '编辑文件'}>{editing ? <X size={13} /> : <Pencil size={13} />}</button>}
-            {editing && <button type="button" className="workspace-entry-icon primary" disabled={busy} onClick={() => void saveEditedFile()} aria-label="保存文件" title="保存文件"><Save size={13} /></button>}
-            <a className="workspace-entry-icon" href={rawFileUrl(threadId, preview.path, true)} aria-label="下载文件" title="下载文件"><Download size={13} /></a>
-            <button type="button" className="workspace-entry-icon" onClick={() => setPreview(null)} aria-label="关闭预览" title="关闭预览"><X size={13} /></button>
-          </div>
-          <div style={{ flex: 1, overflow: 'auto', padding: 12, background: 'var(--preview-bg, #F8FAFD)' }}>
-            {preview.truncated && <div style={{ marginBottom: 10, padding: '7px 9px', borderRadius: 5, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 11 }}>文件较长，当前仅展示开头部分；下载可查看完整内容。</div>}
-            {IMAGE_EXTENSIONS.has(extension(preview.path)) ? (
-              <img src={preview.rawUrl} alt={fileName(preview.path)} width="100%" height="240" style={{ display: 'block', maxWidth: '100%', height: 240, width: '100%', margin: '0 auto', objectFit: 'contain' }} />
-            ) : preview.isBinary ? (
-              <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>该文件不支持文本预览，请点击“下载”查看。</div>
-            ) : editing ? (
-              <textarea value={editorText} onChange={event => setEditorText(event.target.value)} style={{ width: '100%', minHeight: 240, resize: 'vertical', border: '1px solid var(--border)', borderRadius: 6, padding: 10, background: 'var(--surface)', color: 'var(--text-primary)', fontSize: 11, lineHeight: 1.7, fontFamily: "'JetBrains Mono', monospace", boxSizing: 'border-box' }} aria-label="文件内容编辑器" />
-            ) : (
-              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 11, lineHeight: 1.7, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-secondary)' }}>{preview.text}</pre>
-            )}
-          </div>
-        </div>
-      )}
-
-      <Dialog.Root open={dialog !== null} onOpenChange={open => {
-        if (!open) setDialog(null)
-      }}>
+      <Dialog.Root open={dialog !== null} onOpenChange={open => { if (!open) setDialog(null) }}>
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" onClick={() => setDialog(null)} />
           <Dialog.Content className="dialog-content" style={{ width: 'min(360px, 100%)' }} aria-describedby={undefined}>
             <Dialog.Title className="dialog-title">{dialog === 'directory' ? '新建文件夹' : '新建文件'}</Dialog.Title>
+            <p className="dialog-desc">创建位置：/{currentDir || '工作区根目录'}</p>
             <form onSubmit={event => { event.preventDefault(); void createEntry() }}>
               <input autoFocus value={dialogName} onChange={event => setDialogName(event.target.value)} placeholder={dialog === 'directory' ? '文件夹名称' : '文件名，例如 analysis.py'} aria-label="名称" style={{ width: '100%', boxSizing: 'border-box', padding: '9px 10px', border: '1px solid var(--border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, marginTop: 12 }} />
               <div className="dialog-actions">
@@ -294,4 +333,76 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
       />
     </div>
   )
+}
+
+function WorkspaceTreeBranch({ node, depth, busy, openDirectories, selectedPath, selectedDirectory, threadId, onOpen, onCopy, onDelete }: {
+  node: WorkspaceTreeNode
+  depth: number
+  busy: boolean
+  openDirectories: Set<string>
+  selectedPath: string | null
+  selectedDirectory: string
+  threadId: string
+  onOpen: (entry: WorkspaceEntry) => void
+  onCopy: (path: string) => void
+  onDelete: (path: string) => void
+}) {
+  const { entry } = node
+  const open = entry.is_dir && openDirectories.has(entry.path)
+  const active = entry.is_dir ? selectedDirectory === entry.path : selectedPath === entry.path
+  return (
+    <div role="treeitem" aria-expanded={entry.is_dir ? open : undefined}>
+      <div className={`workspace-tree-row${active ? ' active' : ''}`} style={{ paddingLeft: 8 + depth * 15 }}>
+        <button type="button" className="workspace-tree-main" aria-label={fileName(entry.path)} onClick={() => onOpen(entry)}>
+          {entry.is_dir ? (open ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span className="workspace-tree-spacer" />}
+          {entry.is_dir ? (open ? <FolderOpen size={14} /> : <Folder size={14} />) : <File size={14} />}
+          <span>{fileName(entry.path)}</span>
+          {!entry.is_dir && <small>{formatSize(entry.size)}</small>}
+        </button>
+        {!entry.is_dir && <div className="workspace-tree-actions">
+          <button type="button" onClick={() => onCopy(entry.path)} aria-label={`复制路径：${fileName(entry.path)}`} title="复制路径"><Copy size={12} /></button>
+          <a href={rawFileUrl(threadId, entry.path, true)} aria-label={`下载：${fileName(entry.path)}`} title="下载"><Download size={12} /></a>
+          <button type="button" disabled={busy} onClick={() => onDelete(entry.path)} aria-label={`删除：${fileName(entry.path)}`} title="删除"><Trash2 size={12} /></button>
+        </div>}
+      </div>
+      {open && node.children.map(child => <WorkspaceTreeBranch key={child.entry.path} node={child} depth={depth + 1} busy={busy} openDirectories={openDirectories} selectedPath={selectedPath} selectedDirectory={selectedDirectory} threadId={threadId} onOpen={onOpen} onCopy={onCopy} onDelete={onDelete} />)}
+    </div>
+  )
+}
+
+function buildWorkspaceTree(entries: WorkspaceEntry[]): WorkspaceTreeNode[] {
+  const roots: WorkspaceTreeNode[] = []
+  for (const entry of entries) {
+    const parts = entry.path.split('/').filter(Boolean)
+    let children = roots
+    let path = ''
+    parts.forEach((name, index) => {
+      path = path ? `${path}/${name}` : name
+      let node = children.find(item => item.entry.path === path)
+      if (!node) {
+        const final = index === parts.length - 1
+        node = {
+          entry: final ? entry : { path, is_dir: true, size: 0, modified_at: entry.modified_at },
+          children: [],
+        }
+        children.push(node)
+      } else if (index === parts.length - 1) {
+        node.entry = entry
+      }
+      children = node.children
+    })
+  }
+  const sort = (nodes: WorkspaceTreeNode[]) => {
+    nodes.sort((a, b) => Number(b.entry.is_dir) - Number(a.entry.is_dir) || a.entry.path.localeCompare(b.entry.path, 'zh-CN'))
+    nodes.forEach(node => sort(node.children))
+  }
+  sort(roots)
+  return roots
+}
+
+function toggled(current: Set<string>, path: string): Set<string> {
+  const next = new Set(current)
+  if (next.has(path)) next.delete(path)
+  else next.add(path)
+  return next
 }

@@ -1,34 +1,49 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Bot, Boxes, Check, ChevronLeft, ChevronRight, FileText, Network, Save, Search, Wrench } from 'lucide-react'
 import { agentKeys, createAgent, getMine, listSubagentCandidates, updateAgent, writeDraft } from '../../api/agents'
 import { listCatalog as listMcpCatalog, mcpKeys } from '../../api/mcp'
 import { errorMessage } from '../../api/request'
 import { listAvailable as listAvailableSkills, skillKeys } from '../../api/skills'
+import { Button } from '../../components/ui/Button'
 import { MAX_SYSTEM_PROMPT_LENGTH, systemPromptError } from '../config'
 
 const MAX_NAME_LENGTH = 32
 const MAX_DESCRIPTION_LENGTH = 200
 const SUBJECTS = ['公司金融', '量化投资', '资产管理', '风险管理', '学术科研', '会计审计', '其他']
 
-/**
- * 建一个智能体，或改一个已有的。
- *
- * Agent 的内容由系统提示词、Skill、可选子智能体与可选 MCP 引用组成。
- *
- * **改内容与改元信息是两条路**：改名不产生新版本，改提示词会（已经定稿的话，
- * 这一下追加下一个版本号的新草稿）。两者分开写在这里，因为它们打的是两个端点。
- */
+type BuilderStep = 'basics' | 'prompt' | 'capabilities' | 'orchestration'
+type CapabilityTab = 'skills' | 'mcps'
+
+const STEPS: Array<{ id: BuilderStep; title: string; description: string }> = [
+  { id: 'basics', title: '基本信息', description: '名称、说明与学科' },
+  { id: 'prompt', title: '行为设定', description: '编写系统提示词' },
+  { id: 'capabilities', title: '能力组件', description: '组合 Skills 与 MCP' },
+  { id: 'orchestration', title: '协作编排', description: '选择子智能体并检查' },
+]
+
+interface PickerItem {
+  id: string
+  title: string
+  subtitle: string
+  badge?: string
+}
+
+/** 建一个智能体，或改一个已有的；场景沿用同一份数据模型与编辑器。 */
 export function CreateAgent() {
   const { agentId } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const scenarioMode = location.pathname.includes('/my-scenarios')
+  const noun = scenarioMode ? '场景' : '智能体'
+  const returnPath = scenarioMode ? '/workspace/my-scenarios' : '/workspace/my-agents'
   const queryClient = useQueryClient()
   const editing = Boolean(agentId)
 
   const availableSkills = useQuery({ queryKey: skillKeys.available(), queryFn: listAvailableSkills })
   const availableSubagents = useQuery({ queryKey: agentKeys.subagentCandidates(), queryFn: listSubagentCandidates })
   const availableMcps = useQuery({ queryKey: mcpKeys.catalog(), queryFn: listMcpCatalog })
-
   const existing = useQuery({
     queryKey: agentKeys.detail(agentId ?? ''),
     queryFn: () => getMine(agentId ?? ''),
@@ -42,6 +57,11 @@ export function CreateAgent() {
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([])
   const [selectedSubagentIds, setSelectedSubagentIds] = useState<string[]>([])
   const [selectedMcpIds, setSelectedMcpIds] = useState<string[]>([])
+  const [activeStep, setActiveStep] = useState<BuilderStep>('basics')
+  const [capabilityTab, setCapabilityTab] = useState<CapabilityTab>('skills')
+  const [skillSearch, setSkillSearch] = useState('')
+  const [mcpSearch, setMcpSearch] = useState('')
+  const [subagentSearch, setSubagentSearch] = useState('')
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
 
@@ -51,19 +71,33 @@ export function CreateAgent() {
     setName(agent.name)
     setDescription(agent.description)
     setSubject(agent.subject || SUBJECTS[0])
-    // 编辑框里放的是**草稿**；没有草稿时回落到最新已发布版，
-    // 保存时那一下会追加下一个版本号的新草稿
     const draft = agent.versions.find(one => one.status === 'draft')
     const released = [...agent.versions].reverse().find(one => one.status === 'released')
     setPrompt(draft?.system_prompt ?? released?.system_prompt ?? '')
-    const refs = draft?.skill_refs ?? released?.skill_refs ?? []
-    setSelectedSkillIds(refs.map(one => one.skill_id))
-    const subagentRefs = draft?.subagent_refs ?? released?.subagent_refs ?? []
-    setSelectedSubagentIds(subagentRefs.map(one => one.agent_id))
-    const mcpRefs = draft?.mcp_refs ?? released?.mcp_refs ?? []
-    setSelectedMcpIds(mcpRefs.map(one => one.server_id))
+    setSelectedSkillIds((draft?.skill_refs ?? released?.skill_refs ?? []).map(one => one.skill_id))
+    setSelectedSubagentIds((draft?.subagent_refs ?? released?.subagent_refs ?? []).map(one => one.agent_id))
+    setSelectedMcpIds((draft?.mcp_refs ?? released?.mcp_refs ?? []).map(one => one.server_id))
     setLoaded(true)
   }, [existing.data, loaded])
+
+  const skillItems = useMemo<PickerItem[]>(() => (availableSkills.data ?? []).map(skill => ({
+    id: skill.id,
+    title: `${skill.name} · v${skill.version}`,
+    subtitle: `${skill.owner_name} · ${skill.subject || '未分类'} · ${skill.description}`,
+    badge: 'Skill',
+  })), [availableSkills.data])
+  const mcpItems = useMemo<PickerItem[]>(() => (availableMcps.data ?? []).map(server => ({
+    id: server.id,
+    title: server.name,
+    subtitle: `${server.tool_names.join('、') || '未声明工具'} · ${server.description}`,
+    badge: 'MCP',
+  })), [availableMcps.data])
+  const subagentItems = useMemo<PickerItem[]>(() => (availableSubagents.data ?? []).map(agent => ({
+    id: agent.id,
+    title: `${agent.name} · v${agent.version}`,
+    subtitle: `${agent.owner_name} · ${agent.subject || '未分类'} · ${agent.description}`,
+    badge: 'Agent',
+  })), [availableSubagents.data])
 
   const save = useMutation({
     async mutationFn() {
@@ -73,187 +107,224 @@ export function CreateAgent() {
     },
     async onSuccess() {
       await queryClient.invalidateQueries({ queryKey: agentKeys.all })
-      navigate('/workspace/my-agents')
+      navigate(returnPath)
     },
   })
 
-  const submit = (event: React.FormEvent) => {
-    event.preventDefault()
+  const validationStep = (): BuilderStep | null => {
     if (!name.trim()) {
-      setError('请填写智能体名称')
-      return
+      setError(`请填写${noun}名称`)
+      return 'basics'
     }
     const promptError = systemPromptError(prompt)
     if (promptError) {
       setError(promptError)
+      return 'prompt'
+    }
+    if (scenarioMode && selectedSubagentIds.length === 0) {
+      setError('场景至少需要一个子智能体，请在“协作编排”中选择')
+      return 'orchestration'
+    }
+    return null
+  }
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault()
+    const invalidStep = validationStep()
+    if (invalidStep) {
+      setActiveStep(invalidStep)
       return
     }
     setError('')
     save.mutate()
   }
 
+  const currentIndex = STEPS.findIndex(step => step.id === activeStep)
+  const goStep = (step: BuilderStep) => {
+    setActiveStep(step)
+    setError('')
+  }
+  const toggle = (setter: React.Dispatch<React.SetStateAction<string[]>>, id: string) => setter(current => current.includes(id) ? current.filter(one => one !== id) : [...current, id])
+  const completed: Record<BuilderStep, boolean> = {
+    basics: Boolean(name.trim()),
+    prompt: systemPromptError(prompt) === '',
+    capabilities: true,
+    orchestration: !scenarioMode || selectedSubagentIds.length > 0,
+  }
+
   if (editing && existing.isPending) {
-    return <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--text-muted)' }}>正在加载…</div>
+    return <div className="agent-builder-loading">正在加载…</div>
   }
   if (editing && existing.isError) {
-    return <div role="alert" style={{ flex: 1, padding: 36, color: 'var(--danger)' }}>{errorMessage(existing.error)}</div>
+    return <div role="alert" className="agent-builder-loading error">{errorMessage(existing.error)}</div>
   }
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '32px 36px', background: 'var(--bg)' }}>
-      <div style={{ maxWidth: 680, margin: '0 auto' }}>
-        <div style={{ marginBottom: 28 }}>
-          <div className="page-eyebrow">// {editing ? 'EDIT AGENT' : 'CREATE AGENT'}</div>
-          <h1 className="page-title">{editing ? '编辑智能体 / 场景' : '创建智能体 / 场景'}</h1>
-          <p className="page-desc">
-            内容就是一段提示词，可以再挂上 Skill、MCP 与子智能体。保存之后它先是草稿，
-            只有自己看得到；发布一版之后才谈得上共享与提审。
-          </p>
-          {/* **区别是客观事实，不是一个要作者填的类型字段**（P6-decision G2）：
-              挂了子智能体它就是场景，去场景库；没挂就是智能体，去广场，并且可以
-              被别人选作子智能体。这里把这条规则当场说出来，省得作者发布之后
-              才发现自己的东西出现在另一个页面 */}
-          <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: 'var(--bg)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-            {selectedSubagentIds.length > 0
-              ? `挂了 ${selectedSubagentIds.length} 个子智能体 —— 它是一个「场景」，发布后进场景库，不能再被别人选作子智能体。`
-              : '没有挂子智能体 —— 它是一个「智能体」，发布后进广场，可以被别人选作子智能体。挂上子智能体它就变成场景。'}
-          </div>
+    <div className="agent-builder-page">
+      <header className="agent-builder-header">
+        <div>
+          <div className="page-eyebrow">// {editing ? 'EDIT' : 'CREATE'} {scenarioMode ? 'SCENARIO' : 'AGENT'}</div>
+          <h1 className="page-title">{editing ? `编辑${noun}` : `创建${noun}`}</h1>
+          <p className="page-desc">分步完成角色设定、能力组合与协作编排，保存后生成仅自己可见的草稿。</p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => navigate(returnPath)}>返回列表</Button>
+      </header>
+
+      <form className="agent-builder-form" onSubmit={submit}>
+        <div className="agent-builder-workbench">
+          <nav className="agent-builder-steps" aria-label={`${noun}配置步骤`}>
+            <div className="agent-builder-steps-title">配置流程</div>
+            {STEPS.map((step, index) => (
+              <button key={step.id} type="button" className={`agent-builder-step${activeStep === step.id ? ' active' : ''}`} onClick={() => goStep(step.id)}>
+                <span className={`agent-builder-step-index${completed[step.id] ? ' done' : ''}`}>{completed[step.id] ? <Check size={13} /> : index + 1}</span>
+                <span><strong>{step.title}</strong><small>{step.description}</small></span>
+              </button>
+            ))}
+            <div className="agent-builder-type-note">
+              <Network size={15} />
+              <span>{scenarioMode
+                ? '场景通过子智能体完成多角色协作。'
+                : selectedSubagentIds.length > 0
+                  ? '已组合子智能体，保存后会被归类为场景。'
+                  : '不组合子智能体时，它是可独立使用的智能体。'}</span>
+            </div>
+          </nav>
+
+          <main className="agent-builder-canvas">
+            {activeStep === 'basics' && (
+              <BuilderSection eyebrow="STEP 01" title={`${noun}的基本信息`} description="这些信息会出现在你的列表与公共目录卡片中。">
+                <Field label={`${noun}名称`} required hint="保持清晰、具体，说明它负责解决什么问题。">
+                  <input value={name} maxLength={MAX_NAME_LENGTH} onChange={event => { setName(event.target.value); setError('') }} placeholder={scenarioMode ? '如：企业信用风险联合研判' : '如：企业财务异常检测'} />
+                  <FieldCounter current={name.length} max={MAX_NAME_LENGTH} />
+                </Field>
+                <Field label="一句话说明" hint="建议写清输入对象、分析方法和主要输出。">
+                  <textarea value={description} maxLength={MAX_DESCRIPTION_LENGTH} onChange={event => setDescription(event.target.value)} placeholder="如：对财报关键科目做稽核式检查，输出带证据的异常项清单" rows={4} />
+                  <FieldCounter current={description.length} max={MAX_DESCRIPTION_LENGTH} />
+                </Field>
+                <Field label="所属学科">
+                  <select value={subject} onChange={event => setSubject(event.target.value)}>
+                    {SUBJECTS.map(one => <option key={one} value={one}>{one}</option>)}
+                  </select>
+                </Field>
+              </BuilderSection>
+            )}
+
+            {activeStep === 'prompt' && (
+              <BuilderSection eyebrow="STEP 02" title="定义行为与边界" description="系统提示词决定分析风格、工作方法与输出标准；平台环境约束会自动附加。">
+                <div className="agent-builder-prompt-guide">
+                  <PromptGuide icon={<Bot size={16} />} title="角色" text="它是谁，擅长什么领域" />
+                  <PromptGuide icon={<Wrench size={16} />} title="方法" text="分析步骤、工具与判断原则" />
+                  <PromptGuide icon={<FileText size={16} />} title="输出" text="结构、证据与质量要求" />
+                </div>
+                <Field label="系统提示词" required hint="不要重复工作目录、产物目录、无公网等平台环境约束。">
+                  <textarea className="agent-builder-prompt" value={prompt} maxLength={MAX_SYSTEM_PROMPT_LENGTH} onChange={event => { setPrompt(event.target.value); setError('') }} placeholder="你是一位严谨的金融分析师。先核对数据口径，再按以下步骤完成分析……" />
+                  <FieldCounter current={prompt.length} max={MAX_SYSTEM_PROMPT_LENGTH} />
+                </Field>
+              </BuilderSection>
+            )}
+
+            {activeStep === 'capabilities' && (
+              <BuilderSection eyebrow="STEP 03" title="组合能力组件" description="发布版本时会冻结所选 Skill 的版本；MCP 则引用管理员放行的服务目录。">
+                <div className="agent-builder-tabs" role="tablist" aria-label="能力组件类型">
+                  <button type="button" role="tab" aria-selected={capabilityTab === 'skills'} className={capabilityTab === 'skills' ? 'active' : ''} onClick={() => setCapabilityTab('skills')}><Boxes size={15} /> Skills <span>{selectedSkillIds.length}</span></button>
+                  <button type="button" role="tab" aria-selected={capabilityTab === 'mcps'} className={capabilityTab === 'mcps' ? 'active' : ''} onClick={() => setCapabilityTab('mcps')}><Network size={15} /> MCP <span>{selectedMcpIds.length}</span></button>
+                </div>
+                {capabilityTab === 'skills' ? (
+                  <CapabilityPicker items={skillItems} selectedIds={selectedSkillIds} onToggle={id => toggle(setSelectedSkillIds, id)} search={skillSearch} onSearch={setSkillSearch} placeholder="搜索 Skill 名称、作者或说明" loading={availableSkills.isPending} error={availableSkills.isError ? errorMessage(availableSkills.error) : ''} empty="当前没有可用 Skill。" />
+                ) : (
+                  <CapabilityPicker items={mcpItems} selectedIds={selectedMcpIds} onToggle={id => toggle(setSelectedMcpIds, id)} search={mcpSearch} onSearch={setMcpSearch} placeholder="搜索 MCP 名称、工具或说明" loading={availableMcps.isPending} error={availableMcps.isError ? errorMessage(availableMcps.error) : ''} empty="还没有管理员放行的 MCP。" />
+                )}
+              </BuilderSection>
+            )}
+
+            {activeStep === 'orchestration' && (
+              <BuilderSection eyebrow="STEP 04" title="协作编排" description={scenarioMode ? '至少选择一个子智能体，组成可以分工协作的分析场景。' : '仅当它需要协调其他专家角色时选择；选择后会被归类为场景。'}>
+                <CapabilityPicker items={subagentItems} selectedIds={selectedSubagentIds} onToggle={id => { toggle(setSelectedSubagentIds, id); setError('') }} search={subagentSearch} onSearch={setSubagentSearch} placeholder="搜索子智能体名称、作者或说明" loading={availableSubagents.isPending} error={availableSubagents.isError ? errorMessage(availableSubagents.error) : ''} empty="当前没有可用子智能体。" />
+              </BuilderSection>
+            )}
+          </main>
+
+          <aside className="agent-builder-summary">
+            <div className="agent-builder-summary-title">配置摘要</div>
+            <div className="agent-builder-summary-name"><span>{scenarioMode ? 'SCENARIO' : selectedSubagentIds.length > 0 ? 'SCENARIO' : 'AGENT'}</span><strong>{name.trim() || `未命名${noun}`}</strong><small>{subject}</small></div>
+            <SummaryRow label="系统提示词" value={prompt.trim() ? `${prompt.length} 字` : '未填写'} ready={Boolean(prompt.trim())} />
+            <SummaryRow label="Skills" value={`${selectedSkillIds.length} 个`} ready />
+            <SummaryRow label="MCP" value={`${selectedMcpIds.length} 个`} ready />
+            <SummaryRow label="子智能体" value={`${selectedSubagentIds.length} 个`} ready={!scenarioMode || selectedSubagentIds.length > 0} />
+            <div className="agent-builder-summary-divider" />
+            <p>{editing ? '保存会更新元信息，并写入当前草稿版本。' : '创建后先进入草稿状态；发布、共享与提审在列表页完成。'}</p>
+          </aside>
         </div>
 
-        <form onSubmit={submit}>
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 20 }}>
-            <Field label="名称" required hint="同一个作者名下不能重名。广场上重名靠作者名区分">
-              <input value={name} maxLength={MAX_NAME_LENGTH} onChange={event => { setName(event.target.value); setError('') }} placeholder="如：企业财务异常检测" style={inputStyle} />
-            </Field>
-            <Field label="一句话说明" hint="广场卡片上展示的那两行">
-              <textarea value={description} maxLength={MAX_DESCRIPTION_LENGTH} onChange={event => setDescription(event.target.value)} placeholder="如：对财报关键科目做稽核式比率检查，输出带证据的异常项清单" style={{ ...inputStyle, minHeight: 72, resize: 'vertical' }} />
-            </Field>
-            <Field label="学科">
-              <select value={subject} onChange={event => setSubject(event.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-                {SUBJECTS.map(one => <option key={one} value={one}>{one}</option>)}
-              </select>
-            </Field>
+        <footer className="agent-builder-footer">
+          <div className="agent-builder-footer-message">
+            {(error || save.isError) && <span role="alert">{error || errorMessage(save.error)}</span>}
+            {!error && !save.isError && <span>第 {currentIndex + 1} / {STEPS.length} 步 · {STEPS[currentIndex].title}</span>}
           </div>
-
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 24 }}>
-            <Field label="系统提示词" required hint="这段文字会替换平台默认的角色段。平台的环境契约（工作目录、产物目录、无公网）仍然会自动附在后面">
-              <textarea
-                value={prompt}
-                maxLength={MAX_SYSTEM_PROMPT_LENGTH}
-                onChange={event => { setPrompt(event.target.value); setError('') }}
-                placeholder="如：你是一位专业的财务分析师，擅长识别财务报表中的异常信号…"
-                style={{ ...inputStyle, minHeight: 220, resize: 'vertical', lineHeight: 1.7, fontFamily: "'JetBrains Mono', monospace" }}
-              />
-            </Field>
-            <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--text-muted)' }}>{prompt.length} / {MAX_SYSTEM_PROMPT_LENGTH}</div>
+          <div className="agent-builder-footer-actions">
+            <Button variant="secondary" size="sm" disabled={currentIndex === 0} onClick={() => goStep(STEPS[currentIndex - 1].id)}><ChevronLeft size={14} /> 上一步</Button>
+            {currentIndex < STEPS.length - 1 && <Button variant="secondary" size="sm" onClick={() => goStep(STEPS[currentIndex + 1].id)}>下一步 <ChevronRight size={14} /></Button>}
+            <Button variant="primary" size="sm" type="submit" disabled={save.isPending}><Save size={14} /> {save.isPending ? '正在保存…' : editing ? '保存草稿' : '创建草稿'}</Button>
           </div>
+        </footer>
+      </form>
+    </div>
+  )
+}
 
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 24 }}>
-            <Field label="自带 Skills" hint="发布版本时会冻结所选 Skill 的当前版本；运行时还可以再临时追加">
-              {availableSkills.isPending && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>正在加载可用 Skills…</div>}
-              {availableSkills.isError && <div role="alert" style={{ fontSize: 13, color: 'var(--danger)' }}>{errorMessage(availableSkills.error)}</div>}
-              {!availableSkills.isPending && (availableSkills.data ?? []).length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>当前没有可用 Skill。</div>}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {(availableSkills.data ?? []).map(skill => (
-                  <label key={skill.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid var(--border)', borderRadius: 7, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={selectedSkillIds.includes(skill.id)}
-                      onChange={event => setSelectedSkillIds(current => event.target.checked ? [...current, skill.id] : current.filter(one => one !== skill.id))}
-                      style={{ marginTop: 3 }}
-                    />
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{skill.name} · v{skill.version}</span>
-                      <span style={{ display: 'block', marginTop: 3, fontSize: 12, color: 'var(--text-muted)' }}>{skill.owner_name} · {skill.subject || '未分类'} · {skill.description}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </Field>
-          </div>
+function BuilderSection({ eyebrow, title, description, children }: { eyebrow: string; title: string; description: string; children: React.ReactNode }) {
+  return <section className="agent-builder-section"><div className="agent-builder-section-head"><span>{eyebrow}</span><h2>{title}</h2><p>{description}</p></div>{children}</section>
+}
 
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 24 }}>
-            <Field label="自带子智能体" hint="发布版本时会冻结所选子智能体的当前版本；子智能体不能再挂载子智能体">
-              {availableSubagents.isPending && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>正在加载可用子智能体…</div>}
-              {availableSubagents.isError && <div role="alert" style={{ fontSize: 13, color: 'var(--danger)' }}>{errorMessage(availableSubagents.error)}</div>}
-              {!availableSubagents.isPending && (availableSubagents.data ?? []).length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>当前没有可用子智能体。</div>}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {(availableSubagents.data ?? []).map(agent => (
-                  <label key={agent.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid var(--border)', borderRadius: 7, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      aria-label={agent.name}
-                      checked={selectedSubagentIds.includes(agent.id)}
-                      onChange={event => setSelectedSubagentIds(current => event.target.checked ? [...current, agent.id] : current.filter(one => one !== agent.id))}
-                      style={{ marginTop: 3 }}
-                    />
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{agent.name} · v{agent.version}</span>
-                      <span style={{ display: 'block', marginTop: 3, fontSize: 12, color: 'var(--text-muted)' }}>{agent.owner_name} · {agent.subject || '未分类'} · {agent.description}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </Field>
-          </div>
+function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
+  return <div className="agent-builder-field"><label>{label}{required && <span>*</span>}</label>{hint && <p>{hint}</p>}{children}</div>
+}
 
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 24 }}>
-            <Field label="自带 MCP" hint="每次运行都会连一次这些外部服务；引用只冻结目录记录，冻不住那台机器的行为">
-              {availableMcps.isPending && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>正在加载 MCP 目录…</div>}
-              {availableMcps.isError && <div role="alert" style={{ fontSize: 13, color: 'var(--danger)' }}>{errorMessage(availableMcps.error)}</div>}
-              {!availableMcps.isPending && (availableMcps.data ?? []).length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>还没有放行的 MCP。</div>}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {(availableMcps.data ?? []).map(server => (
-                  <label key={server.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid var(--border)', borderRadius: 7, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      aria-label={server.name}
-                      checked={selectedMcpIds.includes(server.id)}
-                      onChange={event => setSelectedMcpIds(current => event.target.checked ? [...current, server.id] : current.filter(one => one !== server.id))}
-                      style={{ marginTop: 3 }}
-                    />
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{server.name}</span>
-                      <span style={{ display: 'block', marginTop: 3, fontSize: 12, color: 'var(--text-muted)' }}>{server.tool_names.join('、') || '未声明工具'} · {server.description}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </Field>
-          </div>
+function FieldCounter({ current, max }: { current: number; max: number }) {
+  return <div className="agent-builder-counter">{current} / {max}</div>
+}
 
-          {(error || save.isError) && (
-            <div role="alert" style={{ marginBottom: 16, padding: '9px 14px', background: 'var(--danger-bg)', border: '1px solid #FECACA', borderRadius: 7, color: 'var(--danger)', fontSize: 13 }}>
-              {error || errorMessage(save.error)}
-            </div>
-          )}
+function PromptGuide({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
+  return <div>{icon}<span><strong>{title}</strong><small>{text}</small></span></div>
+}
 
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-            <button type="button" onClick={() => navigate('/workspace/my-agents')} style={{ padding: '9px 20px', background: 'var(--surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
-            <button type="submit" disabled={save.isPending} style={{ padding: '9px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: save.isPending ? 'default' : 'pointer', opacity: save.isPending ? 0.6 : 1, fontFamily: 'inherit' }}>
-              {save.isPending ? '正在保存…' : editing ? '保存草稿' : '创建'}
-            </button>
-          </div>
-        </form>
+function CapabilityPicker({ items, selectedIds, onToggle, search, onSearch, placeholder, loading, error, empty }: {
+  items: PickerItem[]
+  selectedIds: string[]
+  onToggle: (id: string) => void
+  search: string
+  onSearch: (value: string) => void
+  placeholder: string
+  loading: boolean
+  error: string
+  empty: string
+}) {
+  const normalized = search.trim().toLocaleLowerCase('zh-CN')
+  const filtered = items.filter(item => `${item.title} ${item.subtitle}`.toLocaleLowerCase('zh-CN').includes(normalized))
+  return (
+    <div className="agent-builder-picker">
+      <label className="agent-builder-search"><Search size={14} /><input value={search} onChange={event => onSearch(event.target.value)} placeholder={placeholder} /></label>
+      <div className="agent-builder-picker-meta"><span>已选择 {selectedIds.length} 个</span><span>共 {items.length} 个可用项</span></div>
+      {loading && <div className="agent-builder-picker-state">正在加载…</div>}
+      {error && <div role="alert" className="agent-builder-picker-state error">{error}</div>}
+      {!loading && !error && filtered.length === 0 && <div className="agent-builder-picker-state">{normalized ? '没有匹配项。' : empty}</div>}
+      <div className="agent-builder-picker-list">
+        {filtered.map(item => {
+          const selected = selectedIds.includes(item.id)
+          return (
+            <label key={item.id} className={`agent-builder-picker-item${selected ? ' selected' : ''}`}>
+              <input type="checkbox" checked={selected} onChange={() => onToggle(item.id)} aria-label={item.title} />
+              <span className="agent-builder-picker-check">{selected && <Check size={13} />}</span>
+              <span className="agent-builder-picker-copy"><strong>{item.title}</strong><small>{item.subtitle}</small></span>
+              {item.badge && <span className="agent-builder-picker-badge">{item.badge}</span>}
+            </label>
+          )
+        })}
       </div>
     </div>
   )
 }
 
-function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 18 }}>
-      <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }}>
-        {label}{required && <span style={{ color: 'var(--danger)', marginLeft: 3 }}>*</span>}
-      </label>
-      {hint && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{hint}</div>}
-      {children}
-    </div>
-  )
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7,
-  fontSize: 13, color: 'var(--text-primary)', background: 'var(--input-bg)',
-  fontFamily: 'inherit', boxSizing: 'border-box',
+function SummaryRow({ label, value, ready }: { label: string; value: string; ready: boolean }) {
+  return <div className="agent-builder-summary-row"><span className={ready ? 'ready' : ''}>{ready ? <Check size={11} /> : '!'}</span><strong>{label}</strong><small>{value}</small></div>
 }

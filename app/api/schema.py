@@ -624,6 +624,22 @@ class SkillVersionResponse(BaseModel):
     review_reason: str | None = Field(default=None, description="最近一次拒绝理由")
 
 
+class SkillFileEntryResponse(BaseModel):
+    """Skill 发布版本中的一个只读文件。"""
+
+    path: str = Field(min_length=1, description="相对该版本根目录的 POSIX 路径")
+    size: int = Field(ge=0, description="文件字节数")
+
+
+class SkillFileContentResponse(BaseModel):
+    """Skill 文件的只读文本预览；二进制文件不返回正文。"""
+
+    path: str = Field(min_length=1, description="相对该版本根目录的 POSIX 路径")
+    size: int = Field(ge=0, description="文件字节数")
+    content: str | None = Field(default=None, description="UTF-8 文本；二进制文件为空")
+    is_binary: bool = Field(description="是否无法按 UTF-8 文本预览")
+
+
 class MySkillResponse(BaseModel):
     """作者视角的一条 Skill。"""
 

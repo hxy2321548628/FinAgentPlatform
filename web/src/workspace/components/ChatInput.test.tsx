@@ -140,6 +140,8 @@ describe('ChatInput', () => {
     fireEvent.click(screen.getByLabelText('使用智能体'))
     await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
+    expect(screen.getByText('系统提示词')).toBeTruthy()
+    expect(screen.getByText('每句以喵开头')).toBeTruthy()
     // Radix Dialog 打开时背景 aria-hidden，先「完成」关闭再发送 —— 真实用户也走这条路径
     fireEvent.click(screen.getByRole('button', { name: '完成' }))
     fireEvent.change(input(), { target: { value: '算个波动率' } })
