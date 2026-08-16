@@ -294,5 +294,5 @@ const gridStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: '
 const countStyle: React.CSSProperties = { padding: '20px 0 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }
 const outboundBannerStyle: React.CSSProperties = { padding: '10px 12px', border: '1px solid #FDE68A', borderRadius: 7, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 12, lineHeight: 1.6 }
 const applyButtonStyle: React.CSSProperties = { padding: '8px 14px', border: '1px solid var(--action-border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--action)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }
-const fieldStyle: React.CSSProperties = { width: '100%', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: '#F7F9FC', color: 'var(--text-primary)', boxSizing: 'border-box' }
+const fieldStyle: React.CSSProperties = { width: '100%', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: 'var(--input-bg)', color: 'var(--text-primary)', boxSizing: 'border-box' }
 const hintTextStyle: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }

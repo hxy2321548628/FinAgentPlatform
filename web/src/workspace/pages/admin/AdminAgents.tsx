@@ -77,7 +77,7 @@ export function AdminAgents() {
                 onChange={event => setReasons(current => ({ ...current, [item.id]: event.target.value }))}
                 placeholder="拒绝理由（拒绝时必填）"
                 aria-label={`${item.agent_name} 的拒绝理由`}
-                style={{ flex: 1, padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: '#F7F9FC' }}
+                style={{ flex: 1, padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: 'var(--input-bg)' }}
               />
               <button onClick={() => reject(item)} disabled={decide.isPending} style={{ padding: '7px 14px', background: 'transparent', color: 'var(--danger)', border: '1px solid #FECACA', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>拒绝</button>
               <button onClick={() => decide.mutate({ id: item.id, approved: true })} disabled={decide.isPending} style={{ padding: '7px 16px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>通过</button>

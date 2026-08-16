@@ -166,7 +166,7 @@ function Field({ label, id, children }: { label: string; id: string; children: R
 const inputStyle: React.CSSProperties = {
   width: '100%', height: 40, border: '1px solid var(--border)', borderRadius: 6,
   padding: '0 12px', fontSize: 14, color: 'var(--text-primary)',
-  background: '#F7F9FC', fontFamily: 'inherit',
+  background: 'var(--input-bg)', fontFamily: 'inherit',
   boxSizing: 'border-box',
 }
 

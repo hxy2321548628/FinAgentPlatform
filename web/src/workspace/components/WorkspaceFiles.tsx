@@ -246,7 +246,7 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
             <a href={rawFileUrl(threadId, preview.path, true)} style={{ ...smallButtonStyle, textDecoration: 'none' }}>下载</a>
             <button type="button" onClick={() => setPreview(null)} style={smallButtonStyle}>关闭</button>
           </div>
-          <div style={{ flex: 1, overflow: 'auto', padding: 12, background: '#F8FAFD' }}>
+          <div style={{ flex: 1, overflow: 'auto', padding: 12, background: 'var(--preview-bg, #F8FAFD)' }}>
             {preview.truncated && <div style={{ marginBottom: 10, padding: '7px 9px', borderRadius: 5, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 11 }}>文件较长，当前仅展示开头部分；下载可查看完整内容。</div>}
             {IMAGE_EXTENSIONS.has(extension(preview.path)) ? (
               <img src={preview.rawUrl} alt={fileName(preview.path)} width="100%" height="240" style={{ display: 'block', maxWidth: '100%', height: 240, width: '100%', margin: '0 auto', objectFit: 'contain' }} />

@@ -94,7 +94,7 @@ export function Capabilities() {
             <div className="section-tag">// SECURITY ARCHITECTURE</div>
             <h2 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 24 }}>数据流转路径</h2>
             <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 2px 8px rgba(11,46,92,0.06)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', background: '#F7F9FC', borderBottom: '1px solid var(--border-light)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', background: 'var(--input-bg)', borderBottom: '1px solid var(--border-light)' }}>
                 {[0,1,2].map(i => <div key={i} style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--border)' }} />)}
                 <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6, fontFamily: "'JetBrains Mono', monospace" }}>data_flow.txt</span>
               </div>

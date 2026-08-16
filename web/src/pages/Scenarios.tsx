@@ -58,7 +58,7 @@ function Scenario({ contextLabel, contextText, title, quote, steps, outputs, tag
   const rightContent = (
     <div style={{ flexShrink: 0, width: 420 }}>
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 4px 8px rgba(11,46,92,0.06), 0 12px 40px rgba(11,46,92,0.10)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', background: '#F7F9FC', borderBottom: '1px solid var(--border-light)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', background: 'var(--input-bg)', borderBottom: '1px solid var(--border-light)' }}>
           {[0,1,2].map(i => <div key={i} style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--border)' }} />)}
           <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em' }}>{terminalTitle}</span>
         </div>

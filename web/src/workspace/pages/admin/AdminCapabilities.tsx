@@ -73,7 +73,7 @@ export function AdminSkills() {
                     onChange={event => setReasons(current => ({ ...current, [item.id]: event.target.value }))}
                     placeholder="拒绝理由（拒绝时必填）"
                     aria-label={`${item.skill_name ?? '未命名 Skill'} 的拒绝理由`}
-                    style={{ width: 180, padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: '#F7F9FC' }}
+                    style={{ width: 180, padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: 'var(--input-bg)' }}
                   />
                   <button type="button" onClick={() => reject(item)} disabled={decide.isPending} style={rejectButtonStyle}>拒绝</button>
                   <button type="button" onClick={() => decide.mutate({ id: item.id, approved: true })} disabled={decide.isPending} style={approveButtonStyle}>通过</button>
@@ -303,4 +303,4 @@ function McpTable({ records, probes, failed, action }: {
   )
 }
 
-const reasonInputStyle: React.CSSProperties = { width: 180, padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: '#F7F9FC' }
+const reasonInputStyle: React.CSSProperties = { width: 180, padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: 'var(--input-bg)' }

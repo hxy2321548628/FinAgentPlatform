@@ -14,7 +14,7 @@ export function DashboardCard() {
       overflow: 'hidden', width: 460, flexShrink: 0,
     }}>
       {/* 标题栏 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 16px', background: '#F7F9FC', borderBottom: '1px solid var(--border-light)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 16px', background: 'var(--input-bg)', borderBottom: '1px solid var(--border-light)' }}>
         {[0,1,2].map(i => <div key={i} style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--border)' }} />)}
         <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8, fontFamily: 'monospace', letterSpacing: '0.04em' }}>
           agent_executor · run_0x8B3F

@@ -27,6 +27,9 @@
   --warn-bg:        #FFFBEB;
   --warn-border:    #FDE68A;
   --code-surface:   #F0F3F8;
+  --navbar-bg:      rgba(255,255,255,0.96);
+  --input-bg:       #F7F9FC;
+  --chrome-bg:      #F7F9FC;  /* 窗口标题栏 / 终端卡头那一类「浅灰镶边」 */
   --success:        #166534;
   --success-bg:     #F0FDF4;
   --success-border: #BBF7D0;
@@ -70,6 +73,9 @@
   --success-bg:     rgba(74, 222, 128, 0.12);
   --success-border: #3F7A55;
   --code-surface:   #141A26;
+  --navbar-bg:      rgba(16,20,29,0.92);
+  --input-bg:       #1A2030;
+  --chrome-bg:      #141A26;
   --shiki-foreground: #D6DEEB;
   --shiki-token-comment: #8490A8;
   --shiki-token-punctuation: #A9B4C8;
@@ -315,7 +321,7 @@ body {
 /* ── Navbar ── */
 .navbar {
   height: 56px; flex-shrink: 0;
-  background: rgba(255,255,255,0.96); backdrop-filter: blur(10px);
+  background: var(--navbar-bg); backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
   display: flex; align-items: center;
   padding: 0 40px; gap: 4px;
