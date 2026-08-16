@@ -51,6 +51,11 @@ CursorParam = Annotated[str | None, Query(description="上一页给的 next_curs
 
 LimitParam = Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE, description="一页几条")]
 
+SearchParam = Annotated[
+    str | None,
+    Query(min_length=1, max_length=64, description="按标题模糊搜索（大小写不敏感）；不传则全部"),
+]
+
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_thread(
@@ -81,13 +86,16 @@ async def list_thread(
     platform: Annotated[Platform, Depends(get_platform)],
     cursor: CursorParam = None,
     limit: LimitParam = DEFAULT_PAGE_SIZE,
+    q: SearchParam = None,
 ) -> ThreadPageResponse:
     """我的会话，最近活动的在前。
 
     **游标分页而不是 offset**：这一页按 `updated_at` 排，而那个字段会因为新提问而变动 ——
     翻页途中若有会话被顶到首页，offset 会漏掉或重复条目，且不报错。
+
+    `q` 只匹配标题：会话没有正文索引，全量搜索成本与收益都不划算。
     """
-    page = await _paged(platform.thread.list(user_id=current.user_id, cursor=cursor, limit=limit))
+    page = await _paged(platform.thread.list(user_id=current.user_id, cursor=cursor, limit=limit, query=q))
     # 每个会话「还在跑的 run」批量查一次（见 RunRepository.live_statuses），
     # 列表要显示进行中状态点，而它属于 runs 表
     live = await platform.repository.live_statuses([one.id for one in page.items], user_id=current.user_id)

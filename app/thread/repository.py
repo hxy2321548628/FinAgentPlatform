@@ -89,13 +89,21 @@ class ThreadRepository:
         record = await self._find(thread_id, user_id=user_id)
         return None if record is None else _to_thread(record)
 
-    async def list(self, *, user_id: str, cursor: str | None = None, limit: int = DEFAULT_PAGE_SIZE) -> Page[Thread]:
+    async def list(
+        self,
+        *,
+        user_id: str,
+        cursor: str | None = None,
+        limit: int = DEFAULT_PAGE_SIZE,
+        query: str | None = None,
+    ) -> Page[Thread]:
         """列出这个用户的会话，最近活动的在前。
 
         Args:
             user_id: 当前用户。
             cursor: 上一页给的游标，不传则从头。
             limit: 一页几条。
+            query: 按标题模糊搜索（大小写不敏感），不传则全部。
 
         Returns:
             这一页会话，以及取下一页要带的游标。
@@ -108,6 +116,9 @@ class ThreadRepository:
             return Page(items=[], next_cursor=None)
 
         statement = select(ThreadRecord).where(_visible(owner))
+        if query:
+            # ilike 自带参数绑定，无注入面；%/_ 按通配符语义处理是搜索的预期行为
+            statement = statement.where(col(ThreadRecord.title).ilike(f"%{query}%"))
         if cursor is not None:
             # 行值比较而不是 `updated_at < x OR (updated_at = x AND id < y)`：
             # 后者要把同一组值写两遍，而改排序时漏改一处不会报错，只会让翻页少几条

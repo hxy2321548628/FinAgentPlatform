@@ -166,7 +166,6 @@ def test_the_list_pages_with_a_cursor(client: TestClient) -> None:
 def test_a_garbage_cursor_is_rejected(client: TestClient) -> None:
     """当成「从头开始」的话，前端会收到一整页重复数据而看不出发生了什么。"""
     response = client.get("/api/threads", params={"cursor": "不是游标"})
-
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_ERROR"
 
@@ -174,6 +173,25 @@ def test_a_garbage_cursor_is_rejected(client: TestClient) -> None:
 def test_an_over_sized_page_is_rejected(client: TestClient) -> None:
     """放开的话一次请求就能把整段历史拉出来。"""
     assert client.get("/api/threads", params={"limit": 10_000}).status_code == 422
+
+
+def test_the_list_can_be_searched_by_title(client: TestClient) -> None:
+    """标题模糊搜索：只命中含关键词的会话，别的原样保留。"""
+    first = client.post("/api/threads").json()["id"]
+    client.patch(f"/api/threads/{first}", json={"title": "波动率分析"})
+    second = client.post("/api/threads").json()["id"]
+    client.patch(f"/api/threads/{second}", json={"title": "债券收益率复盘"})
+
+    hit = client.get("/api/threads", params={"q": "波动"}).json()["items"]
+
+    assert [one["id"] for one in hit] == [first]
+
+    none = client.get("/api/threads", params={"q": "不存在的话题"}).json()["items"]
+    assert none == []
+
+
+def test_an_over_long_search_query_is_rejected(client: TestClient) -> None:
+    assert client.get("/api/threads", params={"q": "长" * 65}).status_code == 422
 
 
 # ------------------------------------------------------------------ 详情与改
