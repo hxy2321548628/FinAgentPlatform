@@ -40,7 +40,56 @@
   --ws-sidebar-accent:  #1e3a5f;
 }
 
-.dark { /* TODO */ }
+/* 暗色色板（DSD 第二章 §2.2，2026-08-16）：只覆盖变量，组件零改动。
+   对比度全部 ≥ 4.5:1（--text-muted #8490A8 实测 bg 5.7 / surface 5.1）。 */
+.dark {
+  color-scheme: dark;
+  --bg:             #10141D;
+  --surface:        #1A2030;
+  --border:         #2A3247;
+  --border-light:   #242C3E;
+  --text-primary:   #E8ECF4;
+  --text-secondary: #A9B4C8;
+  --text-muted:     #8490A8;
+  --brand:          #1C3E6E;
+  --action:         #5B8DEF;
+  --action-hover:   #74A0F4;
+  --action-light:   rgba(91, 141, 239, 0.14);
+  --action-border:  #3D5B97;
+  --status-done:    #34D399;
+  --status-active:  #5B8DEF;
+  --status-pending: #8490A8;
+  --status-warn:    #FBBF24;
+  --danger:         #F87171;
+  --danger-bg:      rgba(248, 113, 113, 0.12);
+  --danger-border:  #7A4145;
+  --warn:           #F5C06B;
+  --warn-bg:        rgba(245, 192, 107, 0.12);
+  --warn-border:    #7A6541;
+  --success:        #4ADE80;
+  --success-bg:     rgba(74, 222, 128, 0.12);
+  --success-border: #3F7A55;
+  --code-surface:   #141A26;
+  --shiki-foreground: #D6DEEB;
+  --shiki-token-comment: #8490A8;
+  --shiki-token-punctuation: #A9B4C8;
+  --shiki-token-constant: #93C5FD;
+  --shiki-token-number: #93C5FD;
+  --shiki-token-string: #86EFAC;
+  --shiki-token-string-expression: #86EFAC;
+  --shiki-token-keyword: #FDA4AF;
+  --shiki-token-function: #93C5FD;
+  --shiki-token-parameter: #A9B4C8;
+  --shiki-token-function-method: #93C5FD;
+  --shiki-token-namespace: #E8ECF4;
+}
+
+/* 网格底纹在暗色下换成白色细线 */
+.dark .grid-bg {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.045) 1px, transparent 1px);
+}
 
 @theme inline {
   --color-bg:             var(--bg);
