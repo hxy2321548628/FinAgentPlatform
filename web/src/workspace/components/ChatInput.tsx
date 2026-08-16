@@ -9,6 +9,7 @@ import { listingCaption } from '../agent'
 import { DATA_LEAVES_CAMPUS, mountedMcps } from '../mcp'
 import { useToast } from '../../components/ui/toast-context'
 import * as Dialog from '@radix-ui/react-dialog'
+import { Button } from '../../components/ui/Button'
 import {
   AGENT_CONFIG_MODES,
   AGENT_CONFIG_MODE_LABEL,
@@ -219,8 +220,8 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
           {configError && <div role="alert" style={{ marginTop: 6, fontSize: 11, color: '#DC2626' }}>{configError}</div>}
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <input value={sceneName} onChange={event => setSceneName(event.target.value)} placeholder="场景名称" style={{ ...selectStyle, flex: 1, minWidth: 180 }} />
-            <button type="button" onClick={() => saveScene.mutate()} disabled={saveScene.isPending} style={{ padding: '8px 12px', border: '1px solid var(--action-border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--action)', cursor: saveScene.isPending ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 12 }}>{saveScene.isPending ? '保存中…' : '保存到我的场景库'}</button>
-            <button type="button" onClick={() => setConfigOpen(false)} style={{ padding: '8px 12px', border: 'none', borderRadius: 6, background: 'var(--action)', color: '#fff', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12 }}>完成</button>
+            <Button variant="outline" size="sm" onClick={() => saveScene.mutate()} disabled={saveScene.isPending}>{saveScene.isPending ? '保存中…' : '保存到我的场景库'}</Button>
+            <Button variant="primary" size="sm" onClick={() => setConfigOpen(false)}>完成</Button>
           </div>
         </div>
             </Dialog.Content>

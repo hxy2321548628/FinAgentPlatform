@@ -12,6 +12,8 @@ import {
 import { groupKeys, listMyGroups } from '../../api/groups'
 import { isScenario } from '../agent'
 import { errorMessage } from '../../api/request'
+import * as DialogPrimitive from '@radix-ui/react-dialog'
+import { Button } from '../../components/ui/Button'
 import type { MyAgent } from '../../api/types'
 import { AGENT_TABS, AGENT_TAB_EMPTY, AGENT_TAB_LABEL, agentState, visibilityBadges, type AgentTab } from '../agent'
 
@@ -207,23 +209,25 @@ function ReviewDialog({ agent, onClose, onDone }: { agent: MyAgent; onClose: () 
 
 function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.35)', zIndex: 200 }} />
-      <div role="dialog" aria-label={title} style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 460, maxWidth: '92vw', background: 'var(--surface)', borderRadius: 12, zIndex: 201, boxShadow: '0 12px 40px rgba(11,46,92,0.2)' }}>
-        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>{title}</div>
-        <div style={{ padding: '18px 22px' }}>{children}</div>
-      </div>
-    </>
+    <DialogPrimitive.Root defaultOpen onOpenChange={open => {
+      if (!open) onClose()
+    }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="dialog-overlay dialog-overlay-strong" onClick={onClose} />
+        <DialogPrimitive.Content className="dialog-content" aria-describedby={undefined} style={{ width: 460 }}>
+          <DialogPrimitive.Title className="dialog-title" style={{ paddingBottom: 14, borderBottom: '1px solid var(--border)', marginBottom: 0 }}>{title}</DialogPrimitive.Title>
+          <div style={{ paddingTop: 18 }}>{children}</div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   )
 }
 
 function DialogActions({ onClose, onSubmit, pending, disabled = false, label }: { onClose: () => void; onSubmit: () => void; pending: boolean; disabled?: boolean; label: string }) {
   return (
-    <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-      <button type="button" onClick={onClose} style={ghostButton}>取消</button>
-      <button type="button" onClick={onSubmit} disabled={pending || disabled} style={{ ...primaryButton, opacity: pending || disabled ? 0.5 : 1, cursor: pending || disabled ? 'default' : 'pointer' }}>
-        {pending ? '正在提交…' : label}
-      </button>
+    <div className="dialog-actions">
+      <Button variant="secondary" size="md" onClick={onClose}>取消</Button>
+      <Button variant="primary" size="md" onClick={onSubmit} disabled={pending || disabled}>{pending ? '正在提交…' : label}</Button>
     </div>
   )
 }

@@ -453,6 +453,8 @@ body {
 .btn-secondary:hover:not(:disabled) { border-color: var(--action-border); color: var(--action); }
 .btn-ghost { background: transparent; color: var(--action); }
 .btn-ghost:hover:not(:disabled) { background: var(--action-light); }
+.btn-outline { background: var(--surface); color: var(--action); border-color: var(--action-border); }
+.btn-outline:hover:not(:disabled) { background: var(--action-light); }
 .btn-danger { background: var(--danger); color: #fff; font-weight: 600; }
 .btn-danger:hover:not(:disabled) { background: #B91C1C; }
 

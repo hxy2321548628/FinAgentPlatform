@@ -7,7 +7,7 @@ import type { ButtonHTMLAttributes } from 'react'
  * 迁移策略：新代码与弹窗/表单用本组件，存量内联样式按钮在后续大迁移中逐个替换。
  */
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'outline' | 'danger'
 export type ButtonSize = 'sm' | 'md' | 'lg'
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

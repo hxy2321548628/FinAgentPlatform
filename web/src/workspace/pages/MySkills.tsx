@@ -2,6 +2,8 @@ import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { groupKeys, listMyGroups } from '../../api/groups'
 import { errorMessage } from '../../api/request'
+import * as DialogPrimitive from '@radix-ui/react-dialog'
+import { Button } from '../../components/ui/Button'
 import {
   createSkill,
   deleteSkill,
@@ -218,11 +220,23 @@ function ReviewDialog({ skill, onClose, onDone }: { skill: MySkill; onClose: () 
 }
 
 function Dialog({ title, onClose, width = 460, children }: { title: string; onClose: () => void; width?: number; children: React.ReactNode }) {
-  return <><div onClick={onClose} style={backdropStyle} /><div role="dialog" aria-label={title} style={{ ...dialogStyle, width }}><div style={dialogHeaderStyle}>{title}</div><div style={{ padding: '18px 22px' }}>{children}</div></div></>
+  return (
+    <DialogPrimitive.Root defaultOpen onOpenChange={open => {
+      if (!open) onClose()
+    }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="dialog-overlay dialog-overlay-strong" onClick={onClose} />
+        <DialogPrimitive.Content className="dialog-content" aria-describedby={undefined} style={{ width: Math.min(width, 640) }}>
+          <DialogPrimitive.Title className="dialog-title" style={{ paddingBottom: 14, borderBottom: '1px solid var(--border)', marginBottom: 0 }}>{title}</DialogPrimitive.Title>
+          <div style={{ paddingTop: 18 }}>{children}</div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  )
 }
 
 function DialogActions({ onClose, onSubmit, pending, disabled = false, label }: { onClose: () => void; onSubmit: () => void; pending: boolean; disabled?: boolean; label: string }) {
-  return <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}><button type="button" onClick={onClose} style={ghostButton}>取消</button><button type="button" onClick={onSubmit} disabled={pending || disabled} style={{ ...primaryButton, opacity: pending || disabled ? 0.5 : 1 }}>{pending ? '正在提交…' : label}</button></div>
+  return <div className="dialog-actions"><Button variant="secondary" size="md" onClick={onClose}>取消</Button><Button variant="primary" size="md" onClick={onSubmit} disabled={pending || disabled}>{pending ? '正在提交…' : label}</Button></div>
 }
 
 function formatBytes(bytes: number): string {
@@ -247,6 +261,3 @@ const labelStyle: React.CSSProperties = { display: 'block', fontSize: 13, fontWe
 const inputStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7, background: 'var(--surface)', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit' }
 const fileButtonStyle: React.CSSProperties = { width: '100%', padding: '24px 18px', marginBottom: 14, border: '1px dashed var(--action-border)', borderRadius: 9, background: 'var(--action-light)', color: 'var(--action)', cursor: 'pointer', fontFamily: 'inherit' }
 const noticeStyle: React.CSSProperties = { padding: '10px 12px', marginBottom: 16, borderRadius: 7, background: 'var(--bg)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.65 }
-const backdropStyle: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.35)', zIndex: 300 }
-const dialogStyle: React.CSSProperties = { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', maxWidth: '92vw', background: 'var(--surface)', borderRadius: 12, zIndex: 301, boxShadow: '0 12px 40px rgba(11,46,92,0.2)' }
-const dialogHeaderStyle: React.CSSProperties = { padding: '18px 22px', borderBottom: '1px solid var(--border)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }

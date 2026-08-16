@@ -5,6 +5,7 @@ import { errorMessage } from '../../api/request'
 import type { WorkspaceEntry } from '../../api/types'
 import { ConfirmDialog } from './ConfirmDialog'
 import { useToast } from '../../components/ui/toast-context'
+import { Button } from '../../components/ui/Button'
 
 interface FilePreview {
   path: string
@@ -190,10 +191,10 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
           <div style={{ fontSize: compact ? 12 : 13, color: 'var(--text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title ?? '工作目录'}</div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-          <button type="button" disabled={busy} onClick={() => { setDialogName(''); setDialog('file') }} style={smallButtonStyle}>新建文件</button>
-          <button type="button" disabled={busy} onClick={() => { setDialogName(''); setDialog('directory') }} style={smallButtonStyle}>新建文件夹</button>
+          <Button variant="secondary" size="sm" disabled={busy} onClick={() => { setDialogName(''); setDialog('file') }}>新建文件</Button>
+          <Button variant="secondary" size="sm" disabled={busy} onClick={() => { setDialogName(''); setDialog('directory') }}>新建文件夹</Button>
           <input ref={uploadRef} type="file" multiple style={{ display: 'none' }} onChange={event => event.target.files && void uploadFiles(event.target.files)} />
-          <button type="button" disabled={busy} onClick={() => uploadRef.current?.click()} style={{ padding: '6px 10px', border: 'none', borderRadius: 6, background: 'var(--action)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>上传</button>
+          <Button size="sm" disabled={busy} onClick={() => uploadRef.current?.click()}>上传</Button>
           <button type="button" onClick={() => void tree.refetch()} aria-label="刷新文件列表" title="刷新" style={{ width: 30, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer' }}>↻</button>
         </div>
       </div>

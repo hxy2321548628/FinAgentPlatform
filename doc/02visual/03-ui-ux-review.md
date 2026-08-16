@@ -448,6 +448,7 @@ AdminUsers.tsx:277 - modal 输入 outline:none 无 focus 替代
 | 2026-08-16 | P1-3 部分：Marketplace tab/学科筛选进 URL（可分享可后退）；会话侧栏行内重命名（updateThread title 通道，Enter 保存 / Esc 取消） | §4.6 |
 | 2026-08-16 | **D1 决策 A 落地**：公共站市场区接真实目录 —— 后端新增匿名可读 `GET /api/agents/public`（单独 public_router，投影删掉 system_prompt/mcp_refs/owner_id/source/visibility，OpenAPI 门禁用例同步）；前端 Marketplace 删除全部 mock 数据，统计（教师数/调用数/场景数/学科数）从目录派生，加载走骨架屏、空目录给引导、错误走 alert；Scenarios 页假「实测」数据改为「演示 · 数据为示意」 | §4.7 |
 | 2026-08-16 | P1 b1 第一批：Button/Logo 基础件；ConfirmDialog 迁 Radix AlertDialog、ChatInput 配置弹窗迁 Radix Dialog（接口不变）；Logo 五处复制收敛为一处，深色侧栏按 DSD §6 反白 | §4.4 |
+| 2026-08-16 | P1 b1 第二批：MySkills/MyAgents 的 ReviewDialog 与 PublishDialog 全部迁 Radix Dialog（存量手写 modal 清零）；Button 增加 outline 变体并接入 ChatInput/ThreadSidebar/WorkspaceFiles；WorkspaceSidebar 导航项补上缺失的 hover 态（附录 A 记录的无效过渡） | §4.4 |
 | 待办 | 会话状态指示：`ThreadSummary` 无 run 状态字段，需后端配合 | §4.8 |
 | 待办 | 公共站 mock 数据决策（D1）：接真实 API 或标注示例数据，待评审 | §4.7 |
 

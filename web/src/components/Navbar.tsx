@@ -5,10 +5,10 @@ import { AUTH_QUERY_KEY, me } from '../api/auth'
 
 const NAV_LINKS = [
   { to: '/',             label: '首页',     end: true },
-  { to: '/marketplace', label: '智能体市场' },
   { to: '/scenarios',   label: '研究范式' },
   { to: '/capabilities',label: '技术底座' },
   { to: '/data',        label: '数据要素' },
+  { to: '/marketplace', label: '智能体市场' },
 ]
 
 export function Navbar() {

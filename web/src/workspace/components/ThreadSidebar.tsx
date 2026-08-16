@@ -6,6 +6,7 @@ import { errorMessage } from '../../api/request'
 import { ConfirmDialog } from './ConfirmDialog'
 import { useToast } from '../../components/ui/toast-context'
 import { Skeleton } from '../../components/ui/Skeleton'
+import { Button } from '../../components/ui/Button'
 
 function threadLabel(title: string, createdAt: string): string {
   if (title) return title
@@ -73,9 +74,9 @@ export function ThreadSidebar() {
   return (
     <div style={{ width: 240, flexShrink: 0, background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ padding: '12px 12px 8px' }}>
-        <button type="button" disabled={create.isPending} onClick={() => create.mutate()} style={{ width: '100%', padding: '8px 0', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>
+        <Button style={{ width: '100%' }} disabled={create.isPending} onClick={() => create.mutate()}>
           {create.isPending ? '正在创建…' : '＋ 新建分析'}
-        </button>
+        </Button>
       </div>
       <div style={{ padding: '4px 16px 8px', fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.2em', color: 'var(--text-muted)' }}>// HISTORY</div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 8px' }}>

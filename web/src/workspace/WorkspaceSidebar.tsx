@@ -38,8 +38,9 @@ const ROLE_LABEL = { admin: '管理员', reviewer: '审核员', teacher: '教师
 const BACKEND_ENTRY = { admin: '/admin/users', reviewer: '/admin/agents' } as const
 
 function NavItemRow({ item }: { item: NavItem }) {
+  const [hovered, setHovered] = useState(false)
   return (
-    <NavLink to={item.to} end={item.end} style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', fontSize: 13, fontWeight: isActive ? 600 : 400, color: isActive ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)', background: isActive ? 'var(--ws-sidebar-accent)' : 'transparent', borderLeft: isActive ? '3px solid var(--action)' : '3px solid transparent', textDecoration: 'none', cursor: 'pointer', transition: 'background 0.15s, color 0.15s' })}>
+    <NavLink to={item.to} end={item.end} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', fontSize: 13, fontWeight: isActive ? 600 : 400, color: isActive ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)', background: isActive ? 'var(--ws-sidebar-accent)' : hovered ? 'var(--ws-sidebar-hover)' : 'transparent', borderLeft: isActive ? '3px solid var(--action)' : '3px solid transparent', textDecoration: 'none', cursor: 'pointer', transition: 'background 0.15s, color 0.15s' })}>
       <span style={{ flexShrink: 0 }}>{item.icon()}</span>{item.label}
     </NavLink>
   )
