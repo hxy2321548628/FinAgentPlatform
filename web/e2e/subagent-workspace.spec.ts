@@ -22,7 +22,7 @@ function required(name: string): string {
 async function signIn(page: Page, name: string) {
   await page.context().clearCookies()
   await page.goto('/login')
-  await page.getByPlaceholder('请输入用户名').fill(name)
+  await page.getByPlaceholder('用户名或邮箱都可以').fill(name)
   await page.getByPlaceholder('请输入密码').fill(PASSWORD)
   await page.getByRole('button', { name: '登录系统' }).click()
   await expect(page).toHaveURL(/\/workspace/)
