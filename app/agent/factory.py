@@ -9,6 +9,7 @@
 """
 
 from collections.abc import AsyncIterator
+from contextlib import nullcontext
 from types import MappingProxyType
 from typing import Protocol, cast
 
@@ -27,7 +28,7 @@ from agent.mcp import McpFailureRecorderProtocol, McpTargetLoaderProtocol, load_
 from agent.prompt import compose_prompt
 from agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
 from agent.subagent import SubagentLoaderProtocol, compile_subagents
-from agent.trace import attribution
+from agent.trace import attribution, propagation
 from config import Settings
 from event.mapper import StreamChunk
 from event.model import InterruptAction
@@ -205,13 +206,19 @@ class Agent:
     ) -> AsyncIterator[StreamChunk]:
         async def stream() -> AsyncIterator[StreamChunk]:
             graph = await self._graph(backend, agent_config)
-            async for chunk in graph.astream(
-                entry,
-                self._config(thread_id, user_id=user_id),
-                stream_mode=STREAM_MODE,
-                subgraphs=True,
-            ):
-                yield chunk
+            # **身份要在这里再挂一次，`metadata` 那两个键不够。** 回调只把它们挂到
+            # 根 span 上，而模型是在 LangGraph 随后开出的 async 任务里调的 ——
+            # token 因此全落在没有主人的 GENERATION 上，按用户切出来每人都是 0。
+            # 没配 Langfuse 时不进：`propagate_attributes` 要一个构造过的全局客户端
+            tracing = propagation(thread_id=thread_id, user_id=user_id) if self._callback else nullcontext()
+            with tracing:
+                async for chunk in graph.astream(
+                    entry,
+                    self._config(thread_id, user_id=user_id),
+                    stream_mode=STREAM_MODE,
+                    subgraphs=True,
+                ):
+                    yield chunk
 
         return stream()
 

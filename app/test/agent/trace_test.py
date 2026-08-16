@@ -4,10 +4,12 @@
 前者要等到打开 Langfuse 发现空的才发现，后者要等到有人问「这个月谁花得最多」才发现。
 """
 
+from contextlib import nullcontext
+
 import pytest
 from pydantic import SecretStr
 
-from agent.trace import SESSION_KEY, USER_KEY, attribution, create_callback
+from agent.trace import SESSION_KEY, USER_KEY, attribution, create_callback, propagation
 from config import Settings
 
 BASE_URL = "http://127.0.0.1:3000"
@@ -74,3 +76,24 @@ def test_an_anonymous_run_carries_no_user_key_at_all() -> None:
     metadata = attribution(thread_id="thread-1", user_id=None)
 
     assert metadata == {SESSION_KEY: "thread-1"}
+
+
+def test_an_anonymous_run_propagates_nothing() -> None:
+    """没有提交人就没什么可传播的，交出一个不做事的上下文。"""
+    with propagation(thread_id="thread-1", user_id=None) as entered:
+        assert entered is None
+
+
+def test_a_named_run_propagates_a_real_context() -> None:
+    """**这一条挡的是本期最贵的那个 bug。**
+
+    `metadata` 里的两个键只让**根** span 带上身份 —— 回调在 `on_chain_start` 里
+    进的那个上下文，传不到 LangGraph 后续开出的 async 任务里。而 token 全记在
+    那些任务产生的 GENERATION 上，于是「谁花了多少」按用户切出来每人都是 0，
+    接口却一路返回 200。实测：裸模型调用的 GENERATION 带得上 user_id，走图的带不上。
+
+    因此有提交人时必须交出一个**真的**上下文管理器，不能是空壳。
+    """
+    context = propagation(thread_id="thread-1", user_id="teacher-1")
+
+    assert not isinstance(context, nullcontext)

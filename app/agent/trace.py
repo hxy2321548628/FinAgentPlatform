@@ -15,9 +15,10 @@
 """
 
 import logging
+from contextlib import AbstractContextManager, nullcontext
 
 from langchain_core.callbacks import BaseCallbackHandler
-from langfuse import Langfuse
+from langfuse import Langfuse, propagate_attributes
 from langfuse.langchain import CallbackHandler
 
 from config import Settings
@@ -70,3 +71,26 @@ def attribution(*, thread_id: str, user_id: str | None) -> dict[str, str]:
     if user_id:
         metadata[USER_KEY] = user_id
     return metadata
+
+
+def propagation(*, thread_id: str, user_id: str | None) -> AbstractContextManager[object]:
+    """把身份挂进 OTel 上下文，让它落到图里**每一个** span。
+
+    **光有 `attribution()` 那两个键不够。** 回调确实也做这件事，但它只在根 chain
+    上做（`parent_run_id is None` 那一支），而 LangGraph 随后是在别的 async 任务里
+    调模型的 —— 根上进的那个上下文传不进去。后果是 token 全记在没有主人的
+    GENERATION 上：按用户切出来每人都是 0，而每一步都返回 200。
+
+    2026-08-16 实测（三条并排跑）：裸模型调用的 GENERATION 带得上 user_id，
+    走图的只有 CHAIN 带得上；在外层套一次这个上下文之后，GENERATION 也带上了。
+
+    Args:
+        thread_id: 会话标识，对 Langfuse 是 session。
+        user_id: 提交的人。**匿名时不传播** —— 空串会在它那边多出一个叫「」的用户。
+
+    Returns:
+        可直接 `with` 的上下文；匿名时是一个不做事的空壳。
+    """
+    if not user_id:
+        return nullcontext()
+    return propagate_attributes(user_id=user_id, session_id=thread_id)
