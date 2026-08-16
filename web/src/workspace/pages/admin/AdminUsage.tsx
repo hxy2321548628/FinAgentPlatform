@@ -81,6 +81,6 @@ function formatTokens(value: number): string {
   return String(value)
 }
 
-const alertStyle: React.CSSProperties = { marginBottom: 14, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: '#FEF2F2', color: '#DC2626', fontSize: 13 }
-const noticeStyle: React.CSSProperties = { marginBottom: 16, padding: '12px 14px', border: '1px solid #FDE68A', borderRadius: 8, background: '#FFFBEB', color: '#92400E', fontSize: 13, lineHeight: 1.7 }
+const alertStyle: React.CSSProperties = { marginBottom: 14, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: 'var(--danger-bg)', color: 'var(--danger)', fontSize: 13 }
+const noticeStyle: React.CSSProperties = { marginBottom: 16, padding: '12px 14px', border: '1px solid #FDE68A', borderRadius: 8, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 13, lineHeight: 1.7 }
 const emptyStyle: React.CSSProperties = { padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }

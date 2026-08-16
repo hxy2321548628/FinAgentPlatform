@@ -60,7 +60,7 @@ export function AdminAgents() {
       </div>
 
       {reviews.isPending && <div style={{ color: 'var(--text-muted)' }}>正在加载审核队列…</div>}
-      {reviews.isError && <div role="alert" style={{ color: '#DC2626' }}>{errorMessage(reviews.error)}</div>}
+      {reviews.isError && <div role="alert" style={{ color: 'var(--danger)' }}>{errorMessage(reviews.error)}</div>}
 
       <section style={{ ...sectionStyle, padding: '16px 18px' }}>
         <div style={sectionHeading}>待审核（{pending.length}）</div>
@@ -79,10 +79,10 @@ export function AdminAgents() {
                 aria-label={`${item.agent_name} 的拒绝理由`}
                 style={{ flex: 1, padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: '#F7F9FC' }}
               />
-              <button onClick={() => reject(item)} disabled={decide.isPending} style={{ padding: '7px 14px', background: 'transparent', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>拒绝</button>
+              <button onClick={() => reject(item)} disabled={decide.isPending} style={{ padding: '7px 14px', background: 'transparent', color: 'var(--danger)', border: '1px solid #FECACA', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>拒绝</button>
               <button onClick={() => decide.mutate({ id: item.id, approved: true })} disabled={decide.isPending} style={{ padding: '7px 16px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>通过</button>
             </div>
-            {failed[item.id] && <div role="alert" style={{ marginTop: 8, color: '#DC2626', fontSize: 12 }}>{failed[item.id]}</div>}
+            {failed[item.id] && <div role="alert" style={{ marginTop: 8, color: 'var(--danger)', fontSize: 12 }}>{failed[item.id]}</div>}
           </article>
         ))}
       </section>
@@ -93,7 +93,7 @@ export function AdminAgents() {
         {decided.map(item => (
           <article key={item.id} data-testid="review-row" style={rowStyle}>
             <Header item={item} />
-            {item.reason && <div style={{ marginTop: 6, fontSize: 12, color: '#DC2626' }}>拒绝理由：{item.reason}</div>}
+            {item.reason && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--danger)' }}>拒绝理由：{item.reason}</div>}
           </article>
         ))}
       </section>
@@ -103,14 +103,14 @@ export function AdminAgents() {
 
 function Header({ item }: { item: ReviewItem }) {
   const label = { pending: '待审核', approved: '已通过', rejected: '已拒绝' }[item.status]
-  const tone = { pending: 'var(--status-warn)', approved: 'var(--status-done)', rejected: '#DC2626' }[item.status]
+  const tone = { pending: 'var(--status-warn)', approved: 'var(--status-done)', rejected: 'var(--danger)' }[item.status]
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
       <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{item.agent_name}</span>
       <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-muted)' }}>v{item.version}</span>
       <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{item.owner_name} · {item.subject || '未分类'}</span>
       <span style={{ padding: '1px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, color: tone, border: `1px solid ${tone}` }}>{label}</span>
-      {!item.responsibility_confirmed && <span style={{ fontSize: 11, color: '#DC2626' }}>未勾责任确认</span>}
+      {!item.responsibility_confirmed && <span style={{ fontSize: 11, color: 'var(--danger)' }}>未勾责任确认</span>}
     </div>
   )
 }

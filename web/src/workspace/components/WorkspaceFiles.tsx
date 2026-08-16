@@ -210,8 +210,8 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
 
       <div style={{ flex: preview ? '0 0 auto' : 1, maxHeight: preview ? (compact ? 250 : 300) : undefined, overflowY: 'auto' }}>
         {tree.isPending && <div style={{ padding: 28, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>正在加载工作目录…</div>}
-        {tree.isError && <div role="alert" style={{ padding: 20, color: '#DC2626', fontSize: 12 }}>{errorMessage(tree.error, '工作目录读取失败')}</div>}
-        {tree.data?.truncated && <div style={{ padding: '7px 12px', background: '#FFFBEB', color: '#92400E', fontSize: 11 }}>文件过多，当前只显示部分条目。</div>}
+        {tree.isError && <div role="alert" style={{ padding: 20, color: 'var(--danger)', fontSize: 12 }}>{errorMessage(tree.error, '工作目录读取失败')}</div>}
+        {tree.data?.truncated && <div style={{ padding: '7px 12px', background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 11 }}>文件过多，当前只显示部分条目。</div>}
         {currentDir && (
           <button type="button" onClick={() => { setCurrentDir(directoryName(currentDir)); setPreview(null) }} style={{ width: '100%', padding: '9px 14px', border: 'none', borderBottom: '1px solid var(--border-light)', background: 'transparent', color: 'var(--text-secondary)', textAlign: 'left', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>← 返回上一级</button>
         )}
@@ -247,7 +247,7 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
             <button type="button" onClick={() => setPreview(null)} style={smallButtonStyle}>关闭</button>
           </div>
           <div style={{ flex: 1, overflow: 'auto', padding: 12, background: '#F8FAFD' }}>
-            {preview.truncated && <div style={{ marginBottom: 10, padding: '7px 9px', borderRadius: 5, background: '#FFFBEB', color: '#92400E', fontSize: 11 }}>文件较长，当前仅展示开头部分；下载可查看完整内容。</div>}
+            {preview.truncated && <div style={{ marginBottom: 10, padding: '7px 9px', borderRadius: 5, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 11 }}>文件较长，当前仅展示开头部分；下载可查看完整内容。</div>}
             {IMAGE_EXTENSIONS.has(extension(preview.path)) ? (
               <img src={preview.rawUrl} alt={fileName(preview.path)} width="100%" height="240" style={{ display: 'block', maxWidth: '100%', height: 240, width: '100%', margin: '0 auto', objectFit: 'contain' }} />
             ) : preview.isBinary ? (

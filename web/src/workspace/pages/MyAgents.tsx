@@ -60,7 +60,7 @@ export function MyAgents() {
       </div>
 
       {mine.isPending && <div style={{ color: 'var(--text-muted)' }}>正在加载…</div>}
-      {mine.isError && <div role="alert" style={{ color: '#DC2626' }}>{errorMessage(mine.error)}</div>}
+      {mine.isError && <div role="alert" style={{ color: 'var(--danger)' }}>{errorMessage(mine.error)}</div>}
 
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
         {AGENT_TABS.map(one => (
@@ -76,7 +76,7 @@ export function MyAgents() {
       </div>
 
       {(release.isError || remove.isError) && (
-        <div role="alert" style={{ marginBottom: 16, color: '#DC2626', fontSize: 13 }}>{errorMessage(release.error ?? remove.error)}</div>
+        <div role="alert" style={{ marginBottom: 16, color: 'var(--danger)', fontSize: 13 }}>{errorMessage(release.error ?? remove.error)}</div>
       )}
 
       {!mine.isPending && shown.length === 0 ? (
@@ -96,12 +96,12 @@ export function MyAgents() {
                     {visibilityBadges(agent).map(badge => (
                       <span key={badge} style={{ padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: 'var(--action-light)', color: 'var(--action)', border: '1px solid var(--action-border)' }}>{badge}</span>
                     ))}
-                    {state.reviewStatus === 'pending' && <span style={badgeStyle('#FFFBEB', 'var(--status-warn)', '#FDE68A')}>待审核</span>}
-                    {state.reviewStatus === 'rejected' && <span style={badgeStyle('#FEF2F2', '#DC2626', '#FECACA')}>已拒绝</span>}
+                    {state.reviewStatus === 'pending' && <span style={badgeStyle('var(--warn-bg)', 'var(--status-warn)', 'var(--warn-border)')}>待审核</span>}
+                    {state.reviewStatus === 'rejected' && <span style={badgeStyle('var(--danger-bg)', 'var(--danger)', 'var(--danger-border)')}>已拒绝</span>}
                     <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{agent.call_count} 次调用</span>
                   </div>
                   {state.rejectedReason && (
-                    <div role="alert" style={{ fontSize: 12, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '7px 12px', margin: '4px 0' }}>
+                    <div role="alert" style={{ fontSize: 12, color: 'var(--danger)', background: 'var(--danger-bg)', border: '1px solid #FECACA', borderRadius: 6, padding: '7px 12px', margin: '4px 0' }}>
                       <span style={{ fontWeight: 600 }}>审核未通过：</span>{state.rejectedReason}
                     </div>
                   )}
@@ -120,7 +120,7 @@ export function MyAgents() {
                       {state.reviewStatus === 'rejected' ? '改后重新提审' : '提交审核'}
                     </button>
                   )}
-                  <button onClick={() => remove.mutate(agent.id)} style={{ ...ghostButton, color: '#DC2626', borderColor: '#FECACA' }}>删除</button>
+                  <button onClick={() => remove.mutate(agent.id)} style={{ ...ghostButton, color: 'var(--danger)', borderColor: 'var(--danger-border)' }}>删除</button>
                 </div>
               </div>
             )
@@ -159,7 +159,7 @@ function SharingDialog({ agent, onClose, onDone }: { agent: MyAgent; onClose: ()
         取消勾选即改回私有，组员下一次刷新就看不到它了；他们会话里存着的引用会在下次提问时报错，而不是悄悄换成默认提示词。
       </p>
       {groups.isPending && <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>正在加载课题组…</div>}
-      {groups.isError && <div role="alert" style={{ color: '#DC2626', fontSize: 13 }}>{errorMessage(groups.error)}</div>}
+      {groups.isError && <div role="alert" style={{ color: 'var(--danger)', fontSize: 13 }}>{errorMessage(groups.error)}</div>}
       {(groups.data ?? []).length === 0 && !groups.isPending && (
         <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>你还不属于任何课题组，先加入一个才能共享。</div>
       )}
@@ -176,7 +176,7 @@ function SharingDialog({ agent, onClose, onDone }: { agent: MyAgent; onClose: ()
           </label>
         ))}
       </div>
-      {save.isError && <div role="alert" style={{ color: '#DC2626', fontSize: 13, marginBottom: 10 }}>{errorMessage(save.error)}</div>}
+      {save.isError && <div role="alert" style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 10 }}>{errorMessage(save.error)}</div>}
       <DialogActions onClose={onClose} onSubmit={() => save.mutate()} pending={save.isPending} label="保存共享设置" />
     </Dialog>
   )
@@ -201,7 +201,7 @@ function ReviewDialog({ agent, onClose, onDone }: { agent: MyAgent; onClose: () 
         <input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} style={{ marginTop: 3 }} />
         我确认这段提示词的内容合规，并对它产生的分析结果负责。
       </label>
-      {submit.isError && <div role="alert" style={{ color: '#DC2626', fontSize: 13, marginBottom: 10 }}>{errorMessage(submit.error)}</div>}
+      {submit.isError && <div role="alert" style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 10 }}>{errorMessage(submit.error)}</div>}
       <DialogActions onClose={onClose} onSubmit={() => submit.mutate()} pending={submit.isPending} disabled={!confirmed} label="提交审核" />
     </Dialog>
   )

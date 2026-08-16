@@ -59,7 +59,7 @@ export function AdminSkills() {
       <AdminPageHeader eyebrow="// SKILL MANAGEMENT" title="Skill 审核" pendingCount={pending.length} />
 
       {reviews.isPending && <div style={{ color: 'var(--text-muted)' }}>正在加载审核队列…</div>}
-      {reviews.isError && <div role="alert" style={{ color: '#DC2626' }}>{errorMessage(reviews.error)}</div>}
+      {reviews.isError && <div role="alert" style={{ color: 'var(--danger)' }}>{errorMessage(reviews.error)}</div>}
 
       <AdminTableSection title={`待审核 Skills（${pending.length}）`}>
         {pending.length === 0 && !reviews.isPending ? <div style={emptyStyle}>队列是空的</div> : (
@@ -78,7 +78,7 @@ export function AdminSkills() {
                   <button type="button" onClick={() => reject(item)} disabled={decide.isPending} style={rejectButtonStyle}>拒绝</button>
                   <button type="button" onClick={() => decide.mutate({ id: item.id, approved: true })} disabled={decide.isPending} style={approveButtonStyle}>通过</button>
                 </div>
-                {failed[item.id] && <div role="alert" style={{ marginTop: 8, color: '#DC2626', fontSize: 12 }}>{failed[item.id]}</div>}
+                {failed[item.id] && <div role="alert" style={{ marginTop: 8, color: 'var(--danger)', fontSize: 12 }}>{failed[item.id]}</div>}
               </>
             )}
           />
@@ -87,7 +87,7 @@ export function AdminSkills() {
 
       <AdminTableSection title={`最近处理（${decided.length}）`}>
         {decided.length === 0 ? <div style={emptyStyle}>还没有处理过任何提审</div> : (
-          <SkillReviewTable records={decided} action={item => item.reason ? <span style={{ color: '#DC2626' }}>拒绝理由：{item.reason}</span> : null} />
+          <SkillReviewTable records={decided} action={item => item.reason ? <span style={{ color: 'var(--danger)' }}>拒绝理由：{item.reason}</span> : null} />
         )}
       </AdminTableSection>
     </div>
@@ -108,7 +108,7 @@ function SkillReviewTable({ records, action }: { records: ReviewItem[]; action: 
             <td style={cellStyle}>{item.owner_name}</td>
             <td style={cellStyle}><span style={tagStyle}>{item.subject || '未分类'}</span></td>
             <td style={monoCellStyle}>{item.file_count ?? 0} 个文件 · {formatBytes(item.total_bytes ?? 0)}</td>
-            <td style={cellStyle}>{reviewStatus(item.status)}{!item.responsibility_confirmed && <div style={{ color: '#DC2626', fontSize: 11 }}>未勾责任确认</div>}</td>
+            <td style={cellStyle}>{reviewStatus(item.status)}{!item.responsibility_confirmed && <div style={{ color: 'var(--danger)', fontSize: 11 }}>未勾责任确认</div>}</td>
             <td style={cellStyle}>{action(item)}</td>
           </tr>
         ))}
@@ -187,7 +187,7 @@ export function AdminMcp() {
     <div style={pageStyle}>
       <AdminPageHeader eyebrow="// MCP MANAGEMENT" title="MCP 管理" pendingCount={pending.length} />
       {servers.isPending && <div style={{ color: 'var(--text-muted)' }}>正在加载 MCP 目录…</div>}
-      {servers.isError && <div role="alert" style={{ color: '#DC2626' }}>{errorMessage(servers.error)}</div>}
+      {servers.isError && <div role="alert" style={{ color: 'var(--danger)' }}>{errorMessage(servers.error)}</div>}
 
       <AdminTableSection title={`待审核 MCP Servers（${pending.length}）`}>
         {pending.length === 0 && !servers.isPending ? <div style={emptyStyle}>队列是空的</div> : (
@@ -232,7 +232,7 @@ export function AdminMcp() {
 
       {closed.length > 0 && (
         <AdminTableSection title={`已拒绝（${closed.length}）`}>
-          <McpTable records={closed} probes={probes} failed={failed} action={item => <span style={{ color: '#DC2626' }}>{item.disabled_reason}</span>} />
+          <McpTable records={closed} probes={probes} failed={failed} action={item => <span style={{ color: 'var(--danger)' }}>{item.disabled_reason}</span>} />
         </AdminTableSection>
       )}
     </div>
@@ -278,14 +278,14 @@ function McpTable({ records, probes, failed, action }: {
                 <div style={{ marginTop: 3, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                   {record.stores_user_data && <span style={tagStyle}>存储用户数据</span>}
                   {record.sends_data_out && <span style={tagStyle}>转发数据</span>}
-                  {record.has_write_operation && <span style={{ ...tagStyle, color: '#DC2626' }}>有写操作 · 不可批</span>}
+                  {record.has_write_operation && <span style={{ ...tagStyle, color: 'var(--danger)' }}>有写操作 · 不可批</span>}
                 </div>
               </td>
               <td style={cellStyle}>
                 <div>{statusLabel(record)}</div>
-                {record.disabled_reason && <div style={{ marginTop: 3, color: '#92400E', fontSize: 11 }}>{record.disabled_reason}</div>}
-                {record.failure_count > 0 && <div style={{ marginTop: 3, color: '#92400E', fontSize: 11 }}>连续失败 {record.failure_count} 次</div>}
-                {result && <div style={{ marginTop: 3, fontSize: 11, color: result.reachable ? '#059669' : '#DC2626' }}>
+                {record.disabled_reason && <div style={{ marginTop: 3, color: 'var(--warn)', fontSize: 11 }}>{record.disabled_reason}</div>}
+                {record.failure_count > 0 && <div style={{ marginTop: 3, color: 'var(--warn)', fontSize: 11 }}>连续失败 {record.failure_count} 次</div>}
+                {result && <div style={{ marginTop: 3, fontSize: 11, color: result.reachable ? 'var(--status-done)' : 'var(--danger)' }}>
                   {result.reachable ? `连通，拿到 ${result.tool_names.length} 个工具` : '连不上'}
                   {result.undeclared.length > 0 && `；清单外多出：${result.undeclared.join('、')}`}
                   {result.declared_only.length > 0 && `；清单里有但实际没有：${result.declared_only.join('、')}`}
@@ -293,7 +293,7 @@ function McpTable({ records, probes, failed, action }: {
               </td>
               <td style={cellStyle}>
                 {action(record)}
-                {failed[record.id] && <div role="alert" style={{ marginTop: 8, color: '#DC2626', fontSize: 12 }}>{failed[record.id]}</div>}
+                {failed[record.id] && <div role="alert" style={{ marginTop: 8, color: 'var(--danger)', fontSize: 12 }}>{failed[record.id]}</div>}
               </td>
             </tr>
           )

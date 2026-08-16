@@ -36,7 +36,7 @@ export function MyData() {
         <aside style={{ minHeight: 0, overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
           <div style={{ padding: '11px 16px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.12em' }}>THREAD 列表</div>
           {threadsQuery.isPending && <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>正在加载会话…</div>}
-          {threadsQuery.isError && <div role="alert" style={{ padding: 16, color: '#DC2626', fontSize: 12 }}>{errorMessage(threadsQuery.error)}</div>}
+          {threadsQuery.isError && <div role="alert" style={{ padding: 16, color: 'var(--danger)', fontSize: 12 }}>{errorMessage(threadsQuery.error)}</div>}
           {!threadsQuery.isPending && !threadsQuery.isError && threads.length === 0 && <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>还没有可管理的工作空间</div>}
           {threads.map(thread => {
             const active = thread.id === selected?.id

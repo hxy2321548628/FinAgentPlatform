@@ -79,5 +79,5 @@ const brandStyle: React.CSSProperties = { width: 340, flexShrink: 0, padding: '4
 const formPanelStyle: React.CSSProperties = { flex: 1, padding: '58px 52px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }
 const inputStyle: React.CSSProperties = { width: '100%', height: 40, boxSizing: 'border-box', border: '1px solid var(--border)', borderRadius: 6, padding: '0 12px', fontSize: 14, color: 'var(--text-primary)', background: '#F7F9FC', fontFamily: 'inherit' }
 const buttonStyle: React.CSSProperties = { width: '100%', height: 44, border: 'none', borderRadius: 6, background: 'var(--brand)', color: '#fff', fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }
-const alertStyle: React.CSSProperties = { marginBottom: 14, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: '#FEF2F2', color: '#DC2626', fontSize: 13 }
-const successStyle: React.CSSProperties = { marginBottom: 14, padding: '9px 12px', border: '1px solid #BBF7D0', borderRadius: 6, background: '#F0FDF4', color: '#166534', fontSize: 13, lineHeight: 1.6 }
+const alertStyle: React.CSSProperties = { marginBottom: 14, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: 'var(--danger-bg)', color: 'var(--danger)', fontSize: 13 }
+const successStyle: React.CSSProperties = { marginBottom: 14, padding: '9px 12px', border: '1px solid #BBF7D0', borderRadius: 6, background: 'var(--success-bg)', color: 'var(--success)', fontSize: 13, lineHeight: 1.6 }

@@ -57,7 +57,7 @@ export function AdminSystem() {
               {/* **排队人数要单独说。** 满池与「满池且还有人在等」是两种情况，
                   只看占用条的话它们长得一模一样 */}
               {data?.broker_reachable && data.queued > 0 && (
-                <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 6, background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', fontSize: 12 }}>
+                <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 6, background: 'var(--warn-bg)', border: '1px solid #FDE68A', color: 'var(--warn)', fontSize: 12 }}>
                   有 {data.queued} 个申请正在排队等沙箱 —— 池已经不够用了。
                 </div>
               )}
@@ -81,6 +81,6 @@ export function AdminSystem() {
   )
 }
 
-const alertStyle: React.CSSProperties = { marginBottom: 14, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: '#FEF2F2', color: '#DC2626', fontSize: 13 }
-const noticeStyle: React.CSSProperties = { marginBottom: 16, padding: '12px 14px', border: '1px solid #FECACA', borderRadius: 8, background: '#FEF2F2', color: '#991B1B', fontSize: 13, lineHeight: 1.7 }
+const alertStyle: React.CSSProperties = { marginBottom: 14, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: 'var(--danger-bg)', color: 'var(--danger)', fontSize: 13 }
+const noticeStyle: React.CSSProperties = { marginBottom: 16, padding: '12px 14px', border: '1px solid #FECACA', borderRadius: 8, background: 'var(--danger-bg)', color: '#991B1B', fontSize: 13, lineHeight: 1.7 }
 const codeStyle: React.CSSProperties = { margin: '8px 0', padding: '10px 12px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--border)', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, overflowX: 'auto', color: 'var(--text-primary)' }

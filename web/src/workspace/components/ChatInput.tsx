@@ -165,7 +165,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
             </select>
             <div style={hintStyle}>
               {agents.isPending && '正在加载可用的智能体…'}
-              {agents.isError && <span style={{ color: '#DC2626' }}>{errorMessage(agents.error)}</span>}
+              {agents.isError && <span style={{ color: 'var(--danger)' }}>{errorMessage(agents.error)}</span>}
               {!agents.isPending && !agents.isError && (agents.data ?? []).length === 0 && '还没有你能引用的智能体。去「智能体广场」看看，或自己建一个。'}
               {!agents.isPending && (agents.data ?? []).length > 0 && '提交时会冻结智能体版本及它自带的 Skill。'}
             </div>
@@ -178,7 +178,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
           <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--action-border)' }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 7 }}>本轮 Skill（可多选）</div>
             {skills.isPending && <div style={hintStyle}>正在加载可用 Skill…</div>}
-            {skills.isError && <div role="alert" style={{ ...hintStyle, color: '#DC2626' }}>{errorMessage(skills.error)}</div>}
+            {skills.isError && <div role="alert" style={{ ...hintStyle, color: 'var(--danger)' }}>{errorMessage(skills.error)}</div>}
             {!skills.isPending && !skills.isError && (skills.data ?? []).length === 0 && <div style={hintStyle}>还没有你能使用的 Skill。</div>}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
               {(skills.data ?? []).map(one => <label key={one.id} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -191,7 +191,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
           <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--action-border)' }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 7 }}>本轮子智能体（可多选）</div>
             {subagents.isPending && <div style={hintStyle}>正在加载可用的子智能体…</div>}
-            {subagents.isError && <div role="alert" style={{ ...hintStyle, color: '#DC2626' }}>{errorMessage(subagents.error)}</div>}
+            {subagents.isError && <div role="alert" style={{ ...hintStyle, color: 'var(--danger)' }}>{errorMessage(subagents.error)}</div>}
             {!subagents.isPending && !subagents.isError && (subagents.data ?? []).length === 0 && <div style={hintStyle}>还没有可挂载的子智能体。</div>}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
               {(subagents.data ?? []).map(one => <label key={one.id} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -204,7 +204,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
           <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--action-border)' }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 7 }}>本轮 MCP（可多选，最多 3 个）</div>
             {mcps.isPending && <div style={hintStyle}>正在加载 MCP 目录…</div>}
-            {mcps.isError && <div role="alert" style={{ ...hintStyle, color: '#DC2626' }}>{errorMessage(mcps.error)}</div>}
+            {mcps.isError && <div role="alert" style={{ ...hintStyle, color: 'var(--danger)' }}>{errorMessage(mcps.error)}</div>}
             {!mcps.isPending && !mcps.isError && (mcps.data ?? []).length === 0 && <div style={hintStyle}>还没有放行的 MCP。</div>}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
               {(mcps.data ?? []).map(one => <label key={one.id} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -217,7 +217,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
               <div>最终挂载：{mountedMcpList.map(one => one.via ? `${one.name}（来自 ${one.via}）` : one.name).join('、')}</div>
             </div>}
           </div>
-          {configError && <div role="alert" style={{ marginTop: 6, fontSize: 11, color: '#DC2626' }}>{configError}</div>}
+          {configError && <div role="alert" style={{ marginTop: 6, fontSize: 11, color: 'var(--danger)' }}>{configError}</div>}
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <input value={sceneName} onChange={event => setSceneName(event.target.value)} placeholder="场景名称" style={{ ...selectStyle, flex: 1, minWidth: 180 }} />
             <Button variant="outline" size="sm" onClick={() => saveScene.mutate()} disabled={saveScene.isPending}>{saveScene.isPending ? '保存中…' : '保存到我的场景库'}</Button>
@@ -279,5 +279,5 @@ function duplicateSkillName(agentRefs: readonly SkillReference[], selected: read
 }
 
 const selectStyle: React.CSSProperties = { width: '100%', padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-primary)', boxSizing: 'border-box' }
-const outboundStyle: React.CSSProperties = { marginTop: 8, padding: '8px 10px', border: '1px solid #FDE68A', borderRadius: 6, background: '#FFFBEB', color: '#92400E', fontSize: 11, lineHeight: 1.6 }
+const outboundStyle: React.CSSProperties = { marginTop: 8, padding: '8px 10px', border: '1px solid #FDE68A', borderRadius: 6, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 11, lineHeight: 1.6 }
 const hintStyle: React.CSSProperties = { marginTop: 6, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }

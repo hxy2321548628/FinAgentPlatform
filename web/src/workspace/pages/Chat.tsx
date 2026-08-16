@@ -82,11 +82,11 @@ function RunTurn({ run, threadId, autoReplay, onContentChange }: { run: RunHisto
     </div>
     <MessageList items={view.items} pendingActions={view.pendingActions} onApprove={submitDecisions} threadId={threadId} live={LIVE_STATUS.includes(view.status)} />
     {isTerminalStatus(view.status) && <ArtifactStrip threadId={threadId} startedAt={run.started_at} />}
-    {approve.isError && <div role="alert" style={{ margin: '8px 0 0 44px', color: '#DC2626', fontSize: 12 }}>{errorMessage(approve.error)}</div>}
+    {approve.isError && <div role="alert" style={{ margin: '8px 0 0 44px', color: 'var(--danger)', fontSize: 12 }}>{errorMessage(approve.error)}</div>}
     {!view.connectionAvailable && LIVE_STATUS.includes(view.status) && <div style={{ margin: '8px 0 0 44px', color: 'var(--text-muted)', fontSize: 11 }}>事件流传输层待接入；REST 主链路已建立。</div>}
     {!autoReplay && view.items.length === 0 && !LIVE_STATUS.includes(view.status) && view.connectionAvailable && !replayRequested && <button type="button" onClick={() => setReplayRequested(true)} style={{ margin: '8px 0 0 44px', padding: 0, border: 'none', background: 'transparent', color: 'var(--action)', cursor: 'pointer', fontSize: 11 }}>查看本轮回答与过程</button>}
-    {Boolean(view.connectionError) && <div role="alert" style={{ margin: '8px 0 0 44px', color: '#DC2626', fontSize: 12 }}>{view.connectionRetryable ? '事件流连接中断，正在等待传输层重连。' : '事件流连接失败，请刷新页面后重试。'}</div>}
-    <div style={{ margin: '9px 0 0 44px', color: view.status === 'failed' ? '#DC2626' : 'var(--text-muted)', fontSize: 11 }}>
+    {Boolean(view.connectionError) && <div role="alert" style={{ margin: '8px 0 0 44px', color: 'var(--danger)', fontSize: 12 }}>{view.connectionRetryable ? '事件流连接中断，正在等待传输层重连。' : '事件流连接失败，请刷新页面后重试。'}</div>}
+    <div style={{ margin: '9px 0 0 44px', color: view.status === 'failed' ? 'var(--danger)' : 'var(--text-muted)', fontSize: 11 }}>
       {statusLabel(view.status)}{run.error_message ? ` · ${run.error_message}` : ''}
     </div>
   </section>
@@ -173,13 +173,13 @@ export function Chat() {
         followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_FOLLOW_THRESHOLD
       }} style={{ flex: 1, overflowY: 'auto', padding: '0 28px' }}>
         {!threadId && <div style={{ height: '100%', display: 'grid', placeItems: 'center', color: 'var(--text-muted)', fontSize: 14 }}>点击左侧“新建分析”开始。</div>}
-        {thread.isError && <div role="alert" style={{ padding: 24, color: '#DC2626' }}>{errorMessage(thread.error)}</div>}
+        {thread.isError && <div role="alert" style={{ padding: 24, color: 'var(--danger)' }}>{errorMessage(thread.error)}</div>}
         {runs.isPending && threadId && <div style={{ padding: 24, color: 'var(--text-muted)' }}>正在加载对话历史…</div>}
-        {runs.isError && <div role="alert" style={{ padding: 24, color: '#DC2626' }}>{errorMessage(runs.error)}</div>}
+        {runs.isError && <div role="alert" style={{ padding: 24, color: 'var(--danger)' }}>{errorMessage(runs.error)}</div>}
         {runs.hasNextPage && <button type="button" disabled={runs.isFetchingNextPage} onClick={() => void runs.fetchNextPage()} style={{ display: 'block', margin: '12px auto', border: 'none', background: 'transparent', color: 'var(--action)', cursor: 'pointer' }}>{runs.isFetchingNextPage ? '正在加载…' : '加载更早记录'}</button>}
         {threadId && !runs.isPending && chronological.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>这个对话还没有提问。</div>}
         {chronological.map(run => <RunTurn key={run.id} run={run} threadId={threadId ?? ''} autoReplay={run.id === autoReplayRun?.id} onContentChange={scrollToLatest} />)}
-        {submit.isError && <div role="alert" style={{ padding: '8px 0', color: '#DC2626', fontSize: 12 }}>{errorMessage(submit.error)}</div>}
+        {submit.isError && <div role="alert" style={{ padding: '8px 0', color: 'var(--danger)', fontSize: 12 }}>{errorMessage(submit.error)}</div>}
       </div>
       <ChatInput key={pickedAgentId ?? 'default'} disabled={!threadId || submit.isPending} isRunning={Boolean(latestLive)} threadAgentConfig={thread.data?.agent_config} initialAgentId={pickedAgentId} onSend={async (text, agentConfig) => { await submit.mutateAsync({ text, agentConfig }) }} onStop={() => latestLive && cancel.mutate(latestLive.id)} />
     </div>

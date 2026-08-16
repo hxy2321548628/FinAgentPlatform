@@ -131,7 +131,7 @@ export function MySkills() {
                   {state.draft && <button type="button" onClick={() => release.mutate(skill.id)} disabled={release.isPending} style={outlineButton}>发布 v{state.draft.version}</button>}
                   {state.released && <button type="button" onClick={() => setSharingId(skill.id)} style={outlineButton}>共享设置</button>}
                   {state.released && state.reviewStatus !== 'pending' && <button type="button" onClick={() => setReviewingId(skill.id)} style={outlineButton}>{state.reviewStatus === 'rejected' ? '改后重新提审' : '提交审核'}</button>}
-                  <button type="button" onClick={() => remove.mutate(skill.id)} style={{ ...ghostButton, color: '#DC2626', borderColor: '#FECACA' }}>删除</button>
+                  <button type="button" onClick={() => remove.mutate(skill.id)} style={{ ...ghostButton, color: 'var(--danger)', borderColor: 'var(--danger-border)' }}>删除</button>
                 </div>
               </div>
             )
@@ -251,10 +251,10 @@ const countStyle: React.CSSProperties = { marginLeft: 6, fontSize: 11, backgroun
 const emptyStyle: React.CSSProperties = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '48px 20px', textAlign: 'center' }
 const rowStyle: React.CSSProperties = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }
 const badgeStyle: React.CSSProperties = { padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: '#EFF6FF', color: '#2563EB', border: '1px solid #BFDBFE' }
-const warningBadgeStyle: React.CSSProperties = { ...badgeStyle, background: '#FFFBEB', color: '#92400E', borderColor: '#FDE68A' }
-const rejectedBadgeStyle: React.CSSProperties = { ...badgeStyle, background: '#FEF2F2', color: '#DC2626', borderColor: '#FECACA' }
-const reasonStyle: React.CSSProperties = { fontSize: 12, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '7px 12px', margin: '4px 0' }
-const errorStyle: React.CSSProperties = { color: '#DC2626', fontSize: 13 }
+const warningBadgeStyle: React.CSSProperties = { ...badgeStyle, background: 'var(--warn-bg)', color: 'var(--warn)', borderColor: 'var(--warn-border)' }
+const rejectedBadgeStyle: React.CSSProperties = { ...badgeStyle, background: 'var(--danger-bg)', color: 'var(--danger)', borderColor: 'var(--danger-border)' }
+const reasonStyle: React.CSSProperties = { fontSize: 12, color: 'var(--danger)', background: 'var(--danger-bg)', border: '1px solid #FECACA', borderRadius: 6, padding: '7px 12px', margin: '4px 0' }
+const errorStyle: React.CSSProperties = { color: 'var(--danger)', fontSize: 13 }
 const hintStyle: React.CSSProperties = { fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: 14 }
 const labelStyle: React.CSSProperties = { display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }
 const inputStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7, background: 'var(--surface)', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit' }

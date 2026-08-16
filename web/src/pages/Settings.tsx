@@ -120,8 +120,8 @@ function SettingsCard({ children }: { children: React.ReactNode }) {
 const cardTitleStyle: React.CSSProperties = { fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }
 const cardDescStyle: React.CSSProperties = { fontSize: 13, color: 'var(--text-secondary)' }
 const mutedStyle: React.CSSProperties = { fontSize: 13, color: 'var(--text-muted)' }
-const alertStyle: React.CSSProperties = { padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: '#FEF2F2', color: '#DC2626', fontSize: 13 }
-const noticeStyle: React.CSSProperties = { padding: '12px 14px', border: '1px solid #FDE68A', borderRadius: 8, background: '#FFFBEB', color: '#92400E', fontSize: 13, lineHeight: 1.7 }
+const alertStyle: React.CSSProperties = { padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: 'var(--danger-bg)', color: 'var(--danger)', fontSize: 13 }
+const noticeStyle: React.CSSProperties = { padding: '12px 14px', border: '1px solid #FDE68A', borderRadius: 8, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 13, lineHeight: 1.7 }
 const roleTagStyle: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', marginLeft: 10, padding: '2px 8px',
   borderRadius: 4, fontSize: 11, fontWeight: 600, letterSpacing: '0.05em',

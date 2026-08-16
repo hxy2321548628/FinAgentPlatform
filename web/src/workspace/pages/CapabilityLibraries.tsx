@@ -238,7 +238,7 @@ function McpApplyDialog({ onClose }: { onClose: () => void }) {
       <CheckField label="会把数据再转发给第三方" checked={form.sendsDataOut} onChange={value => setForm(one => ({ ...one, sendsDataOut: value }))} />
       <CheckField label="工具里有写操作（写库、发消息、扣费）" checked={form.hasWriteOperation} onChange={value => setForm(one => ({ ...one, hasWriteOperation: value }))} />
       {error && <div role="alert" style={{ margin: '10px 0', color: 'var(--danger)', fontSize: 12 }}>{error}</div>}
-      {done && <div role="status" style={{ margin: '10px 0', color: '#059669', fontSize: 12 }}>已提交，等待管理员放行</div>}
+      {done && <div role="status" style={{ margin: '10px 0', color: 'var(--status-done)', fontSize: 12 }}>已提交，等待管理员放行</div>}
       <Button disabled={submit.isPending || done} onClick={() => submit.mutate()}>{submit.isPending ? '提交中…' : '提交申请'}</Button>
     </Drawer>
   )
@@ -278,7 +278,7 @@ function LibraryPage({ eyebrow, title, description, children }: { eyebrow: strin
 }
 
 function Notice({ error = false, children }: { error?: boolean; children: React.ReactNode }) {
-  return <div role={error ? 'alert' : undefined} style={{ padding: '60px 36px', textAlign: 'center', color: error ? '#DC2626' : 'var(--text-muted)', fontSize: 14 }}>{children}</div>
+  return <div role={error ? 'alert' : undefined} style={{ padding: '60px 36px', textAlign: 'center', color: error ? 'var(--danger)' : 'var(--text-muted)', fontSize: 14 }}>{children}</div>
 }
 
 function sourceLabel(source: SkillListing['source']): string {
@@ -292,7 +292,7 @@ function formatBytes(bytes: number): string {
 const sectionTitle: React.CSSProperties = { fontSize: 12, fontWeight: 650, color: 'var(--text-primary)', marginBottom: 8 }
 const gridStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }
 const countStyle: React.CSSProperties = { padding: '20px 0 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }
-const outboundBannerStyle: React.CSSProperties = { padding: '10px 12px', border: '1px solid #FDE68A', borderRadius: 7, background: '#FFFBEB', color: '#92400E', fontSize: 12, lineHeight: 1.6 }
+const outboundBannerStyle: React.CSSProperties = { padding: '10px 12px', border: '1px solid #FDE68A', borderRadius: 7, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 12, lineHeight: 1.6 }
 const applyButtonStyle: React.CSSProperties = { padding: '8px 14px', border: '1px solid var(--action-border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--action)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }
 const fieldStyle: React.CSSProperties = { width: '100%', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', background: '#F7F9FC', color: 'var(--text-primary)', boxSizing: 'border-box' }
 const hintTextStyle: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }

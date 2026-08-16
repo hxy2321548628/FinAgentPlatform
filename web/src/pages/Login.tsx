@@ -137,7 +137,7 @@ export function Login() {
               <input className="login-input" id="login-password" name="password" type="password" autoComplete="current-password" placeholder="请输入密码" value={loginPassword} onChange={event => setLoginPassword(event.target.value)}
                 style={inputStyle} />
             </Field>
-            {loginError && <div role="alert" style={{ marginBottom: 16, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: '#FEF2F2', color: '#DC2626', fontSize: 13 }}>{loginError}</div>}
+            {loginError && <div role="alert" style={{ marginBottom: 16, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: 'var(--danger-bg)', color: 'var(--danger)', fontSize: 13 }}>{loginError}</div>}
             <button type="submit" disabled={loginMutation.isPending || !loginName.trim() || !loginPassword} style={{ ...darkBtnStyle, opacity: loginMutation.isPending || !loginName.trim() || !loginPassword ? 0.6 : 1, cursor: loginMutation.isPending || !loginName.trim() || !loginPassword ? 'default' : 'pointer' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>

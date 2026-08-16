@@ -173,7 +173,7 @@ export function AdminUsers() {
                         <button
                           disabled={change.isPending}
                           onClick={() => change.mutate({ id: user.id, body: { is_active: !user.is_active } })}
-                          style={{ padding: '4px 10px', background: 'transparent', color: user.is_active ? '#DC2626' : 'var(--status-done)', border: '1px solid ' + (user.is_active ? '#FECACA' : '#A7F3D0'), borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}
+                          style={{ padding: '4px 10px', background: 'transparent', color: user.is_active ? 'var(--danger)' : 'var(--status-done)', border: '1px solid ' + (user.is_active ? 'var(--danger-border)' : '#A7F3D0'), borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}
                         >
                           {user.is_active ? '停用' : '启用'}
                         </button>
@@ -281,5 +281,5 @@ function Labelled({ label, children }: { label: string; children: React.ReactNod
 
 const selectStyle: React.CSSProperties = { padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer' }
 const modalInputStyle: React.CSSProperties = { width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-primary)', boxSizing: 'border-box' }
-const alertStyle: React.CSSProperties = { marginBottom: 14, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: '#FEF2F2', color: '#DC2626', fontSize: 13 }
+const alertStyle: React.CSSProperties = { marginBottom: 14, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: 'var(--danger-bg)', color: 'var(--danger)', fontSize: 13 }
 const emptyStyle: React.CSSProperties = { padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }

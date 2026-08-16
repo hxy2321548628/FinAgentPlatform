@@ -27,6 +27,9 @@
   --warn-bg:        #FFFBEB;
   --warn-border:    #FDE68A;
   --code-surface:   #F0F3F8;
+  --success:        #166534;
+  --success-bg:     #F0FDF4;
+  --success-border: #BBF7D0;
 
   /* ── Workspace sidebar ── */
   --ws-sidebar-bg:      #0D1829;

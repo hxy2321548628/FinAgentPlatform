@@ -97,7 +97,7 @@ export function CreateAgent() {
     return <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--text-muted)' }}>正在加载…</div>
   }
   if (editing && existing.isError) {
-    return <div role="alert" style={{ flex: 1, padding: 36, color: '#DC2626' }}>{errorMessage(existing.error)}</div>
+    return <div role="alert" style={{ flex: 1, padding: 36, color: 'var(--danger)' }}>{errorMessage(existing.error)}</div>
   }
 
   return (
@@ -152,7 +152,7 @@ export function CreateAgent() {
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 24 }}>
             <Field label="自带 Skills" hint="发布版本时会冻结所选 Skill 的当前版本；运行时还可以再临时追加">
               {availableSkills.isPending && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>正在加载可用 Skills…</div>}
-              {availableSkills.isError && <div role="alert" style={{ fontSize: 13, color: '#DC2626' }}>{errorMessage(availableSkills.error)}</div>}
+              {availableSkills.isError && <div role="alert" style={{ fontSize: 13, color: 'var(--danger)' }}>{errorMessage(availableSkills.error)}</div>}
               {!availableSkills.isPending && (availableSkills.data ?? []).length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>当前没有可用 Skill。</div>}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {(availableSkills.data ?? []).map(skill => (
@@ -176,7 +176,7 @@ export function CreateAgent() {
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 24 }}>
             <Field label="自带子智能体" hint="发布版本时会冻结所选子智能体的当前版本；子智能体不能再挂载子智能体">
               {availableSubagents.isPending && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>正在加载可用子智能体…</div>}
-              {availableSubagents.isError && <div role="alert" style={{ fontSize: 13, color: '#DC2626' }}>{errorMessage(availableSubagents.error)}</div>}
+              {availableSubagents.isError && <div role="alert" style={{ fontSize: 13, color: 'var(--danger)' }}>{errorMessage(availableSubagents.error)}</div>}
               {!availableSubagents.isPending && (availableSubagents.data ?? []).length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>当前没有可用子智能体。</div>}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {(availableSubagents.data ?? []).map(agent => (
@@ -202,7 +202,7 @@ export function CreateAgent() {
             <Field label="自带 MCP" hint="每次运行都会连一次这些外部服务；引用只冻结目录记录，冻不住那台机器的行为">
               <div role="note" style={outboundStyle}>{DATA_LEAVES_CAMPUS}</div>
               {availableMcps.isPending && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>正在加载 MCP 目录…</div>}
-              {availableMcps.isError && <div role="alert" style={{ fontSize: 13, color: '#DC2626' }}>{errorMessage(availableMcps.error)}</div>}
+              {availableMcps.isError && <div role="alert" style={{ fontSize: 13, color: 'var(--danger)' }}>{errorMessage(availableMcps.error)}</div>}
               {!availableMcps.isPending && (availableMcps.data ?? []).length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>还没有放行的 MCP。</div>}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {(availableMcps.data ?? []).map(server => (
@@ -225,7 +225,7 @@ export function CreateAgent() {
           </div>
 
           {(error || save.isError) && (
-            <div role="alert" style={{ marginBottom: 16, padding: '9px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 7, color: '#DC2626', fontSize: 13 }}>
+            <div role="alert" style={{ marginBottom: 16, padding: '9px 14px', background: 'var(--danger-bg)', border: '1px solid #FECACA', borderRadius: 7, color: 'var(--danger)', fontSize: 13 }}>
               {error || errorMessage(save.error)}
             </div>
           )}
@@ -246,7 +246,7 @@ function Field({ label, required, hint, children }: { label: string; required?: 
   return (
     <div style={{ marginBottom: 18 }}>
       <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }}>
-        {label}{required && <span style={{ color: '#DC2626', marginLeft: 3 }}>*</span>}
+        {label}{required && <span style={{ color: 'var(--danger)', marginLeft: 3 }}>*</span>}
       </label>
       {hint && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{hint}</div>}
       {children}
@@ -254,7 +254,7 @@ function Field({ label, required, hint, children }: { label: string; required?: 
   )
 }
 
-const outboundStyle: React.CSSProperties = { marginBottom: 10, padding: '9px 11px', border: '1px solid #FDE68A', borderRadius: 7, background: '#FFFBEB', color: '#92400E', fontSize: 12, lineHeight: 1.6 }
+const outboundStyle: React.CSSProperties = { marginBottom: 10, padding: '9px 11px', border: '1px solid #FDE68A', borderRadius: 7, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 12, lineHeight: 1.6 }
 
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7,

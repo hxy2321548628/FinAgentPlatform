@@ -30,7 +30,7 @@ function ScenarioPage({ title, description, loading, error, children }: { title:
       <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>{description}</p>
     </div>
     {loading && <div style={noticeStyle}>正在加载…</div>}
-    {error && <div role="alert" style={{ ...noticeStyle, color: '#DC2626' }}>{error}</div>}
+    {error && <div role="alert" style={{ ...noticeStyle, color: 'var(--danger)' }}>{error}</div>}
     {!loading && !error && children}
   </div>
 }
