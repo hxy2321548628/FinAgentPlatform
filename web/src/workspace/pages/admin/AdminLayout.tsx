@@ -15,8 +15,10 @@ const ADMIN_GROUPS = [
   {
     label: '内容与能力',
     links: [
-      { to: '/admin/agents', label: '智能体审核', icon: <><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/><path d="m17 14 2 2 4-4"/></> },
-      { to: '/admin/scenarios', label: '场景管理', icon: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></> },
+      // **场景与智能体共用这一个审核入口**：它们在库里是同一张表，
+      // 区别只是「挂没挂子智能体」（P6-decision G2）。原来那个「场景管理」页
+      // 审的是同一个队列，两个入口只会让两边状态看起来不一致
+      { to: '/admin/agents', label: '场景与智能体审核', icon: <><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/><path d="m17 14 2 2 4-4"/></> },
       { to: '/admin/skills', label: 'Skill 管理', icon: <><path d="m12 2 2.4 4.86 5.6.81-4 3.9.94 5.51L12 14.5l-4.94 2.58L8 11.57l-4-3.9 5.6-.81L12 2z"/><path d="M5 21h14"/></> },
       { to: '/admin/mcp', label: 'MCP 管理', icon: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M10 6.5h4a3.5 3.5 0 0 1 3.5 3.5v4M14 17.5h-4A3.5 3.5 0 0 1 6.5 14v-4"/></> },
     ],

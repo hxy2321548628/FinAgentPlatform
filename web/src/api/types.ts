@@ -11,7 +11,55 @@ export interface RegisterResponse {
 export interface Me {
   id: string
   name: string
+  email: string
   role: UserRole
+}
+
+/** 后台账号列表里的一行。配额两项留空表示「跟着角色的默认档走」，不是「没有配额」。 */
+export interface AdminUser {
+  id: string
+  name: string
+  email: string
+  dept: string
+  role: UserRole
+  is_active: boolean
+  quota_tokens_daily: number | null
+  quota_concurrent_runs: number | null
+}
+
+/**
+ * 一段窗口里的用量。
+ *
+ * `available` 为 false 时下面三个数**不是「零用量」，是「没数」** —— 一串 0 会让
+ * 「没接账本」与「这个月还没人用」长得一模一样。
+ */
+export interface Usage {
+  available: boolean
+  tokens: number
+  cost: number
+  observations: number
+}
+
+export interface UserUsage {
+  user_id: string
+  name: string
+  tokens: number
+  cost: number
+  observations: number
+}
+
+export interface UsageRanking {
+  available: boolean
+  total: Usage
+  items: UserUsage[]
+}
+
+/** 沙箱池的占用。`broker_reachable` 为 false 时三个数都是 0，**不是真的空闲**。 */
+export interface SystemStatus {
+  broker_reachable: boolean
+  in_use: number
+  capacity: number
+  queued: number
 }
 
 /**

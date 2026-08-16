@@ -55,7 +55,7 @@ describe('后台路由守卫', () => {
   })
 
   it('普通用户访问后台时原地显示 404', async () => {
-    mocks.me.mockResolvedValue({ id: 'teacher-1', name: '教师', role: 'teacher' })
+    mocks.me.mockResolvedValue({ id: 'teacher-1', name: '教师', email: 'teacher@zuel.edu.cn', role: 'teacher' })
 
     renderGuard('/admin')
 
@@ -65,7 +65,7 @@ describe('后台路由守卫', () => {
   })
 
   it('审核员访问管理员页面时原地显示 404', async () => {
-    mocks.me.mockResolvedValue({ id: 'reviewer-1', name: '审核员', role: 'reviewer' })
+    mocks.me.mockResolvedValue({ id: 'reviewer-1', name: '审核员', email: 'reviewer@zuel.edu.cn', role: 'reviewer' })
 
     renderGuard('/admin/users')
 
@@ -74,7 +74,7 @@ describe('后台路由守卫', () => {
   })
 
   it('管理员仍可访问管理员页面', async () => {
-    mocks.me.mockResolvedValue({ id: 'admin-1', name: '管理员', role: 'admin' })
+    mocks.me.mockResolvedValue({ id: 'admin-1', name: '管理员', email: 'admin@zuel.edu.cn', role: 'admin' })
 
     renderGuard('/admin')
 
@@ -82,7 +82,7 @@ describe('后台路由守卫', () => {
   })
 
   it('审核员仍可访问审核页面', async () => {
-    mocks.me.mockResolvedValue({ id: 'reviewer-1', name: '审核员', role: 'reviewer' })
+    mocks.me.mockResolvedValue({ id: 'reviewer-1', name: '审核员', email: 'reviewer@zuel.edu.cn', role: 'reviewer' })
 
     renderGuard('/admin/agents', 'reviewer')
 

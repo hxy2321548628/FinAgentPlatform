@@ -92,3 +92,27 @@ export function sourceLabel(source: AgentSource): string {
 export function listingCaption(listing: AgentListing): string {
   return `${listing.owner_name} · v${listing.version} · ${sourceLabel(listing.source)}`
 }
+
+/**
+ * 一个条目是「场景」还是「智能体」。
+ *
+ * **判据是客观事实，不是一个人工标注的类型字段** —— 挂了子智能体的就是场景。
+ * 这条规则由 P6-decision G2 定下，后端的 `subagent-candidates` 一直按它过滤；
+ * 前端沿用同一条，两边才不会各算各的。
+ *
+ * 加一个 `kind` 列会造出第二个真相源：一旦出现「kind=agent 却挂着子智能体」的行，
+ * 候选列表该信哪一个就说不清了。
+ */
+export function isScenario(item: { subagent_refs?: unknown[] | null }): boolean {
+  return (item.subagent_refs?.length ?? 0) > 0
+}
+
+/** 智能体广场上该出现的：没挂子智能体的那些，它们同时也是子智能体的候选。 */
+export function onlyAgents<T extends { subagent_refs?: unknown[] | null }>(items: T[]): T[] {
+  return items.filter(one => !isScenario(one))
+}
+
+/** 场景库里该出现的：挂了子智能体的那些。 */
+export function onlyScenarios<T extends { subagent_refs?: unknown[] | null }>(items: T[]): T[] {
+  return items.filter(isScenario)
+}

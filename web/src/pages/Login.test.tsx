@@ -16,8 +16,8 @@ afterEach(() => {
 
 describe('Login', () => {
   it('clears the previous account cache before storing the new identity', async () => {
-    const previousUser: Me = { id: 'old-user', name: '旧账号', role: 'teacher' }
-    const newUser: Me = { id: 'new-user', name: '新账号', role: 'teacher' }
+    const previousUser: Me = { id: 'old-user', name: '旧账号', email: 'old@zuel.edu.cn', role: 'teacher' }
+    const newUser: Me = { id: 'new-user', name: '新账号', email: 'new@zuel.edu.cn', role: 'teacher' }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(newUser)))
 
     const queryClient = new QueryClient({
@@ -41,7 +41,7 @@ describe('Login', () => {
       </QueryClientProvider>,
     )
 
-    fireEvent.change(screen.getByPlaceholderText('请输入用户名'), { target: { value: '新账号' } })
+    fireEvent.change(screen.getByPlaceholderText('用户名或邮箱都可以'), { target: { value: '新账号' } })
     fireEvent.change(screen.getByPlaceholderText('请输入密码'), { target: { value: 'password' } })
     fireEvent.click(screen.getByRole('button', { name: '登录系统' }))
 

@@ -25,7 +25,7 @@ export function Login() {
       navigate(user.role === 'admin' ? '/admin' : '/workspace', { replace: true })
     },
     onError(error) {
-      setLoginError(errorMessage(error, '登录失败，请检查用户名和密码'))
+      setLoginError(errorMessage(error, '登录失败，请检查账号和密码'))
     },
   })
 
@@ -130,8 +130,8 @@ export function Login() {
 
           {/* 登录表单 */}
           <form onSubmit={handleLogin}>
-            <Field label="用户名">
-              <input className="login-input" type="text" autoComplete="username" placeholder="请输入用户名" value={loginName} onChange={event => setLoginName(event.target.value)}
+            <Field label="用户名或邮箱">
+              <input className="login-input" type="text" autoComplete="username" placeholder="用户名或邮箱都可以" value={loginName} onChange={event => setLoginName(event.target.value)}
                 style={inputStyle} />
             </Field>
             <Field label="密码">

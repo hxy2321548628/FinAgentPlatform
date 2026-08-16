@@ -27,6 +27,7 @@ describe('Register', () => {
     )
 
     fireEvent.change(screen.getByPlaceholderText('请输入用户名'), { target: { value: '新用户' } })
+    fireEvent.change(screen.getByPlaceholderText('用它也能登录'), { target: { value: 'new@zuel.edu.cn' } })
     fireEvent.change(screen.getByPlaceholderText('至少 8 位密码'), { target: { value: 'password' } })
     fireEvent.click(screen.getByRole('button', { name: '提交注册申请' }))
 
@@ -50,6 +51,7 @@ describe('Register', () => {
     )
 
     fireEvent.change(screen.getByPlaceholderText('请输入用户名'), { target: { value: '已存在' } })
+    fireEvent.change(screen.getByPlaceholderText('用它也能登录'), { target: { value: 'new@zuel.edu.cn' } })
     fireEvent.change(screen.getByPlaceholderText('至少 8 位密码'), { target: { value: 'password' } })
     fireEvent.click(screen.getByRole('button', { name: '提交注册申请' }))
 

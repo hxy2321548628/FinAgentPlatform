@@ -16,7 +16,7 @@ afterEach(() => {
 
 describe('WorkspaceSidebar', () => {
   it('keeps cached account data and stays on the page when logout fails', async () => {
-    const user: Me = { id: 'teacher-1', name: '张老师', role: 'teacher' }
+    const user: Me = { id: 'teacher-1', name: '张老师', email: 'zhang@zuel.edu.cn', role: 'teacher' }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
       error: { code: 'INTERNAL', message: '会话服务不可用' },
     }, { status: 503 })))

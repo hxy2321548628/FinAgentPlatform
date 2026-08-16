@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { agentKeys, listAvailable } from '../../api/agents'
+import { onlyAgents } from '../agent'
 import { errorMessage } from '../../api/request'
 import type { AgentListing } from '../../api/types'
 import { sourceLabel } from '../agent'
@@ -26,7 +27,9 @@ export function AgentPlaza() {
 
   const current = useQuery({ queryKey: agentKeys.available(), queryFn: listAvailable })
 
-  const shown = (current.data ?? []).filter(one => {
+  // **广场只放智能体，场景在场景库。** 判据是「有没有挂子智能体」这个客观事实
+  // （P6-decision G2），与后端 subagent-candidates 用的是同一条
+  const shown = onlyAgents(current.data ?? []).filter(one => {
     const bySubject = subject === '全部' || one.subject === subject
     const byText = !search || one.name.includes(search) || one.description.includes(search) || one.owner_name.includes(search)
     return bySubject && byText

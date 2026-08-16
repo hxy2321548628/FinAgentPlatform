@@ -16,7 +16,6 @@ import { AdminGuard, ReviewerGuard } from './workspace/pages/admin/AdminGuard'
 import { AdminLayout } from './workspace/pages/admin/AdminLayout'
 import { AdminUsers } from './workspace/pages/admin/AdminUsers'
 import { AdminAgents } from './workspace/pages/admin/AdminAgents'
-import { AdminScenarios } from './workspace/pages/admin/AdminScenarios'
 import { AdminMcp, AdminSkills } from './workspace/pages/admin/AdminCapabilities'
 import { AdminUsage } from './workspace/pages/admin/AdminUsage'
 import { AdminSystem } from './workspace/pages/admin/AdminSystem'
@@ -39,7 +38,6 @@ export default function App() {
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<AdminUsers />} />
             <Route path="users" element={<AdminUsers />} />
-            <Route path="scenarios" element={<AdminScenarios />} />
             <Route path="mcp" element={<AdminMcp />} />
             <Route path="usage" element={<AdminUsage />} />
             <Route path="system" element={<AdminSystem />} />

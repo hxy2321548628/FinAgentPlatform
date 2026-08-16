@@ -10,6 +10,7 @@ import {
   submitForReview,
 } from '../../api/agents'
 import { groupKeys, listMyGroups } from '../../api/groups'
+import { isScenario } from '../agent'
 import { errorMessage } from '../../api/request'
 import type { MyAgent } from '../../api/types'
 import { AGENT_TABS, AGENT_TAB_EMPTY, AGENT_TAB_LABEL, agentState, visibilityBadges, type AgentTab } from '../agent'
@@ -28,7 +29,13 @@ export function MyAgents() {
   const [reviewingId, setReviewingId] = useState<string | null>(null)
 
   const mine = useQuery({ queryKey: agentKeys.mine(), queryFn: listMine })
-  const agents = (mine.data ?? []).filter(one => !one.is_deleted)
+  // **这一页只管智能体，挂了子智能体的归「我的场景」** —— 同一批数据两个入口
+  // 各看一半，判据是 P6-decision G2 那条客观事实
+  const agents = (mine.data ?? []).filter(one => {
+    if (one.is_deleted) return false
+    const latest = one.versions.at(-1)
+    return latest === undefined || !isScenario(latest)
+  })
   const refresh = () => queryClient.invalidateQueries({ queryKey: agentKeys.all })
 
   const release = useMutation({ mutationFn: releaseVersion, onSuccess: refresh })

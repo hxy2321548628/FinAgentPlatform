@@ -7,12 +7,14 @@ import { errorMessage } from '../api/request'
 export function Register() {
   const navigate = useNavigate()
   const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [dept, setDept] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const mutation = useMutation({
-    mutationFn: () => register(name.trim(), password, inviteCode),
+    mutationFn: () => register(name.trim(), email.trim(), password, inviteCode, dept),
     onSuccess(result) {
       setError('')
       setSuccess(result.is_active
@@ -25,9 +27,12 @@ export function Register() {
     },
   })
 
+  // 邮箱是登录凭据，后端非空且唯一 —— 这里先挡一道，省掉一次 422 往返
+  const ready = Boolean(name.trim()) && /^[^@\s]+@[^@\s]+$/.test(email.trim()) && password.length >= 8
+
   const submit = (event: React.FormEvent) => {
     event.preventDefault()
-    if (!name.trim() || password.length < 8) return
+    if (!ready) return
     setError('')
     setSuccess('')
     mutation.mutate()
@@ -48,11 +53,13 @@ export function Register() {
           </div>
           <form onSubmit={submit}>
             <Field label="用户名"><input autoFocus autoComplete="username" placeholder="请输入用户名" value={name} onChange={event => setName(event.target.value)} style={inputStyle} /></Field>
+            <Field label="邮箱"><input type="email" autoComplete="email" placeholder="用它也能登录" value={email} onChange={event => setEmail(event.target.value)} style={inputStyle} /></Field>
             <Field label="密码"><input type="password" autoComplete="new-password" placeholder="至少 8 位密码" value={password} onChange={event => setPassword(event.target.value)} style={inputStyle} /></Field>
+            <Field label="院系（可选）"><input autoComplete="organization" placeholder="如：金融学院" value={dept} onChange={event => setDept(event.target.value)} style={inputStyle} /></Field>
             <Field label="邀请码（可选）"><input autoComplete="off" placeholder="有邀请码可直接加入课题组" value={inviteCode} onChange={event => setInviteCode(event.target.value)} style={inputStyle} /></Field>
             {error && <div role="alert" style={alertStyle}>{error}</div>}
             {success && <div role="status" style={successStyle}>{success}</div>}
-            <button type="submit" disabled={mutation.isPending || !name.trim() || password.length < 8} style={{ ...buttonStyle, opacity: mutation.isPending || !name.trim() || password.length < 8 ? 0.6 : 1 }}>{mutation.isPending ? '正在提交…' : '提交注册申请'}</button>
+            <button type="submit" disabled={mutation.isPending || !ready} style={{ ...buttonStyle, opacity: mutation.isPending || !ready ? 0.6 : 1 }}>{mutation.isPending ? '正在提交…' : '提交注册申请'}</button>
           </form>
           <div style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--text-secondary)' }}>已有账号？ <Link to="/login" style={{ color: 'var(--action)', fontWeight: 600 }}>返回登录</Link></div>
         </div>
