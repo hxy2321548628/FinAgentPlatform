@@ -322,9 +322,13 @@ print(PasswordHasher().hash('$password'))" | tr -d '\r')"
     [[ -n $hashed ]] || { echo "算不出口令哈希，api 容器有问题" >&2; return 1; }
     # **email 是 P11 的 0015 加的 NOT NULL 列**，不给就整条插不进去，
     # 而症状会出现在后面的登录那一步（「登不进去」），不指向造号。
-    # 用户名本身全库唯一，拼出来的邮箱因此也唯一
+    # 用户名本身全库唯一，拼出来的邮箱因此也唯一。
+    #
+    # **域名不能用 `.local` / `.test` / `.example`**：那几个是保留 TLD，`EmailStr`
+    # 一律拒绝。这里走 SQL 绕过了校验所以看着没事，而 `/api/auth/register`
+    # 那条路会 422 —— 两处用同一个域名才不会一处能跑一处不能
     psql_query "INSERT INTO users (id, name, email, password_hash, role, is_active, created_at)
-         VALUES (gen_random_uuid(), '$name', '$name@verify.local', '$hashed', '$role', true, now())
+         VALUES (gen_random_uuid(), '$name', '$name@verify.zuel.edu.cn', '$hashed', '$role', true, now())
          ON CONFLICT (name) DO NOTHING;" >/dev/null
     exist="$(psql_query "SELECT count(*) FROM users WHERE name = '$name';" | tr -d '[:space:]')"
     [[ $exist == 1 ]] || { echo "账号 $name 没建出来（库里有 ${exist:-?} 行）" >&2; return 1; }
@@ -1907,7 +1911,7 @@ else
     # 接下来该去登录还是该去等管理员，说错一句就是一通电话
     REG_JOINED="$(curl -s -X POST "$BASE_URL/api/auth/register" -H 'Content-Type: application/json' \
         -d "$(jq -nc --arg n "$P5_STUDENT" --arg p "$P5_SECRET" --arg c "$INVITE_ONE" \
-            '{name:$n,email:($n + "@verify.local"),password:$p,invite_code:$c}')")"
+            '{name:$n,email:($n + "@verify.zuel.edu.cn"),password:$p,invite_code:$c}')")"
     [[ $(jq -r .is_active <<<"$REG_JOINED") == true && $(jq -r '.group_name // empty' <<<"$REG_JOINED") == "zuel-p5-码组-$P5_TAG" ]] \
         && pass "凭邀请码注册：账号当场可用，且带出了进的那个组" \
         || fail "凭码注册的结果不对：$REG_JOINED"
@@ -1919,7 +1923,7 @@ else
     # 不填码注册：账号先停用，而「停用」要真的登不上 —— 只看字段的话，
     # 一个把 is_active 当摆设的实现照样绿
     REG_LONER="$(curl -s -X POST "$BASE_URL/api/auth/register" -H 'Content-Type: application/json' \
-        -d "$(jq -nc --arg n "$P5_LONER" --arg p "$P5_SECRET" '{name:$n,email:($n + "@verify.local"),password:$p}')")"
+        -d "$(jq -nc --arg n "$P5_LONER" --arg p "$P5_SECRET" '{name:$n,email:($n + "@verify.zuel.edu.cn"),password:$p}')")"
     LONER_LOGIN="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/auth/login" \
         -H 'Content-Type: application/json' \
         -d "$(jq -nc --arg n "$P5_LONER" --arg p "$P5_SECRET" '{name:$n,password:$p}')")"
@@ -1929,7 +1933,7 @@ else
     # 填错码不是「当没填」：那会留下一个自己登不上、管理员也不认识的账号
     BAD_INVITE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/auth/register" \
         -H 'Content-Type: application/json' \
-        -d "$(jq -nc --arg n "zuel-p5-bad-$P5_TAG" --arg p "$P5_SECRET" '{name:$n,email:($n + "@verify.local"),password:$p,invite_code:"这不是一个码"}')")"
+        -d "$(jq -nc --arg n "zuel-p5-bad-$P5_TAG" --arg p "$P5_SECRET" '{name:$n,email:($n + "@verify.zuel.edu.cn"),password:$p,invite_code:"这不是一个码"}')")"
     [[ $BAD_INVITE == 422 ]] && pass "邀请码填错 → 422，号根本不建" || fail "填错码得到 $BAD_INVITE"
 
     if ! login "$P5_STUDENT" "$P5_SECRET" "$JAR_P5_STUDENT"; then
@@ -4653,7 +4657,7 @@ if (( ! P11_READY )); then
     fail "前置没就绪（$P11_SETUP_NOTE）"
 else
     P11_MAIL_NAME="zuel-$P11_TAG-mail"
-    P11_MAIL_ADDR="$P11_MAIL_NAME@verify.local"
+    P11_MAIL_ADDR="$P11_MAIL_NAME@verify.zuel.edu.cn"
     P11_MAIL_PASS="zuel-secret-$$"
     if ! make_user "$P11_MAIL_NAME" "$P11_MAIL_PASS" teacher; then
         fail "邮箱登录用的账号没造出来"
@@ -4689,14 +4693,18 @@ else
     if ! P11_USER_Q="$(open_session "$JAR_P11_Q" teacher "$P11_TAG-q")"; then
         fail "配额判据的账号没开出来"
     else
-        # **1 个 token 的额度**：任何一次分析都会超，而这个数是管理员刚写进去的
+        # **额度要设 0，不能设 1。** 闸门判的是「今天已经用掉的 >= 上限」，
+        # 不是「这一次会不会超」—— 新账号已用 0，上限 1 时 `0 >= 1` 不成立，
+        # 照样放行。那是设计如此（见 route/thread.py 的 _require_quota），
+        # 不是漏洞。0 才是策略里写明的「一次都不许跑」那一档。
+        # **第一版判据设的就是 1，于是这条红了一轮 —— 红的是判据不是产品。**
         P11_PATCH_CODE="$(code "$JAR_P11_ADMIN" -X PATCH "$BASE_URL/api/admin/users/$P11_USER_Q" \
-            -H 'Content-Type: application/json' -d '{"quota_tokens_daily":1}')"
+            -H 'Content-Type: application/json' -d '{"quota_tokens_daily":0}')"
         P11_READBACK="$(api "$JAR_P11_ADMIN" "$BASE_URL/api/admin/users" |
             jq -r --arg id "$P11_USER_Q" '.[] | select(.id == $id) | .quota_tokens_daily')"
         if [[ $P11_PATCH_CODE != 200 ]]; then
             fail "改配额返回 $P11_PATCH_CODE"
-        elif [[ $P11_READBACK != 1 ]]; then
+        elif [[ $P11_READBACK != 0 ]]; then
             fail "配额没写进去（回读是 ${P11_READBACK:-空}）"
         else
             # **只验回读是代理指标。** 字段写进去了不等于闸门读的是它 ——
@@ -4705,11 +4713,27 @@ else
             P11_Q_BODY="$(body "$JAR_P11_Q" -X POST "$BASE_URL/api/threads/$THREAD_P11_Q/runs" \
                 -H 'Content-Type: application/json' -d '{"content":"随便算一下 1+1"}')"
             P11_Q_CODE="$(jq -r '.error.code // empty' <<<"${P11_Q_BODY:-null}")"
-            info "提交返回的错误码：${P11_Q_CODE:-（没有错误，提交成功了）}"
-            if [[ $P11_Q_CODE == QUOTA_EXCEEDED ]]; then
-                pass "配额闸门读的就是刚写进去那一列"
+            info "配额 0 时提交返回的错误码：${P11_Q_CODE:-（没有错误，提交成功了）}"
+            if [[ $P11_Q_CODE != QUOTA_EXCEEDED ]]; then
+                fail "配额调到 0 之后仍然提交得上去 —— 那个字段没有被闸门读到"
             else
-                fail "配额调到 1 之后仍然提交得上去 —— 那个字段没有被闸门读到"
+                # **还要证明这个 429 来自配额，不是来自别的什么。** 把配额撤回
+                # 默认档（显式传 null），同一个账号同一条路径必须重新提交得上去 ——
+                # 少了这一步，一个「无论如何都拒绝」的实现也能让上面那条绿
+                code "$JAR_P11_ADMIN" -X PATCH "$BASE_URL/api/admin/users/$P11_USER_Q" \
+                    -H 'Content-Type: application/json' -d '{"quota_tokens_daily":null}' >/dev/null
+                P11_Q_AGAIN="$(body "$JAR_P11_Q" -X POST "$BASE_URL/api/threads/$THREAD_P11_Q/runs" \
+                    -H 'Content-Type: application/json' -d '{"content":"随便算一下 1+1"}')"
+                P11_Q_RUN="$(jq -r '.id // empty' <<<"${P11_Q_AGAIN:-null}")"
+                # **收进来就立刻取消。** 这条判据验的是闸门放不放行，不是分析跑得对不对 ——
+                # 让它跑完就是白花一次 DeepSeek 的钱，而这一条本该属于免费的那 42 条
+                [[ -n $P11_Q_RUN ]] && api "$JAR_P11_Q" -X POST "$BASE_URL/api/runs/$P11_Q_RUN/cancel" >/dev/null 2>&1
+                info "撤回配额后再提交：${P11_Q_RUN:+收下了 run $P11_Q_RUN（已取消）}${P11_Q_RUN:-$(jq -r '.error.code // "没有 run id"' <<<"${P11_Q_AGAIN:-null}")}"
+                if [[ -n $P11_Q_RUN ]]; then
+                    pass "配额闸门读的就是刚写进去那一列：设 0 挡下、撤回放行"
+                else
+                    fail "撤回配额之后仍然提交不上 —— 那个 429 未必来自配额"
+                fi
             fi
         fi
     fi

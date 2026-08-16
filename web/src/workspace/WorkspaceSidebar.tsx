@@ -34,6 +34,11 @@ const NAV_GROUPS: { items: NavItem[] }[] = [
 
 const ROLE_LABEL = { admin: '管理员', reviewer: '审核员', teacher: '教师', student: '学生' } as const
 
+// **后台入口原来一处都没有。** admin 只靠登录那一跳进得去，点了「返回工作台」
+// 就回不来；reviewer 连那一跳都没有，等于完全进不去。落点按角色分：
+// reviewer 打不开用户管理那一页
+const BACKEND_ENTRY = { admin: '/admin/users', reviewer: '/admin/agents' } as const
+
 function NavItemRow({ item }: { item: NavItem }) {
   return (
     <NavLink to={item.to} end={item.end} style={({ isActive }) => ({ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', fontSize: 13, fontWeight: isActive ? 600 : 400, color: isActive ? 'var(--ws-sidebar-active)' : 'var(--ws-sidebar-text)', background: isActive ? 'var(--ws-sidebar-accent)' : 'transparent', borderLeft: isActive ? '3px solid var(--action)' : '3px solid transparent', textDecoration: 'none', cursor: 'pointer', transition: 'background 0.15s, color 0.15s' })}>
@@ -55,6 +60,7 @@ export function WorkspaceSidebar() {
     },
   })
   const user = current.data
+  const backendTo = user && user.role in BACKEND_ENTRY ? BACKEND_ENTRY[user.role as keyof typeof BACKEND_ENTRY] : null
 
   return (
     <aside style={{ width: 220, flexShrink: 0, background: 'var(--ws-sidebar-bg)', display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
@@ -64,6 +70,16 @@ export function WorkspaceSidebar() {
       </div>
       <nav style={{ flex: 1, overflowY: 'auto', padding: '10px 0' }}>
         {NAV_GROUPS.map((group, index) => <div key={index}>{index > 0 && <div style={{ height: 1, background: 'var(--ws-sidebar-border)', margin: '6px 0' }}/>} {group.items.map(item => <NavItemRow key={item.to} item={item}/>)}</div>)}
+        {backendTo && (
+          <div>
+            <div style={{ height: 1, background: 'var(--ws-sidebar-border)', margin: '6px 0' }}/>
+            <NavItemRow item={{
+              to: backendTo,
+              label: '管理后台',
+              icon: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2 3 6v6c0 5 3.8 9.2 9 10 5.2-.8 9-5 9-10V6z"/><path d="m9 12 2 2 4-4"/></svg>,
+            }}/>
+          </div>
+        )}
       </nav>
       <div style={{ borderTop: '1px solid var(--ws-sidebar-border)' }}>
         {userMenuOpen && (

@@ -22,7 +22,10 @@ export function Login() {
       // 缓存，避免新账号短暂看到 staleTime 内仍属“新鲜”的旧数据。
       queryClient.clear()
       queryClient.setQueryData(AUTH_QUERY_KEY, user)
-      navigate(user.role === 'admin' ? '/admin' : '/workspace', { replace: true })
+      // **reviewer 也进后台。** 它登进来就是为了清审核队列，落在工作台的话
+      // 还得自己找路 —— 而工作台里原本一个后台入口都没有。`/admin` 会按角色分流
+      const backend = user.role === 'admin' || user.role === 'reviewer'
+      navigate(backend ? '/admin' : '/workspace', { replace: true })
     },
     onError(error) {
       setLoginError(errorMessage(error, '登录失败，请检查账号和密码'))

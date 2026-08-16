@@ -56,4 +56,38 @@ describe('WorkspaceSidebar', () => {
 
     queryClient.clear()
   })
+
+  /**
+   * **后台入口原来一处都没有。** admin 靠登录那一跳进后台，一旦点了「返回工作台」
+   * 就没有路回去；reviewer 连那一跳都没有 —— 除非手输 URL，否则进不去审核队列。
+   *
+   * 落点必须按角色分：reviewer 打不开 `/admin/users`，指过去等于指进一个 404。
+   */
+  it.each([
+    { role: 'admin' as const, to: '/admin/users' },
+    { role: 'reviewer' as const, to: '/admin/agents' },
+  ])('给 $role 一个后台入口，指向 $to', ({ role, to }) => {
+    expect(entryHref({ id: 'u1', name: '某人', email: 'a@zuel.edu.cn', role })).toBe(to)
+  })
+
+  it.each(['teacher', 'student'] as const)('%s 看不到后台入口', role => {
+    expect(entryHref({ id: 'u1', name: '某人', email: 'a@zuel.edu.cn', role })).toBeNull()
+  })
 })
+
+/** 渲染侧边栏，返回「管理后台」那条链接的 href；没有这条链接时返回 null。 */
+function entryHref(user: Me): string | null {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  })
+  queryClient.setQueryData(AUTH_QUERY_KEY, user)
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/workspace']}>
+        <WorkspaceSidebar />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  const link = screen.queryByRole('link', { name: '管理后台' })
+  return link ? link.getAttribute('href') : null
+}

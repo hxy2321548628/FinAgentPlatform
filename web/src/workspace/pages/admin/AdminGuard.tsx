@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Outlet } from 'react-router-dom'
+import { Navigate, Outlet } from 'react-router-dom'
 import { AUTH_QUERY_KEY, me } from '../../../api/auth'
 import type { UserRole } from '../../../api/types'
 import { NotFound } from '../../../components/NotFound'
@@ -39,4 +39,16 @@ export function AdminGuard() {
 /** 审核页的准入。`admin` 同时满足，反过来不成立。 */
 export function ReviewerGuard() {
   return <BackendGuard roles={['admin', 'reviewer']} />
+}
+
+/**
+ * 裸 `/admin` 的落点，按角色分流。
+ *
+ * **不能固定落在用户管理那一页** —— reviewer 打不开它，于是「审核员进不去后台」。
+ * 分流本身不放宽准入：这个组件挂在 `ReviewerGuard` 底下，别的角色到不了这里。
+ */
+export function AdminHome() {
+  const current = useQuery({ queryKey: AUTH_QUERY_KEY, queryFn: () => me({ redirectOn401: false }) })
+  if (current.isPending) return null
+  return <Navigate to={current.data?.role === 'reviewer' ? '/admin/agents' : '/admin/users'} replace />
 }
