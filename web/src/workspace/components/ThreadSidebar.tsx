@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { createThread, deleteThread, listThreads, threadKeys } from '../../api/threads'
+import { createThread, deleteThread, listThreads, threadKeys, updateThread } from '../../api/threads'
 import { errorMessage } from '../../api/request'
 import { ConfirmDialog } from './ConfirmDialog'
 import { useToast } from '../../components/ui/toast-context'
@@ -19,6 +19,7 @@ export function ThreadSidebar() {
   const { threadId } = useParams()
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null)
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null)
   const threads = useInfiniteQuery({
     queryKey: threadKeys.list(),
     initialPageParam: null as string | null,
@@ -46,7 +47,28 @@ export function ThreadSidebar() {
       toast({ title: '会话删除失败', description: errorMessage(error), variant: 'error' })
     },
   })
+  const rename = useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) => updateThread(id, { title }),
+    async onSuccess() {
+      await queryClient.invalidateQueries({ queryKey: threadKeys.all })
+      toast({ title: '会话已重命名', variant: 'success' })
+    },
+    onError(error) {
+      toast({ title: '重命名失败', description: errorMessage(error), variant: 'error' })
+    },
+  })
   const items = threads.data?.pages.flatMap(page => page.items) ?? []
+
+  // Enter 与 blur 可能先后都触发提交（输入框随状态卸载时浏览器会补一个 blur），
+  // 用 ref 保证同一次重命名只提交一次
+  const submittedRename = useRef<string | null>(null)
+  const submitRename = () => {
+    if (!renaming || submittedRename.current === renaming.id) return
+    submittedRename.current = renaming.id
+    const title = renaming.value.trim()
+    setRenaming(null)
+    if (title) rename.mutate({ id: renaming.id, title })
+  }
 
   return (
     <div style={{ width: 240, flexShrink: 0, background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -63,13 +85,36 @@ export function ThreadSidebar() {
         {items.map(thread => {
           const active = thread.id === threadId
           const hovered = thread.id === hoveredId
+          const isRenaming = renaming?.id === thread.id
           return (
             <div key={thread.id} className="thread-row" onMouseEnter={() => setHoveredId(thread.id)} onMouseLeave={() => setHoveredId(null)} style={{ marginBottom: 2, background: active ? 'var(--action-light)' : hovered ? 'var(--bg)' : 'transparent', border: active ? '1px solid var(--action-border)' : '1px solid transparent', borderRadius: 7 }}>
-              <Link to={`/workspace/chat/${thread.id}`} aria-current={active ? 'page' : undefined} style={{ display: 'block', padding: '10px 12px', textDecoration: 'none' }}>
-                <div style={{ fontSize: 13, fontWeight: 500, color: active ? 'var(--action)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: hovered ? 20 : 0 }}>{threadLabel(thread.title, thread.created_at)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(thread.updated_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
-              </Link>
-              <button type="button" className="thread-delete" aria-label={`删除${threadLabel(thread.title, thread.created_at)}`} disabled={remove.isPending} onClick={() => setPendingDelete({ id: thread.id, label: threadLabel(thread.title, thread.created_at) })}>×</button>
+              {isRenaming ? (
+                <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <input
+                    autoFocus
+                    aria-label="会话名称"
+                    value={renaming.value}
+                    maxLength={80}
+                    onChange={event => setRenaming({ id: thread.id, value: event.target.value })}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') { event.preventDefault(); submitRename() }
+                      if (event.key === 'Escape') setRenaming(null)
+                    }}
+                    onBlur={submitRename}
+                    style={{ width: '100%', padding: '4px 8px', border: '1px solid var(--action-border)', borderRadius: 5, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+                  />
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Enter 保存 · Esc 取消</div>
+                </div>
+              ) : (
+                <>
+                  <Link to={`/workspace/chat/${thread.id}`} aria-current={active ? 'page' : undefined} style={{ display: 'block', padding: '10px 12px', textDecoration: 'none' }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: active ? 'var(--action)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: hovered ? 40 : 0 }}>{threadLabel(thread.title, thread.created_at)}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(thread.updated_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+                  </Link>
+                  <button type="button" className="thread-delete thread-rename" aria-label={`重命名${threadLabel(thread.title, thread.created_at)}`} disabled={rename.isPending} onClick={() => { submittedRename.current = null; setRenaming({ id: thread.id, value: thread.title }) }}>✎</button>
+                  <button type="button" className="thread-delete" aria-label={`删除${threadLabel(thread.title, thread.created_at)}`} disabled={remove.isPending} onClick={() => setPendingDelete({ id: thread.id, label: threadLabel(thread.title, thread.created_at) })}>×</button>
+                </>
+              )}
             </div>
           )
         })}

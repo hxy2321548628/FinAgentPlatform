@@ -107,6 +107,8 @@
 }
 .thread-row:hover .thread-delete,
 .thread-row:focus-within .thread-delete { visibility: visible; }
+/* 重命名按钮挨着删除按钮左侧 */
+.thread-row .thread-rename { right: 34px; color: var(--text-muted); font-size: 12px; }
 
 body {
   font-family: 'Noto Sans SC', 'PingFang SC', '微软雅黑', sans-serif;

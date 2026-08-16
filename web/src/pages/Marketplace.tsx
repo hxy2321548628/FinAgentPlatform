@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { CatalogCard } from '../workspace/components/Catalog'
 
 // ── 数据定义 ──────────────────────────────────────────────────
@@ -210,8 +210,24 @@ function AgentMiniCard({ agent }: { agent: AgentCard }) {
 // ── 主页面 ────────────────────────────────────────────────────
 export function Marketplace() {
   const navigate = useNavigate()
-  const [activeSubject, setActiveSubject] = useState('全部')
-  const [activeTab, setActiveTab] = useState<'scenes' | 'agents'>('scenes')
+  // 筛选状态进 URL：可分享、可后退（审查文档 P1-3）
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeTab: 'scenes' | 'agents' = searchParams.get('tab') === 'agents' ? 'agents' : 'scenes'
+  const activeSubject = searchParams.get('subject') ?? '全部'
+
+  const setActiveTab = (key: 'scenes' | 'agents') => {
+    const next = new URLSearchParams(searchParams)
+    if (key === 'scenes') next.delete('tab')
+    else next.set('tab', key)
+    setSearchParams(next)
+  }
+
+  const setActiveSubject = (subject: string) => {
+    const next = new URLSearchParams(searchParams)
+    if (subject === '全部') next.delete('subject')
+    else next.set('subject', subject)
+    setSearchParams(next)
+  }
 
   const filteredAgents = ALL_AGENTS.filter(a =>
     activeSubject === '全部' || a.subject === activeSubject
