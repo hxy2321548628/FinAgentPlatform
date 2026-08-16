@@ -14,6 +14,7 @@ broker 那边，这里只有到它的一条 HTTP 连接。
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
+import httpx
 from fastapi import Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -41,11 +42,15 @@ from store import postgres, redis
 from task.queue import TaskQueue
 from thread.repository import ThreadRepository
 from thread.title import TitleWriter
+from usage.langfuse import LangfuseUsage
 from user.repository import UserRepository
 
 # 网关只投递不消费，consumer 名字用不上。给一个显式的常量而不是空串，
 # 是为了万一有人拿它去 XREADGROUP 时能一眼看出是谁干的
 PRODUCER_NAME = "api"
+
+# 向 Langfuse 取用量的超时。它是外部服务，慢一点也不该把后台那一页卡死
+LANGFUSE_TIMEOUT = 15.0
 
 
 @dataclass(frozen=True)
@@ -92,7 +97,12 @@ class Platform:
     upload_max_byte: int
     policy: QuotaPolicy
     cancel: CancelFlag
+    # 配额闸门读的那一份用量，数据源是 `runs` 表。**它与下面那个各答各的问题**：
+    # 这一个答「还能不能再跑」，那一个答「花了多少」
     usage: RunUsage
+    # 外部账本。**没配 Langfuse 时是 None，不是一个空实现** —— 空实现会让
+    # 「没配」与「这段时间没人用」都显示成 0，而这两件事的处置完全相反
+    langfuse: LangfuseUsage | None
     rate: RateLimiter
     password: PasswordHasher
     # Cookie 的 max-age 要与 session 在 Redis 里的 TTL 一致。两边分别配的话，
@@ -162,6 +172,7 @@ async def build_platform(settings: Settings) -> Platform:
             output_weight=policy.output_weight,
             reset_zone=ZoneInfo(settings.quota_reset_timezone),
         ),
+        langfuse=_langfuse_usage(settings),
         rate=RateLimiter(cache, limit=settings.rate_limit, window_second=settings.rate_limit_window_second),
         session=SessionStore(cache, ttl_second=settings.session_ttl_second),
         upload_max_byte=settings.upload_max_byte,
@@ -174,3 +185,25 @@ def get_platform(request: Request) -> Platform:
     """路由取运行时的依赖项。"""
     platform: Platform = request.app.state.platform
     return platform
+
+
+def _langfuse_usage(settings: Settings) -> LangfuseUsage | None:
+    """按配置造一个用量客户端，没配全就返回 None。
+
+    **与 `agent/trace.py` 的 `create_callback` 同一条规矩**：配了一半等于没配。
+    留一半的话客户端造得出来而每次查询都失败，症状是用量页永远转圈。
+
+    Args:
+        settings: 平台配置。
+
+    Returns:
+        可用的客户端；地址、public key、secret key 任缺其一则 None。
+    """
+    secret = settings.langfuse_secret_key.get_secret_value()
+    if not (settings.langfuse_base_url and settings.langfuse_public_key and secret):
+        return None
+    return LangfuseUsage(
+        client=httpx.AsyncClient(base_url=settings.langfuse_base_url.rstrip("/"), timeout=LANGFUSE_TIMEOUT),
+        public_key=settings.langfuse_public_key,
+        secret_key=secret,
+    )
