@@ -556,6 +556,27 @@ class AgentListingResponse(BaseModel):
     updated_at: datetime = Field(description="最后改动时间，UTC")
 
 
+class PublicAgentListingResponse(BaseModel):
+    """公开目录的一行（落地页市场区，**匿名可读**，见审查文档 D1 决策 A）。
+
+    与 `AgentListingResponse` 的差别就是**删掉的那几样**：提示词全文（判断值不值得
+    用是登录用户的事）、`mcp_refs`（里面是凭据键名，不该出现在账号体系之外）、
+    `owner_id` / `visibility` / `source`（都是登录后可见性语境的字段，匿名语境下
+    没有意义，删掉比原样泄露更诚实）。
+    """
+
+    id: str = Field(min_length=1, description="智能体标识")
+    owner_name: str = Field(min_length=1, description="作者姓名")
+    name: str = Field(min_length=1, description="名称")
+    description: str = Field(description="一句话说明")
+    subject: str = Field(description="学科")
+    call_count: int = Field(ge=0, description="被引用过几次")
+    version: int = Field(ge=1, description="广场当前展示的版本号")
+    skill_refs: list[SkillReference] | None = Field(default=None, description="这一版自带的 Skill")
+    subagent_refs: list[SubagentReference] | None = Field(default=None, description="这一版自带的子智能体")
+    updated_at: datetime = Field(description="最后改动时间，UTC")
+
+
 class UpdateSkillRequest(BaseModel):
     """Skill 的身份元信息；name 由首版 frontmatter 冻结。"""
 

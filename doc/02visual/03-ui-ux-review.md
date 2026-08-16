@@ -277,7 +277,7 @@ gantt
 
 | # | 决策 | 选项 | 本文推荐 |
 |---|---|---|---|
-| D1 | 公共站 mock 数据 | A 接真实 API / B 标注示例数据 | A，见 §4.7 |
+| D1 | 公共站 mock 数据 | A 接真实 API / B 标注示例数据 | **A，已确认并实现（2026-08-16）**：新增匿名可读 `GET /api/agents/public`，投影删除提示词/MCP 引用/owner_id，见 §6 |
 | D2 | 暗色模式时机 | 维持"预留不实现" / 本期实现 | 维持预留，见 §4.9 |
 | D3 | 响应式范围 | 桌面+平板 / 全端 | 桌面+平板，见 §4.10 |
 | D4 | 图表引用契约 | 答复 Markdown 中引用相对路径（需后端配合） | 定契约后前后端各半天，见 §5.4 说明 |
@@ -445,7 +445,10 @@ AdminUsers.tsx:277 - modal 输入 outline:none 无 focus 替代
 | 2026-08-16 | P0-3 ConfirmDialog 替换两处 window.confirm（alertdialog、焦点陷阱、Esc） | §4.3 |
 | 2026-08-16 | P1-2 反馈系统：Toast（Radix Toast）替换 WorkspaceFiles/ChatInput/ThreadSidebar 内联通知；Skeleton 骨架屏替换会话列表/总览/广场加载态 | §4.5 |
 | 2026-08-16 | P1-5 部分：`transition: all` ×4 改显式属性；`...` 改 `…`；预览图固定尺寸；Marketplace 文案笔误；Overview「本月会话」改为有界翻页全量统计 | §4.8 |
-| 待办 | 会话重命名：前端无入口（`updateThread` 已支持 title 通道）；会话状态指示：`ThreadSummary` 无 run 状态字段，需后端配合 | §4.8 |
+| 2026-08-16 | P1-3 部分：Marketplace tab/学科筛选进 URL（可分享可后退）；会话侧栏行内重命名（updateThread title 通道，Enter 保存 / Esc 取消） | §4.6 |
+| 2026-08-16 | **D1 决策 A 落地**：公共站市场区接真实目录 —— 后端新增匿名可读 `GET /api/agents/public`（单独 public_router，投影删掉 system_prompt/mcp_refs/owner_id/source/visibility，OpenAPI 门禁用例同步）；前端 Marketplace 删除全部 mock 数据，统计（教师数/调用数/场景数/学科数）从目录派生，加载走骨架屏、空目录给引导、错误走 alert；Scenarios 页假「实测」数据改为「演示 · 数据为示意」 | §4.7 |
+| 待办 | 会话状态指示：`ThreadSummary` 无 run 状态字段，需后端配合 | §4.8 |
+| 待办 | 公共站 mock 数据决策（D1）：接真实 API 或标注示例数据，待评审 | §4.7 |
 
 ---
 

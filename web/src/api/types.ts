@@ -207,6 +207,20 @@ export interface AgentListing {
   updated_at: string
 }
 
+/** 公开目录投影（落地页市场区，匿名可读）：后端已删掉提示词/MCP/owner_id 等字段。 */
+export interface PublicAgentListing {
+  id: string
+  owner_name: string
+  name: string
+  description: string
+  subject: string
+  call_count: number
+  version: number
+  skill_refs?: SkillReference[] | null
+  subagent_refs?: SubagentReference[] | null
+  updated_at: string
+}
+
 /** 审核队列里的一条。 */
 export interface ReviewItem {
   id: string

@@ -68,6 +68,9 @@ def create_app(platform: Platform | None = None) -> FastAPI:
     )
     install_handler(app)
     app.include_router(auth.router, prefix=API_PREFIX)
+    # 公开目录：匿名可读的安全投影（审查文档 D1 决策 A）。**必须放在 protected
+    # 那一组之前装配** —— /agents/public 若先被 agent.router 匹配，就回到 401。
+    app.include_router(agent.public_router, prefix=API_PREFIX)
     protected = (
         thread.router,
         file.router,

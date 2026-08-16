@@ -313,6 +313,43 @@ def test_approving_puts_that_version_on_the_plaza(client: TestClient, reviewer: 
     assert plaza[agent_id]["source"] == "catalog"
 
 
+def test_public_catalog_is_anonymous_and_redacted(client: TestClient, reviewer: User) -> None:
+    """落地页市场区是匿名入口（审查文档 D1 决策 A），但投影必须删掉敏感字段。
+
+    匿名拿得到目录（与广场同一份数据），拿不到提示词全文、MCP 引用与 owner_id ——
+    这三样属于登录后的可见性语境。顺带钉死边界：**别的 agent 端点仍要登录**，
+    匿名能读的只有这一个投影。
+    """
+    agent_id = str(create_agent(client, prompt=CAT_PROMPT)["id"])
+    release(client, agent_id)
+    review_id = submit_review(client, agent_id)
+    as_user(client, reviewer)
+    assert client.post(f"{REVIEW_PATH}/{review_id}", json={"approved": True}).status_code == 202
+
+    client.cookies.clear()
+    assert client.get(AGENT_PATH).status_code == 401
+
+    response = client.get(f"{AGENT_PATH}/public")
+    assert response.status_code == 200
+    body = response.json()
+    # 目录是会话级累积的（同库跑的别的用例也在里面），按成员关系断言
+    ids = [one["id"] for one in body]
+    assert agent_id in ids
+    one = next(item for item in body if item["id"] == agent_id)
+    for key in ("system_prompt", "mcp_refs", "owner_id", "source", "visibility"):
+        assert key not in one, f"匿名投影泄露了 {key}"
+
+
+def test_an_unapproved_agent_never_reaches_the_public_catalog(client: TestClient) -> None:
+    """公开目录与广场同口径：没审过的版本不该出现在落地页上。"""
+    agent_id = str(create_agent(client, prompt=CAT_PROMPT)["id"])
+
+    client.cookies.clear()
+    response = client.get(f"{AGENT_PATH}/public")
+    assert response.status_code == 200
+    assert agent_id not in [one["id"] for one in response.json()]
+
+
 def test_editing_after_approval_does_not_slip_onto_the_plaza(
     client: TestClient, author: dict[str, str], reviewer: User, outsider: User
 ) -> None:

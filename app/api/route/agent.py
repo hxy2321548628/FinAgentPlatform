@@ -24,6 +24,7 @@ from api.schema import (
     AgentVersionResponse,
     CreateAgentRequest,
     MyAgentResponse,
+    PublicAgentListingResponse,
     SetSharingRequest,
     SubmitReviewRequest,
     UpdateAgentRequest,
@@ -40,6 +41,11 @@ from preset.subagent_reference import SubagentReferenceError, resolve_subagent_r
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agents", tags=["agent"])
+
+# **匿名可读的公开目录单独一个 router**：agent.router 整体挂在 `require_user`
+# 依赖下面（app.py 装配），FastAPI 的路由级依赖只能加不能减 —— 把这一条摘出来
+# 单独装配，是「只有这个投影匿名可读」最不容易退化的写法。
+public_router = APIRouter(prefix="/agents", tags=["agent"])
 
 AGENT_NOT_FOUND_MESSAGE = "没有这个智能体，或者它不是你的"
 
@@ -69,6 +75,20 @@ async def browse_catalog(
     没有分页 —— 学院内部平台上 agent 是几十个量级。
     """
     return [_to_listing(one) for one in await platform.agent.list_catalog()]
+
+
+@public_router.get("/public")
+async def browse_public_catalog(
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> list[PublicAgentListingResponse]:
+    """公开目录（落地页市场区）：**匿名可读**，与广场同一份数据、同一个口径。
+
+    审查文档 D1 决策 A：公共站接真实 API。投影只留展示所需字段 —— 提示词全文、
+    MCP 引用、owner_id 都不出账号体系（见 `PublicAgentListingResponse` 的说明）。
+    平台部署在学院内网，匿名可读的边界与「目录本来就是审核通过后发布给全院看
+    的内容」是一致的。
+    """
+    return [_to_public_listing(one) for one in await platform.agent.list_catalog()]
 
 
 # **`/available` 与 `/mine` 必须定义在 `/{agent_id}` 那几个之前**：路由按注册顺序
@@ -401,6 +421,21 @@ def _to_listing(listing: AgentListing) -> AgentListingResponse:
         subagent_refs=listing.subagent_refs,
         mcp_refs=listing.mcp_refs,
         source=listing.source,
+        updated_at=listing.updated_at,
+    )
+
+
+def _to_public_listing(listing: AgentListing) -> PublicAgentListingResponse:
+    return PublicAgentListingResponse(
+        id=listing.id,
+        owner_name=listing.owner_name,
+        name=listing.name,
+        description=listing.description,
+        subject=listing.subject,
+        call_count=listing.call_count,
+        version=listing.version,
+        skill_refs=listing.skill_refs,
+        subagent_refs=listing.subagent_refs,
         updated_at=listing.updated_at,
     )
 

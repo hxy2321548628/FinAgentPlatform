@@ -1,9 +1,10 @@
 import { request } from './request'
-import type { AgentListing, MyAgent, Visibility } from './types'
+import type { AgentListing, MyAgent, PublicAgentListing, Visibility } from './types'
 
 export const agentKeys = {
   all: ['agents'] as const,
   catalog: () => ['agents', 'catalog'] as const,
+  publicCatalog: () => ['agents', 'public'] as const,
   available: () => ['agents', 'available'] as const,
   subagentCandidates: () => ['agents', 'subagent-candidates'] as const,
   mine: () => ['agents', 'mine'] as const,
@@ -13,6 +14,11 @@ export const agentKeys = {
 /** 广场：只有平台目录里的那些，展示的是最新那个**过审**的版本。 */
 export function listCatalog(): Promise<AgentListing[]> {
   return request('/api/agents')
+}
+
+/** 公开目录（落地页市场区）：匿名可读的安全投影，与广场同一份数据。 */
+export function listPublicCatalog(): Promise<PublicAgentListing[]> {
+  return request('/api/agents/public')
 }
 
 /** 我此刻能引用的：我自己的 ∪ 共享给我所在组的 ∪ 平台目录。 */

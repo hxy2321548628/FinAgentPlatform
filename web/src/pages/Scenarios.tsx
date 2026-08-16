@@ -110,7 +110,7 @@ export function Scenarios() {
             金融学院率先部署智能体科研环境，意味着师生正在以下一代研究范式开展工作。
           </p>
           <div style={{ marginTop: 24, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-            实测 · 一次完整量化分析 · 17 次工具调用 · 约 3 分钟 · 313,341 tokens
+            演示 · 一次完整量化分析的典型流程 · 数据为示意
           </div>
         </div>
       </section>
