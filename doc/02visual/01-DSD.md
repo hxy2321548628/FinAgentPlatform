@@ -895,7 +895,9 @@ SECTION LABEL
 - 行为：打开即焦点入面板、Tab 焦点圈在面板内、Esc 关闭、点击遮罩关闭、
   `overscroll-behavior: contain`；
 - 语义：`role="dialog" aria-modal="true"`；确认类用 `role="alertdialog"`。
-- P1 起全部换 Radix Dialog（选型文档 §3.2 既定决策）；本阶段新弹窗按此规格手写。
+- **✅ 已落地（2026-08-16）**：Radix Dialog/AlertDialog（`theme.css` 的
+  `.dialog-*` class 承载 DSD 视觉）；ConfirmDialog 与 ChatInput 配置弹窗已迁移，
+  其余存量弹窗（MySkills / PublishDialog 的手写 modal）按此规格在后续迁移。
 
 ### 2.8 无障碍与交互基线（P0-2 改造口径）
 

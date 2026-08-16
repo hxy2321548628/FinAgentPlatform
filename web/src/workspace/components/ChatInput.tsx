@@ -8,6 +8,7 @@ import type { AgentConfig, SkillReference } from '../../api/types'
 import { listingCaption } from '../agent'
 import { DATA_LEAVES_CAMPUS, mountedMcps } from '../mcp'
 import { useToast } from '../../components/ui/toast-context'
+import * as Dialog from '@radix-ui/react-dialog'
 import {
   AGENT_CONFIG_MODES,
   AGENT_CONFIG_MODE_LABEL,
@@ -135,7 +136,15 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
         <button type="button" aria-label="本轮智能体配置" aria-expanded={configOpen} onClick={() => setConfigOpen(open => !open)} style={{ border: 'none', background: 'transparent', color: 'var(--action)', fontSize: 12, padding: '2px 0 8px', cursor: 'pointer', fontFamily: 'inherit' }}>
           配置智能体 · {AGENT_CONFIG_MODE_LABEL[mode]}{skillIds.length ? ` · ${skillIds.length} 个 Skill` : ''}{subagentIds.length ? ` · ${subagentIds.length} 个子智能体` : ''}{mountedMcpList.length ? ` · ${mountedMcpList.length} 个 MCP` : ''}
         </button>
-        {configOpen && <><div onClick={() => setConfigOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.35)', zIndex: 300 }} /><div role="dialog" aria-label="智能体配置" style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 620, maxWidth: 'calc(100vw - 32px)', maxHeight: 'calc(100vh - 48px)', overflowY: 'auto', padding: '18px 20px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)', boxShadow: '0 16px 48px rgba(11,46,92,0.22)', zIndex: 301 }}><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}><strong style={{ fontSize: 16, color: 'var(--text-primary)' }}>本轮智能体配置</strong><button type="button" aria-label="关闭配置" onClick={() => setConfigOpen(false)} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer' }}>×</button></div><div style={{ padding: '10px 12px', border: '1px solid var(--action-border)', borderRadius: 7, background: 'var(--action-light)' }}>
+        <Dialog.Root open={configOpen} onOpenChange={setConfigOpen}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="dialog-overlay dialog-overlay-strong" />
+            <Dialog.Content className="dialog-content dialog-content-wide" aria-describedby={undefined}>
+              <Dialog.Title className="dialog-title" style={{ marginBottom: 12 }}>本轮智能体配置</Dialog.Title>
+              <Dialog.Close asChild>
+                <button type="button" aria-label="关闭配置" className="dialog-close-x">×</button>
+              </Dialog.Close>
+              <div style={{ padding: '10px 12px', border: '1px solid var(--action-border)', borderRadius: 7, background: 'var(--action-light)' }}>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: mode === 'inherit' ? 0 : 10 }}>
             {AGENT_CONFIG_MODES.map(value => <label key={value} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
               <input type="radio" name="agent-config-mode" value={value} checked={mode === value} onChange={() => { setMode(value); setConfigError('') }} />
@@ -213,7 +222,10 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
             <button type="button" onClick={() => saveScene.mutate()} disabled={saveScene.isPending} style={{ padding: '8px 12px', border: '1px solid var(--action-border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--action)', cursor: saveScene.isPending ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 12 }}>{saveScene.isPending ? '保存中…' : '保存到我的场景库'}</button>
             <button type="button" onClick={() => setConfigOpen(false)} style={{ padding: '8px 12px', border: 'none', borderRadius: 6, background: 'var(--action)', color: '#fff', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12 }}>完成</button>
           </div>
-        </div></div></>}
+        </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
         <textarea value={text} disabled={disabled || isSending} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSend() } }} placeholder={disabled ? '请先新建一个分析对话' : '输入分析需求…（Enter 发送，Shift+Enter 换行）'} style={{ width: '100%', minHeight: 52, maxHeight: 160, border: 'none', fontSize: 14, color: 'var(--text-primary)', background: 'transparent', resize: 'none', fontFamily: 'inherit', lineHeight: 1.65, boxSizing: 'border-box' }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-light)' }}>
           {isRunning ? <button type="button" onClick={onStop} aria-label="停止分析" style={{ width: 40, height: 40, borderRadius: 8, background: 'var(--danger)', border: 'none', color: '#fff', cursor: 'pointer', display: 'grid', placeItems: 'center' }}>■</button> : <button type="button" disabled={disabled || isSending || !text.trim()} onClick={() => void handleSend()} aria-label="发送" style={{ width: 40, height: 40, borderRadius: 8, background: 'var(--action)', border: 'none', color: '#fff', cursor: disabled || isSending || !text.trim() ? 'default' : 'pointer', opacity: disabled || isSending || !text.trim() ? 0.5 : 1, display: 'grid', placeItems: 'center' }}>↗</button>}

@@ -2,10 +2,8 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { AUTH_QUERY_KEY, logout, me } from '../api/auth'
+import { Logo } from '../components/Logo'
 import { errorMessage } from '../api/request'
-
-const LOGO_PATH_1 = 'M24.22,27.73l1.05-2c.36-.69.73-1.38,1.08-2.07a.26.26,0,0,1,.27-.17h3.83a.26.26,0,0,1,.27.18c1.44,3.06,3,6.08,4.65,9a.23.23,0,0,0,.08.16H27.09a.3.3,0,0,1-.32-.19q-1.2-2.34-2.42-4.66l-.14-.25c-.05.09-.1.16-.13.23l-2.44,4.7a.25.25,0,0,1-.26.17H13l.4-.83c1.53-2.72,2.94-5.5,4.27-8.33a.35.35,0,0,1,.38-.24h3.74a.27.27,0,0,1,.28.18l2,3.84Z'
-const LOGO_PATH_2 = 'M24.21,4.19a82.908,82.908,0,0,0,2.43,9.16,85.1,85.1,0,0,0,3.43,8.85H18.33a79,79,0,0,0,3.47-8.86,84.311,84.311,0,0,0,2.41-9.15Zm0,16.18A1.3,1.3,0,1,0,23,19.07a1.26,1.26,0,0,0,1.23,1.3Z'
 
 interface NavItem {
   to: string
@@ -65,7 +63,7 @@ export function WorkspaceSidebar() {
   return (
     <aside style={{ width: 220, flexShrink: 0, background: 'var(--ws-sidebar-bg)', display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       <div style={{ height: 72, display: 'flex', alignItems: 'center', gap: 9, padding: '0 16px', borderBottom: '1px solid var(--ws-sidebar-border)', flexShrink: 0 }}>
-        <svg viewBox="12 3 24 34" fill="currentColor" style={{ height: 22, width: 'auto', color: '#0E8A7B' }} aria-hidden="true"><path d={LOGO_PATH_1}/><path d={LOGO_PATH_2}/></svg>
+        <Logo height={22} color="#fff" />
         <div><div style={{ fontSize: 14, fontWeight: 700, color: '#fff', lineHeight: 1.2 }}>FinAgentPlatform</div><div style={{ fontSize: 10, color: 'var(--ws-sidebar-text)', marginTop: 2 }}>工作台</div></div>
       </div>
       <nav style={{ flex: 1, overflowY: 'auto', padding: '10px 0' }}>

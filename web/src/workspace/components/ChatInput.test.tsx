@@ -133,6 +133,8 @@ describe('ChatInput', () => {
     fireEvent.click(screen.getByLabelText('选一个智能体'))
     await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
+    // Radix Dialog 打开时背景 aria-hidden，先「完成」关闭再发送 —— 真实用户也走这条路径
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
     fireEvent.change(input(), { target: { value: '算个波动率' } })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
@@ -146,6 +148,7 @@ describe('ChatInput', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /本轮智能体配置/ }))
     fireEvent.click(screen.getByLabelText('选一个智能体'))
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
     fireEvent.change(input(), { target: { value: '算个波动率' } })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
@@ -173,6 +176,7 @@ describe('ChatInput Skills', () => {
     fireEvent.click(screen.getByLabelText('turn-skill'))
 
     expect(screen.getByText(/最终挂载：agent-skill、turn-skill/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
     fireEvent.change(input(), { target: { value: '算个波动率' } })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
@@ -200,6 +204,7 @@ describe('ChatInput 子智能体', () => {
     fireEvent.click(await screen.findByRole('checkbox', { name: /本轮收益率助手/ }))
 
     expect(screen.getByText(/最终挂载：内置波动率助手、本轮收益率助手/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
     fireEvent.change(input(), { target: { value: '比较两种波动率' } })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
