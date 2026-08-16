@@ -197,6 +197,10 @@ class Settings(StoreSettings):
         default=SecretStr(""),
         description="首个管理员的口令。仅在 users 表为空时生效，落库的只有 argon2id 哈希",
     )
+    admin_email: str = Field(
+        default="",
+        description="首个管理员的邮箱，登录认它也认用户名。留空则按 `<用户名>@zuel.edu.cn` 拼",
+    )
     session_ttl_second: int = Field(
         default=DEFAULT_SESSION_TTL_SECOND,
         gt=0,

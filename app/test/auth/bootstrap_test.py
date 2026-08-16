@@ -18,6 +18,10 @@ from user.repository import UserRepository
 ADMIN_PASSWORD = "口令-admin"
 
 
+def _email() -> str:
+    return f"{uuid4().hex[:8]}@zuel.edu.cn"
+
+
 @pytest.fixture
 def hasher() -> PasswordHasher:
     return PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
@@ -61,7 +65,9 @@ async def test_an_empty_database_gets_its_first_admin(
 async def test_a_populated_database_is_left_alone(repository: UserRepository, hasher: PasswordHasher) -> None:
     """已经有人了就一个字都不改 —— 这一条是「重启不覆盖已改过的口令」的全部内容。"""
     name = f"admin-{uuid4().hex[:8]}"
-    await repository.create(name=name, password_hash=hasher.hash("运维后来改的口令"), role=UserRole.ADMIN)
+    await repository.create(
+        name=name, password_hash=hasher.hash("运维后来改的口令"), role=UserRole.ADMIN, email=_email()
+    )
 
     created = await ensure_first_admin(repository=repository, hasher=hasher, name=name, password=ADMIN_PASSWORD)
 

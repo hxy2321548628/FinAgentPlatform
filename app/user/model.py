@@ -21,6 +21,9 @@ from sqlmodel import Field, SQLModel
 
 TABLE_NAME = "users"
 
+# 邮箱唯一索引。**它是第二把登录钥匙**，重了就分不清进来的是谁
+EMAIL_INDEX = "ix_users_email"
+
 
 class UserRole(StrEnum):
     """用户角色。
@@ -58,6 +61,11 @@ class UserRecord(SQLModel, table=True):
 
     id: UUID = Field(primary_key=True)
     name: str = Field(unique=True)
+    # **登录认它也认 `name`**（P11）。两把钥匙开同一把锁，因此它同样要全库唯一 ——
+    # 重了的话「这个邮箱是谁」就没有唯一答案，而那正是登录要回答的问题
+    email: str = Field(unique=True)
+    # 院系。**不参与任何判断**，只是名册上的一列，因此不设唯一也不设索引
+    dept: str = Field(default="")
     password_hash: str
     role: UserRole = Field(sa_column=role_column())
     # **留空表示「跟着角色的默认档走」**，不是「没有配额」。默认档在 Settings 里，

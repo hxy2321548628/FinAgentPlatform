@@ -57,7 +57,7 @@ from run.repository import RunRepository
 from run.submitter import RunSubmitter
 from sandbox.backend import SandboxBackend
 from sandbox.container import CommandResult
-from sandbox.pool import QueuePositionCallback
+from sandbox.pool import PoolStat, QueuePositionCallback
 from sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
 from sandbox.workspace import Workspace
 from task.queue import TaskQueue
@@ -99,6 +99,10 @@ class FakeContainer:
         return CommandResult(output="", exit_code=0)
 
 
+# 假池的容量。判据只看「不是 0」与「随占用变化」，具体数字无关紧要
+FAKE_POOL_CAPACITY = 20
+
+
 class FakePool:
     """broker 侧的假池：不起 Docker，但借还与查询的行为与真池一致。"""
 
@@ -118,6 +122,9 @@ class FakePool:
 
     async def discard(self, thread_id: str) -> None:
         self.discarded.append(thread_id)
+
+    def stat(self) -> PoolStat:
+        return PoolStat(in_use=len(self.held), capacity=FAKE_POOL_CAPACITY, queued=0)
         self.held.pop(thread_id, None)
 
     def current(self, thread_id: str) -> FakeContainer | None:
@@ -305,6 +312,8 @@ def platform(
         policy=QuotaPolicy(),
         cancel=CancelFlag(live_cache),
         usage=RunUsage(live_engine),
+        # 测试不连 Langfuse：用量端点因此走「没接账本」那一支，这正是要覆盖的行为
+        langfuse=None,
         rate=RateLimiter(live_cache, limit=TEST_RATE_LIMIT, window_second=TEST_RATE_WINDOW_SECOND),
         session=SessionStore(live_cache, ttl_second=DEFAULT_TTL_SECOND),
         upload_max_byte=upload_max_byte,
@@ -364,7 +373,13 @@ def signup(
     """
     assert client.portal is not None
     return client.portal.call(
-        partial(platform.user.create, name=name, password_hash=hasher.hash(TEST_PASSWORD), role=role)
+        partial(
+            platform.user.create,
+            name=name,
+            email=f"{uuid4().hex[:8]}@zuel.edu.cn",
+            password_hash=hasher.hash(TEST_PASSWORD),
+            role=role,
+        )
     )
 
 

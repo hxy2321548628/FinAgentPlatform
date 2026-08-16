@@ -29,7 +29,12 @@ def users(live_engine: AsyncEngine) -> UserRepository:
 
 
 async def _student(users: UserRepository) -> User:
-    return await users.create(name=f"student-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.STUDENT)
+    return await users.create(
+        name=f"student-{uuid4().hex[:8]}",
+        email=f"{uuid4().hex[:8]}@zuel.edu.cn",
+        password_hash=FAKE_HASH,
+        role=UserRole.STUDENT,
+    )
 
 
 def _group_name() -> str:

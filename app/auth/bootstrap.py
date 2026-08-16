@@ -20,6 +20,9 @@ from user.repository import UserRepository
 
 logger = logging.getLogger(__name__)
 
+# 没配 ADMIN_EMAIL 时按它拼一个。学院在中南财经政法大学
+DEFAULT_EMAIL_DOMAIN = "zuel.edu.cn"
+
 
 async def ensure_first_admin(
     *,
@@ -27,6 +30,7 @@ async def ensure_first_admin(
     hasher: PasswordHasher,
     name: str,
     password: str,
+    email: str = "",
 ) -> bool:
     """库里一个账号都没有时，按配置建出首个管理员。
 
@@ -35,6 +39,9 @@ async def ensure_first_admin(
         hasher: 口令哈希器。
         name: 配置里的管理员用户名。
         password: 配置里的管理员口令。
+        email: 配置里的管理员邮箱。**留空则按用户名拼一个** —— 邮箱是 NOT NULL 的，
+            而「没配 ADMIN_EMAIL」不该让空库启动不起来：那会让平台一个人都登不进去，
+            代价远大于一个可以事后改掉的默认邮箱。
 
     Returns:
         这一次是否真的建了号。
@@ -47,7 +54,12 @@ async def ensure_first_admin(
         return False
 
     try:
-        await repository.create(name=name, password_hash=hasher.hash(password), role=UserRole.ADMIN)
+        await repository.create(
+            name=name,
+            email=email or f"{name}@{DEFAULT_EMAIL_DOMAIN}",
+            password_hash=hasher.hash(password),
+            role=UserRole.ADMIN,
+        )
     # 多副本同时启动时两边都会读到 0。撞车的那一方按「已经有人建好了」处理 ——
     # 这正是本函数要保证的结果，不是失败
     except IntegrityError:

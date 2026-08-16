@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI
 
 from api.error import install_handler
 from api.platform import Platform, build_platform
-from api.route import admin, agent, auth, file, group, mcp, review, run, skill, thread
+from api.route import admin, agent, auth, file, group, mcp, review, run, skill, thread, usage
 from api.security import limit_by_user, require_user
 from auth.bootstrap import ensure_first_admin
 from config import get_settings
@@ -48,6 +48,7 @@ def create_app(platform: Platform | None = None) -> FastAPI:
                 hasher=current.password,
                 name=settings.admin_name,
                 password=settings.admin_password.get_secret_value(),
+                email=settings.admin_email,
             )
         try:
             yield
@@ -77,6 +78,7 @@ def create_app(platform: Platform | None = None) -> FastAPI:
         skill.router,
         mcp.router,
         review.router,
+        usage.router,
     )
     for router in protected:
         app.include_router(

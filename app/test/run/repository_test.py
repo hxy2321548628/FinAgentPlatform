@@ -189,7 +189,10 @@ async def test_another_users_run_is_not_found(
 ) -> None:
     """越权与不存在是同一个结果 —— 端点因此自然落到 404，不需要额外写一句鉴权。"""
     stranger = await UserRepository(live_engine).create(
-        name=f"stranger-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.TEACHER
+        name=f"stranger-{uuid4().hex[:8]}",
+        email=f"{uuid4().hex[:8]}@zuel.edu.cn",
+        password_hash=FAKE_HASH,
+        role=UserRole.TEACHER,
     )
 
     assert await repository.get(submitted, user_id=stranger.id) is None
@@ -200,7 +203,10 @@ async def test_an_admin_gets_no_special_treatment(
 ) -> None:
     """管理员多的是管账号的能力，不是看别人会话的能力。这一层没有绕过过滤的旁路。"""
     admin = await UserRepository(live_engine).create(
-        name=f"admin-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.ADMIN
+        name=f"admin-{uuid4().hex[:8]}",
+        email=f"{uuid4().hex[:8]}@zuel.edu.cn",
+        password_hash=FAKE_HASH,
+        role=UserRole.ADMIN,
     )
 
     assert await repository.get(submitted, user_id=admin.id) is None
@@ -385,7 +391,10 @@ async def test_another_users_thread_has_no_history(
 ) -> None:
     """越权与空会话是同一个结果。过滤在这一层，端点那里没有鉴权判断。"""
     stranger = await UserRepository(live_engine).create(
-        name=f"stranger-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.TEACHER
+        name=f"stranger-{uuid4().hex[:8]}",
+        email=f"{uuid4().hex[:8]}@zuel.edu.cn",
+        password_hash=FAKE_HASH,
+        role=UserRole.TEACHER,
     )
 
     page = await repository.list_by_thread(owned_thread.id, user_id=stranger.id)

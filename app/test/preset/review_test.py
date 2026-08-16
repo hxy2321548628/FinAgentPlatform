@@ -29,7 +29,12 @@ def users(live_engine: AsyncEngine) -> UserRepository:
 
 
 async def _reviewer(users: UserRepository) -> User:
-    return await users.create(name=f"reviewer-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.REVIEWER)
+    return await users.create(
+        name=f"reviewer-{uuid4().hex[:8]}",
+        email=f"{uuid4().hex[:8]}@zuel.edu.cn",
+        password_hash=FAKE_HASH,
+        role=UserRole.REVIEWER,
+    )
 
 
 async def _released_version(agents: AgentRepository, owner: User, *, prompt: str = "每一句都以喵开头") -> str:

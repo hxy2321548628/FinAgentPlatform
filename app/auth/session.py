@@ -39,6 +39,10 @@ class Session(BaseModel):
     user_id: str = Field(min_length=1, description="用户标识")
     name: str = Field(min_length=1, description="用户名")
     role: UserRole = Field(description="角色")
+    # **给默认值是为了旧 session 还能反序列化**：这个字段是 P11 加的，Redis 里
+    # 已经发出去的那些没有它。没有默认值的话，加完这一行所有在线的人下一个请求
+    # 就 500 —— 而那看起来像是平台挂了，不像是升级
+    email: str = Field(default="", description="邮箱。P11 之前发出的 session 没有这一项")
 
 
 class SessionStore:

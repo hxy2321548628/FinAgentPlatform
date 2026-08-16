@@ -36,7 +36,7 @@ DISABLED_MESSAGE = "账号尚未启用，请联系管理员"
 # 码不对与码根本不存在给同一句话。分开说等于给试探的人一个「这个组存在」的信号
 INVALID_INVITE_CODE_MESSAGE = "邀请码不正确"
 
-NAME_TAKEN_MESSAGE = "这个用户名已经被占用了"
+NAME_TAKEN_MESSAGE = "这个用户名或邮箱已经被占用了"
 
 # Cookie 的三项属性。
 # - HttpOnly：JS 读不到它，XSS 偷不走登录态；
@@ -69,12 +69,16 @@ async def register(
     try:
         user = await platform.user.create(
             name=request.name,
+            email=request.email,
+            dept=request.dept,
             password_hash=platform.password.hash(request.password),
             role=UserRole.STUDENT,
             is_active=group is not None,
         )
+    # **用户名与邮箱撞车给同一句话**：分开说等于告诉试探的人「这个邮箱注册过」，
+    # 而那正是撞库要的第一条信息
     except IntegrityError as error:
-        logger.info("注册撞了已有的用户名：name=%s", request.name)
+        logger.info("注册撞了已有的用户名或邮箱：name=%s", request.name)
         raise invalid(NAME_TAKEN_MESSAGE) from error
 
     if group is not None:
@@ -108,7 +112,7 @@ async def login(
     platform: Annotated[Platform, Depends(get_platform)],
 ) -> MeResponse:
     """校验用户名与口令，发一个登录态 Cookie。"""
-    credential = await platform.user.find_by_name(request.name)
+    credential = await platform.user.find_by_identifier(request.name)
     if credential is None or not platform.password.verify(credential.password_hash, request.password):
         # **不记用户名之外的任何东西**，尤其不记那个试出来的口令 —— 它多半是某个人
         # 真在用的口令，只是敲错了地方
@@ -120,7 +124,7 @@ async def login(
         raise unauthenticated(DISABLED_MESSAGE)
 
     user = credential.user
-    token = await platform.session.issue(Session(user_id=user.id, name=user.name, role=user.role))
+    token = await platform.session.issue(Session(user_id=user.id, name=user.name, role=user.role, email=user.email))
     response.set_cookie(
         COOKIE_NAME,
         token,
@@ -130,7 +134,7 @@ async def login(
         path=COOKIE_PATH,
     )
     logger.info("登录成功：user_id=%s role=%s", user.id, user.role.value)
-    return MeResponse(id=user.id, name=user.name, role=user.role)
+    return MeResponse(id=user.id, name=user.name, email=user.email, role=user.role)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -154,4 +158,4 @@ async def logout(
 @router.get("/me")
 async def me(current: CurrentUser) -> MeResponse:
     """当前登录用户。未登录时是 401，不是空对象。"""
-    return MeResponse(id=current.user_id, name=current.name, role=current.role)
+    return MeResponse(id=current.user_id, name=current.name, email=current.email, role=current.role)

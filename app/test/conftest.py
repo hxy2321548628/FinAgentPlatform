@@ -201,7 +201,10 @@ async def owner(live_engine: AsyncEngine) -> User:
     这正是隔离做在数据层的副作用：无主的数据在库那一层就存不下来。
     """
     return await UserRepository(live_engine).create(
-        name=f"owner-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.TEACHER
+        name=f"owner-{uuid4().hex[:8]}",
+        email=f"{uuid4().hex[:8]}@zuel.edu.cn",
+        password_hash=FAKE_HASH,
+        role=UserRole.TEACHER,
     )
 
 

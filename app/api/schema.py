@@ -6,7 +6,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from agent.config import (
     MAX_SYSTEM_PROMPT_LENGTH,
@@ -57,9 +57,14 @@ MAX_SHARED_GROUP = 20
 
 
 class LoginRequest(BaseModel):
-    """登录。"""
+    """登录。
 
-    name: str = Field(min_length=1, description="用户名")
+    **`name` 这个字段名留着不改**：它现在同时收用户名与邮箱，但改名会打穿所有
+    已经在发这个请求的地方（前端、验收脚本、别人写的脚本），换来的只是一个更贴切的
+    字段名。描述里说清就够。
+    """
+
+    name: str = Field(min_length=1, description="用户名或邮箱，两者都认")
     password: str = Field(min_length=1, description="口令。只用于校验，不落库也不进日志")
 
 
@@ -71,7 +76,9 @@ class RegisterRequest(BaseModel):
     """
 
     name: str = Field(min_length=1, max_length=MAX_NAME_LENGTH, description="用户名，全库唯一")
+    email: EmailStr = Field(description="邮箱，全库唯一。**它是第二把登录钥匙**")
     password: str = Field(min_length=MIN_PASSWORD_LENGTH, description="口令。只用于算哈希，不落库也不进日志")
+    dept: str = Field(default="", max_length=MAX_NAME_LENGTH, description="院系，只是名册上的一列")
     invite_code: str | None = Field(
         default=None,
         description="教师给的邀请码。填对了直接进组并可以登录；不填则账号先停用，等管理员激活",
@@ -101,6 +108,7 @@ class MeResponse(BaseModel):
 
     id: str = Field(min_length=1, description="用户标识")
     name: str = Field(min_length=1, description="用户名")
+    email: str = Field(description="邮箱")
     role: UserRole = Field(description="角色，前端据此决定是否显示管理入口")
 
 
@@ -108,14 +116,29 @@ class CreateUserRequest(BaseModel):
     """管理员建一个账号。**教师账号唯一的来源** —— 自助注册出来的一律是学生。"""
 
     name: str = Field(min_length=1, max_length=MAX_NAME_LENGTH, description="用户名，全库唯一")
+    email: EmailStr = Field(description="邮箱，全库唯一。登录认它也认用户名")
     password: str = Field(min_length=MIN_PASSWORD_LENGTH, description="初始口令。只用于算哈希，不落库也不进日志")
     role: UserRole = Field(description="角色")
+    dept: str = Field(default="", max_length=MAX_NAME_LENGTH, description="院系")
 
 
 class SetActiveRequest(BaseModel):
-    """启用或停用一个账号。"""
+    """改一个账号：启停、角色、配额、院系，**每一项都可选**。
 
-    is_active: bool = Field(description="停用之后只是登不上，数据全部留在原处")
+    **配额那两项要区分「不传」与「传 null」**：留空表示「跟着角色的默认档走」，
+    是一个有意义的值。两者若不区分，调过配额的人就再也回不到默认档。
+    路由据 `model_fields_set` 判断哪些字段真的被传了。
+    """
+
+    is_active: bool | None = Field(default=None, description="停用之后只是登不上，数据全部留在原处")
+    role: UserRole | None = Field(default=None, description="新角色，不传则不动")
+    quota_tokens_daily: int | None = Field(
+        default=None, ge=0, description="每日 token 配额。**显式传 null 表示回到角色默认档**"
+    )
+    quota_concurrent_runs: int | None = Field(
+        default=None, ge=0, description="并发 run 配额。**显式传 null 表示回到角色默认档**"
+    )
+    dept: str | None = Field(default=None, max_length=MAX_NAME_LENGTH, description="院系，不传则不动")
 
 
 class UserResponse(BaseModel):
@@ -123,8 +146,59 @@ class UserResponse(BaseModel):
 
     id: str = Field(min_length=1, description="用户标识")
     name: str = Field(min_length=1, description="用户名")
+    email: str = Field(description="邮箱")
+    dept: str = Field(description="院系")
     role: UserRole = Field(description="角色")
     is_active: bool = Field(description="能不能登录。注册后等激活与被管理员停用都是 false")
+    # 后台那一页要显示与编辑它们。**留空表示「跟着角色的默认档走」**，不是「没有配额」
+    quota_tokens_daily: int | None = Field(default=None, description="每日 token 配额，留空即走角色默认档")
+    quota_concurrent_runs: int | None = Field(default=None, description="并发 run 配额，留空即走角色默认档")
+
+
+class UsageResponse(BaseModel):
+    """一段窗口里的用量。
+
+    **`available` 为 false 时下面三个数不是「零用量」，是「没数」。** 一串 0 会让
+    「没接账本」与「这个月还没人用」长得一模一样，而这两件事一个该去配环境，
+    一个什么都不用做。
+    """
+
+    available: bool = Field(description="账本接上了没有。false 时下面三个数没有意义")
+    tokens: int = Field(default=0, ge=0, description="token 总数")
+    cost: float = Field(default=0.0, ge=0, description="费用，USD。**模型没注册单价时恒为 0**")
+    observations: int = Field(default=0, ge=0, description="模型调用次数")
+
+
+class UserUsageItem(BaseModel):
+    """排行榜上的一行。"""
+
+    user_id: str = Field(min_length=1, description="用户标识")
+    name: str = Field(min_length=1, description="用户名。账号已删时回落成 id")
+    tokens: int = Field(ge=0, description="token 总数")
+    cost: float = Field(ge=0, description="费用，USD")
+    observations: int = Field(ge=0, description="模型调用次数")
+
+
+class UsageRankingResponse(BaseModel):
+    """全院用量与排行。"""
+
+    available: bool = Field(description="账本接上了没有")
+    total: UsageResponse = Field(description="全平台总量")
+    items: list[UserUsageItem] = Field(description="按 token 降序，**不含没有主人的那部分**")
+
+
+class SystemStatusResponse(BaseModel):
+    """平台此刻的资源占用，后台系统状态页用。
+
+    **只有沙箱池。** Postgres 与 Redis 的死活不在这里答 —— 这个响应能发出来，
+    就说明 api 与库都是通的；而它们真挂了的时候，这一页本身也打不开。
+    再列一行「Postgres 在线」只是把一个恒为真的东西画出来。
+    """
+
+    broker_reachable: bool = Field(description="broker 应答了没有。**没应答时下面三个数都是 0，不是真的空闲**")
+    in_use: int = Field(ge=0, description="存活着的沙箱容器数")
+    capacity: int = Field(ge=0, description="同时存活的容器数上限")
+    queued: int = Field(ge=0, description="正在排队等沙箱的申请数")
 
 
 class CreateGroupRequest(BaseModel):

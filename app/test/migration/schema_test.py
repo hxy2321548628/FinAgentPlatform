@@ -115,10 +115,26 @@ def _column(database: str, table: str) -> set[str]:
 
 
 def _insert_user(connection: psycopg.Connection[tuple[object, ...]], user_id: str) -> None:
+    """插一个账号。
+
+    **列是现查的，不是写死的。** 这些用例各自停在不同的历史 revision 上造数据，
+    而 `email` 是 `0015` 才加的 —— 写死带上它，跑在更早版本上的用例会因为
+    「没有这一列」而红；写死不带，跑在 `0015` 之后的又会撞上 NOT NULL。
+    """
+    found = connection.execute(
+        "SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'email'"
+    ).fetchone()
+    if found is None:
+        connection.execute(
+            "INSERT INTO users (id, name, password_hash, role, is_active, created_at)"
+            " VALUES (%s, %s, 'x', 'teacher', true, %s)",
+            (user_id, f"u-{user_id[:8]}", datetime.now(UTC)),
+        )
+        return
     connection.execute(
-        "INSERT INTO users (id, name, password_hash, role, is_active, created_at)"
-        " VALUES (%s, %s, 'x', 'teacher', true, %s)",
-        (user_id, f"u-{user_id[:8]}", datetime.now(UTC)),
+        "INSERT INTO users (id, name, email, password_hash, role, is_active, created_at)"
+        " VALUES (%s, %s, %s, 'x', 'teacher', true, %s)",
+        (user_id, f"u-{user_id[:8]}", f"{user_id[:8]}@zuel.edu.cn", datetime.now(UTC)),
     )
 
 
@@ -183,15 +199,15 @@ def test_user_name_is_unique(scratch: str) -> None:
 
     with _connect(scratch) as connection:
         connection.execute(
-            "INSERT INTO users (id, name, password_hash, role, is_active, created_at)"
-            " VALUES (%s, '重名', 'x', 'teacher', true, %s)",
-            (uuid4().hex, datetime.now(UTC)),
+            "INSERT INTO users (id, name, email, password_hash, role, is_active, created_at)"
+            " VALUES (%s, '重名', %s, 'x', 'teacher', true, %s)",
+            (uuid4().hex, f"{uuid4().hex[:8]}@zuel.edu.cn", datetime.now(UTC)),
         )
         with pytest.raises(psycopg.errors.UniqueViolation):
             connection.execute(
-                "INSERT INTO users (id, name, password_hash, role, is_active, created_at)"
-                " VALUES (%s, '重名', 'y', 'student', true, %s)",
-                (uuid4().hex, datetime.now(UTC)),
+                "INSERT INTO users (id, name, email, password_hash, role, is_active, created_at)"
+                " VALUES (%s, '重名', %s, 'y', 'student', true, %s)",
+                (uuid4().hex, f"{uuid4().hex[:8]}@zuel.edu.cn", datetime.now(UTC)),
             )
 
 

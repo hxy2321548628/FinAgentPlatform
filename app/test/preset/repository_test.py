@@ -41,7 +41,12 @@ def users(live_engine: AsyncEngine) -> UserRepository:
 
 
 async def _teacher(users: UserRepository) -> User:
-    return await users.create(name=f"teacher-{uuid4().hex[:8]}", password_hash=FAKE_HASH, role=UserRole.TEACHER)
+    return await users.create(
+        name=f"teacher-{uuid4().hex[:8]}",
+        email=f"{uuid4().hex[:8]}@zuel.edu.cn",
+        password_hash=FAKE_HASH,
+        role=UserRole.TEACHER,
+    )
 
 
 async def _agent_of(agents: AgentRepository, owner: User, *, prompt: str = "每一句都以喵开头") -> str:

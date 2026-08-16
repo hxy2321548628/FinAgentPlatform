@@ -8,6 +8,7 @@ dependencies = [
     "alembic>=1.19.0",
     "argon2-cffi>=25.1.0",
     "deepagents>=0.7.1",
+    "email-validator>=2.3.0",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "langchain-deepseek>=1.1.0",
