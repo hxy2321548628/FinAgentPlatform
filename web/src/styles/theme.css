@@ -196,7 +196,35 @@ details[open] > .reasoning-summary .reasoning-caret { transform: rotate(180deg);
   .reasoning-dot.streaming { animation: none; }
 }
 
-/* ── 对话欢迎页（无会话时的居中首页）── */
+/* ── 对话画布：标题栏让位给内容；欢迎页展示彩色院徽，会话页展示低对比水印 ── */
+.chat-main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+.chat-scroll-region {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.chat-watermark {
+  position: absolute;
+  z-index: 0;
+  left: 50%;
+  top: 48%;
+  transform: translate(-50%, -50%);
+  opacity: 0.028;
+  pointer-events: none;
+  user-select: none;
+}
+.dark .chat-watermark { opacity: 0.05; }
 .chat-welcome {
   flex: 1;
   display: flex;
@@ -207,11 +235,10 @@ details[open] > .reasoning-summary .reasoning-caret { transform: rotate(180deg);
   text-align: center;
   padding: 48px 24px 16px;
 }
+.chat-welcome-logo { margin-bottom: 2px; }
 .chat-welcome h1 { margin: 0; font-size: 22px; font-weight: 700; color: var(--text-primary); }
 .chat-welcome p { margin: 0; max-width: 460px; font-size: 13px; line-height: 1.8; color: var(--text-muted); }
-/* 欢迎页的输入区与标题同宽居中，随主区一起呼吸 */
-.chat-welcome-composer { width: 100%; max-width: 744px; margin: 0 auto; }
-.chat-welcome-composer .chat-composer-area { border-top: none; padding: 0 24px 20px; }
+.chat-welcome-composer { width: 100%; }
 
 /* 会话行：更多操作（⋮）悬停/聚焦/菜单打开时可见；触屏设备常显 */
 .thread-row { position: relative; }
@@ -313,7 +340,7 @@ details[open] > .reasoning-summary .reasoning-caret { transform: rotate(180deg);
   color: var(--ws-sidebar-text);
   opacity: 0.85;
 }
-.ws-userbar { padding: 11px 16px; border-radius: 8px; margin: 6px 8px 8px; transition: background 0.15s; }
+.ws-userbar { width: calc(100% - 16px); padding: 11px 16px; border-radius: 8px; margin: 6px 8px 8px; transition: background 0.15s; box-sizing: border-box; }
 .ws-userbar:hover { background: var(--ws-sidebar-hover); }
 .ws-sidebar.collapsed .ws-brand,
 .ws-sidebar.collapsed .nav-label,
@@ -324,11 +351,49 @@ details[open] > .reasoning-summary .reasoning-caret { transform: rotate(180deg);
 .ws-sidebar.collapsed .ws-header { padding: 0 8px; gap: 0; justify-content: space-between; }
 .ws-sidebar.collapsed .ws-collapse { margin-left: 0; }
 .ws-sidebar.collapsed .nav-row { margin: 1px 10px; padding: 9px 0; justify-content: center; }
-.ws-sidebar.collapsed .ws-userbar { padding: 10px 0; margin: 6px 10px; justify-content: center; }
+.ws-sidebar.collapsed .ws-userbar { width: 40px; padding: 10px 0; margin: 6px auto; justify-content: center; }
 
-/* ── 对话页文件面板（P2-2）：<1280px 变成右侧抽屉，盖在主区上 ── */
+/* ── 对话页文件面板：用最右侧边界把手展开/收起，窄屏仍以抽屉覆盖主区 ── */
 .chat-root { position: relative; }
-.chat-files-panel { width: 380px; background: var(--surface); }
+.chat-files-panel {
+  position: relative;
+  width: 380px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  transition: width 0.18s ease;
+}
+.chat-files-panel.collapsed { width: 24px; }
+.chat-files-content { height: 100%; overflow: hidden; }
+.chat-files-toggle {
+  position: absolute;
+  z-index: 2;
+  left: -14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 52px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text-muted);
+  box-shadow: 0 4px 14px rgba(11,46,92,0.1);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.chat-files-toggle:hover,
+.chat-files-toggle:focus-visible { color: var(--action); border-color: var(--action-border); background: var(--action-light); outline: none; }
+.chat-files-panel.collapsed .chat-files-toggle {
+  left: -1px;
+  width: 24px;
+  height: 72px;
+  border-right: none;
+  border-radius: 9px 0 0 9px;
+  box-shadow: -4px 0 12px rgba(11,46,92,0.08);
+}
 @media (max-width: 1279px) {
   .chat-files-panel {
     position: absolute;
@@ -339,6 +404,7 @@ details[open] > .reasoning-summary .reasoning-caret { transform: rotate(180deg);
     z-index: 60;
     box-shadow: -8px 0 24px rgba(11,46,92,0.15);
   }
+  .chat-files-panel.collapsed { width: 24px; box-shadow: none; }
 }
 
 body {
@@ -793,7 +859,7 @@ body {
 }
 
 /* ── 对话输入区与配置弹窗（DSD 第二章 §2.5/§2.7 改造，2026-08）── */
-.chat-composer-area { padding: 14px 24px 18px; border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
+.chat-composer-area { position: relative; z-index: 1; width: min(744px, 100%); margin: 0 auto; padding: 14px 24px 20px; background: transparent; flex-shrink: 0; box-sizing: border-box; }
 .composer {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -936,23 +1002,31 @@ body {
 }
 .config-scene-input:focus { outline: none; border-color: var(--action-border); }
 
-/* 模式分段选择器 */
-.config-modes { display: flex; gap: 6px; flex-wrap: wrap; }
-.config-mode { position: relative; cursor: pointer; }
+/* 角色来源：只展示用户真正要选的三个结果，不暴露 inherit / override 实现语义 */
+.config-role-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
+.config-role-title { font-size: 12.5px; font-weight: 700; color: var(--text-primary); }
+.config-role-description { font-size: 11px; color: var(--text-muted); text-align: right; }
+.config-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.config-mode { position: relative; min-width: 0; cursor: pointer; }
 .config-mode-input { position: absolute; opacity: 0; pointer-events: none; }
 .config-mode-pill {
-  display: inline-block;
-  padding: 6px 12px;
+  display: flex;
+  min-height: 58px;
+  padding: 10px 12px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
   border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 12px;
-  line-height: 1.4;
+  border-radius: 8px;
   color: var(--text-secondary);
-  background: var(--bg);
+  background: var(--surface);
   transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
-.config-mode-pill:hover { border-color: var(--action-border); }
-.config-mode-input:checked + .config-mode-pill { background: var(--action); border-color: var(--action); color: #fff; }
+.config-mode-title { font-size: 12.5px; line-height: 1.3; font-weight: 650; color: var(--text-primary); }
+.config-mode-description { font-size: 10.5px; line-height: 1.35; color: var(--text-muted); }
+.config-mode-pill:hover { border-color: var(--action-border); background: var(--action-light); }
+.config-mode-input:checked + .config-mode-pill { background: var(--action-light); border-color: var(--action); box-shadow: inset 0 0 0 1px var(--action); }
+.config-mode-input:checked + .config-mode-pill .config-mode-title { color: var(--action); }
 .config-mode-input:focus-visible + .config-mode-pill { outline: 2px solid var(--action-border); outline-offset: 2px; }
 
 .config-note {
@@ -1103,6 +1177,7 @@ body {
   transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
 .theme-toggle:hover { border-color: var(--action-border); color: var(--action); }
+.theme-toggle-labeled { width: auto; min-width: 112px; padding: 0 14px; gap: 8px; font-size: 12.5px; font-weight: 600; }
 .theme-menu {
   min-width: 148px;
   padding: 6px;
@@ -1124,4 +1199,146 @@ body {
   outline: none;
 }
 .theme-menu-item[data-highlighted] { background: var(--action-light); color: var(--action); }
-.theme-menu-check { width: 14px; font-size: 12px; color: var(--action); }
+
+/* ── 会话工作区：标题与操作分层，操作统一使用紧凑图标按钮 ── */
+.workspace-files-header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.workspace-files-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.workspace-icon-button,
+.workspace-entry-icon {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.workspace-icon-button { width: 32px; height: 32px; }
+.workspace-entry-icon { width: 26px; height: 26px; }
+.workspace-icon-button:hover:not(:disabled),
+.workspace-entry-icon:hover:not(:disabled) { color: var(--action); border-color: var(--action-border); background: var(--action-light); }
+.workspace-icon-button.primary,
+.workspace-entry-icon.primary { color: #fff; border-color: var(--action); background: var(--action); }
+.workspace-icon-button.primary:hover:not(:disabled),
+.workspace-entry-icon.primary:hover:not(:disabled) { color: #fff; border-color: var(--action-hover); background: var(--action-hover); }
+.workspace-entry-icon.danger { color: var(--danger); }
+.workspace-entry-icon.danger:hover:not(:disabled) { border-color: var(--danger-border); background: var(--danger-bg); }
+.workspace-icon-button:disabled,
+.workspace-entry-icon:disabled { opacity: 0.45; cursor: default; }
+.workspace-icon-button:focus-visible,
+.workspace-entry-icon:focus-visible { outline: 2px solid var(--action-border); outline-offset: 2px; }
+.workspace-entry-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+/* ── 总览：补足工作流与资源入口，让首屏之后仍有可执行内容 ── */
+.overview-page {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px 36px 48px;
+  background: var(--bg);
+}
+.overview-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 28px;
+}
+.overview-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 20px;
+}
+.overview-section { margin-top: 34px; }
+.overview-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 14px;
+}
+.overview-section-heading h2 {
+  margin: 3px 0 0;
+  font-size: 17px;
+  line-height: 1.3;
+  color: var(--text-primary);
+}
+.overview-section-heading > span {
+  max-width: 440px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.overview-workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.overview-workflow-card {
+  min-height: 118px;
+  display: flex;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.overview-workflow-card > span {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--action);
+}
+.overview-workflow-card h3,
+.overview-resource-card h3 { margin: 0; font-size: 13px; color: var(--text-primary); }
+.overview-workflow-card p,
+.overview-resource-card p { margin: 6px 0 0; font-size: 12px; line-height: 1.7; color: var(--text-muted); }
+.overview-resource-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.overview-resource-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 88px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.15s, border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.overview-resource-card:hover {
+  color: var(--action);
+  border-color: var(--action-border);
+  transform: translateY(-1px);
+  box-shadow: 0 5px 16px rgba(11,46,92,0.07);
+}
+.overview-resource-card svg { flex-shrink: 0; }
+@media (max-width: 1100px) {
+  .overview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-main-grid { grid-template-columns: 1fr; }
+  .overview-resource-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .overview-page { padding: 24px 20px 36px; }
+  .overview-workflow-grid,
+  .overview-resource-grid { grid-template-columns: 1fr; }
+  .overview-section-heading { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .overview-section-heading > span { text-align: left; }
+}

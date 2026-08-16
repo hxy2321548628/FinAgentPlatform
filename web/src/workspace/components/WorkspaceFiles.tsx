@@ -7,6 +7,7 @@ import { ConfirmDialog } from './ConfirmDialog'
 import { useToast } from '../../components/ui/toast-context'
 import { Button } from '../../components/ui/Button'
 import * as Dialog from '@radix-ui/react-dialog'
+import { Copy, Download, FilePlus2, FolderPlus, Pencil, RefreshCw, Save, Trash2, Upload, X } from 'lucide-react'
 
 interface FilePreview {
   path: string
@@ -186,17 +187,17 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: compact ? 0 : 560, background: 'var(--surface)', overflow: 'hidden' }}>
-      <div style={{ padding: compact ? '12px 14px' : '16px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <div className="workspace-files-header" style={{ padding: compact ? '14px 16px 12px' : '16px 18px' }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.16em', color: 'var(--text-muted)' }}>THREAD WORKSPACE</div>
-          <div style={{ fontSize: compact ? 12 : 13, color: 'var(--text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title ?? '工作目录'}</div>
+          <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.16em', color: 'var(--text-muted)' }}>THREAD WORKSPACE</div>
+          <div style={{ marginTop: 4, fontSize: compact ? 13 : 14, color: 'var(--text-primary)', fontWeight: 650, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title ?? '工作目录'}</div>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-          <Button variant="secondary" size="sm" disabled={busy} onClick={() => { setDialogName(''); setDialog('file') }}>新建文件</Button>
-          <Button variant="secondary" size="sm" disabled={busy} onClick={() => { setDialogName(''); setDialog('directory') }}>新建文件夹</Button>
+        <div className="workspace-files-actions" role="toolbar" aria-label="工作区文件操作">
+          <button type="button" className="workspace-icon-button" disabled={busy} onClick={() => { setDialogName(''); setDialog('file') }} aria-label="新建文件" title="新建文件"><FilePlus2 size={16} strokeWidth={1.8} /></button>
+          <button type="button" className="workspace-icon-button" disabled={busy} onClick={() => { setDialogName(''); setDialog('directory') }} aria-label="新建文件夹" title="新建文件夹"><FolderPlus size={16} strokeWidth={1.8} /></button>
           <input ref={uploadRef} type="file" multiple style={{ display: 'none' }} onChange={event => event.target.files && void uploadFiles(event.target.files)} />
-          <Button size="sm" disabled={busy} onClick={() => uploadRef.current?.click()}>上传</Button>
-          <button type="button" onClick={() => void tree.refetch()} aria-label="刷新文件列表" title="刷新" style={{ width: 30, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer' }}>↻</button>
+          <button type="button" className="workspace-icon-button primary" disabled={busy} onClick={() => uploadRef.current?.click()} aria-label="上传文件" title="上传文件"><Upload size={16} strokeWidth={1.8} /></button>
+          <button type="button" className="workspace-icon-button" disabled={tree.isFetching} onClick={() => void tree.refetch()} aria-label="刷新文件列表" title="刷新文件列表"><RefreshCw size={16} strokeWidth={1.8} /></button>
         </div>
       </div>
 
@@ -227,10 +228,10 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
               </span>
             </button>
             {!entry.is_dir && (
-              <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
-                <button type="button" title="复制路径" onClick={() => void copyPath(entry.path)} style={iconButtonStyle}>复制</button>
-                <a title="下载" href={rawFileUrl(threadId, entry.path, true)} style={{ ...iconButtonStyle, textDecoration: 'none' }}>下载</a>
-                <button type="button" title="删除" disabled={busy} onClick={() => setPendingDelete(entry.path)} style={{ ...iconButtonStyle, color: 'var(--danger)' }}>删除</button>
+              <div className="workspace-entry-actions">
+                <button type="button" className="workspace-entry-icon" title="复制路径" aria-label={`复制路径：${fileName(entry.path)}`} onClick={() => void copyPath(entry.path)}><Copy size={13} strokeWidth={1.8} /></button>
+                <a className="workspace-entry-icon" title="下载" aria-label={`下载：${fileName(entry.path)}`} href={rawFileUrl(threadId, entry.path, true)}><Download size={13} strokeWidth={1.8} /></a>
+                <button type="button" className="workspace-entry-icon danger" title="删除" aria-label={`删除：${fileName(entry.path)}`} disabled={busy} onClick={() => setPendingDelete(entry.path)}><Trash2 size={13} strokeWidth={1.8} /></button>
               </div>
             )}
           </div>
@@ -241,10 +242,10 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
         <div style={{ flex: 1, minHeight: compact ? 220 : 300, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--border-light)', background: 'var(--bg)' }}>
             <span style={{ flex: 1, minWidth: 0, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview.path}</span>
-            {!preview.isBinary && <button type="button" disabled={busy} onClick={() => setEditing(value => !value)} style={smallButtonStyle}>{editing ? '取消编辑' : '编辑'}</button>}
-            {editing && <button type="button" disabled={busy} onClick={() => void saveEditedFile()} style={{ ...smallButtonStyle, background: 'var(--action)', color: '#fff', borderColor: 'var(--action)' }}>保存</button>}
-            <a href={rawFileUrl(threadId, preview.path, true)} style={{ ...smallButtonStyle, textDecoration: 'none' }}>下载</a>
-            <button type="button" onClick={() => setPreview(null)} style={smallButtonStyle}>关闭</button>
+            {!preview.isBinary && <button type="button" className="workspace-entry-icon" disabled={busy} onClick={() => setEditing(value => !value)} aria-label={editing ? '取消编辑' : '编辑文件'} title={editing ? '取消编辑' : '编辑文件'}>{editing ? <X size={13} /> : <Pencil size={13} />}</button>}
+            {editing && <button type="button" className="workspace-entry-icon primary" disabled={busy} onClick={() => void saveEditedFile()} aria-label="保存文件" title="保存文件"><Save size={13} /></button>}
+            <a className="workspace-entry-icon" href={rawFileUrl(threadId, preview.path, true)} aria-label="下载文件" title="下载文件"><Download size={13} /></a>
+            <button type="button" className="workspace-entry-icon" onClick={() => setPreview(null)} aria-label="关闭预览" title="关闭预览"><X size={13} /></button>
           </div>
           <div style={{ flex: 1, overflow: 'auto', padding: 12, background: 'var(--preview-bg, #F8FAFD)' }}>
             {preview.truncated && <div style={{ marginBottom: 10, padding: '7px 9px', borderRadius: 5, background: 'var(--warn-bg)', color: 'var(--warn)', fontSize: 11 }}>文件较长，当前仅展示开头部分；下载可查看完整内容。</div>}
@@ -293,12 +294,4 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
       />
     </div>
   )
-}
-
-const iconButtonStyle: React.CSSProperties = {
-  padding: '3px 5px', border: 'none', background: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10, fontFamily: 'inherit', borderRadius: 4,
-}
-
-const smallButtonStyle: React.CSSProperties = {
-  padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 5, background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 10, fontFamily: 'inherit',
 }

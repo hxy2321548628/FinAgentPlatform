@@ -71,6 +71,16 @@ describe('Overview', () => {
     expect(await screen.findByText('波动率分析')).toBeTruthy()
   })
 
+  it('展示分析流程与常用资源，避免总览页内容过空', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    listThreads.mockResolvedValue({ items: [], next_cursor: null })
+
+    show(client)
+
+    expect(await screen.findByText('从问题到分析成果')).toBeTruthy()
+    expect(screen.getByText('常用资源')).toBeTruthy()
+  })
+
   it('says the ledger is missing instead of showing a zero', async () => {
     /** 「没接账本」与「这个月没用过」都显示 0 的话，教师无从判断是哪一种。 */
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })

@@ -73,7 +73,8 @@ export function ThreadSidebar() {
 
   return (
     <div style={{ width: 240, flexShrink: 0, background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <div style={{ padding: '12px 12px 8px' }}>
+      <div style={{ padding: '14px 16px 8px', fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.2em', color: 'var(--text-muted)' }}>// HISTORY</div>
+      <div style={{ padding: '0 12px 8px' }}>
         <Button style={{ width: '100%' }} onClick={() => navigate('/workspace/chat')}>
           ＋ 新建分析
         </Button>
@@ -83,7 +84,6 @@ export function ThreadSidebar() {
         <input type="search" placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} />
         {search && <button type="button" aria-label="清空搜索" onClick={() => setSearch('')}>×</button>}
       </div>
-      <div style={{ padding: '4px 16px 8px', fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.2em', color: 'var(--text-muted)' }}>// HISTORY</div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 8px' }}>
         {threads.isPending && Array.from({ length: 3 }, (_, i) => <div key={i} style={{ padding: '10px 12px', marginBottom: 2, display: 'flex', flexDirection: 'column', gap: 6 }}><Skeleton width="80%" height={13} /><Skeleton width="45%" height={11} /></div>)}
         {threads.isError && <div role="alert" style={{ padding: 16, color: 'var(--danger)', fontSize: 12 }}>{errorMessage(threads.error)}</div>}

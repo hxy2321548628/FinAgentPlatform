@@ -17,34 +17,30 @@ afterEach(() => {
 })
 
 describe('ThemeMenu', () => {
-  it('展开菜单并选择深色：持久化 + html 类名生效', async () => {
+  it('单击按跟随系统、浅色、深色循环并立即生效', () => {
     render(<ThemeMenu />)
-    // Radix DropdownMenu 在 pointerdown 打开；jsdom 下用键盘路径（ArrowDown）最稳
-    fireEvent.keyDown(screen.getByRole('button', { name: /切换外观/ }), { key: 'ArrowDown' })
+    const button = screen.getByRole('button', { name: /当前跟随系统/ })
 
-    expect(await screen.findByText('浅色')).toBeTruthy()
-    expect(screen.getByText('跟随系统')).toBeTruthy()
+    fireEvent.click(button)
+    expect(localStorage.getItem('finagent-theme')).toBe('light')
+    expect(button.getAttribute('aria-label')).toContain('当前浅色')
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
 
-    fireEvent.click(screen.getByText('深色'))
+    fireEvent.click(button)
     expect(localStorage.getItem('finagent-theme')).toBe('dark')
+    expect(button.getAttribute('aria-label')).toContain('当前深色')
     expect(document.documentElement.classList.contains('dark')).toBe(true)
+
+    fireEvent.click(button)
+    expect(localStorage.getItem('finagent-theme')).toBe('system')
+    expect(button.getAttribute('aria-label')).toContain('当前跟随系统')
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
   })
 
-  it('当前模式显示勾选标记，切换后标记跟着走', async () => {
+  it('设置页可直接显示当前模式文字', () => {
     localStorage.setItem('finagent-theme', 'dark')
-    render(<ThemeMenu />)
-    // Radix DropdownMenu 在 pointerdown 打开；jsdom 下用键盘路径（ArrowDown）最稳
-    fireEvent.keyDown(screen.getByRole('button', { name: /切换外观/ }), { key: 'ArrowDown' })
-    await screen.findByText('深色')
+    render(<ThemeMenu showLabel />)
 
-    // 深色项带 ✓；浅色项不带
-    const darkItem = screen.getByText('深色').closest('.theme-menu-item')!
-    const lightItem = screen.getByText('浅色').closest('.theme-menu-item')!
-    expect(darkItem.querySelector('.theme-menu-check')?.textContent).toBe('✓')
-    expect(lightItem.querySelector('.theme-menu-check')?.textContent).toBe('')
-
-    // 切到浅色后标记跟着走
-    fireEvent.click(screen.getByText('浅色'))
-    expect(localStorage.getItem('finagent-theme')).toBe('light')
+    expect(screen.getByRole('button', { name: /当前深色/ }).textContent).toBe('深色')
   })
 })

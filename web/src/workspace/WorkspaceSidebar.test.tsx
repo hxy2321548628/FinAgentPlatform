@@ -87,16 +87,17 @@ describe('WorkspaceSidebar', () => {
       </QueryClientProvider>,
     )
     const aside = container.querySelector('.ws-sidebar')!
-    expect(aside.className).not.toContain('collapsed')
-
-    fireEvent.click(screen.getByRole('button', { name: '折叠侧栏' }))
     expect(aside.className).toContain('collapsed')
     const expand = screen.getByRole('button', { name: '展开侧栏' }) as HTMLButtonElement
-    // 折叠态：受控区域（侧栏）处于收起状态，aria-expanded=false
     expect(expand.getAttribute('aria-expanded')).toBe('false')
 
     fireEvent.click(expand)
     expect(aside.className).not.toContain('collapsed')
+    const collapse = screen.getByRole('button', { name: '折叠侧栏' }) as HTMLButtonElement
+    expect(collapse.getAttribute('aria-expanded')).toBe('true')
+
+    fireEvent.click(collapse)
+    expect(aside.className).toContain('collapsed')
   })
 })
 

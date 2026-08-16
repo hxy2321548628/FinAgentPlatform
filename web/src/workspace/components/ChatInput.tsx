@@ -12,8 +12,6 @@ import { useToast } from '../../components/ui/toast-context'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Button } from '../../components/ui/Button'
 import {
-  AGENT_CONFIG_MODES,
-  AGENT_CONFIG_MODE_LABEL,
   MAX_SYSTEM_PROMPT_LENGTH,
   agentChoiceError,
   buildRunAgentConfig,
@@ -21,6 +19,12 @@ import {
   systemPromptError,
   type AgentConfigMode,
 } from '../config'
+
+const VISIBLE_AGENT_MODES = [
+  { value: 'default', label: '平台默认', description: '使用平台基础角色', ariaLabel: '平台默认' },
+  { value: 'agent', label: '使用智能体', description: '引用已发布的配置', ariaLabel: '使用智能体' },
+  { value: 'custom', label: '自定义提示词', description: '直接编写角色要求', ariaLabel: '使用自定义提示词' },
+] as const
 
 interface ChatInputProps {
   isRunning?: boolean
@@ -284,9 +288,12 @@ export function ChatInput({ isRunning = false, disabled = false, threadId, threa
     }
   }
 
-  const configSummary = mode === 'agent'
-    ? (selectedAgent ? `智能体：${selectedAgent.name}` : '选择一个智能体')
-    : AGENT_CONFIG_MODE_LABEL[mode]
+  const visibleAgentMode = mode === 'inherit' ? 'default' : mode
+  const configSummary = mode === 'inherit'
+    ? describeAgentConfig(threadAgentConfig, agents.data ?? [])
+    : mode === 'agent'
+      ? (selectedAgent ? `智能体：${selectedAgent.name}` : '选择一个智能体')
+      : mode === 'custom' ? '自定义提示词' : '平台默认配置'
   const additionsSummary = [
     skillIds.length ? `${skillIds.length} 个 Skill` : '',
     subagentIds.length ? `${subagentIds.length} 个子智能体` : '',
@@ -378,21 +385,25 @@ export function ChatInput({ isRunning = false, disabled = false, threadId, threa
             </div>
             <div className="config-body">
               <div role="tabpanel" id="config-panel-agent" aria-labelledby="config-tab-agent" className="config-tabpanel" hidden={activeTab !== 'agent'}>
-                <div className="config-modes" role="radiogroup" aria-label="配置模式">
-                  {AGENT_CONFIG_MODES.map(value => (
-                    <label key={value} className="config-mode">
-                      <input type="radio" name="agent-config-mode" className="config-mode-input" value={value} checked={mode === value} onChange={() => { setMode(value); setConfigError('') }} />
-                      <span className="config-mode-pill">{AGENT_CONFIG_MODE_LABEL[value]}</span>
+                <div className="config-role-heading">
+                  <div className="config-role-title">角色来源</div>
+                  <div className="config-role-description">保存后用于本轮及这个会话的后续分析</div>
+                </div>
+                <div className="config-modes" role="radiogroup" aria-label="角色来源">
+                  {VISIBLE_AGENT_MODES.map(one => (
+                    <label key={one.value} className="config-mode">
+                      <input type="radio" name="agent-config-mode" className="config-mode-input" value={one.value} aria-label={one.ariaLabel} checked={visibleAgentMode === one.value} onChange={() => { setMode(one.value); setConfigError('') }} />
+                      <span className="config-mode-pill">
+                        <span className="config-mode-title">{one.label}</span>
+                        <span className="config-mode-description">{one.description}</span>
+                      </span>
                     </label>
                   ))}
                 </div>
-                {mode === 'inherit' && <div className="config-note">
-                  本轮不传 <code>agent_config</code>，沿用会话当前默认：{describeAgentConfig(threadAgentConfig, agents.data ?? [])}
+                {visibleAgentMode === 'default' && <div className="config-note">
+                  使用平台基础分析角色；仍可在其他页签中挂载 Skill、子智能体或 MCP。
                 </div>}
-                {mode === 'default' && <div className="config-note">
-                  本轮显式覆盖为平台默认角色；可以只在「Skill / 子智能体 / MCP」页签里加挂载。
-                </div>}
-                {mode === 'agent' && <div className="config-field">
+                {visibleAgentMode === 'agent' && <div className="config-field">
                   <label className="config-field-label" htmlFor="config-agent-select">选择智能体</label>
                   <select id="config-agent-select" className="config-select" aria-label="选择智能体" value={agentId} onChange={event => { setAgentId(event.target.value); setConfigError('') }}>
                     <option value="">-- 请选择 --</option>
@@ -411,7 +422,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadId, threa
                     </div>
                   )}
                 </div>}
-                {mode === 'custom' && <div className="config-field">
+                {visibleAgentMode === 'custom' && <div className="config-field">
                   <label className="config-field-label" htmlFor="config-custom-prompt">自定义提示词</label>
                   <textarea id="config-custom-prompt" className="config-textarea" value={prompt} maxLength={MAX_SYSTEM_PROMPT_LENGTH} onChange={event => { setPrompt(event.target.value); setConfigError('') }} placeholder="例如：你是一名谨慎的金融风险分析师…" />
                   <div className="config-hint" style={{ textAlign: 'right' }}>{prompt.length} / {MAX_SYSTEM_PROMPT_LENGTH}</div>

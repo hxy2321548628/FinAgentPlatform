@@ -14,7 +14,6 @@ import { MessageList } from '../components/MessageList'
 import { ArtifactStrip } from '../components/ArtifactStrip'
 import { ChatInput } from '../components/ChatInput'
 import { WorkspaceFiles } from '../components/WorkspaceFiles'
-import { Button } from '../../components/ui/Button'
 import { Logo } from '../../components/Logo'
 
 const LIVE_STATUS: readonly RunStatus[] = ['queued', 'running', 'waiting_approval']
@@ -111,7 +110,7 @@ export function Chat() {
   // 挂载时即取走：懒创建下这时可能还没有会话，取走正好让欢迎页的输入区带着它
   const [pickedAgentId] = useState<string | undefined>(() => takeHandedOffAgent() ?? undefined)
   const queryClient = useQueryClient()
-  const [panelVisible, setPanelVisible] = useState(true)
+  const [panelVisible, setPanelVisible] = useState(false)
   const scrollRegion = useRef<HTMLDivElement>(null)
   const followLatest = useRef(true)
   const initializedThread = useRef<string | undefined>(undefined)
@@ -185,18 +184,15 @@ export function Chat() {
 
   return <div className="chat-root" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
     <ThreadSidebar />
-    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
-      <header style={{ minHeight: 54, padding: '10px 24px', boxSizing: 'border-box', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-        <div style={{ minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{threadId ? thread.data?.title || '新分析' : '新分析'}</div></div>
-        {threadId && <Button variant="secondary" size="sm" onClick={() => setPanelVisible(value => !value)}>{panelVisible ? '收起工作目录' : '展开工作目录'}</Button>}
-      </header>
-      <div ref={scrollRegion} data-testid="chat-scroll-region" onScroll={event => {
+    <div className="chat-main">
+      {threadId && <Logo className="chat-watermark" height={250} />}
+      <div ref={scrollRegion} className="chat-scroll-region" data-testid="chat-scroll-region" onScroll={event => {
         const element = event.currentTarget
         followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_FOLLOW_THRESHOLD
-      }} style={{ flex: 1, overflowY: 'auto', padding: threadId ? '0 28px' : 0, display: 'flex', flexDirection: 'column' }}>
+      }} style={{ padding: threadId ? '0 28px' : 0 }}>
         {!threadId && (
           <div className="chat-welcome">
-            <Logo height={54} />
+            <Logo className="chat-welcome-logo" height={58} />
             <h1>开始一次新的分析</h1>
             <p>输入你的分析需求，智能体将自行编写 Python、在隔离沙箱中执行，并返回结论与图表 —— 不需要你会写代码。</p>
           </div>
@@ -217,6 +213,20 @@ export function Chat() {
         </div>
       )}
     </div>
-    {panelVisible && threadId && <aside className="chat-files-panel" style={{ flexShrink: 0, borderLeft: '1px solid var(--border)', overflow: 'hidden' }}><WorkspaceFiles threadId={threadId} title={thread.data?.title || '新分析'} compact /></aside>}
+    {threadId && (
+      <aside className={`chat-files-panel${panelVisible ? '' : ' collapsed'}`} aria-label="会话工作区">
+        <button
+          type="button"
+          className="chat-files-toggle"
+          aria-label={panelVisible ? '收起工作区' : '展开工作区'}
+          aria-expanded={panelVisible}
+          onClick={() => setPanelVisible(value => !value)}
+          title={panelVisible ? '收起工作区' : '展开工作区'}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><polyline points={panelVisible ? '9 18 15 12 9 6' : '15 18 9 12 15 6'} /></svg>
+        </button>
+        {panelVisible && <div className="chat-files-content"><WorkspaceFiles threadId={threadId} title={thread.data?.title || '新分析'} compact /></div>}
+      </aside>
+    )}
   </div>
 }

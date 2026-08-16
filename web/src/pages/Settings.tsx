@@ -40,10 +40,10 @@ export function Settings() {
           <SettingsCard>
             <div style={{ padding: '20px 24px 0' }}>
               <div style={cardTitleStyle}>外观</div>
-              <div style={cardDescStyle}>浅色 / 深色 / 跟随系统；「跟随系统」会响应操作系统的明暗切换</div>
+              <div style={cardDescStyle}>点击按钮在跟随系统、浅色、深色间循环；「跟随系统」会响应操作系统的明暗切换</div>
             </div>
             <div style={{ padding: '20px 24px 24px', display: 'flex', gap: 8 }}>
-              <ThemeMenu />
+              <ThemeMenu showLabel />
             </div>
           </SettingsCard>
 

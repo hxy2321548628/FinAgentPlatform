@@ -114,6 +114,17 @@ describe('ThreadSidebar 三点菜单', () => {
   })
 })
 
+describe('ThreadSidebar 布局', () => {
+  it('把历史标题放在新建分析按钮之前', async () => {
+    show()
+    await screen.findByText('波动率分析')
+
+    const history = screen.getByText('// HISTORY')
+    const create = screen.getByRole('button', { name: '＋ 新建分析' })
+    expect(history.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
+
 describe('ThreadSidebar 新建与搜索', () => {
   it('新建分析只是导航到无会话欢迎页，不建会话（幂等）', async () => {
     show()

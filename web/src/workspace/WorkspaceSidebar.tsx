@@ -51,7 +51,7 @@ export function WorkspaceSidebar() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const current = useQuery({ queryKey: AUTH_QUERY_KEY, queryFn: () => me() })
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
   const logoutMutation = useMutation({
     mutationFn: logout,
     onSuccess() {
@@ -98,7 +98,7 @@ export function WorkspaceSidebar() {
               type="button"
               className="ws-userbar"
               aria-label={`用户菜单：${user?.name ?? '正在加载'}`}
-              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
             >
               <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--action)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{user?.name.at(0) ?? '·'}</div>
               <div className="ws-user-info" style={{ minWidth: 0, flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.name ?? '正在加载…'}</div><div style={{ fontSize: 11, color: 'var(--ws-sidebar-text)', marginTop: 1 }}>{user ? ROLE_LABEL[user.role] : ''}</div></div>

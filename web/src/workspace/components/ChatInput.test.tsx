@@ -137,7 +137,7 @@ describe('ChatInput', () => {
     mount({ onSend })
 
     fireEvent.click(screen.getByRole('button', { name: /本轮智能体配置/ }))
-    fireEvent.click(screen.getByLabelText('选一个智能体'))
+    fireEvent.click(screen.getByLabelText('使用智能体'))
     await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
     // Radix Dialog 打开时背景 aria-hidden，先「完成」关闭再发送 —— 真实用户也走这条路径
@@ -148,26 +148,50 @@ describe('ChatInput', () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('算个波动率', { agent_id: 'agent-1' }))
   })
 
+  it('选择自定义提示词后只展示对应输入区并随本轮提交', async () => {
+    const onSend = vi.fn(async () => {})
+    mount({ onSend })
+
+    fireEvent.click(screen.getByRole('button', { name: /本轮智能体配置/ }))
+    expect((screen.getByLabelText('平台默认') as HTMLInputElement).checked).toBe(true)
+    expect(screen.queryByLabelText('自定义提示词')).toBeNull()
+
+    fireEvent.click(screen.getByLabelText('使用自定义提示词'))
+
+    fireEvent.change(screen.getByLabelText('自定义提示词'), {
+      target: { value: '你是一名谨慎的金融风险分析师' },
+    })
+
+    expect((screen.getByLabelText('使用自定义提示词') as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
+    fireEvent.change(input(), { target: { value: '分析组合风险' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('分析组合风险', {
+      system_prompt: '你是一名谨慎的金融风险分析师',
+    }))
+  })
+
   it('refuses to submit an empty agent choice instead of letting the backend 422', async () => {
     mocks.available = [listing()]
     const onSend = vi.fn(async () => {})
     mount({ onSend })
 
     fireEvent.click(screen.getByRole('button', { name: /本轮智能体配置/ }))
-    fireEvent.click(screen.getByLabelText('选一个智能体'))
+    fireEvent.click(screen.getByLabelText('使用智能体'))
     // 不选就点完成：错误留在面板里，面板不关闭
     fireEvent.click(screen.getByRole('button', { name: '完成' }))
 
     expect(screen.getByRole('alert').textContent).toBe('请先选一个智能体')
     expect(onSend).not.toHaveBeenCalled()
 
-    // 改回继承默认，恢复可用
-    fireEvent.click(screen.getByLabelText('继承会话默认'))
+    // 改回平台默认，恢复可用
+    fireEvent.click(screen.getByLabelText('平台默认'))
     fireEvent.click(screen.getByRole('button', { name: '完成' }))
     fireEvent.change(input(), { target: { value: '算个波动率' } })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
-    await waitFor(() => expect(onSend).toHaveBeenCalledWith('算个波动率', undefined))
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('算个波动率', {}))
   })
 })
 
@@ -215,7 +239,7 @@ describe('ChatInput Skills', () => {
     mount({ onSend })
 
     fireEvent.click(screen.getByRole('button', { name: /本轮智能体配置/ }))
-    fireEvent.click(screen.getByLabelText('选一个智能体'))
+    fireEvent.click(screen.getByLabelText('使用智能体'))
     await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
     fireEvent.click(screen.getByRole('tab', { name: /^Skill/ }))
@@ -244,7 +268,7 @@ describe('ChatInput 子智能体', () => {
     mount({ onSend })
 
     fireEvent.click(screen.getByRole('button', { name: /本轮智能体配置/ }))
-    fireEvent.click(screen.getByLabelText('选一个智能体'))
+    fireEvent.click(screen.getByLabelText('使用智能体'))
     await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
     fireEvent.click(screen.getByRole('tab', { name: /^子智能体/ }))
@@ -319,6 +343,19 @@ describe('ChatInput 子智能体', () => {
 })
 
 describe('ChatInput 会话配置持久化', () => {
+  it('会话默认已有自定义提示词时自动选中并回填自定义模式', async () => {
+    mount({
+      threadId: 't1',
+      threadAgentConfig: { system_prompt: '你是一名谨慎的金融风险分析师' },
+      onSend: vi.fn(async () => {}),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
+
+    await waitFor(() => expect((screen.getByLabelText('使用自定义提示词') as HTMLInputElement).checked).toBe(true))
+    expect((screen.getByLabelText('自定义提示词') as HTMLTextAreaElement).value).toBe('你是一名谨慎的金融风险分析师')
+  })
+
   it('重新打开会话时从会话配置回填表单', async () => {
     const onSend = vi.fn(async () => {})
     mocks.available = [listing()]
@@ -343,7 +380,7 @@ describe('ChatInput 会话配置持久化', () => {
     mount({ threadId: 't1', onSend: vi.fn(async () => {}) })
 
     fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
-    fireEvent.click(screen.getByLabelText('选一个智能体'))
+    fireEvent.click(screen.getByLabelText('使用智能体'))
     await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
     fireEvent.click(screen.getByRole('button', { name: '完成' }))
@@ -358,7 +395,7 @@ describe('ChatInput 会话配置持久化', () => {
     mount({ threadId: 't1', onSend })
 
     fireEvent.click(screen.getByRole('button', { name: '本轮智能体配置' }))
-    fireEvent.click(screen.getByLabelText('选一个智能体'))
+    fireEvent.click(screen.getByLabelText('使用智能体'))
     await waitFor(() => expect(screen.getByRole('option', { name: /喵语老师/ })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('选择智能体'), { target: { value: 'agent-1' } })
     fireEvent.click(screen.getByRole('button', { name: '完成' }))

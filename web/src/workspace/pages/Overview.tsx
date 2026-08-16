@@ -17,6 +17,19 @@ const QUICK_ACTIONS = [
     icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/><circle cx="12" cy="8" r="1" fill="currentColor"/></svg> },
 ]
 
+const WORKFLOW_STEPS = [
+  { number: '01', title: '描述分析问题', desc: '直接说明数据、指标与期望结果，不需要先整理成代码需求。' },
+  { number: '02', title: '智能体执行', desc: '自动编写 Python，在隔离沙箱运行，并保留过程与生成文件。' },
+  { number: '03', title: '复用分析成果', desc: '下载图表与文件，或把成熟配置保存为场景和专属智能体。' },
+]
+
+const RESOURCE_LINKS = [
+  { label: '工作空间', desc: '查看会话生成与上传的数据文件', to: '/workspace/data' },
+  { label: '我的 Skills', desc: '管理可复用的分析能力', to: '/workspace/my-skills' },
+  { label: 'MCP 库', desc: '连接校外数据与工具服务', to: '/workspace/mcp' },
+  { label: '我的场景', desc: '继续维护已保存的分析模板', to: '/workspace/my-scenarios' },
+]
+
 function isThisMonth(iso: string): boolean {
   const at = new Date(iso)
   const now = new Date()
@@ -104,7 +117,7 @@ export function Overview() {
   const callValue = usage.data?.available ? String(usage.data.observations) : '—'
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '32px 36px', background: 'var(--bg)' }}>
+    <div className="overview-page">
       {/* 页头 */}
       <div style={{ marginBottom: 24 }}>
         <div className="page-eyebrow">
@@ -120,7 +133,7 @@ export function Overview() {
 
       {/* 统计卡片。**四张都有真实来源** —— 配额进度条去掉了：配额按天算，
           这一排看的是本月，两个口径凑成一个百分比只会得出一个没有意义的数 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 28 }}>
+      <div className="overview-stats">
         <StatCard label="本月会话" value={String(monthlyThreads)} unit="个会话" />
         <StatCard label="Token 消耗" value={tokenValue} unit="本月累计" hint={tokenHint} />
         <StatCard label="模型调用" value={callValue} unit="次（本月）" />
@@ -128,7 +141,7 @@ export function Overview() {
       </div>
 
       {/* 下半部分：最近会话 + 快速入口 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 20 }}>
+      <div className="overview-main-grid">
 
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>最近会话</div>
@@ -196,6 +209,48 @@ export function Overview() {
         </div>
 
       </div>
+
+      <section className="overview-section" aria-labelledby="overview-workflow-title">
+        <div className="overview-section-heading">
+          <div>
+            <div className="page-eyebrow">// WORKFLOW</div>
+            <h2 id="overview-workflow-title">从问题到分析成果</h2>
+          </div>
+          <span>平台会保存每轮过程、结论和工作区文件</span>
+        </div>
+        <div className="overview-workflow-grid">
+          {WORKFLOW_STEPS.map(step => (
+            <div key={step.number} className="overview-workflow-card">
+              <span>{step.number}</span>
+              <div>
+                <h3>{step.title}</h3>
+                <p>{step.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="overview-section" aria-labelledby="overview-resources-title">
+        <div className="overview-section-heading">
+          <div>
+            <div className="page-eyebrow">// RESOURCES</div>
+            <h2 id="overview-resources-title">常用资源</h2>
+          </div>
+          <span>在分析前准备数据与能力，在分析后沉淀可复用资产</span>
+        </div>
+        <div className="overview-resource-grid">
+          {RESOURCE_LINKS.map(item => (
+            <Link key={item.to} to={item.to} className="overview-resource-card">
+              <div>
+                <h3>{item.label}</h3>
+                <p>{item.desc}</p>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            </Link>
+          ))}
+        </div>
+      </section>
     </div>
   )
 }

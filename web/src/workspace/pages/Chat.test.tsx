@@ -237,6 +237,25 @@ describe('Chat 历史轮次视口自动回放', () => {
   })
 })
 
+describe('Chat 工作区面板', () => {
+  it('具体会话默认收起工作区，并可从右侧边界展开', () => {
+    render(<Chat />)
+
+    const expand = screen.getByRole('button', { name: '展开工作区' })
+    expect(expand.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.click(expand)
+    expect(screen.getByRole('button', { name: '收起工作区' }).getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('欢迎页不显示会话工作区把手', () => {
+    routeState.threadId = undefined
+    render(<Chat />)
+
+    expect(screen.queryByRole('button', { name: '展开工作区' })).toBeNull()
+  })
+})
+
 describe('Chat 欢迎页与懒创建', () => {
   it('没有会话时显示居中欢迎页，输入区可用', () => {
     routeState.threadId = undefined
