@@ -6,7 +6,6 @@ import { listCatalog as listMcpCatalog, mcpKeys } from '../../api/mcp'
 import { errorMessage } from '../../api/request'
 import { listAvailable as listAvailableSkills, skillKeys } from '../../api/skills'
 import { MAX_SYSTEM_PROMPT_LENGTH, systemPromptError } from '../config'
-import { DATA_LEAVES_CAMPUS } from '../mcp'
 
 const MAX_NAME_LENGTH = 32
 const MAX_DESCRIPTION_LENGTH = 200
@@ -200,7 +199,6 @@ export function CreateAgent() {
 
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 24 }}>
             <Field label="自带 MCP" hint="每次运行都会连一次这些外部服务；引用只冻结目录记录，冻不住那台机器的行为">
-              <div role="note" style={outboundStyle}>{DATA_LEAVES_CAMPUS}</div>
               {availableMcps.isPending && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>正在加载 MCP 目录…</div>}
               {availableMcps.isError && <div role="alert" style={{ fontSize: 13, color: 'var(--danger)' }}>{errorMessage(availableMcps.error)}</div>}
               {!availableMcps.isPending && (availableMcps.data ?? []).length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>还没有放行的 MCP。</div>}

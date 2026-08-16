@@ -5,7 +5,6 @@ import { errorMessage } from '../../api/request'
 import { listCatalog, skillKeys } from '../../api/skills'
 import type { McpServer, SkillListing } from '../../api/types'
 import { CatalogCard, CatalogControls, type CatalogFilter } from '../components/Catalog'
-import { DATA_LEAVES_CAMPUS } from '../mcp'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Button } from '../../components/ui/Button'
 
@@ -114,9 +113,9 @@ export function McpLibrary() {
 
   return (
     <LibraryPage eyebrow="// MCP LIBRARY" title="MCP 库" description={`浏览管理员放行的外部 MCP Server，共 ${items.length} 个目录项`}>
-      <div style={{ padding: '0 36px' }}>
-        <div role="note" style={outboundBannerStyle}>{DATA_LEAVES_CAMPUS}</div>
-      </div>
+      {/* <div style={{ padding: '0 36px' }}> */}
+        {/* <div role="note" style={outboundBannerStyle}>{DATA_LEAVES_CAMPUS}</div> */}
+      {/* </div> */}
       <CatalogControls search={search} onSearch={setSearch} placeholder="搜索 MCP Server 名称、描述或工具名…" filters={[]} activeFilter="" onFilter={() => undefined} />
       <div style={{ padding: '0 36px 12px' }}>
         <button type="button" onClick={() => setApplying(true)} style={applyButtonStyle}>申请添加 MCP</button>
@@ -154,7 +153,7 @@ export function McpLibrary() {
 function McpDetail({ item, onClose }: { item: McpServer; onClose: () => void }) {
   return (
     <Drawer title={item.name} subtitle={item.url} onClose={onClose}>
-      <div role="note" style={{ ...outboundBannerStyle, marginBottom: 20 }}>{DATA_LEAVES_CAMPUS}</div>
+      {/* <div role="note" style={{ ...outboundBannerStyle, marginBottom: 20 }}>{DATA_LEAVES_CAMPUS}</div> */}
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.75, marginBottom: 20 }}>{item.description || '（申请人没有写说明）'}</p>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
         <Info label="传输方式" value={item.transport === 'sse' ? 'SSE' : 'Streamable HTTP'} />

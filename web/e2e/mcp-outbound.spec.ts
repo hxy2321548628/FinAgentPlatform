@@ -23,7 +23,8 @@ const AUTHOR = required('E2E_AUTHOR')
 const MCP_NAME = required('E2E_MCP_NAME')
 const SCENE_NAME = required('E2E_MCP_SCENE_NAME')
 
-const OUTBOUND_NOTICE = '此服务位于校外，调用时你的数据会发送至外部'
+// 不要这句话
+// const OUTBOUND_NOTICE = '此服务位于校外，调用时你的数据会发送至外部'
 
 function required(name: string): string {
   const value = process.env[name]
@@ -59,7 +60,7 @@ test('直接勾一个 MCP，配置面板上出现外发标注', async ({ page })
 
   const notice = page.getByTestId('mcp-outbound')
   await expect(notice).toBeVisible()
-  await expect(notice).toContainText(OUTBOUND_NOTICE)
+  // await expect(notice).toContainText(OUTBOUND_NOTICE)
   await expect(notice).toContainText(MCP_NAME)
 })
 
@@ -77,7 +78,7 @@ test('只选一个自带 MCP 的子智能体，同样看得见它会连哪台校
 
   const notice = page.getByTestId('mcp-outbound')
   await expect(notice).toBeVisible()
-  await expect(notice).toContainText(OUTBOUND_NOTICE)
+  // await expect(notice).toContainText(OUTBOUND_NOTICE)
   // **要说清它是谁带来的。** 只显示服务名的话，教师看到一个自己没勾过的名字，
   // 第一反应是「这是哪来的」——而那正是这条标注要回答的问题
   await expect(notice).toContainText(`${MCP_NAME}（来自 ${SCENE_NAME}）`)

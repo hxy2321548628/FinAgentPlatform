@@ -6,7 +6,7 @@ import { errorMessage } from '../../api/request'
 import { listAvailable as listAvailableSkills, skillKeys } from '../../api/skills'
 import type { AgentConfig, SkillReference } from '../../api/types'
 import { listingCaption } from '../agent'
-import { DATA_LEAVES_CAMPUS, mountedMcps } from '../mcp'
+import {  mountedMcps } from '../mcp'
 import { useToast } from '../../components/ui/toast-context'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Button } from '../../components/ui/Button'
@@ -213,7 +213,7 @@ export function ChatInput({ isRunning = false, disabled = false, threadAgentConf
               </label>)}
             </div>
             {mountedMcpList.length > 0 && <div data-testid="mcp-outbound" style={outboundStyle}>
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>{DATA_LEAVES_CAMPUS}</div>
+              {/* <div style={{ fontWeight: 600, marginBottom: 4 }}>{DATA_LEAVES_CAMPUS}</div> */}
               <div>最终挂载：{mountedMcpList.map(one => one.via ? `${one.name}（来自 ${one.via}）` : one.name).join('、')}</div>
             </div>}
           </div>

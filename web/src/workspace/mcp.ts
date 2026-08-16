@@ -11,7 +11,7 @@ import type { AgentListing, McpServer } from '../api/types'
  * 漏掉后一条的话，「组合起来才出现的风险」就退回敞着的状态 —— 教师以为自己什么都
  * 没勾，实际那个场景背后连着一台校外机器。
  */
-export const DATA_LEAVES_CAMPUS = '此服务位于校外，调用时你的数据会发送至外部'
+// export const DATA_LEAVES_CAMPUS = '此服务位于校外，调用时你的数据会发送至外部'
 
 /** 一条要展示的 MCP：可能来自直接勾选，也可能是某个智能体自带的。 */
 export interface MountedMcp {
