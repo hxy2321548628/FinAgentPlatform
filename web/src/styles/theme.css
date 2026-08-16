@@ -110,6 +110,11 @@
 /* 重命名按钮挨着删除按钮左侧 */
 .thread-row .thread-rename { right: 34px; color: var(--text-muted); font-size: 12px; }
 
+/* ── 长列表兜底渲染（P2-3）：浏览器跳过离屏项的实际布局。
+   对「滚到底」安全：底部新内容总是真实布局的，顶部估算误差不影响底对齐 ── */
+.thread-row { content-visibility: auto; contain-intrinsic-size: auto 64px; }
+.run-turn   { content-visibility: auto; contain-intrinsic-size: auto 520px; }
+
 body {
   font-family: 'Noto Sans SC', 'PingFang SC', '微软雅黑', sans-serif;
   background-color: var(--bg);

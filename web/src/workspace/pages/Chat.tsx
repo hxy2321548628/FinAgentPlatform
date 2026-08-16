@@ -70,7 +70,7 @@ function RunTurn({ run, threadId, autoReplay, onContentChange }: { run: RunHisto
     await approve.mutateAsync(decisions)
   }
 
-  return <section style={{ padding: '18px 0 22px', borderBottom: '1px solid var(--border-light)' }}>
+  return <section className="run-turn" style={{ padding: '18px 0 22px', borderBottom: '1px solid var(--border-light)' }}>
     <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
       <div style={{ maxWidth: 620 }}>
         <div style={{ padding: '11px 15px', borderRadius: '12px 12px 2px 12px', background: 'var(--brand)', color: '#fff', fontSize: 14, lineHeight: 1.65 }}>{run.content ?? '（这条历史提问未保留原文）'}</div>
