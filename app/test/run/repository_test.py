@@ -110,6 +110,22 @@ async def test_the_history_exposes_each_runs_agent_config(
 # ------------------------------------------------------------ 开跑：是不是第一次
 # 前端拿这个答案决定「要不要把已经显示的对话重置」。答错的代价是一次崩溃恢复之后
 # 教师眼前的分析过程被清空重来 —— 而后台其实好好地接着跑。
+async def test_live_statuses_reports_only_unfinished_runs(
+    repository: RunRepository, submitted: str, owner: User, owned_thread: Thread
+) -> None:
+    """会话侧栏的「进行中」状态点：还在跑的才算，终态不算，缺席不报。"""
+    assert await repository.live_statuses([owned_thread.id], user_id=owner.id) == {owned_thread.id: RunStatus.QUEUED}
+
+    # 走到终态后不再是「进行中」
+    tokens = TokenUsage(input_cache_read=0, input_uncached=1, output=2)
+    assert await repository.succeed(submitted, tokens=tokens)
+    assert await repository.live_statuses([owned_thread.id], user_id=owner.id) == {}
+
+    # 陌生 id 与空列表都不报错
+    assert await repository.live_statuses(["never-existed"], user_id=owner.id) == {}
+    assert await repository.live_statuses([], user_id=owner.id) == {}
+
+
 async def test_starting_a_queued_run_is_the_first_time(repository: RunRepository, submitted: str) -> None:
     assert await repository.start(submitted) is RunStart.FIRST
 

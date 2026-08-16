@@ -13,6 +13,8 @@ function threadLabel(title: string, createdAt: string): string {
   return `新对话 · ${new Date(createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`
 }
 
+const LIVE_LABEL = { queued: '排队中', running: '分析中', waiting_approval: '等待确认' } as const
+
 export function ThreadSidebar() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -109,8 +111,13 @@ export function ThreadSidebar() {
               ) : (
                 <>
                   <Link to={`/workspace/chat/${thread.id}`} aria-current={active ? 'page' : undefined} style={{ display: 'block', padding: '10px 12px', textDecoration: 'none' }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: active ? 'var(--action)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: hovered ? 40 : 0 }}>{threadLabel(thread.title, thread.created_at)}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(thread.updated_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      {thread.live_run_status && <span className="thread-live-dot" aria-hidden="true" />}
+                      <div style={{ minWidth: 0, fontSize: 13, fontWeight: 500, color: active ? 'var(--action)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: hovered ? 40 : 0 }}>{threadLabel(thread.title, thread.created_at)}</div>
+                    </div>
+                    <div style={{ fontSize: 11, color: thread.live_run_status ? 'var(--status-active)' : 'var(--text-muted)', marginTop: 4 }}>
+                      {thread.live_run_status ? LIVE_LABEL[thread.live_run_status as keyof typeof LIVE_LABEL] : new Date(thread.updated_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </div>
                   </Link>
                   <button type="button" className="thread-delete thread-rename" aria-label={`重命名${threadLabel(thread.title, thread.created_at)}`} disabled={rename.isPending} onClick={() => { submittedRename.current = null; setRenaming({ id: thread.id, value: thread.title }) }}>✎</button>
                   <button type="button" className="thread-delete" aria-label={`删除${threadLabel(thread.title, thread.created_at)}`} disabled={remove.isPending} onClick={() => setPendingDelete({ id: thread.id, label: threadLabel(thread.title, thread.created_at) })}>×</button>

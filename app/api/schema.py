@@ -300,6 +300,11 @@ class ThreadResponse(BaseModel):
     created_at: datetime = Field(description="建立时间，UTC")
     # 列表按它倒序。提交分析与改标题都会把它推到此刻
     updated_at: datetime = Field(description="最后活动时间，UTC")
+    live_run_status: RunStatus | None = Field(
+        default=None,
+        description="这个会话现在有没有还在跑的 run（queued/running/waiting_approval），"
+        "没有就是 None。供会话侧栏显示「进行中」状态点",
+    )
 
 
 class ThreadDetailResponse(ThreadResponse):

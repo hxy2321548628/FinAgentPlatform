@@ -296,6 +296,8 @@ export interface ThreadSummary {
   title: string
   created_at: string
   updated_at: string
+  /** 这个会话现在还在跑的 run 的状态；没有就是 null（会话侧栏的「进行中」状态点）。 */
+  live_run_status?: RunStatus | null
 }
 
 export interface ThreadDetail extends ThreadSummary {

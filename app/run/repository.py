@@ -222,6 +222,37 @@ class RunRepository:
             session.add(record)
             await session.commit()
 
+    async def live_statuses(self, thread_ids: list[str], *, user_id: str) -> dict[str, RunStatus]:
+        """一批会话各自「还在跑的 run」的状态，按会话聚合。
+
+        会话列表要显示哪个会话正在进行中，而这个信息属于 `runs` 表 —— 这里按
+        thread 批量查一次，列表页就不必一页发 N 条查询。终态不算「在跑」，
+        缺席即不在结果里。同一个会话有多个在跑时取 `started_at` 最新的那个。
+
+        **与其他公开方法一样要求 `user_id`**：隔离门禁（store/isolation_test）
+        不允许任何不带用户上下文的入口 —— 少了它，别人 thread 的 run 状态也能
+        被批量探测。
+        """
+        owner = _parse(user_id)
+        ids = [one for one in (_parse(value) for value in thread_ids) if one is not None]
+        if owner is None or not ids:
+            return {}
+        async with AsyncSession(self._engine) as session:
+            found = await session.exec(
+                select(RunRecord)
+                .where(
+                    col(RunRecord.thread_id).in_(ids),
+                    col(RunRecord.user_id) == owner,
+                    col(RunRecord.status).in_((RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_APPROVAL)),
+                )
+                .order_by(col(RunRecord.started_at).desc())
+            )
+        statuses: dict[str, RunStatus] = {}
+        for record in found.all():
+            # 按 started_at 倒序，第一次见到的就是最新的那一个
+            statuses.setdefault(record.thread_id.hex, record.status)
+        return statuses
+
     async def get(self, run_id: str, *, user_id: str) -> Run | None:
         """按 id 查一次 run，**只查得到自己的那些**。
 

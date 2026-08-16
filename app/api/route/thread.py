@@ -34,6 +34,7 @@ from api.schema import (
 )
 from api.security import UNAUTHENTICATED_MESSAGE, CurrentUser
 from cursor import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, CursorError, Page
+from event.model import RunStatus
 from preset.mcp_reference import McpReferenceError, resolve_mcp_references
 from preset.reference import ReferenceUnavailableError, resolve_reference
 from preset.skill_reference import SkillReferenceError, resolve_skill_references
@@ -87,7 +88,13 @@ async def list_thread(
     翻页途中若有会话被顶到首页，offset 会漏掉或重复条目，且不报错。
     """
     page = await _paged(platform.thread.list(user_id=current.user_id, cursor=cursor, limit=limit))
-    return ThreadPageResponse(items=[_to_response(one) for one in page.items], next_cursor=page.next_cursor)
+    # 每个会话「还在跑的 run」批量查一次（见 RunRepository.live_statuses），
+    # 列表要显示进行中状态点，而它属于 runs 表
+    live = await platform.repository.live_statuses([one.id for one in page.items], user_id=current.user_id)
+    return ThreadPageResponse(
+        items=[_to_response(one, live_status=live.get(one.id)) for one in page.items],
+        next_cursor=page.next_cursor,
+    )
 
 
 @router.get("/{thread_id}")
@@ -98,11 +105,13 @@ async def get_thread(
 ) -> ThreadDetailResponse:
     """一个会话的详情。别人的会话与不存在的会话是同一个回答。"""
     thread = await require_thread(platform, thread_id, current.user_id)
+    live = await platform.repository.live_statuses([thread.id], user_id=current.user_id)
     return ThreadDetailResponse(
         id=thread.id,
         title=thread.title,
         created_at=thread.created_at,
         updated_at=thread.updated_at,
+        live_run_status=live.get(thread.id),
         agent_config=thread.agent_config,
     )
 
@@ -305,12 +314,13 @@ async def _paged[Item](call: Awaitable[Page[Item]]) -> Page[Item]:
         raise invalid(str(exc)) from exc
 
 
-def _to_response(thread: Thread) -> ThreadResponse:
+def _to_response(thread: Thread, *, live_status: RunStatus | None = None) -> ThreadResponse:
     return ThreadResponse(
         id=thread.id,
         title=thread.title,
         created_at=thread.created_at,
         updated_at=thread.updated_at,
+        live_run_status=live_status,
     )
 
 

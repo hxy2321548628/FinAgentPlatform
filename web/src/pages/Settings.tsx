@@ -1,10 +1,9 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AUTH_QUERY_KEY, me } from '../api/auth'
 import { errorMessage } from '../api/request'
 import { myUsage, usageKeys } from '../api/usage'
 import type { UserRole } from '../api/types'
-import { readThemeMode, saveThemeMode, type ThemeMode } from '../components/ui/theme'
+import { ThemeMenu } from '../components/ui/ThemeMenu'
 
 const ROLE_LABEL: Record<UserRole, string> = {
   admin: '管理员',
@@ -23,12 +22,6 @@ function monthRange(): string {
 export function Settings() {
   const account = useQuery({ queryKey: AUTH_QUERY_KEY, queryFn: () => me() })
   const usage = useQuery({ queryKey: usageKeys.mine(), queryFn: myUsage })
-  const [theme, setTheme] = useState<ThemeMode>(readThemeMode)
-
-  const changeTheme = (mode: ThemeMode) => {
-    setTheme(mode)
-    saveThemeMode(mode)
-  }
 
   return (
     <div className="grid-bg" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
@@ -42,29 +35,15 @@ export function Settings() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-          {/* 外观（DSD 第二章 §2.2 暗色色板，2026-08-16） */}
+          {/* 外观（DSD 第二章 §2.2 暗色色板，2026-08-16）。
+              入口在公共顶栏对所有访问者开放，这里给登录后的工作台用户留同一入口 */}
           <SettingsCard>
             <div style={{ padding: '20px 24px 0' }}>
               <div style={cardTitleStyle}>外观</div>
-              <div style={cardDescStyle}>选择配色；「跟随系统」会响应操作系统的明暗切换</div>
+              <div style={cardDescStyle}>浅色 / 深色 / 跟随系统；「跟随系统」会响应操作系统的明暗切换</div>
             </div>
             <div style={{ padding: '20px 24px 24px', display: 'flex', gap: 8 }}>
-              {([['light', '浅色'], ['dark', '深色'], ['system', '跟随系统']] as const).map(([mode, label]) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => changeTheme(mode)}
-                  aria-pressed={theme === mode}
-                  style={{
-                    padding: '8px 16px', borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
-                    border: `1px solid ${theme === mode ? 'var(--action)' : 'var(--border)'}`,
-                    background: theme === mode ? 'var(--action)' : 'var(--surface)',
-                    color: theme === mode ? '#fff' : 'var(--text-secondary)',
-                    fontWeight: theme === mode ? 600 : 400,
-                    transition: 'background 0.15s, border-color 0.15s, color 0.15s',
-                  }}
-                >{label}</button>
-              ))}
+              <ThemeMenu />
             </div>
           </SettingsCard>
 

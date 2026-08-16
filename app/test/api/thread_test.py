@@ -1,3 +1,4 @@
+from functools import partial
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -17,6 +18,36 @@ def _become_someone_else(client: TestClient, platform: Platform, hasher: Passwor
     signup(client, platform, hasher, name=name)
     client.cookies.clear()
     login(client, name)
+
+
+# ------------------------------------------------------------------ 列表携带进行中状态
+def test_a_thread_without_live_runs_reports_none(client: TestClient, thread_id: str) -> None:
+    page = client.get("/api/threads").json()
+    mine = next(one for one in page["items"] if one["id"] == thread_id)
+
+    assert mine["live_run_status"] is None
+
+
+def test_thread_list_reports_the_live_run_status(client: TestClient, platform: Platform, thread_id: str) -> None:
+    """会话侧栏的「进行中」状态点：列表响应带上还在跑的 run 的状态。
+
+    直接落一行 queued 的 run（不进队列，worker 不会碰它），状态稳定可断言 ——
+    走提交路径的话 worker 会把它跑完，断言就在跟执行竞速。
+    """
+    user = client.get("/api/auth/me").json()
+    assert client.portal is not None
+    client.portal.call(
+        partial(
+            platform.repository.create,
+            run_id=uuid4().hex,
+            thread_id=thread_id,
+            user_id=user["id"],
+        )
+    )
+
+    page = client.get("/api/threads").json()
+    mine = next(one for one in page["items"] if one["id"] == thread_id)
+    assert mine["live_run_status"] == RunStatus.QUEUED
 
 
 # ------------------------------------------------------------------ 建会话

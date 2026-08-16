@@ -10,10 +10,17 @@ export type ThemeMode = 'light' | 'dark' | 'system'
 
 const STORAGE_KEY = 'finagent-theme'
 const MEDIA = '(prefers-color-scheme: dark)'
+/** 主题变化通知（多个入口组件靠它同步：Navbar / 设置页）。 */
+export const THEME_EVENT = 'finagent-theme-changed'
 
 export function readThemeMode(): ThemeMode {
   const stored = localStorage.getItem(STORAGE_KEY)
   return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system'
+}
+
+/** 当前真正生效的是深还是浅（system 模式下按系统偏好解析）。 */
+export function effectiveIsDark(): boolean {
+  return readThemeMode() === 'dark' || (readThemeMode() === 'system' && window.matchMedia(MEDIA).matches)
 }
 
 export function applyTheme(mode: ThemeMode) {
@@ -27,6 +34,13 @@ export function applyTheme(mode: ThemeMode) {
 export function saveThemeMode(mode: ThemeMode) {
   localStorage.setItem(STORAGE_KEY, mode)
   applyTheme(mode)
+  window.dispatchEvent(new CustomEvent(THEME_EVENT))
+}
+
+/** 订阅主题变化（其他入口组件切换主题时同步自身 UI）。返回退订函数。 */
+export function subscribeTheme(listener: () => void): () => void {
+  window.addEventListener(THEME_EVENT, listener)
+  return () => window.removeEventListener(THEME_EVENT, listener)
 }
 
 /** 应用启动时调用一次：恢复持久化选择并跟随系统变化（仅 system 模式响应）。 */
@@ -35,6 +49,9 @@ export function initTheme() {
   const mode: ThemeMode = stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system'
   applyTheme(mode)
   window.matchMedia(MEDIA).addEventListener('change', () => {
-    if (readThemeMode() === 'system') applyTheme('system')
+    if (readThemeMode() === 'system') {
+      applyTheme('system')
+      window.dispatchEvent(new CustomEvent(THEME_EVENT))
+    }
   })
 }

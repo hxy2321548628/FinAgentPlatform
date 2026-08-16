@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { Logo } from './Logo'
 import { AUTH_QUERY_KEY, me } from '../api/auth'
+import { ThemeMenu } from './ui/ThemeMenu'
 
 const NAV_LINKS = [
   { to: '/',             label: '首页',     end: true },
@@ -54,18 +55,21 @@ export function Navbar() {
         ))}
       </div>
 
-      <button
-        type="button"
-        onClick={handleWorkspaceEntry}
-        style={{
-          marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', height: 34,
-          padding: '0 16px', borderRadius: 7, background: 'var(--action)', color: '#fff',
-          border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
-          fontWeight: 600, whiteSpace: 'nowrap',
-        }}
-      >
-        进入工作台 →
-      </button>
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <ThemeMenu />
+        <button
+          type="button"
+          onClick={handleWorkspaceEntry}
+          style={{
+            display: 'inline-flex', alignItems: 'center', height: 34,
+            padding: '0 16px', borderRadius: 7, background: 'var(--action)', color: '#fff',
+            border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
+            fontWeight: 600, whiteSpace: 'nowrap',
+          }}
+        >
+          进入工作台 →
+        </button>
+      </div>
     </nav>
   )
 }

@@ -141,6 +141,15 @@
   left: 0;
 }
 
+.thread-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-active);
+  flex-shrink: 0;
+  animation: progress-pulse 1.4s ease-in-out infinite;
+}
+
 /* 会话行：删除按钮悬停/聚焦时可见 */
 .thread-row { position: relative; }
 .thread-row .thread-delete {
@@ -667,3 +676,41 @@ body {
   white-space: nowrap;
   border: 0;
 }
+
+/* ── 主题切换（Navbar / 设置页共用）── */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.theme-toggle:hover { border-color: var(--action-border); color: var(--action); }
+.theme-menu {
+  min-width: 148px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(11,46,92,0.14);
+  z-index: 600;
+}
+.theme-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  outline: none;
+}
+.theme-menu-item[data-highlighted] { background: var(--action-light); color: var(--action); }
+.theme-menu-check { width: 14px; font-size: 12px; color: var(--action); }
