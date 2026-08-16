@@ -1,15 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import type { InterruptAction } from '../../api/events'
 import type { Decision } from '../../api/types'
 import { errorMessage } from '../../api/request'
 import { buildDecisions, createDecisionDrafts, DECISION_LABEL } from '../decisions'
 import type { DecisionDraft } from '../decisions'
 import type { RunViewItem } from '../eventReducer'
+import { MarkdownAnswer } from './MarkdownAnswer'
 
 interface MessageListProps {
   items: RunViewItem[]
   pendingActions?: InterruptAction[] | null
   onApprove?: (decisions: Decision[]) => Promise<void>
+  /** 所属 thread，用于把答复里的 outputs/ 相对路径重写为下载 URL。 */
+  threadId?: string
+  /** 该 run 是否还在流式输出；流式期间最后一条走轻量渲染 + 光标。 */
+  live?: boolean
 }
 
 type RenderEntry =
@@ -62,34 +67,40 @@ function ToolView({ item, nested = false }: { item: Extract<RunViewItem, { kind:
   </div>
 }
 
-function ItemView({ item, index, nested = false }: { item: RunViewItem; index: number; nested?: boolean }) {
+const ItemView = memo(function ItemView({ item, index, nested = false, streaming = false, threadId }: { item: RunViewItem; index: number; nested?: boolean; streaming?: boolean; threadId?: string }) {
   if (item.kind === 'tool') return <ToolView key={`tool-${item.id}-${index}`} item={item} nested={nested} />
   if (item.kind === 'notice') return <div key={`notice-${index}`} style={{ marginLeft: nested ? 0 : 44, padding: '8px 12px', borderRadius: 6, background: item.tone === 'error' ? '#FEF2F2' : item.tone === 'warning' ? '#FFFBEB' : 'var(--action-light)', color: item.tone === 'error' ? '#DC2626' : item.tone === 'warning' ? '#92400E' : 'var(--action)', fontSize: 12 }}>{item.message}</div>
   if (item.kind === 'reasoning') {
     if (nested) return <div key={`reasoning-${index}`} style={{ padding: '8px 12px', borderLeft: '2px solid var(--action-border)', background: 'var(--action-light)', color: 'var(--text-secondary)', fontSize: 12 }}>
       <div style={{ color: 'var(--action)', marginBottom: 6 }}>分析思路</div>
-      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{item.text}</div>
+      <MarkdownAnswer text={item.text} threadId={threadId} streaming={streaming} />
     </div>
     return <details key={`reasoning-${index}`} open style={{ marginLeft: 44, padding: '8px 12px', borderLeft: '2px solid var(--action-border)', background: 'var(--action-light)', color: 'var(--text-secondary)', fontSize: 12 }}>
       <summary style={{ cursor: 'pointer', color: 'var(--action)', marginBottom: 6 }}>{pathLabel(item.path)} · 分析思路</summary>
-      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{item.text}</div>
+      <MarkdownAnswer text={item.text} threadId={threadId} streaming={streaming} />
     </details>
   }
-  if (nested) return <div key={`answer-${index}`} style={{ padding: '10px 12px', border: '1px solid var(--border-light)', borderRadius: 7, background: 'var(--surface)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.7, fontSize: 13 }}>{item.text}</div>
+  if (nested) return <div key={`answer-${index}`} style={{ padding: '10px 12px', border: '1px solid var(--border-light)', borderRadius: 7, background: 'var(--surface)', overflowWrap: 'anywhere', lineHeight: 1.7, fontSize: 13 }}><MarkdownAnswer text={item.text} threadId={threadId} streaming={streaming} /></div>
   return <div key={`answer-${index}`} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
     <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--brand)', color: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0, fontWeight: 700 }}>F</div>
-    <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 5 }}>{pathLabel(item.path)}</div><div style={{ padding: '14px 18px', border: '1px solid var(--border)', borderRadius: '2px 12px 12px 12px', background: 'var(--surface)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.75, fontSize: 14 }}>{item.text}</div></div>
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 5 }}>{pathLabel(item.path)}</div>
+      <div style={{ padding: '14px 18px', border: '1px solid var(--border)', borderRadius: '2px 12px 12px 12px', background: 'var(--surface)', overflowWrap: 'anywhere', lineHeight: 1.75, fontSize: 14 }}>
+        <MarkdownAnswer text={item.text} threadId={threadId} streaming={streaming} />
+        {streaming && <span className="cursor" aria-hidden="true" />}
+      </div>
+    </div>
   </div>
-}
+})
 
-function SubagentGroup({ path, items }: Extract<RenderEntry, { kind: 'subagent' }>) {
+function SubagentGroup({ path, items, threadId, lastIndex, live }: Extract<RenderEntry, { kind: 'subagent' }> & { threadId?: string; lastIndex: number; live: boolean }) {
   const name = path[path.length - 1]
   return <details data-subagent={name} style={{ marginLeft: 44, border: '1px solid var(--action-border)', borderRadius: 8, background: 'var(--action-light)', overflow: 'hidden' }}>
     <summary style={{ padding: '10px 12px', cursor: 'pointer', color: 'var(--action)', fontSize: 13 }}>
       <strong>{name}</strong><span style={{ marginLeft: 8, color: 'var(--text-muted)', fontSize: 11 }}>{items.length} 条过程</span>
     </summary>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 12px 12px' }}>
-      {items.map(one => <ItemView key={`${one.item.kind}-${one.index}`} item={one.item} index={one.index} nested />)}
+      {items.map(one => <ItemView key={`${one.item.kind}-${one.index}`} item={one.item} index={one.index} nested threadId={threadId} streaming={live && one.index === lastIndex} />)}
     </div>
   </details>
 }
@@ -144,12 +155,15 @@ function ApprovalBatch({ actions, onApprove }: { actions: InterruptAction[]; onA
   </div>
 }
 
-export function MessageList({ items, pendingActions, onApprove }: MessageListProps) {
+export function MessageList({ items, pendingActions, onApprove, threadId, live = false }: MessageListProps) {
   const entries = groupNestedItems(items)
-  return <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+  // 流式态：只有列表最后一条（token/reasoning 增量都合并进最后一项）在「动」，
+  // 其余项渲染结果不变 —— 用 identity 判断，避免逐 token 重渲染已定稿消息。
+  const lastIndex = items.length - 1
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} aria-live="polite">
     {entries.map((entry, index) => entry.kind === 'subagent'
-      ? <SubagentGroup key={`subagent-${entry.path.join('/')}-${index}`} {...entry} />
-      : <ItemView key={`item-${entry.index}`} item={entry.item} index={entry.index} />)}
+      ? <SubagentGroup key={`subagent-${entry.path.join('/')}-${index}`} {...entry} threadId={threadId} lastIndex={lastIndex} live={live} />
+      : <ItemView key={`item-${entry.index}`} item={entry.item} index={entry.index} threadId={threadId} streaming={live && entry.index === lastIndex} />)}
     {pendingActions && pendingActions.length > 0 && onApprove && <ApprovalBatch actions={pendingActions} onApprove={onApprove} />}
   </div>
 }

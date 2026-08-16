@@ -15,11 +15,18 @@
   },
   "dependencies": {
     "@microsoft/fetch-event-source": "^2.0.1",
+    "@shikijs/langs": "^4.4.3",
     "@tanstack/react-query": "^5.101.4",
+    "katex": "^0.18.4",
     "lucide-react": "1.28.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router-dom": "7"
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "7",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "shiki": "^4.4.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

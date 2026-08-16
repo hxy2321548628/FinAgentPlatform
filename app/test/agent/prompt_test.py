@@ -34,6 +34,16 @@ def test_the_prompt_forbids_hunting_for_chinese_fonts() -> None:
     assert "rcParams" in SYSTEM_PROMPT
 
 
+def test_the_prompt_specifies_the_artifact_citation_format() -> None:
+    """前端按 Markdown 图片语法渲染产物（doc/02visual/04 M3）。
+
+    没有这条，图表只出现在文件面板里，对话答复看不到。路径必须相对 /workspace，
+    前端只放行 outputs/ 前缀。
+    """
+    assert "Markdown 图片语法" in SYSTEM_PROMPT
+    assert "![各行业年化波动率](outputs/volatility_chart.png)" in SYSTEM_PROMPT
+
+
 def test_the_default_prompt_is_composed_from_all_platform_segments() -> None:
     assert compose_prompt(AgentConfig()) == SYSTEM_PROMPT
     assert ROLE_SEGMENT in SYSTEM_PROMPT

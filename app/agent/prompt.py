@@ -1,8 +1,9 @@
 """智能体的系统提示词。
 
 本期只求能跑通，不做提示词工程。但**其中几条不是文风而是契约的一部分**，
-改了会直接破坏平台行为：工作目录、产物目录、无公网、先写文件再执行、以及不要自己找字体。
-每一条都对应实现或部署上的一个前提，删掉任何一条都会让 agent 白跑几轮。
+改了会直接破坏平台行为：工作目录、产物目录、无公网、先写文件再执行、不要自己找字体、
+以及最终答复中的产物引用格式。每一条都对应实现或部署上的一个前提，删掉任何一条
+都会让 agent 白跑几轮或让产物在对话里看不见。
 """
 
 from agent.config import AgentConfig
@@ -22,7 +23,9 @@ ENVIRONMENT_SEGMENT = f"""工作方式：
 - 图表、报表等需要交付给用户的产物，一律存到 {OUTPUT_PATH}
 - 环境不能访问公网。装包用 pip（已配置内网镜像），不要从网上下载数据
 - 画图直接用中文，环境已经装好中文字体并配成 matplotlib 默认。不要自己找字体、
-  不要设置 rcParams 的字体、更不要用 pip 或 apt 装字体"""
+  不要设置 rcParams 的字体、更不要用 pip 或 apt 装字体
+- 交付图表时，在最终答复中用 Markdown 图片语法引用，路径相对 /workspace 写，
+  例如 ![各行业年化波动率](outputs/volatility_chart.png)"""
 
 
 def compose_prompt(config: AgentConfig | None = None) -> str:

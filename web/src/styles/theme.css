@@ -8,7 +8,7 @@
   --border-light:   #E8EDF4;
   --text-primary:   #0D1829;
   --text-secondary: #5A6A7E;
-  --text-muted:     #8E9BB0;
+  --text-muted:     #5D6D82;
   --brand:          #0B2E5C;
   --logo-green:       #08574E;
   --action:         #1749C4;
@@ -17,8 +17,16 @@
   --action-border:  #BBCEF5;
   --status-done:    #10B981;
   --status-active:  #1749C4;
-  --status-pending: #8E9BB0;
+  --status-pending: #5D6D82;
   --status-warn:    #D97706;
+  /* 错误/警告 token（DSD 第二章 §2.2）—— 替换全站 #DC2626 族硬编码 */
+  --danger:         #DC2626;
+  --danger-bg:      #FEF2F2;
+  --danger-border:  #FECACA;
+  --warn:           #92400E;
+  --warn-bg:        #FFFBEB;
+  --warn-border:    #FDE68A;
+  --code-surface:   #F0F3F8;
 
   /* ── Workspace sidebar ── */
   --ws-sidebar-bg:      #0D1829;
@@ -55,6 +63,50 @@
 
 /* ── Reset & base ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* 焦点可见（DSD 第二章 §2.8）：键盘聚焦一律显示 ring。
+   组件里的 outline:none 已移除，不再需要逐个补焦点样式 */
+:focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 2px;
+}
+
+/* 跳到主要内容（键盘用户第一站） */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 999;
+  padding: 8px 14px;
+  background: var(--surface);
+  color: var(--action);
+  border: 1px solid var(--action-border);
+  border-radius: 0 0 8px 0;
+  font-size: 13px;
+  text-decoration: none;
+}
+.skip-link:focus {
+  left: 0;
+}
+
+/* 会话行：删除按钮悬停/聚焦时可见 */
+.thread-row { position: relative; }
+.thread-row .thread-delete {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  border-radius: 6px;
+  visibility: hidden;
+}
+.thread-row:hover .thread-delete,
+.thread-row:focus-within .thread-delete { visibility: visible; }
 
 body {
   font-family: 'Noto Sans SC', 'PingFang SC', '微软雅黑', sans-serif;
@@ -140,4 +192,184 @@ body {
 @keyframes thinking-bounce {
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
   40%           { transform: scale(1);   opacity: 1; }
+}
+
+/* ── 答复渲染层（doc/02visual/04）── */
+
+/* Shiki CSS 变量主题：token 颜色只在这里定义，暗色模式补一套变量即可 */
+:root {
+  --shiki-background: transparent;
+  --shiki-foreground: #24304A;
+  --shiki-token-comment: #8E9BB0;
+  --shiki-token-punctuation: #5A6A7E;
+  --shiki-token-constant: #1239A6;
+  --shiki-token-number: #1239A6;
+  --shiki-token-string: #0B6E62;
+  --shiki-token-string-expression: #0B6E62;
+  --shiki-token-keyword: #A61B29;
+  --shiki-token-function: #1749C4;
+  --shiki-token-parameter: #5A6A7E;
+  --shiki-token-function-method: #1749C4;
+  --shiki-token-namespace: #0D1829;
+}
+
+/* 流式输出光标（DSD §3 的 .cursor，用作流式输出指示） */
+.cursor {
+  display: inline-block;
+  width: 3px;
+  height: 1em;
+  background: var(--action);
+  vertical-align: text-bottom;
+  margin-left: 4px;
+  animation: blink 1.1s step-end infinite;
+}
+
+.markdown-answer {
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.markdown-answer p { margin: 0 0 10px; }
+.markdown-answer p:last-child { margin-bottom: 0; }
+.markdown-answer h1, .markdown-answer h2, .markdown-answer h3, .markdown-answer h4 {
+  margin: 18px 0 8px; color: var(--text-primary); line-height: 1.4;
+}
+.markdown-answer h1 { font-size: 20px; }
+.markdown-answer h2 { font-size: 17px; }
+.markdown-answer h3 { font-size: 15px; }
+.markdown-answer h4 { font-size: 14px; }
+.markdown-answer ul, .markdown-answer ol { margin: 0 0 10px; padding-left: 22px; }
+.markdown-answer li { margin: 3px 0; }
+.markdown-answer blockquote {
+  margin: 0 0 10px; padding: 6px 12px;
+  border-left: 2px solid var(--action-border);
+  background: var(--action-light);
+  color: var(--text-secondary);
+  border-radius: 0 6px 6px 0;
+}
+.markdown-answer a { color: var(--action); text-decoration: underline; }
+.markdown-answer hr { border: none; border-top: 1px solid var(--border-light); margin: 14px 0; }
+
+.inline-code {
+  font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--code-bg, #F0F3F8);
+  border: 1px solid var(--border-light);
+  color: var(--text-primary);
+}
+
+.code-block {
+  position: relative;
+  margin: 10px 0;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--code-bg, #F0F3F8);
+  overflow: hidden;
+}
+.code-block .shiki {
+  margin: 0;
+  padding: 12px 16px;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.code-block-lang {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.md-table-wrap { margin: 10px 0; overflow-x: auto; }
+.md-table-wrap table { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+.md-table-wrap th, .md-table-wrap td {
+  padding: 7px 12px; border: 1px solid var(--border-light); text-align: left;
+}
+.md-table-wrap th { background: var(--bg); color: var(--text-primary); font-weight: 600; }
+
+.md-img-fallback {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* 本轮产物区 */
+.artifact-strip {
+  margin: 10px 0 0 44px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.artifact-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+.artifact-grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+.artifact-image {
+  display: flex; flex-direction: column; gap: 6px;
+  text-decoration: none;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  padding: 6px;
+  background: var(--bg);
+  transition: border-color 0.15s;
+}
+.artifact-image:hover { border-color: var(--action-border); }
+.artifact-image img {
+  display: block;
+  max-width: 220px;
+  max-height: 160px;
+  border-radius: 4px;
+}
+.artifact-caption {
+  font-size: 11px;
+  color: var(--text-secondary);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-file {
+  display: flex; align-items: center; gap: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  padding: 9px 12px;
+  background: var(--bg);
+  min-width: 200px;
+}
+.artifact-file-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.artifact-file-name {
+  font-size: 12px; font-weight: 600; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.artifact-file-size { font-size: 11px; color: var(--text-muted); }
+.artifact-download {
+  font-size: 12px; color: var(--action); text-decoration: none; flex-shrink: 0;
+  padding: 4px 10px; border: 1px solid var(--action-border); border-radius: 6px;
+}
+.artifact-download:hover { background: var(--action-light); }
+.artifact-more {
+  margin-top: 10px;
+  border: none; background: none; padding: 0;
+  color: var(--action); cursor: pointer;
+  font-family: inherit; font-size: 12px;
+}
+
+/* 装饰动画对「减少动态效果」的降级（审查文档 P1-5） */
+@media (prefers-reduced-motion: reduce) {
+  .cursor, .status-badge .dot { animation: none; }
+  @keyframes blink {}
+  [style*="ticker-scroll"], [style*="card-enter"], [style*="thinking-bounce"] { animation: none !important; }
 }

@@ -7,10 +7,12 @@ import { fileKeys } from '../../api/files'
 import { errorMessage } from '../../api/request'
 import type { AgentConfig, Decision, RunHistory, RunStatus } from '../../api/types'
 import { useRunEvents } from '../../hooks/useRunEvents'
+import { isTerminalStatus } from '../../api/events'
 import { describeAgentConfig } from '../config'
 import { takeHandedOffAgent } from '../pickedAgent'
 import { ThreadSidebar } from '../components/ThreadSidebar'
 import { MessageList } from '../components/MessageList'
+import { ArtifactStrip } from '../components/ArtifactStrip'
 import { ChatInput } from '../components/ChatInput'
 import { WorkspaceFiles } from '../components/WorkspaceFiles'
 
@@ -78,7 +80,8 @@ function RunTurn({ run, threadId, autoReplay, onContentChange }: { run: RunHisto
         </details>
       </div>
     </div>
-    <MessageList items={view.items} pendingActions={view.pendingActions} onApprove={submitDecisions} />
+    <MessageList items={view.items} pendingActions={view.pendingActions} onApprove={submitDecisions} threadId={threadId} live={LIVE_STATUS.includes(view.status)} />
+    {isTerminalStatus(view.status) && <ArtifactStrip threadId={threadId} startedAt={run.started_at} />}
     {approve.isError && <div role="alert" style={{ margin: '8px 0 0 44px', color: '#DC2626', fontSize: 12 }}>{errorMessage(approve.error)}</div>}
     {!view.connectionAvailable && LIVE_STATUS.includes(view.status) && <div style={{ margin: '8px 0 0 44px', color: 'var(--text-muted)', fontSize: 11 }}>事件流传输层待接入；REST 主链路已建立。</div>}
     {!autoReplay && view.items.length === 0 && !LIVE_STATUS.includes(view.status) && view.connectionAvailable && !replayRequested && <button type="button" onClick={() => setReplayRequested(true)} style={{ margin: '8px 0 0 44px', padding: 0, border: 'none', background: 'transparent', color: 'var(--action)', cursor: 'pointer', fontSize: 11 }}>查看本轮回答与过程</button>}
