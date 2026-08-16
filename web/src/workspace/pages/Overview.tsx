@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { agentKeys, listMine } from '../../api/agents'
 import { errorMessage } from '../../api/request'
 import { listThreads, threadKeys } from '../../api/threads'
@@ -71,11 +71,21 @@ export function Overview() {
   const [hoveredSession, setHoveredSession] = useState<string | null>(null)
   const [hoveredAction, setHoveredAction] = useState<string | null>(null)
 
-  const threads = useQuery({ queryKey: threadKeys.list(), queryFn: () => listThreads() })
+  // **必须与 ThreadSidebar / MyData 一样用 useInfiniteQuery。**
+  // 同一个 queryKey 在 React Query 里只有一份缓存，而两种 hook 存的形状不同
+  // （infinite 是 {pages:[…]}，普通 query 是 {items:…}）—— 混用的话谁先加载
+  // 谁的形状占住这个键，另一边读到的字段全是 undefined，页面就是一片空白。
+  // 保持一致还顺带让两边共享缓存：总览加载过，进对话时侧边栏立刻就有内容
+  const threads = useInfiniteQuery({
+    queryKey: threadKeys.list(),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => listThreads(pageParam),
+    getNextPageParam: page => page.next_cursor ?? undefined,
+  })
   const usage = useQuery({ queryKey: usageKeys.mine(), queryFn: myUsage })
   const agents = useQuery({ queryKey: agentKeys.mine(), queryFn: listMine })
 
-  const items: ThreadSummary[] = threads.data?.items ?? []
+  const items: ThreadSummary[] = threads.data?.pages.flatMap(page => page.items) ?? []
   const recent = items.slice(0, 5)
   const monthlyThreads = items.filter(one => isThisMonth(one.created_at)).length
   const agentCalls = (agents.data ?? []).reduce((sum, one) => sum + one.call_count, 0)
