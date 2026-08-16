@@ -105,10 +105,20 @@ export function CreateAgent() {
       <div style={{ maxWidth: 680, margin: '0 auto' }}>
         <div style={{ marginBottom: 28 }}>
           <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.3em', color: 'var(--text-muted)', marginBottom: 6 }}>// {editing ? 'EDIT AGENT' : 'CREATE AGENT'}</div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>{editing ? '编辑智能体' : '创建智能体'}</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>{editing ? '编辑智能体 / 场景' : '创建智能体 / 场景'}</h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            智能体的内容就是一段提示词。保存之后它先是草稿，只有自己看得到；发布一版之后才谈得上共享与提审。
+            内容就是一段提示词，可以再挂上 Skill、MCP 与子智能体。保存之后它先是草稿，
+            只有自己看得到；发布一版之后才谈得上共享与提审。
           </p>
+          {/* **区别是客观事实，不是一个要作者填的类型字段**（P6-decision G2）：
+              挂了子智能体它就是场景，去场景库；没挂就是智能体，去广场，并且可以
+              被别人选作子智能体。这里把这条规则当场说出来，省得作者发布之后
+              才发现自己的东西出现在另一个页面 */}
+          <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: 'var(--bg)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+            {selectedSubagentIds.length > 0
+              ? `挂了 ${selectedSubagentIds.length} 个子智能体 —— 它是一个「场景」，发布后进场景库，不能再被别人选作子智能体。`
+              : '没有挂子智能体 —— 它是一个「智能体」，发布后进广场，可以被别人选作子智能体。挂上子智能体它就变成场景。'}
+          </div>
         </div>
 
         <form onSubmit={submit}>
