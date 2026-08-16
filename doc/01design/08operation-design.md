@@ -138,9 +138,30 @@ Agent run 是 **IO 密集**的 —— 绝大部分时间在等 LLM 返回。
 | 项 | 取值 |
 |---|---|
 | 接入点 | 回调挂在**图**上而不是模型上（[`app/agent/trace.py`](../../app/agent/trace.py)）—— 挂模型只看得到「调了几次 LLM」，挂图才看得到节点、工具调用与中断，而 agent 出问题多半在工具那一段 |
-| 归属 | `langfuse_session_id` = `thread_id`，`langfuse_user_id` = 提交人。**对上这两个键它才答得出「谁花了多少」**，否则只剩一堆孤立 trace |
+| 归属 | `langfuse_session_id` = `thread_id`，`langfuse_user_id` = 提交人。**光对上这两个键还不够** —— 见下方那条 2026-08-16 的更正 |
 | 开关 | `LANGFUSE_BASE_URL` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` **任缺其一即整个关掉**，并打一条日志说明。宁可没有追踪，也不要「配了一半、以为在记其实没记」 |
-| compose | worker 容器要经 `host.docker.internal` 才够得着它（compose 里已配 `host-gateway`）。**填 `127.0.0.1` 连的是容器自己**，症状是 trace 一条不出现且没有报错 |
+| compose | worker **与 api** 都要经 `host.docker.internal` 才够得着它（compose 里已配 `host-gateway`）。**填 `127.0.0.1` 或 `localhost` 连的是容器自己**，症状是 trace 一条不出现且没有报错，而 api 那侧的用量端点一律回 `available: false` |
+
+> **2026-08-16 更正（P11）：这一节原来漏了一件事，而漏掉的那件让「谁花了多少」整整
+> 三天答不出来。**
+>
+> `metadata` 里的两个键只让**根 span** 带上身份。`CallbackHandler` 确实也调
+> `propagate_attributes`，但只在 `on_chain_start` 的 `parent_run_id is None` 那一支 ——
+> 而 LangGraph 随后是在别的 async 任务里调模型的，根上进的 OTel 上下文传不进去。
+>
+> 后果：**token 全部落在没有主人的 `GENERATION` 上**。Langfuse 自己的按用户统计
+> （`repositories/events.ts`）逐 event 行按 `e.user_id` 分组并且 `WHERE user_id` 非空，
+> 于是那些行被整批滤掉 —— 按用户切出来每人都是 0，而每一步都返回 200。
+> 实测：7,118,137 个 token 全记在 `userId = null` 那一行。
+>
+> **修法**：在 `agent/factory.py` 的 `_astream` 里，把整个 `graph.astream` 再包一层
+> `propagate_attributes`。三条路径并排实测过 —— 裸模型调用本来就带得上，走图的带不上，
+> 外层包一次之后带上了。**历史数据补不回来**（那个上下文管理器不追溯已存在的 span）。
+>
+> 另外两件同期查清的事：**v1 metrics 与 traces / sessions 三个端点在 v4 的
+> `events_only` 模式下整个 404**（而它们的文档还活着）；**费用恒为 0 的真因是
+> Langfuse 内置的 100 个模型价格里一个 deepseek 都没有**，`POST /api/public/models`
+> 可以自己注册，脚本见 `deploy/register-model-price.sh`。
 
 **两个必须知道的后果：**
 

@@ -104,6 +104,16 @@ cd app && uv run python -m worker.main                # 再开一个。不起它
 > 它自己一份 compose，克隆在 `LangchainAcademic/langfuse`）。`GET /api/admin/usage` 与它的账本
 > 已撤除。**配额闸门不受影响**：那条读的是 `runs` 表，`tokens_*` 仍在逐条落库。
 >
+> **这句话直到 2026-08-16 才真正成立**（P11）。此前它答不出「谁花了多少」：身份只挂在
+> 根 span 上，而 token 全在没有主人的 `GENERATION` 上 —— 按用户切出来每人都是 0，
+> 而接口一路返回 200。修法是在 `agent/factory.py` 里把整个图的执行包进
+> `propagate_attributes`，回调自己那次只对根 chain 生效。**历史数据补不回来。**
+>
+> 平台内的两个用量端点是 `GET /api/usage/me` 与 `GET /api/usage/ranking`（P11 加），
+> 数据源是 Langfuse 而不是本地账本 —— 与撤掉的那个 `/api/admin/usage` 不是同一个东西。
+> **费用要先注册模型单价**：Langfuse 内置的 100 个价格里一个 deepseek 都没有，
+> 缺价格时 `total_cost` 恒为 0 而不报错，跑一次 `deploy/register-model-price.sh`。
+>
 > **Langfuse 记的是完整 prompt 与 completion** —— 谁能登录它谁就看得见全部会话内容。
 > 这是主动接受的边界变更,见[数据设计 §6.3.1](doc/01design/06data-design.md)。
 >
