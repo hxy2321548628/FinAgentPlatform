@@ -78,7 +78,7 @@ export function MySkills() {
           <h1 className="page-title">我的 Skills</h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>上传后先形成草稿；发布版本后可组内共享，提审通过后进入平台目录</p>
         </div>
-        <button type="button" onClick={() => setEditingId(null)} style={primaryButton}>+ 创建 Skill</button>
+        <Button onClick={() => setEditingId(null)}>+ 创建 Skill</Button>
       </div>
 
       {mine.isPending && <div style={{ color: 'var(--text-muted)' }}>正在加载…</div>}
@@ -98,7 +98,7 @@ export function MySkills() {
       {!mine.isPending && shown.length === 0 ? (
         <div style={emptyStyle}>
           <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 10 }}>该状态下还没有 Skill</div>
-          <button type="button" onClick={() => setEditingId(null)} style={primaryButton}>+ 创建 Skill</button>
+          <Button onClick={() => setEditingId(null)}>+ 创建 Skill</Button>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -127,11 +127,11 @@ export function MySkills() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                  <button type="button" onClick={() => setEditingId(skill.id)} style={ghostButton}>上传新草稿</button>
-                  {state.draft && <button type="button" onClick={() => release.mutate(skill.id)} disabled={release.isPending} style={outlineButton}>发布 v{state.draft.version}</button>}
-                  {state.released && <button type="button" onClick={() => setSharingId(skill.id)} style={outlineButton}>共享设置</button>}
-                  {state.released && state.reviewStatus !== 'pending' && <button type="button" onClick={() => setReviewingId(skill.id)} style={outlineButton}>{state.reviewStatus === 'rejected' ? '改后重新提审' : '提交审核'}</button>}
-                  <button type="button" onClick={() => remove.mutate(skill.id)} style={{ ...ghostButton, color: 'var(--danger)', borderColor: 'var(--danger-border)' }}>删除</button>
+                  <Button variant="secondary" size="sm" onClick={() => setEditingId(skill.id)}>上传新草稿</Button>
+                  {state.draft && <Button variant="outline" size="sm" onClick={() => release.mutate(skill.id)} disabled={release.isPending}>发布 v{state.draft.version}</Button>}
+                  {state.released && <Button variant="outline" size="sm" onClick={() => setSharingId(skill.id)}>共享设置</Button>}
+                  {state.released && state.reviewStatus !== 'pending' && <Button variant="outline" size="sm" onClick={() => setReviewingId(skill.id)}>{state.reviewStatus === 'rejected' ? '改后重新提审' : '提交审核'}</Button>}
+                  <Button variant="secondary" size="sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger-border)' }} onClick={() => remove.mutate(skill.id)}>删除</Button>
                 </div>
               </div>
             )
@@ -243,9 +243,6 @@ function formatBytes(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`
 }
 
-const primaryButton: React.CSSProperties = { padding: '9px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }
-const ghostButton: React.CSSProperties = { padding: '6px 14px', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }
-const outlineButton: React.CSSProperties = { ...ghostButton, color: 'var(--action)', borderColor: 'var(--action-border)' }
 const tabStyle: React.CSSProperties = { padding: '10px 20px', fontSize: 13, fontWeight: 500, background: 'none', border: 'none', borderBottom: '2px solid transparent', marginBottom: -1, cursor: 'pointer', fontFamily: 'inherit' }
 const countStyle: React.CSSProperties = { marginLeft: 6, fontSize: 11, background: 'var(--bg)', padding: '1px 6px', borderRadius: 10, color: 'var(--text-muted)' }
 const emptyStyle: React.CSSProperties = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '48px 20px', textAlign: 'center' }

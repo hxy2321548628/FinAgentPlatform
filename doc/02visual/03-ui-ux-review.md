@@ -453,6 +453,8 @@ AdminUsers.tsx:277 - modal 输入 outline:none 无 focus 替代
 | 2026-08-16 | P2-3 兜底方案：会话行与对话轮次加 `content-visibility: auto`（对「滚到底」安全，见 theme.css 注释），不引入虚拟列表依赖 | §4.11 |
 | 2026-08-16 | P2-2 桌面+平板档落地：工作台侧栏可折叠为 60px 图标栏（aria-expanded、native tooltip）；文件面板 <1280px 自动变为右侧抽屉 | §4.10 |
 | 2026-08-16 | P1 b1 收尾：AdminUsers 编辑/创建弹窗、WorkspaceFiles 新建对话框、AgentPlaza 提示词抽屉、CapabilityLibraries 三个抽屉全部迁 Radix（新增 `.dialog-drawer` 抽屉变体）；**全站手写弹窗清零**（grep 验证） | §4.4 |
+| 2026-08-16 | P1 b3 第二批：19 个文件 111 处错误/警告/成功色字面量 token 化（--danger/--warn/--success 系），组件内硬编码状态色清零 | §4.4 |
+| 2026-08-16 | **D2 决策变更并落地**：暗色模式本期实现（前置条件已满足）——.dark 变量级覆盖、三态切换（浅/深/跟随系统）、Shiki 换肤、对比度实测 ≥4.5:1；图表浅底为已知债务 | §4.9 |
 | 待办 | 会话状态指示：`ThreadSummary` 无 run 状态字段，需后端配合 | §4.8 |
 | 待办 | 公共站 mock 数据决策（D1）：接真实 API 或标注示例数据，待评审 | §4.7 |
 

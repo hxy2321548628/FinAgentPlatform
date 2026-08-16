@@ -56,7 +56,7 @@ export function MyAgents() {
           <h1 className="page-title">我的智能体</h1>
           <p className="page-desc">发布一版之后组内才看得见；进广场要审核通过</p>
         </div>
-        <button onClick={() => navigate('/workspace/my-agents/create')} style={primaryButton}>+ 创建智能体</button>
+        <Button onClick={() => navigate('/workspace/my-agents/create')}>+ 创建智能体</Button>
       </div>
 
       {mine.isPending && <div style={{ color: 'var(--text-muted)' }}>正在加载…</div>}
@@ -82,7 +82,7 @@ export function MyAgents() {
       {!mine.isPending && shown.length === 0 ? (
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '48px 20px', textAlign: 'center' }}>
           <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }}>{AGENT_TAB_EMPTY[tab]}</div>
-          <button onClick={() => navigate('/workspace/my-agents/create')} style={{ ...primaryButton, marginTop: 8 }}>+ 创建智能体</button>
+          <Button style={{ marginTop: 8 }} onClick={() => navigate('/workspace/my-agents/create')}>+ 创建智能体</Button>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -112,15 +112,15 @@ export function MyAgents() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                  <button onClick={() => navigate(`/workspace/my-agents/${agent.id}/edit`)} style={ghostButton}>编辑</button>
-                  {state.draft && <button onClick={() => release.mutate(agent.id)} disabled={release.isPending} style={outlineButton}>发布 v{state.draft.version}</button>}
-                  {state.released && <button onClick={() => setSharingId(agent.id)} style={outlineButton}>共享设置</button>}
+                  <Button variant="secondary" size="sm" onClick={() => navigate(`/workspace/my-agents/${agent.id}/edit`)}>编辑</Button>
+                  {state.draft && <Button variant="outline" size="sm" onClick={() => release.mutate(agent.id)} disabled={release.isPending}>发布 v{state.draft.version}</Button>}
+                  {state.released && <Button variant="outline" size="sm" onClick={() => setSharingId(agent.id)}>共享设置</Button>}
                   {state.released && state.reviewStatus !== 'pending' && (
-                    <button onClick={() => setReviewingId(agent.id)} style={outlineButton}>
+                    <Button variant="outline" size="sm" onClick={() => setReviewingId(agent.id)}>
                       {state.reviewStatus === 'rejected' ? '改后重新提审' : '提交审核'}
-                    </button>
+                    </Button>
                   )}
-                  <button onClick={() => remove.mutate(agent.id)} style={{ ...ghostButton, color: 'var(--danger)', borderColor: 'var(--danger-border)' }}>删除</button>
+                  <Button variant="secondary" size="sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger-border)' }} onClick={() => remove.mutate(agent.id)}>删除</Button>
                 </div>
               </div>
             )
@@ -236,17 +236,5 @@ function badgeStyle(background: string, color: string, border: string): React.CS
   return { padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background, color, border: `1px solid ${border}` }
 }
 
-const primaryButton: React.CSSProperties = {
-  padding: '9px 20px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7,
-  fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-}
 
-const ghostButton: React.CSSProperties = {
-  padding: '6px 14px', background: 'transparent', color: 'var(--text-secondary)',
-  border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
-}
 
-const outlineButton: React.CSSProperties = {
-  padding: '6px 14px', background: 'transparent', color: 'var(--action)',
-  border: '1px solid var(--action-border)', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
-}
