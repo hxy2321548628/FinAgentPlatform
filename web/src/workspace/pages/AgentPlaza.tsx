@@ -9,6 +9,8 @@ import { sourceLabel } from '../agent'
 import { handOffAgent } from '../pickedAgent'
 import { CatalogCard, CatalogControls } from '../components/Catalog'
 import { Skeleton } from '../../components/ui/Skeleton'
+import * as Dialog from '@radix-ui/react-dialog'
+import { Button } from '../../components/ui/Button'
 
 const SUBJECT_FILTERS = ['全部', '公司金融', '量化投资', '资产管理', '风险管理', '学术科研', '会计审计', '其他']
 
@@ -105,37 +107,41 @@ export function AgentPlaza() {
  */
 function PromptDrawer({ agent, onClose, onUse }: { agent: AgentListing; onClose: () => void; onUse: () => void }) {
   return (
-    <>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.3)', zIndex: 200 }} />
-      <div role="dialog" aria-label={`${agent.name} 的提示词`} style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 460, maxWidth: '92vw', background: 'var(--surface)', borderLeft: '1px solid var(--border)', zIndex: 201, display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 24px rgba(11,46,92,0.12)' }}>
-        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{agent.name}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
-              {agent.owner_name} · {agent.subject || '未分类'} · v{agent.version} · {sourceLabel(agent.source)}
+    <Dialog.Root defaultOpen onOpenChange={open => {
+      if (!open) onClose()
+    }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" onClick={onClose} />
+        <Dialog.Content className="dialog-content dialog-drawer" aria-describedby={undefined}>
+          <div className="dialog-drawer-header">
+            <Dialog.Title className="dialog-title" style={{ marginBottom: 3 }}>
+              {agent.name}
+              <div style={{ fontSize: 12, fontWeight: 400, color: 'var(--text-muted)', marginTop: 3 }}>
+                {agent.owner_name} · {agent.subject || '未分类'} · v{agent.version} · {sourceLabel(agent.source)}
+              </div>
+            </Dialog.Title>
+            <Dialog.Close asChild>
+              <button aria-label="关闭" className="dialog-close-x" style={{ position: 'static' }}>×</button>
+            </Dialog.Close>
+          </div>
+          <div className="dialog-drawer-body">
+            <div style={{ marginBottom: 16 }}>
+              <div style={sectionTitle}>功能描述</div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.75 }}>{agent.description || '（作者没有写说明）'}</div>
+            </div>
+            <div>
+              <div style={sectionTitle}>系统提示词全文</div>
+              <div data-testid="agent-prompt" style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '12px 14px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-secondary)', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
+                {agent.system_prompt}
+              </div>
             </div>
           </div>
-          <button onClick={onClose} aria-label="关闭" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>×</button>
-        </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
-          <div style={{ marginBottom: 16 }}>
-            <div style={sectionTitle}>功能描述</div>
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.75 }}>{agent.description || '（作者没有写说明）'}</div>
+          <div className="dialog-drawer-footer">
+            <Button style={{ width: '100%' }} size="lg" onClick={onUse}>用它开始分析 →</Button>
           </div>
-          <div>
-            <div style={sectionTitle}>系统提示词全文</div>
-            <div data-testid="agent-prompt" style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '12px 14px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-secondary)', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
-              {agent.system_prompt}
-            </div>
-          </div>
-        </div>
-        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)' }}>
-          <button onClick={onUse} style={{ width: '100%', padding: '11px 0', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-            用它开始分析 →
-          </button>
-        </div>
-      </div>
-    </>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
 

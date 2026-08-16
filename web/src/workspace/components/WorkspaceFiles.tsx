@@ -6,6 +6,7 @@ import type { WorkspaceEntry } from '../../api/types'
 import { ConfirmDialog } from './ConfirmDialog'
 import { useToast } from '../../components/ui/toast-context'
 import { Button } from '../../components/ui/Button'
+import * as Dialog from '@radix-ui/react-dialog'
 
 interface FilePreview {
   path: string
@@ -260,18 +261,23 @@ export function WorkspaceFiles({ threadId, title, compact = false }: WorkspaceFi
         </div>
       )}
 
-      {dialog && (
-        <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 20, display: 'grid', placeItems: 'center', padding: 20, background: 'rgba(11, 46, 92, 0.25)' }}>
-          <form onSubmit={event => { event.preventDefault(); void createEntry() }} style={{ width: 'min(360px, 100%)', padding: 20, borderRadius: 10, background: 'var(--surface)', boxShadow: '0 16px 45px rgba(11,46,92,0.2)' }}>
-            <div style={{ marginBottom: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{dialog === 'directory' ? '新建文件夹' : '新建文件'}</div>
-            <input autoFocus value={dialogName} onChange={event => setDialogName(event.target.value)} placeholder={dialog === 'directory' ? '文件夹名称' : '文件名，例如 analysis.py'} aria-label="名称" style={{ width: '100%', boxSizing: 'border-box', padding: '9px 10px', border: '1px solid var(--border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 12 }} />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => setDialog(null)} style={smallButtonStyle}>取消</button>
-              <button type="submit" disabled={busy} style={{ ...smallButtonStyle, background: 'var(--action)', color: '#fff', borderColor: 'var(--action)' }}>创建</button>
-            </div>
-          </form>
-        </div>
-      )}
+      <Dialog.Root open={dialog !== null} onOpenChange={open => {
+        if (!open) setDialog(null)
+      }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" onClick={() => setDialog(null)} />
+          <Dialog.Content className="dialog-content" style={{ width: 'min(360px, 100%)' }} aria-describedby={undefined}>
+            <Dialog.Title className="dialog-title">{dialog === 'directory' ? '新建文件夹' : '新建文件'}</Dialog.Title>
+            <form onSubmit={event => { event.preventDefault(); void createEntry() }}>
+              <input autoFocus value={dialogName} onChange={event => setDialogName(event.target.value)} placeholder={dialog === 'directory' ? '文件夹名称' : '文件名，例如 analysis.py'} aria-label="名称" style={{ width: '100%', boxSizing: 'border-box', padding: '9px 10px', border: '1px solid var(--border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, marginTop: 12 }} />
+              <div className="dialog-actions">
+                <Button variant="secondary" size="sm" onClick={() => setDialog(null)}>取消</Button>
+                <Button variant="primary" size="sm" type="submit" disabled={busy}>创建</Button>
+              </div>
+            </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       <ConfirmDialog
         open={pendingDelete !== null}

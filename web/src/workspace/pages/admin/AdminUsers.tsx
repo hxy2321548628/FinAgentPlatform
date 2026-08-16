@@ -4,6 +4,8 @@ import { adminKeys, createUser, listUsers, updateUser } from '../../../api/admin
 import { errorMessage } from '../../../api/request'
 import type { AdminUser, UserRole } from '../../../api/types'
 import { AdminPageHeader, AdminTableSection } from './AdminUi'
+import * as DialogPrimitive from '@radix-ui/react-dialog'
+import { Button } from '../../../components/ui/Button'
 import {
   approveButtonStyle,
   cellStyle,
@@ -250,17 +252,21 @@ function Modal({ title, children, onClose, onSubmit, submitDisabled }: {
   submitDisabled?: boolean
 }) {
   return (
-    <>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(13,24,41,0.4)', backdropFilter: 'blur(4px)', zIndex: 200 }} />
-      <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 32, width: 420, zIndex: 201, boxShadow: '0 20px 60px rgba(11,46,92,0.2)' }}>
-        <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 24 }}>{title}</div>
-        {children}
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 24 }}>
-          <button onClick={onClose} style={{ padding: '8px 18px', background: 'var(--surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
-          <button onClick={onSubmit} disabled={submitDisabled} style={{ padding: '8px 18px', background: 'var(--action)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', opacity: submitDisabled ? 0.6 : 1 }}>保存</button>
-        </div>
-      </div>
-    </>
+    <DialogPrimitive.Root defaultOpen onOpenChange={open => {
+      if (!open) onClose()
+    }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="dialog-overlay" onClick={onClose} />
+        <DialogPrimitive.Content className="dialog-content" style={{ width: 440 }} aria-describedby={undefined}>
+          <DialogPrimitive.Title className="dialog-title" style={{ fontSize: 17, marginBottom: 18 }}>{title}</DialogPrimitive.Title>
+          {children}
+          <div className="dialog-actions">
+            <Button variant="secondary" size="md" onClick={onClose}>取消</Button>
+            <Button variant="primary" size="md" onClick={onSubmit} disabled={submitDisabled}>保存</Button>
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   )
 }
 
