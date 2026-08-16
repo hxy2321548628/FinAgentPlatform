@@ -16,13 +16,21 @@ function required(name: string): string {
   return value
 }
 
-async function signIn(page: Page, name: string) {
+/**
+ * 登录并落到 `landing` 指的那一页。
+ *
+ * **落点是按角色分的**：教师进工作台，而审核员 2026-08-16 起直接进后台的审核队列 ——
+ * 此前它被送去工作台，而工作台里一个后台入口都没有，等于进不去（P11 §8.8b）。
+ * 因此这里不写死 `/workspace`：**审核员那几次调用正是在验它自己走得到队列**，
+ * 而不是靠测试代码 `goto` 过去。
+ */
+async function signIn(page: Page, name: string, landing: RegExp = /\/workspace/) {
   await page.context().clearCookies()
   await page.goto('/login')
   await page.getByPlaceholder('用户名或邮箱都可以').fill(name)
   await page.getByPlaceholder('请输入密码').fill(PASSWORD)
   await page.getByRole('button', { name: '登录系统' }).click()
-  await expect(page).toHaveURL(/\/workspace/)
+  await expect(page).toHaveURL(landing)
 }
 
 function zip(entries: Array<{ name: string; content: string }>): Buffer {
@@ -122,7 +130,7 @@ test('越界包显示具体理由且不新增，合法包可发布、提审并�
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(row.getByText('待审核')).toBeVisible()
 
-  await signIn(page, REVIEWER)
+  await signIn(page, REVIEWER, /\/admin\/agents/)
   await page.goto('/admin/skills')
   const queued = page.getByTestId('review-row').filter({ hasText: SKILL_NAME })
   await expect(queued).toBeVisible()

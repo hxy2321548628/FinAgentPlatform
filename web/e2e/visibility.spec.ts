@@ -30,7 +30,15 @@ function required(name: string): string {
   return value
 }
 
-async function signIn(page: Page, name: string) {
+/**
+ * 登录并落到 `landing` 指的那一页。
+ *
+ * **落点是按角色分的**：教师进工作台，而审核员 2026-08-16 起直接进后台的审核队列 ——
+ * 此前它被送去工作台，而工作台里一个后台入口都没有，等于进不去（P11 §8.8b）。
+ * 因此这里不写死 `/workspace`：**审核员那几次调用正是在验它自己走得到队列**，
+ * 而不是靠测试代码 `goto` 过去。
+ */
+async function signIn(page: Page, name: string, landing: RegExp = /\/workspace/) {
   // 每次换人都要先把上一个人的登录态清掉 —— 同一个 Cookie 名，不清的话
   // 「别组看不见」会在作者自己的身份下跑，而那当然是看得见的
   await page.context().clearCookies()
@@ -38,7 +46,7 @@ async function signIn(page: Page, name: string) {
   await page.getByPlaceholder('用户名或邮箱都可以').fill(name)
   await page.getByPlaceholder('请输入密码').fill(PASSWORD)
   await page.getByRole('button', { name: '登录系统' }).click()
-  await expect(page).toHaveURL(/\/workspace/)
+  await expect(page).toHaveURL(landing)
 }
 
 /**
@@ -113,8 +121,7 @@ test('三档可见性：组内看得见、别组看不见，审核通过之后�
   await expect(row.getByText('待审核')).toBeVisible()
 
   // ---- reviewer：队列里有它，通过 ----
-  await signIn(page, REVIEWER)
-  await page.goto('/admin/agents')
+  await signIn(page, REVIEWER, /\/admin\/agents/)
   const queued = page.getByTestId('review-row').filter({ hasText: AGENT_NAME })
   await expect(queued).toBeVisible()
   await expect(queued.getByText(PROMPT)).toBeVisible()

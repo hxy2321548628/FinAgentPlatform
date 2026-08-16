@@ -4062,14 +4062,20 @@ else
         fail "未放行的没拦住：目录隐藏=$P10_HIDDEN 提交=$P10_PENDING_CODE run $P10_BEFORE→$P10_AFTER"
     fi
 
-    # reviewer 批不了 —— 放行一个外网地址是安全边界决定，不是内容合规判断
+    # **这里探的是启停，不再是审批**（2026-08-16 边界重划）：批与拒放给了 reviewer，
+    # 而启停与探活仍归 admin —— 线从「按资源类型分」改成「按审核与运维分」。
+    #
+    # 探针必须**不消耗这条待审申请**：让 reviewer 真去批一次的话它就变成已处理，
+    # 下面那段「管理员放行」拿到的是 422，而这条判据的正题恰恰是管理员放行。
+    # 启停正好合适 —— 准入是依赖注入，在「这条还没放行」那一步之前就判完了。
+    # reviewer 批得了这件事由 P7⑤ 与后端用例各自钉住
     P10_REVIEWER_CODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR_P7_R" \
-        -X POST "$BASE_URL/api/mcp/admin/$SERVER_P10/decision" \
-        -H 'Content-Type: application/json' -d '{"approved":true}')"
+        -X POST "$BASE_URL/api/mcp/admin/$SERVER_P10/enabled" \
+        -H 'Content-Type: application/json' -d '{"enabled":false,"reason":"越权试探"}')"
     if [[ $P10_REVIEWER_CODE == 403 ]]; then
-        pass "reviewer 批不了 MCP（403）：内容合规与安全边界不是同一批人的判断"
+        pass "reviewer 停不了 MCP（403）：审得了不等于运维得了"
     else
-        fail "reviewer 居然能批 MCP：HTTP $P10_REVIEWER_CODE"
+        fail "reviewer 居然停得了 MCP：HTTP $P10_REVIEWER_CODE"
     fi
 
     # 声明有写操作的一律不批。**这是本期唯一一条「不能靠人记住」的规则**
@@ -4581,11 +4587,15 @@ else
         undone "api 容器里没配 Langfuse，用量归属验不了"
     else
         THREAD_P11="$(new_thread "$JAR_P11_A")"
-        RUN_P11="$(api "$JAR_P11_A" -X POST "$BASE_URL/api/threads/$THREAD_P11/runs" \
+        # **提交响应里那个字段叫 id，不是 run_id。** 取错名字时 curl 照常收到 202、
+        # jq 照常退 0，只是吐出 null —— 报出来的是「没提交上去」，而分析其实已经
+        # 跑起来了，钱也花了。2026-08-16 实测被它骗过一轮，所以失败时连响应体一起打
+        P11_SUBMIT="$(api "$JAR_P11_A" -X POST "$BASE_URL/api/threads/$THREAD_P11/runs" \
             -H 'Content-Type: application/json' \
-            -d "$(jq -nc '{content:"用一句话说明什么是夏普比率，不要写代码、不要建文件。"}')" | jq -r .run_id)"
-        if [[ -z $RUN_P11 || $RUN_P11 == null ]]; then
-            fail "P11 的分析没提交上去"
+            -d "$(jq -nc '{content:"用一句话说明什么是夏普比率，不要写代码、不要建文件。"}')")"
+        RUN_P11="$(jq -r '.id // empty' <<<"${P11_SUBMIT:-null}")"
+        if [[ -z $RUN_P11 ]]; then
+            fail "P11 的分析没提交上去：${P11_SUBMIT:-（没有响应体）}"
         elif ! wait_status "$JAR_P11_A" "$RUN_P11" succeeded "$RUN_WINDOW"; then
             fail "P11 的分析没跑到 succeeded（当前 $(run_status "$JAR_P11_A" "$RUN_P11")）"
         else
