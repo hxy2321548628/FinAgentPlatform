@@ -1,7 +1,7 @@
 """配额的测试。
 
 派生与命令拼装是纯逻辑，这里全覆盖。「配额真的触发 ENOSPC」那条也在这里，且
-**走产品代码、以普通用户身份写**：deploy/test/hostile.sh 自己拼命令，验的是
+**走产品代码、以普通用户身份写**：script/test/verify.sh 的破坏性那组自己拼命令，验的是
 「XFS 的机制成立」而不是「平台拼出来的命令对不对」，两者缺一不可。
 """
 
@@ -276,7 +276,7 @@ def _quota_ready(mount: Path) -> bool:
 
 @pytest.mark.skipif(
     not _quota_ready(XFS_MOUNT),
-    reason="需要 data/sandbox 是 XFS + prjquota、挂载点可写、xfs_quota 免密可调（deploy/setup-xfs.sh）",
+    reason="需要 data/sandbox 是 XFS + prjquota、挂载点可写、xfs_quota 免密可调（script/setup-xfs.sh）",
 )
 def test_a_real_quota_stops_writes_at_the_limit() -> None:
     """配额对目录生效，因此宿主侧直接写（文件工具走的正是这条路）同样被挡住。

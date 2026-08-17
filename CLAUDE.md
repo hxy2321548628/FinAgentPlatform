@@ -17,16 +17,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 路径 | 内容 |
 |---|---|
-| `src/` | 后端 Python 工程（见 [src/CLAUDE.md](src/CLAUDE.md)） |
-| `web/` | 前端 React 工程（见 [web/CLAUDE.md](web/CLAUDE.md)） |
-| `deploy/` | compose、Dockerfile、nginx、宿主机脚本、回归验收脚本 |
+| `src/` | 后端 Python 工程 + 它的 `Dockerfile`（见 [src/CLAUDE.md](src/CLAUDE.md)） |
+| `web/` | 前端 React 工程 + 它的 `Dockerfile`（见 [web/CLAUDE.md](web/CLAUDE.md)） |
+| `docker/` | compose、nginx 配置、沙箱镜像 —— **应用与前端的 Dockerfile 不在这里**，跟着源码放在 `src/` 与 `web/` |
+| `script/` | 宿主机部署脚本（gVisor / XFS / 体检 / 单价注册）与回归验收脚本（`script/test/`） |
 | `doc/01design/` | 九份设计文档 + 16 条 ADR |
 | `doc/03plan/` | P0–P11 分期计划与验收记录（[索引](doc/03plan/CLAUDE.md)） |
 | `data/` | postgres / redis / sandbox 三个宿主机 bind mount |
 
 ## 架构
 
-六个容器（`deploy/compose.yml`）。**沙箱容器不在其中** —— 由 broker 在运行时按会话动态创建与销毁。
+六个容器（`docker/compose.yml`）。**沙箱容器不在其中** —— 由 broker 在运行时按会话动态创建与销毁。
 
 ```
 nginx ──> api ──XADD──> Redis Stream ──XREADGROUP──> worker ×2
@@ -35,6 +36,8 @@ nginx ──> api ──XADD──> Redis Stream ──XREADGROUP──> worker 
                             │ docker.sock
                             └── 沙箱容器（gVisor / 无网 / XFS 配额）
 ```
+
+**nginx 那个容器有两份活**：`/` 发前端构建产物（`web/Dockerfile` 里编译好烤进镜像），`/api/` 才转给 api。因此改了前端代码要 `make rebuild`，restart 是不够的；而 `X-Accel-Redirect` 的内部前缀是 `/__workspace/` 而非 `/workspace/` —— 后者是教师工作台的前端路由，同名会把它的深链接全变成 404。
 
 一次分析的链路：
 
@@ -63,23 +66,26 @@ make hooks      # 新克隆的仓库跑一次，启用 pre-push 门禁
 部署：
 
 ```bash
+make deploy         # 新机器一键部署：gVisor / XFS / 沙箱镜像缺什么补什么，起栈后自检
 make up / down / rebuild / ps
 make logs S=worker
 make remount        # 重启机器后：重挂 XFS，并让 broker 与 nginx 重新解析挂载
 make sandbox-image  # 新克隆的仓库跑一次，否则沙箱测试静默跳过
 ```
 
-几条「忘了就要查半天」的前置条件已经固化进 Makefile，不必再手工记：`deploy/.env → ../.env` 的链接（缺了它**任何** compose 子命令在解析阶段就失败，连 `ps` 都算）、每次现查的 `SANDBOX_QUOTA_DEVICE`（loop 设备号每次挂载都可能变）、重挂之后必须 force-recreate 的 broker 与必须 restart 的 nginx。
+`make deploy` 就是 [`script/deploy.sh`](script/deploy.sh)：机器改造那三步是一次性的、幂等的，起容器那一步它反过来转调 `make up` —— compose 的调用方式只定义在 Makefile 一处。日常改代码用 `make rebuild`。
+
+几条「忘了就要查半天」的前置条件已经固化进 Makefile，不必再手工记：`docker/.env → ../.env` 的链接（缺了它**任何** compose 子命令在解析阶段就失败，连 `ps` 都算）、每次现查的 `SANDBOX_QUOTA_DEVICE`（loop 设备号每次挂载都可能变）、重挂之后必须 force-recreate 的 broker 与必须 restart 的 nginx。
 
 真实验收要六个服务起着，与 `make all` 是两回事：
 
 ```bash
-bash deploy/test/verify.sh                             # 61 条判据全跑，要 sudo、有 LLM 费用
-SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 免费的 42 条，约 30 分钟
+bash script/test/verify.sh                             # 61 条判据全跑，要 sudo、有 LLM 费用
+SKIP_LLM=1 SKIP_HOSTILE=1 bash script/test/verify.sh   # 免费的 42 条，约 30 分钟
 ```
 
 **判据没触发到要测的场景时记「未验」，不记通过** —— 这条规矩比判据本身更重要。
 
 ## 包根
 
-**两个子工程各自自洽**：`src/` 与 `web/` 各持有自己的依赖声明与工具配置，包根就是那个目录。因此后端的模块路径是 `app.api.app`、`config`、`log`、`cursor` —— **不带 `src.` 前缀**，`src/` 只是目录名，不是包。所有工具都在 `src/` 里跑（`make` 已经代劳），compose 的三个入口与镜像里的路径与本地完全一致。
+**两个子工程各自自洽**：`src/` 与 `web/` 各持有自己的依赖声明与工具配置，包根就是那个目录。因此后端的模块路径是 `app.api.app`、`config`、`log`、`cursor` —— **不带 `src.` 前缀**，`src/` 只是目录名，不是包。所有工具都在 `src/` 里跑（`make` 已经代劳），compose 的三个入口与镜像里的路径与本地完全一致。**镜像定义也跟着这条走**：两份 `Dockerfile` 各自躺在自己的包根里，构建上下文就是那个目录。

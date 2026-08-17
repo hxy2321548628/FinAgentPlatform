@@ -7,7 +7,7 @@ Create Date: 2026-08-08
 **只建表，不回填已有数据。** 迁移之前的 `runs` 行与 workspace 目录全部是验收脚本
 跑出来的，没有真实归属 —— 给它们编一个 owner 只会造出一批假数据。因此本次迁移之后
 `runs.user_id` 仍有一批空值，那是遗留而不是 bug；已有的 workspace 目录成为孤儿目录，
-由 deploy/workspace-report.sh 可见，人工清理。
+由 script/workspace-report.sh 可见，人工清理。
 
 `runs.user_id` 的外键这一版就建：遗留行在这一列上是 NULL，而 NULL 本来就不受外键约束。
 

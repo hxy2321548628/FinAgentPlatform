@@ -72,7 +72,7 @@ export function AdminSystem() {
               MinIO 已于 2026-08-13 随可观测性一并撤除，另外三个的死活也不该由一行
               写死的绿点来回答 —— 它们真挂了的时候，这一页本身就打不开 */}
           三个进程都打 JSON 行日志，一条 run 的全过程这样捞：
-          <pre style={codeStyle}>docker compose -f deploy/compose.yml logs worker | jq -c 'select(.run_id == "…")'</pre>
+          <pre style={codeStyle}>docker compose -f docker/compose.yml logs worker | jq -c 'select(.run_id == "…")'</pre>
           模型链路与用量在 Langfuse 上看；这一页只回答「沙箱池还剩多少」——
           那是平台唯一一个会被抢光的资源。
         </div>

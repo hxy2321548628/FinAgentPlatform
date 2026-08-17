@@ -10,9 +10,10 @@ APP := src
 WEB := web
 UV  := uv run
 
-COMPOSE := docker compose -f deploy/compose.yml
-# 应用镜像那三个服务。存储与 nginx 不跟着代码走，改代码时不必动它们
-APP_SERVICE := api worker broker
+COMPOSE := docker compose -f docker/compose.yml
+# 跟着代码走的四个服务：三个应用入口共用 src/ 的镜像，nginx 烤着 web/ 的构建产物。
+# 存储那两个不在里面，改代码时不必动它们
+APP_SERVICE := api worker broker nginx
 
 # workspace 根。.env 里没写就用仓库内的默认值（config.py 同一个默认）
 SANDBOX_WORKSPACE_ROOT := $(shell sed -n 's/^SANDBOX_WORKSPACE_ROOT=//p' .env 2>/dev/null)
@@ -31,7 +32,7 @@ export SANDBOX_QUOTA_DEVICE := $(shell findmnt -no SOURCE,FSTYPE --target "$(SAN
 
 .DEFAULT_GOAL := all
 .PHONY: all fix fmt lint type test cov sync sync-locked hooks clean help \
-        up down rebuild remount remount-apply logs ps sandbox-image
+        deploy up down rebuild remount remount-apply logs ps sandbox-image
 
 ## all: 本地门禁 —— lint + 类型 + 测试（提交前必须全绿）
 all: lint type test
@@ -87,17 +88,24 @@ sync-locked:
 # ---- Docker 部署 ----
 #
 # 这一段把 CLAUDE.md 里那几条「忘了就要查半天」的前置条件固化成命令：
-# deploy/.env 链接、现查的 quota 设备、重挂之后必须动的两个容器。
+# docker/.env 链接、现查的 quota 设备、重挂之后必须动的两个容器。
 
 # compose 的 ${...} 插值只读 compose.yml 同目录的 .env，而这个项目的 .env 在仓库根 ——
 # 两边从来不是同一份文件。缺了链接的话，**任何一条 compose 子命令都在解析阶段就失败**
 # （连 stop 与 ps 都算）。链接被 gitignore 忽略，不随 clone 走
-deploy/.env:
-	@ln -sf ../.env deploy/.env
-	@echo "✅ 已建 deploy/.env → ../.env"
+docker/.env:
+	@ln -sf ../.env docker/.env
+	@echo "✅ 已建 docker/.env → ../.env"
+
+## deploy: 新机器一键部署（gVisor / XFS / 沙箱镜像缺什么补什么，起栈后自检）
+#
+# 机器改造那三步是一次性的，日常改代码用 rebuild。脚本反过来转调下面的 up，
+# compose 的调用方式因此只有这一份
+deploy:
+	@bash script/deploy.sh
 
 ## up: 起全套六个服务（nginx + api + worker×2 + broker + postgres + redis）
-up: deploy/.env
+up: docker/.env
 	@$(COMPOSE) up -d --build
 	@$(MAKE) --no-print-directory ps
 
@@ -105,8 +113,8 @@ up: deploy/.env
 down:
 	@$(COMPOSE) down
 
-## rebuild: 改过 src/ 代码后重建并重启三个应用容器（前端跑 vite dev，不在这里）
-rebuild: deploy/.env
+## rebuild: 改过 src/ 或 web/ 代码后重建并重启这四个容器
+rebuild: docker/.env
 	@$(COMPOSE) up -d --build --force-recreate $(APP_SERVICE)
 	@$(MAKE) --no-print-directory ps
 
@@ -115,32 +123,32 @@ rebuild: deploy/.env
 # 分成两个目标是必须的：设备号在 Makefile 解析时就算好了，而它要等 setup-xfs.sh
 # 跑完才有新值 —— 只有子 make 会重新解析一遍 Makefile
 remount:
-	@sudo bash deploy/setup-xfs.sh
+	@sudo bash script/setup-xfs.sh
 	@$(MAKE) --no-print-directory remount-apply
 
 # broker 必须 force-recreate 而非 restart：bind mount 靠 restart 能重新解析，但
 # `devices:` 那一项是建容器那一刻定死的。nginx 只绑卷不要设备，restart 足够 ——
 # **漏掉它的症状在下载上**：字节走 X-Accel-Redirect 由 nginx 直发，它绑着旧目录时
 # api 照常回 200 而浏览器收 404。旧沙箱容器同样绑着旧目录，清掉让 broker 按需重建
-remount-apply: deploy/.env
+remount-apply: docker/.env
 	@$(COMPOSE) up -d --no-deps --force-recreate broker
 	@$(COMPOSE) restart nginx
 	@docker ps -q --filter 'name=zuel-sandbox' | xargs -r docker rm -f
 	@$(MAKE) --no-print-directory ps
 
 ## logs: 跟随日志（make logs S=worker 只看一个服务）
-logs: deploy/.env
+logs: docker/.env
 	@$(COMPOSE) logs -f --tail=100 $(S)
 
 ## ps: 服务状态，并核对 broker 里的 quota 设备与宿主机现值是否一致
-ps: deploy/.env
+ps: docker/.env
 	@$(COMPOSE) ps
 	@echo "宿主机 quota 设备：$(or $(SANDBOX_QUOTA_DEVICE),（未挂 XFS，不设配额）)"
 	@echo "broker 映射设备：  $$($(COMPOSE) ps -q broker | xargs -r docker inspect --format '{{range .HostConfig.Devices}}{{.PathOnHost}}{{end}}')"
 
 ## sandbox-image: 构建沙箱镜像（新克隆的仓库要跑一次，否则沙箱测试静默跳过）
 sandbox-image:
-	@docker build -f deploy/sandbox.Dockerfile -t zuel-sandbox:latest .
+	@docker build -f docker/sandbox.Dockerfile -t zuel-sandbox:latest docker
 
 ## hooks: 启用仓库内的 git hooks（新克隆的仓库需手动跑一次）
 hooks:

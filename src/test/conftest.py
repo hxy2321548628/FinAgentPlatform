@@ -50,8 +50,8 @@ TEST_REDIS_DATABASE = 15
 # 库不存在时由 `migrated` 自己建，因此新机器不必先手工 createdb
 TEST_POSTGRES_DATABASE = "zuel_test"
 
-SKIP_POSTGRES = "没有可用的 Postgres：docker compose -f deploy/compose.yml up -d postgres"
-SKIP_REDIS = "没有可用的 Redis：docker compose -f deploy/compose.yml up -d redis"
+SKIP_POSTGRES = "没有可用的 Postgres：docker compose -f docker/compose.yml up -d postgres"
+SKIP_REDIS = "没有可用的 Redis：docker compose -f docker/compose.yml up -d redis"
 
 # 建账号的夹具只需要一个形状对的串。真的哈希在 auth 那边的用例里算
 FAKE_HASH = "$argon2id$v=19$m=8,t=1,p=1$假的但形状对"

@@ -1,6 +1,11 @@
 # 内网单机部署：nginx + api + worker×2 + broker + postgres + redis，六个服务。
 #
-#   docker compose -f deploy/compose.yml up -d --build
+#   docker compose -f docker/compose.yml up -d --build
+#
+# **镜像定义跟着源码走**：应用镜像是 `src/Dockerfile`（api / worker / broker 三个
+# 入口共用），边缘镜像是 `web/Dockerfile`（前端构建产物 + nginx）。两个构建上下文
+# 就是那两个目录本身，与两端「各自自洽」的包根一致。沙箱镜像不 COPY 任何源码，
+# 因此留在本目录（`sandbox.Dockerfile`，由 `make sandbox-image` 单独构建）。
 #
 # **沙箱容器不在这里声明** —— 它们由 broker 在运行时动态创建与销毁。
 #
@@ -16,7 +21,11 @@ name: zuel-platform
 
 services:
   nginx:
-    image: nginx:1.27-alpine
+    # **教师看到的界面就在这个镜像里**：前端在构建阶段编译成静态文件，由这一层
+    # 直接发，`/api/` 才转给 api。因此**改了 web/ 的代码要重建它**，不是重启
+    build:
+      context: ../web
+      dockerfile: Dockerfile
     ports:
       - "${HTTP_PORT:-80}:80"
     volumes:
@@ -35,8 +44,8 @@ services:
 
   api:
     build:
-      context: ..
-      dockerfile: deploy/app.Dockerfile
+      context: ../src
+      dockerfile: Dockerfile
     # **迁移只由 api 跑**：worker 有多个副本，让它们各自 upgrade 会撞在同一把
     # DDL 锁上。checkpoint 那几张表不在这里 —— LangGraph 自己 setup()
     command: sh -c "alembic upgrade head && uvicorn app.api.app:app --host 0.0.0.0 --port 8000"
@@ -77,8 +86,8 @@ services:
 
   worker:
     build:
-      context: ..
-      dockerfile: deploy/app.Dockerfile
+      context: ../src
+      dockerfile: Dockerfile
     # 不是 HTTP 服务，因此没有 uvicorn，也不开端口
     command: python -m app.worker.main
     # 副本数解决的是「这个进程挂了怎么办」，不是吞吐 ——
@@ -168,8 +177,8 @@ services:
 
   broker:
     build:
-      context: ..
-      dockerfile: deploy/app.Dockerfile
+      context: ../src
+      dockerfile: Dockerfile
     command: uvicorn app.broker.app:app --host 0.0.0.0 --port 8100
     env_file:
       - ../.env

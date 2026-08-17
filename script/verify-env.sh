@@ -4,7 +4,7 @@
 #
 # 这两条是步骤一二验证标准成立的前提 —— 环境没补齐时，加固参数写得再对也验不出来。
 #
-#   sudo bash deploy/verify-env.sh
+#   sudo bash script/verify-env.sh
 #
 # 需要 root：xfs_quota -x 只对 root 开放。
 
@@ -28,9 +28,9 @@ failed=0
 
 log "① gVisor 下跑通 import pandas"
 if ! docker info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}' | tr ' ' '\n' | grep -qx runsc; then
-    fail "Docker 未注册 runsc 运行时，先跑 deploy/setup-gvisor.sh"
+    fail "Docker 未注册 runsc 运行时，先跑 script/setup-gvisor.sh"
 elif ! docker image inspect "$SANDBOX_IMAGE" >/dev/null 2>&1; then
-    fail "沙箱镜像不存在：$SANDBOX_IMAGE，先 docker build -f deploy/sandbox.Dockerfile -t $SANDBOX_IMAGE ."
+    fail "沙箱镜像不存在：$SANDBOX_IMAGE，先 docker build -f docker/sandbox.Dockerfile -t $SANDBOX_IMAGE ."
 else
     # 验的是 runsc 的 syscall 覆盖够不够真实分析场景用 —— hello world 跑通不算数，
     # pandas 导入会摸到 mmap / futex / 一堆文件系统调用
@@ -44,7 +44,7 @@ fi
 
 log "② XFS project quota 在 ${TEST_QUOTA_MB}MB 处触发 ENOSPC"
 if ! mountpoint -q "$MOUNT_POINT"; then
-    fail "$MOUNT_POINT 未挂载，先跑 deploy/setup-xfs.sh"
+    fail "$MOUNT_POINT 未挂载，先跑 script/setup-xfs.sh"
 elif [[ $(findmnt -no FSTYPE "$MOUNT_POINT") != xfs ]]; then
     fail "$MOUNT_POINT 不是 XFS"
 else

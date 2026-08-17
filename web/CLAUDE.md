@@ -17,7 +17,15 @@ pnpm coverage     # vitest + v8，白名单模块 80% 下限
 pnpm test -- src/workspace/eventReducer.test.ts   # 跑单个文件
 ```
 
-端到端走查另有一套：`pnpm exec playwright test`。它要六个服务起着、要真账号（由 `deploy/test/verify.sh` 造好后从环境变量传入 —— 平台没有公开的教师注册入口），因此**不进 `make all`**，进 `verify.sh`。换栈跑时用 `E2E_API_TARGET` 覆盖 vite 的代理目标。
+## 部署形态
+
+**前端不是单独的容器**：`web/Dockerfile` 第一阶段 `pnpm build`，第二阶段把 `dist/` 烤进 nginx 镜像 —— compose 里那个 nginx 服务就是它，`/` 发静态文件，`/api/` 才转给 api。因此**改了前端代码要 `make rebuild`**，`restart` 拿到的还是旧产物。反代配置仍从 `docker/nginx.conf` 挂进去，改配置不必重建。
+
+`pnpm dev` 那条路没变：vite 起在 5173，把 `/api` 代理给 nginx 的 80 —— 开发时看到的前端是 vite 的，不是镜像里的那份。
+
+**深链接靠 nginx 的 `try_files` 兜底**，路由表里的每个路径都得刷新得起来；而 `X-Accel-Redirect` 的内部前缀是 `/__workspace/`，正是为了避开 `/workspace/*` 这个前端路由。
+
+端到端走查另有一套：`pnpm exec playwright test`。它要六个服务起着、要真账号（由 `script/test/verify.sh` 造好后从环境变量传入 —— 平台没有公开的教师注册入口），因此**不进 `make all`**，进 `verify.sh`。换栈跑时用 `E2E_API_TARGET` 覆盖 vite 的代理目标。
 
 ## 路由三层（`src/App.tsx`）
 

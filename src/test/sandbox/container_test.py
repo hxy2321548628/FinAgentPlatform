@@ -41,7 +41,7 @@ def _docker_ready() -> bool:
 
 pytestmark = pytest.mark.skipif(
     not _docker_ready(),
-    reason=f"需要 docker 与镜像 {DEFAULT_IMAGE}（deploy/sandbox.Dockerfile）",
+    reason=f"需要 docker 与镜像 {DEFAULT_IMAGE}（docker/sandbox.Dockerfile）",
 )
 
 # 子进程必须活着不退，否则同时存在的进程数永远到不了上限，测的就不是 pids-limit

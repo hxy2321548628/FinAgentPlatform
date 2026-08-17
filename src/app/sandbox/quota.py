@@ -101,7 +101,7 @@ class XfsQuota:
     """用 XFS project quota 给 workspace 目录设硬上限。
 
     要求承载 workspace 的文件系统是 XFS 且以 `prjquota` 挂载 —— 这是一条部署前提，
-    挂载选项改动要重启，事后补代价高。开发机上用 `deploy/setup-xfs.sh` 造。
+    挂载选项改动要重启，事后补代价高。开发机上用 `script/setup-xfs.sh` 造。
 
     Args:
         mount_point: 承载各会话目录的 XFS 挂载点。

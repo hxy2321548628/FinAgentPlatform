@@ -298,7 +298,7 @@ M2 兜底不受影响——因此 M3 与 M1/M2 **解耦**，可作为独立小�
 集成：`runEventTransport` 已有 integration test 惯例；本次渲染层不触传输层，仅保证
 `parseRunEvent` 契约不变（**事件 schema 一行不改**，这是明确边界）。
 
-浏览器判据（可选）：仿 `P7⑥` 惯例在 `deploy/test/verify.sh` 加一条"真实 run 答复含
+浏览器判据（可选）：仿 `P7⑥` 惯例在 `script/test/verify.sh` 加一条"真实 run 答复含
 产物区"——依赖六个服务起全，不计入 `make all`。
 
 ---

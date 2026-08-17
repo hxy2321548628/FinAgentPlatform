@@ -57,7 +57,7 @@ from app.worker.loop import DEFAULT_CONCURRENCY, DEFAULT_HEARTBEAT_SECOND
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = REPO_ROOT / ".env"
 
-# 上传的字节上限，与 deploy/nginx.conf 的 `client_max_body_size 64m` 对齐。
+# 上传的字节上限，与 docker/nginx.conf 的 `client_max_body_size 64m` 对齐。
 # **没有别的模块该拥有这个数**：它是 HTTP 边界上的一道闸，不是文件空间的性质
 DEFAULT_UPLOAD_MAX_BYTE = 64 * 1024 * 1024
 

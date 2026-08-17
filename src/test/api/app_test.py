@@ -152,7 +152,7 @@ def test_an_app_without_an_injected_platform_builds_its_own(tmp_path: Path, monk
     """生产走的是这条路径：uvicorn 起进程时没有人给它塞运行时。
 
     只验它能自己起得来、并把运行时挂上去。**不在这里发业务请求** —— 拆出 broker
-    之后那需要一个真的 broker 在跑，那是 deploy/test/ 里的集成验收，不是单测。
+    之后那需要一个真的 broker 在跑，那是 script/test/ 里的集成验收，不是单测。
     """
     settings = Settings(deepseek_api_key=SecretStr("sk-test"), sandbox_workspace_root=tmp_path)
     monkeypatch.setattr("app.api.app.get_settings", lambda: settings)

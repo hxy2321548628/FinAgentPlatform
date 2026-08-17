@@ -12,7 +12,8 @@ Python 3.13 + FastAPI + SQLModel/Alembic + LangGraph/DeepAgents，包管理用 `
 
 - 领域代码在 `app` 包里 —— `from app.run.executor import ...`，**不带 `src.` 前缀**；
 - `config.py` / `log.py` / `cursor.py` 与 `app/` 平级，裸导入 —— `from config import Settings`；
-- 工具一律在这里跑（`cd src && uv run …`，`make` 已经代劳），镜像里 `src/` 的内容平铺进 `/app`，模块路径与本地一字不差。
+- 工具一律在这里跑（`cd src && uv run …`，`make` 已经代劳），镜像里 `src/` 的内容平铺进 `/app`，模块路径与本地一字不差；
+- 镜像定义就是本目录的 `Dockerfile`，**构建上下文也是本目录** —— api / worker / broker 三个入口共用它，差别只在 compose 给的 command。
 
 **改动模块路径时，字符串形式的那些一起改**：logger 名（`logging.getLogger(__name__)` 的断言值，如 `"app.api.route.auth"`）、`monkeypatch.setattr("app.agent.factory.create_deep_agent", …)`、以及 `container_test.py` 里塞进子进程 `-c` 的那一行。它们躲得过 import 检查，只会在跑测试时才现形。
 

@@ -5,7 +5,7 @@
 # 沙箱靠 runsc 拦住容器逃逸（ADR-0002）。开发机与目标服务器都要跑一次；
 # 不装则 --runtime=runsc 直接起不来，加固清单里最重要的一条落空。
 #
-#   sudo bash deploy/setup-gvisor.sh
+#   sudo bash script/setup-gvisor.sh
 #
 # 可重跑：已装且版本一致时跳过下载，daemon.json 重复注册也不会写坏。
 

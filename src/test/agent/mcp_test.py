@@ -4,7 +4,7 @@
 （平台自己压超时、逐个 server 各要各的、撞名剔除）都是从这几条实测推出来的 ——
 库换个版本把行为改了，这里必须先红，否则那三处定案会安静地失去理由。
 
-夹具是 `deploy/test/mcp/server.py`，按子进程起在临时端口上，与验收脚本起它的方式
+夹具是 `script/test/mcp/server.py`，按子进程起在临时端口上，与验收脚本起它的方式
 一致。开发机的 `ALL_PROXY=socks://…` 会让 httpx 连不上 127.0.0.1（它不认 socks
 方案），因此起夹具与连夹具两侧都把代理变量剥掉。
 """
@@ -32,7 +32,7 @@ from app.agent.circuit import McpCircuit
 from app.agent.config import McpReference
 from app.agent.mcp import RESERVED_TOOL_NAME, McpTarget, _CallGuard, load_mcp_tools, probe_mcp_server
 
-FIXTURE_SCRIPT = Path(__file__).resolve().parents[3] / "deploy" / "test" / "mcp" / "server.py"
+FIXTURE_SCRIPT = Path(__file__).resolve().parents[3] / "script" / "test" / "mcp" / "server.py"
 
 # 夹具起不来时等多久放弃。它只是个本地 uvicorn，正常两秒内就绪
 FIXTURE_READY_SECOND = 20.0

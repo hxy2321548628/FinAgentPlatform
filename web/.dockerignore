@@ -1,0 +1,14 @@
+# 构建上下文是本目录。依赖在镜像里按锁文件重装，本地产物一律不带进去 ——
+# node_modules 里有按宿主机平台编译的原生二进制（tailwind 的 oxide、esbuild），
+# 带进镜像会覆盖掉镜像里那份，症状是构建时报「不支持的平台」。
+node_modules/
+dist/
+.vite/
+coverage/
+
+# playwright 的失败产物与端到端走查：走查跑在宿主机上，不进镜像
+test-results/
+playwright-report/
+
+.env
+.env.*

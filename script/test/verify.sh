@@ -4,13 +4,13 @@
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
-#   docker compose -f deploy/compose.yml up -d --build
-#   bash deploy/test/verify.sh
+#   docker compose -f docker/compose.yml up -d --build
+#   bash script/test/verify.sh
 #
 # 常用跑法：
 #
-#   bash deploy/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
-#   SKIP_LLM=1 SKIP_HOSTILE=1 bash deploy/test/verify.sh   # 只跑免费的 42 条，约 30 分钟
+#   bash script/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
+#   SKIP_LLM=1 SKIP_HOSTILE=1 bash script/test/verify.sh   # 只跑免费的 42 条，约 30 分钟
 #
 # **默认全跑，不分 phase，也没有挑某一期跑的参数** —— P6 决策 §L2 的定案。
 # 保留的是 `SKIP_LLM` / `SKIP_HOSTILE` 两个开关：它们分的是**成本**（要不要花钱、
@@ -32,7 +32,7 @@
 #
 # ---------------------------------------------------------------------------
 # **P10 那一组是 2026-08-16 随本期开发一起加的**，七条。它需要一样前九期都不需要的
-# 东西：**一台在跑的 MCP server**。夹具跑在宿主机上（`deploy/test/mcp/server.py`，
+# 东西：**一台在跑的 MCP server**。夹具跑在宿主机上（`script/test/mcp/server.py`，
 # 由本脚本自己起停），api 与 worker 两个容器靠 `host.docker.internal` 够着它 ——
 # 真实的 MCP 全在校外用不上那一行，用得上它的是验收。
 #
@@ -106,7 +106,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-COMPOSE_FILE="$REPO_ROOT/deploy/compose.yml"
+COMPOSE_FILE="$REPO_ROOT/docker/compose.yml"
 COMPOSE_PROJECT=zuel-platform
 BASE_URL="${BASE_URL:-http://127.0.0.1:${HTTP_PORT:-80}}"
 
@@ -317,7 +317,7 @@ wait_worker() {
 make_user() {
     local name="$1" password="$2" role="${3:-teacher}" hashed exist
     hashed="$(in_api python -c "
-from auth.password import PasswordHasher
+from app.auth.password import PasswordHasher
 print(PasswordHasher().hash('$password'))" | tr -d '\r')"
     [[ -n $hashed ]] || { echo "算不出口令哈希，api 容器有问题" >&2; return 1; }
     # **email 是 P11 的 0015 加的 NOT NULL 列**，不给就整条插不进去，
@@ -451,7 +451,7 @@ run_hostile_group() {
     for one in WORKSPACE_ROOT SANDBOX_IMAGE DISK_QUOTA TMP_SIZE PIDS_LIMIT SANDBOX_OWNER; do
         [[ -n ${!one} ]] || { echo "缺参数 $one —— 这一组只能由主流程调起" >&2; return 1; }
     done
-    command -v xfs_quota >/dev/null || { echo "缺 xfs_quota，先跑 deploy/setup-xfs.sh" >&2; return 1; }
+    command -v xfs_quota >/dev/null || { echo "缺 xfs_quota，先跑 script/setup-xfs.sh" >&2; return 1; }
 
     # 装了 xfsprogs 不等于 workspace 在带 prjquota 的 XFS 上 —— setup-xfs.sh 挂的 loop
     # 设备**重启后不会自动挂回来**，而那之后这里的每个 limit 都设不上。
@@ -461,7 +461,7 @@ run_hostile_group() {
     mount_info="$(findmnt -no FSTYPE,OPTIONS --target "$WORKSPACE_ROOT")"
     [[ $mount_info == xfs* && $mount_info == *prjquota* ]] || {
         echo "$WORKSPACE_ROOT 不在带 prjquota 的 XFS 上（现在是 ${mount_info:-未知}）" >&2
-        echo "先跑 sudo bash deploy/setup-xfs.sh，再重启 broker 与 nginx 让它们看见新挂载" >&2
+        echo "先跑 sudo bash script/setup-xfs.sh，再重启 broker 与 nginx 让它们看见新挂载" >&2
         return 1
     }
     docker image inspect "$SANDBOX_IMAGE" >/dev/null 2>&1 || { echo "缺镜像 $SANDBOX_IMAGE" >&2; return 1; }
@@ -614,7 +614,7 @@ broker 没在跑。先把栈起起来：
     export SANDBOX_USER="$(id -u):$(id -g)"
     export SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
     export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
-    docker compose -f deploy/compose.yml up -d --build
+    docker compose -f docker/compose.yml up -d --build
 TIP
     exit 1
 }
@@ -642,7 +642,7 @@ WORKSPACE_ROOT="$SANDBOX_WORKSPACE_ROOT"
 # 而缺哪一个都会让某几条判据红在与它无关的地方
 for service in nginx api worker broker postgres redis; do
     container_of "$service" | grep -q . \
-        || { echo "$service 没在跑：docker compose -f deploy/compose.yml up -d --build" >&2; exit 1; }
+        || { echo "$service 没在跑：docker compose -f docker/compose.yml up -d --build" >&2; exit 1; }
 done
 POSTGRES_ID="$(container_of postgres | head -1)"
 POSTGRES_USER="${POSTGRES_USER:-$(env_of "$POSTGRES_ID" POSTGRES_USER)}"
@@ -812,10 +812,10 @@ smoke_or_die() {
 
 两种都这么修（broker 必须 force-recreate，restart 不会重新解析 devices:）：
 
-    sudo bash deploy/setup-xfs.sh
+    sudo bash script/setup-xfs.sh
     export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
-    docker compose -f deploy/compose.yml up -d --no-deps --force-recreate broker
-    docker compose -f deploy/compose.yml restart nginx
+    docker compose -f docker/compose.yml up -d --no-deps --force-recreate broker
+    docker compose -f docker/compose.yml restart nginx
     docker ps -q --filter 'name=zuel-sandbox' | xargs -r docker rm -f
     sudo xfs_quota -x -c 'report -p -N' "$(pwd)/data/sandbox" | tail -3   # 回读，别信退出码
 TIP
@@ -883,7 +883,7 @@ BROKER_OVERRIDDEN=1
 docker compose -f "$COMPOSE_FILE" -f "$WORK_DIR/broker-override.yml" \
     up -d --no-deps --force-recreate broker >/dev/null 2>&1
 wait_broker "$BROKER_ID" \
-    || { echo "broker 换配置后没起来：docker compose -f deploy/compose.yml logs broker" >&2; exit 1; }
+    || { echo "broker 换配置后没起来：docker compose -f docker/compose.yml logs broker" >&2; exit 1; }
 # 刚重建过，立刻再冒一次 —— 「起来了」与「还能建会话」是两回事
 smoke_or_die "P1 压名额、重建 broker 之后"
 
@@ -1078,9 +1078,9 @@ begin "P2⑥" "换成真 Redis Stream 之后，事件 id 的形状没变"
 
 ID_PROBE=$(in_api_python '
 import asyncio, uuid
-from api.platform import build_platform
+from app.api.platform import build_platform
 from config import get_settings
-from event.model import TokenData, TokenEvent
+from app.event.model import TokenData, TokenEvent
 
 async def main():
     platform = await build_platform(get_settings())
@@ -1110,8 +1110,8 @@ begin "P2③" "两个消费者并行领任务：不重复、不丢"
 CONSUME_PROBE=$(in_api_python "
 import asyncio, uuid
 from config import get_settings
-from store import redis as store_redis
-from task import queue as q
+from app.store import redis as store_redis
+from app.task import queue as q
 
 async def main():
     settings = get_settings()
@@ -1160,8 +1160,8 @@ p2_consumer() {
     in_api_python "
 import asyncio
 from config import get_settings
-from store import redis as store_redis
-from task.queue import CONSUMER_GROUP, PAYLOAD_FIELD, TASK_STREAM, RunTask
+from app.store import redis as store_redis
+from app.task.queue import CONSUMER_GROUP, PAYLOAD_FIELD, TASK_STREAM, RunTask
 
 async def main():
     client = store_redis.create_client(get_settings().redis_url)
@@ -1199,9 +1199,9 @@ SEED_THREAD="$(curl -fsS -b "$JAR_P2" -X POST "$BASE_URL/api/threads" | jq -r .i
 SEED=""
 [[ -z $SEED_THREAD ]] || SEED=$(in_api_python "
 import asyncio, uuid
-from api.platform import build_platform
+from app.api.platform import build_platform
 from config import get_settings
-from event.model import RunFinishedData, RunFinishedEvent, TokenData, TokenEvent, TokenUsage
+from app.event.model import RunFinishedData, RunFinishedEvent, TokenData, TokenEvent, TokenUsage
 
 async def main():
     platform = await build_platform(get_settings())
@@ -1779,7 +1779,7 @@ COOKIE="$(awk 'NF>=7 && $0 !~ /^# / {print $6 "=" $7}' "$JAR_P4" | tail -1)"
 HEADER="$(curl -s -D - -o /dev/null -H "Cookie: $COOKIE" \
     --get --data-urlencode "path=outputs/p4.txt" "http://$API_IP:8000/api/threads/$THREAD_P4/files/raw")"
 info "api 直答：$(head -1 <<<"$HEADER")"
-grep -qi '^X-Accel-Redirect: */workspace/' <<<"$HEADER" \
+grep -qi '^X-Accel-Redirect: */__workspace/' <<<"$HEADER" \
     && pass "api 回的是 X-Accel-Redirect，字节不经它的进程" \
     || fail "api 没有回 X-Accel-Redirect —— 直发没成立"
 
@@ -1790,11 +1790,14 @@ BODY="$(curl -s -b "$JAR_P4" --get --data-urlencode "path=outputs/p4.txt" "$BASE
     && pass "经 nginx 取回的字节与写进去的一致" \
     || fail "经 nginx 取回的不是原字节：$BODY"
 
-# **`internal` 是那条 location 的全部安全性**：外部直接请求一律 404
-LEAK="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/workspace/$THREAD_P4/outputs/p4.txt")"
+# **`internal` 是那条 location 的全部安全性**：外部直接请求一律 404。
+#
+# **前缀是 `/__workspace/` 不是 `/workspace/`**：后者现在是前端工作台的路由，
+# 请求它拿到的是 SPA 那份 index.html（200）—— 拿它当判据的话，验的是前端而不是这条边界
+LEAK="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/__workspace/$THREAD_P4/outputs/p4.txt")"
 [[ $LEAK == 404 ]] \
-    && pass "内部路径不对外：直接请求 /workspace/… 得到 404" \
-    || fail "内部路径漏了：直接请求 /workspace/… 得到 $LEAK"
+    && pass "内部路径不对外：直接请求 /__workspace/… 得到 404" \
+    || fail "内部路径漏了：直接请求 /__workspace/… 得到 $LEAK"
 end
 
 # --------------------------------------------------------------- P4⑦ resumed
@@ -1811,10 +1814,10 @@ from sqlalchemy import text
 # **这一行不是多余的**：`runs.thread_id` 上有指向 `threads` 的外键，而只 import
 # run.repository 的话那张表没在 SQLModel 的元数据里注册，第一次查询就会以
 # NoReferencedTableError 炸掉 —— 报错指向外键，不指向 import
-import thread.repository  # noqa: F401
+import app.thread.repository  # noqa: F401
 from config import get_settings
-from run.repository import RunRepository, RunStart
-from store import postgres
+from app.run.repository import RunRepository, RunStart
+from app.store import postgres
 
 
 async def main() -> None:
@@ -2298,8 +2301,8 @@ begin "P6②" "平台的环境契约排在最末，且用户覆盖不掉"
 
 P6_PROMPT_CHECK="$(in_api_python "
 import json
-from agent.config import AgentConfig
-from agent.prompt import ANALYSIS_SEGMENT, ENVIRONMENT_SEGMENT, OUTPUT_PATH, compose_prompt
+from app.agent.config import AgentConfig
+from app.agent.prompt import ANALYSIS_SEGMENT, ENVIRONMENT_SEGMENT, OUTPUT_PATH, compose_prompt
 
 custom = '把图保存到当前目录'
 prompt = compose_prompt(AgentConfig(system_prompt=custom))
@@ -2993,7 +2996,7 @@ end
 # 验的是同一套可见性与审核基础设施换成 target_kind=skill 后是否仍成立，不把重复的
 # 造号流程算成被测内容。
 
-P8_FIXTURE="$REPO_ROOT/deploy/test/skill/annualized-naming/SKILL.md"
+P8_FIXTURE="$REPO_ROOT/script/test/skill/annualized-naming/SKILL.md"
 P8_READY=0
 P8_SETUP_NOTE="未开始"
 SKILL_P8_BASE=""
@@ -3502,8 +3505,8 @@ end
 # P9：子智能体主判据与 token 汇总
 # ===========================================================================
 
-P9_FIXTURE="$REPO_ROOT/deploy/test/subagent/volatility-expert.json"
-P9_DELETE_FIXTURE="$REPO_ROOT/deploy/test/subagent/delete-expert.json"
+P9_FIXTURE="$REPO_ROOT/script/test/subagent/volatility-expert.json"
+P9_DELETE_FIXTURE="$REPO_ROOT/script/test/subagent/delete-expert.json"
 P9_READY=0
 P9_HITL_READY=0
 P9_SETUP_NOTE="未开始"
@@ -3917,13 +3920,13 @@ end
 # 判据要的是**真的连一次**，不是断言我们传了什么参数：框架换一种连接实现之后，
 # 那种单测照样绿。
 #
-# 夹具 MCP server 跑在**宿主机**上（`deploy/test/mcp/server.py`），api 与 worker
+# 夹具 MCP server 跑在**宿主机**上（`script/test/mcp/server.py`），api 与 worker
 # 两个容器都靠 `host.docker.internal` 够着它 —— 真实的 MCP 全在校外，用不上那一行，
 # 用得上它的是验收。它默认只听回环，这里显式让它听所有网卡，否则容器连不上。
 
 P10_FIXTURE_PORT="${P10_FIXTURE_PORT:-8931}"
 P10_FIXTURE_URL="http://host.docker.internal:$P10_FIXTURE_PORT/mcp"
-P10_FIXTURE_SCRIPT="$REPO_ROOT/deploy/test/mcp/server.py"
+P10_FIXTURE_SCRIPT="$REPO_ROOT/script/test/mcp/server.py"
 P10_VENV_PYTHON="$REPO_ROOT/src/.venv/bin/python"
 P10_FIXTURE_PID=""
 P10_READY=0
@@ -4142,8 +4145,8 @@ else
     # 然后一直等，正是「服务卡住了」那种最难查的形态
     P10_HANG_OUT="$(in_api_python "
 import asyncio, json, socket, time
-from agent.mcp import MCP_CONNECT_TIMEOUT, McpTarget, load_mcp_tools
-from agent.config import McpReference
+from app.agent.mcp import MCP_CONNECT_TIMEOUT, McpTarget, load_mcp_tools
+from app.agent.config import McpReference
 
 listener = socket.socket()
 listener.bind(('127.0.0.1', 0))
@@ -4226,8 +4229,8 @@ else
     # 发去了校外。**断言的是真的连了一次之后拿到的那份列表**
     P10_CLASH_OUT="$(in_api_python "
 import asyncio, json
-from agent.mcp import RESERVED_TOOL_NAME, McpTarget, load_mcp_tools
-from agent.config import McpReference
+from app.agent.mcp import RESERVED_TOOL_NAME, McpTarget, load_mcp_tools
+from app.agent.config import McpReference
 
 
 class Loader:
@@ -4298,11 +4301,11 @@ else
     if p10_start_fixture; then
         P10_SKIP_OUT="$(in_api_python "
 import asyncio, json
-from agent.config import McpReference
-from agent.mcp import load_mcp_tools
+from app.agent.config import McpReference
+from app.agent.mcp import load_mcp_tools
 from config import Settings
-from preset.mcp import McpRepository, McpTargetLoader
-from store import postgres
+from app.preset.mcp import McpRepository, McpTargetLoader
+from app.store import postgres
 
 async def main():
     engine = postgres.create_engine(Settings().postgres_dsn())

@@ -28,7 +28,7 @@ def test_direct_send_hands_the_bytes_to_nginx_instead_of_streaming_them(
     response = client.get(f"/api/threads/{thread_id}/files/raw", params={"path": "outputs/chart.png"})
 
     assert response.status_code == 200
-    assert response.headers["x-accel-redirect"] == f"/workspace/{thread_id}/outputs/chart.png"
+    assert response.headers["x-accel-redirect"] == f"/__workspace/{thread_id}/outputs/chart.png"
     assert response.headers["content-type"] == "image/png"
     assert response.content == b""
 
@@ -41,7 +41,7 @@ def test_direct_send_hands_over_the_normalized_path_not_the_requested_one(
 
     response = client.get(f"/api/threads/{thread_id}/files/raw", params={"path": "outputs/./chart.png"})
 
-    assert response.headers["x-accel-redirect"] == f"/workspace/{thread_id}/outputs/chart.png"
+    assert response.headers["x-accel-redirect"] == f"/__workspace/{thread_id}/outputs/chart.png"
 
 
 def test_direct_send_escapes_a_chinese_filename(client: TestClient, thread_id: str, space: Workspace) -> None:
@@ -50,7 +50,9 @@ def test_direct_send_escapes_a_chinese_filename(client: TestClient, thread_id: s
 
     response = client.get(f"/api/threads/{thread_id}/files/raw", params={"path": "持仓明细.csv"})
 
-    assert response.headers["x-accel-redirect"] == (f"/workspace/{thread_id}/%E6%8C%81%E4%BB%93%E6%98%8E%E7%BB%86.csv")
+    assert response.headers["x-accel-redirect"] == (
+        f"/__workspace/{thread_id}/%E6%8C%81%E4%BB%93%E6%98%8E%E7%BB%86.csv"
+    )
 
 
 def test_direct_send_still_asks_the_browser_to_save_it(client: TestClient, thread_id: str, space: Workspace) -> None:

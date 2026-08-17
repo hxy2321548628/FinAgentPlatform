@@ -20,7 +20,7 @@
 # 那一栏要当人民币读；这是明知的取舍，换算成美元的话汇率一动数字就悄悄偏了。
 #
 # 用法：
-#   bash deploy/register-model-price.sh
+#   bash script/register-model-price.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

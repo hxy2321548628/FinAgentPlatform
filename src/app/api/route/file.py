@@ -49,8 +49,12 @@ PathParam = Annotated[str, Query(min_length=1, description="相对会话根的�
 ACCEL_REDIRECT_HEADER = "X-Accel-Redirect"
 
 # 内部跳转的前缀，与 nginx 那条 `internal` location 必须一致。
-# 它下面就是 workspace 根，因此拼进去的路径必须已经由 broker 判过越界
-ACCEL_PREFIX = "/workspace"
+# 它下面就是 workspace 根，因此拼进去的路径必须已经由 broker 判过越界。
+#
+# **前缀里的 `__` 是为了躲开前端路由**：教师的工作台就挂在 `/workspace/*` 上，
+# 而 nginx 现在同时发前端 —— 两者同名的话，那条 `internal` location 会把工作台的
+# 每一个深链接都变成 404，且首次进站正常，要等到有人按 F5 才现形
+ACCEL_PREFIX = "/__workspace"
 
 
 @router.get("/{thread_id}/files")
@@ -259,7 +263,7 @@ def _accel_target(thread_id: str, relative_path: str) -> str:
         relative_path: broker 规范化过的相对路径，已确认落在会话目录内。
 
     Returns:
-        形如 `/workspace/{会话}/{路径}` 的 URI，只在 nginx 那条 `internal` location 有效。
+        形如 `/__workspace/{会话}/{路径}` 的 URI，只在 nginx 那条 `internal` location 有效。
     """
     return f"{ACCEL_PREFIX}/{quote(thread_id)}/{quote(relative_path)}"
 

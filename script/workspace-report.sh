@@ -2,12 +2,12 @@
 #
 # workspace 占用体检：磁盘水位 + 异常大的会话。
 #
-#   bash deploy/workspace-report.sh                    # 看一眼
-#   WARN_PERCENT=70 bash deploy/workspace-report.sh    # 收紧阈值
+#   bash script/workspace-report.sh                    # 看一眼
+#   WARN_PERCENT=70 bash script/workspace-report.sh    # 收紧阈值
 #
 # 超过水位时**退出码为 1**，方便挂到 cron 上让它自己叫：
 #
-#   0 7 * * * cd /path/to/zuel-platform && bash deploy/workspace-report.sh || mail -s ...
+#   0 7 * * * cd /path/to/zuel-platform && bash script/workspace-report.sh || mail -s ...
 #
 # **本期不回收 workspace**（决策见架构 §6.5）：实测典型会话只有几百 KB，
 # 而删掉就再也拉不回来 —— 而对象存储已于 2026-08-13 随可观测性一并撤除，

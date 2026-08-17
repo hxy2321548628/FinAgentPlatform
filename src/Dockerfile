@@ -1,4 +1,6 @@
-# api 与 broker 共用的镜像。两者是同一份代码的两个入口，差别只在 command。
+# api / worker / broker 共用的镜像。三者是同一份代码的三个入口，差别只在 command。
+#
+# **构建上下文就是本目录**（包根），因此镜像里的模块路径与 `cd src` 时一字不差。
 #
 # **这个镜像不含 docker CLI 的使用权** —— broker 靠挂进去的 docker.sock 操作容器，
 # api 容器不挂那个 socket，因此就算装了 CLI 也无处可用（ADR-0004）。
@@ -24,12 +26,11 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app
 
 # 依赖单独一层：改业务代码不必重装依赖
-COPY src/pyproject.toml src/uv.lock ./
+COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-install-project --no-dev
 
-# 包根是 src/，因此它的内容平铺进 WORKDIR —— 镜像里的模块路径与 `cd src` 时一致，
-# 本地跑得起来的入口在容器里原样成立
-COPY src/ ./
+# 包根的内容平铺进 WORKDIR —— 本地跑得起来的入口在容器里原样成立
+COPY . ./
 
 ENV PATH="/app/.venv/bin:$PATH"
 

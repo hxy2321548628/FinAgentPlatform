@@ -11,7 +11,7 @@ from redis.exceptions import RedisError
 
 logger = logging.getLogger(__name__)
 
-# 开发机默认值，与 deploy/compose.yml 里 redis 服务对齐
+# 开发机默认值，与 docker/compose.yml 里 redis 服务对齐
 DEFAULT_URL = "redis://127.0.0.1:6379/0"
 
 # 阻塞读的 socket 超时，秒。**必须大于任何一条阻塞命令的 BLOCK 时长。**

@@ -13,7 +13,7 @@
 
 跑起来（`streamable-http`，挂在 `/mcp`）：
 
-    cd app && uv run python ../deploy/test/mcp/server.py
+    cd src && uv run python ../script/test/mcp/server.py
 
 开发机上的 `ALL_PROXY=socks://…` 会让 httpx 连不上 127.0.0.1（它不认 socks 方案），
 连它的那一侧要设 `NO_PROXY=127.0.0.1`。
@@ -24,7 +24,7 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-# 判据断言的两个标记。**改这两个字符串等于改判据**，`deploy/test/verify.sh` 里对着抓
+# 判据断言的两个标记。**改这两个字符串等于改判据**，`script/test/verify.sh` 里对着抓
 PAPER_HIT_PREFIX = "PAPER-HIT"
 READ_FILE_MARK = "MCP-READ-FILE"
 
