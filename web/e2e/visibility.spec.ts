@@ -62,18 +62,24 @@ async function openPlaza(page: Page) {
 }
 
 /** 列表加载完之后，这个 agent 的卡片在不在。**等列表真的加载完再断言** —— 直接断言
- * 「看不见」的话，页面还停在「正在加载…」时它必然成立，那是最典型的假绿。 */
+ * 「看不见」的话，页面还停在骨架屏时它必然成立，那是最典型的假绿。
+ *
+ * 等的是 `data-loaded` 而不是一句加载文案：文案改掉之后 `toHaveCount(0)` 会变成
+ * 恒真，这一层保护就在没人察觉的情况下消失了（2026-08-17 实际发生过一次）。 */
 async function settled(page: Page) {
-  await expect(page.getByText('正在加载…')).toHaveCount(0)
+  await expect(page.getByTestId('agent-plaza-list')).toHaveAttribute('data-loaded', 'true')
 }
 
 test('三档可见性：组内看得见、别组看不见，审核通过之后才上广场', async ({ page }) => {
   // ---- A：建一个 agent、写提示词、发布一版、共享给自己的组 ----
   await signIn(page, AUTHOR)
   await page.goto('/workspace/my-agents/create')
-  await page.getByPlaceholder('如：企业财务异常检测').fill(AGENT_NAME)
-  await page.getByPlaceholder(/你是一位专业的财务分析师/).fill(PROMPT)
-  await page.getByRole('button', { name: '创建' }).click()
+  // **编辑器是分步的**：名称在第一步，提示词在第二步，不切步就根本没渲染出来。
+  // 两个输入框都按 testid 找 —— 占位文案改一次这条链路就整条走不下去
+  await page.getByTestId('agent-name').fill(AGENT_NAME)
+  await page.getByRole('button', { name: '行为设定' }).click()
+  await page.getByTestId('agent-system-prompt').fill(PROMPT)
+  await page.getByRole('button', { name: '创建草稿' }).click()
   await expect(page).toHaveURL(/\/workspace\/my-agents$/)
 
   const row = page.getByTestId('my-agent-row').filter({ hasText: AGENT_NAME })

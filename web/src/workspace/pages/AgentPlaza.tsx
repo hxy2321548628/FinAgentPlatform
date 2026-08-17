@@ -60,7 +60,9 @@ export function AgentPlaza() {
         onFilter={setSubject}
       />
 
-      <div style={{ padding: '0 36px 32px' }}>
+      {/* data-loaded 是端到端走查唯一能等的「列表已加载完」信号：断言「别组看不见」
+          时列表若还停在骨架屏，那一条必然成立，而那是最典型的假绿 */}
+      <div data-testid="agent-plaza-list" data-loaded={String(!current.isPending)} style={{ padding: '0 36px 32px' }}>
         {current.isPending && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
             {Array.from({ length: 6 }, (_, i) => <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, display: 'flex', flexDirection: 'column', gap: 10 }}><Skeleton width="55%" height={15} /><Skeleton width="30%" height={12} /><Skeleton width="100%" height={12} /><Skeleton width="85%" height={12} /></div>)}

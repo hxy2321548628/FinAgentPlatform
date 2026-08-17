@@ -194,7 +194,7 @@ export function CreateAgent() {
             {activeStep === 'basics' && (
               <BuilderSection eyebrow="STEP 01" title={`${noun}的基本信息`} description="这些信息会出现在你的列表与公共目录卡片中。">
                 <Field label={`${noun}名称`} required hint="保持清晰、具体，说明它负责解决什么问题。">
-                  <input value={name} maxLength={MAX_NAME_LENGTH} onChange={event => { setName(event.target.value); setError('') }} placeholder={scenarioMode ? '如：企业信用风险联合研判' : '如：企业财务异常检测'} />
+                  <input data-testid="agent-name" value={name} maxLength={MAX_NAME_LENGTH} onChange={event => { setName(event.target.value); setError('') }} placeholder={scenarioMode ? '如：企业信用风险联合研判' : '如：企业财务异常检测'} />
                   <FieldCounter current={name.length} max={MAX_NAME_LENGTH} />
                 </Field>
                 <Field label="一句话说明" hint="建议写清输入对象、分析方法和主要输出。">
@@ -217,7 +217,7 @@ export function CreateAgent() {
                   <PromptGuide icon={<FileText size={16} />} title="输出" text="结构、证据与质量要求" />
                 </div>
                 <Field label="系统提示词" required hint="不要重复工作目录、产物目录、无公网等平台环境约束。">
-                  <textarea className="agent-builder-prompt" value={prompt} maxLength={MAX_SYSTEM_PROMPT_LENGTH} onChange={event => { setPrompt(event.target.value); setError('') }} placeholder="你是一位严谨的金融分析师。先核对数据口径，再按以下步骤完成分析……" />
+                  <textarea data-testid="agent-system-prompt" className="agent-builder-prompt" value={prompt} maxLength={MAX_SYSTEM_PROMPT_LENGTH} onChange={event => { setPrompt(event.target.value); setError('') }} placeholder="你是一位严谨的金融分析师。先核对数据口径，再按以下步骤完成分析……" />
                   <FieldCounter current={prompt.length} max={MAX_SYSTEM_PROMPT_LENGTH} />
                 </Field>
               </BuilderSection>

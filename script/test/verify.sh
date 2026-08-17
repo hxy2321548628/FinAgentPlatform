@@ -2971,7 +2971,7 @@ elif ! (cd "$REPO_ROOT/web" && pnpm exec playwright install --dry-run chromium >
 else
     P7_E2E_LOG="$WORK_DIR/p7-e2e.log"
     if (cd "$REPO_ROOT/web" && \
-        E2E_BASE_URL="$BASE_URL" \
+        E2E_API_TARGET="$BASE_URL" \
         E2E_PASSWORD="$P7_SECRET" \
         E2E_AUTHOR="$NAME_P7_A" \
         E2E_TEAMMATE="$NAME_P7_B" \
@@ -3486,7 +3486,7 @@ elif ! (cd "$REPO_ROOT/web" && pnpm exec playwright install --dry-run chromium >
 else
     P8_E2E_LOG="$WORK_DIR/p8-e2e.log"
     if (cd "$REPO_ROOT/web" && \
-        E2E_BASE_URL="$BASE_URL" \
+        E2E_API_TARGET="$BASE_URL" \
         E2E_PASSWORD="$P7_SECRET" \
         E2E_AUTHOR="$NAME_P7_A" \
         E2E_REVIEWER="$NAME_P7_R" \
