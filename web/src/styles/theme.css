@@ -379,12 +379,12 @@ details[open] > .reasoning-summary .reasoning-caret { transform: rotate(180deg);
 }
 .ws-sidebar-footer { position: relative; z-index: 1; width: 220px; flex-shrink: 0; border-top: 1px solid var(--ws-sidebar-border); background: var(--ws-sidebar-bg); }
 .ws-sidebar-actions { display: grid; gap: 2px; padding: 6px 8px 0; }
-.ws-sidebar-action-icon { width: 16px; height: 16px; flex: 0 0 16px; display: grid; place-items: center; color: var(--ws-sidebar-active); opacity: 1; visibility: visible; }
+.ws-sidebar-action-icon { width: 16px; height: 16px; flex: 0 0 16px; display: grid; place-items: center; color: currentColor; opacity: 1; visibility: visible; }
 .ws-sidebar-action-icon svg { display: block; width: 16px; height: 16px; }
-.ws-sidebar-action.danger .ws-sidebar-action-icon { color: #FCA5A5; }
-.ws-sidebar-action { width: 204px; height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 13px; border: 0; border-radius: 7px; box-sizing: border-box; overflow: hidden; background: transparent; color: var(--ws-sidebar-text); font: 12px inherit; text-align: left; text-decoration: none; white-space: nowrap; cursor: pointer; }
+.ws-sidebar-action { width: 204px; height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 13px; border: 0; border-radius: 7px; box-sizing: border-box; overflow: hidden; background: transparent; color: var(--ws-sidebar-text); font-family: inherit; font-size: 13px; font-weight: 400; line-height: 1; text-align: left; text-decoration: none; white-space: nowrap; cursor: pointer; }
 .ws-sidebar-action:hover,
 .ws-sidebar-action:focus-visible { background: var(--ws-sidebar-hover); color: var(--ws-sidebar-active); }
+.ws-sidebar-action.danger,
 .ws-sidebar-action.danger:hover,
 .ws-sidebar-action.danger:focus-visible { color: #FCA5A5; }
 .ws-sidebar-action:disabled { opacity: .6; cursor: wait; }
@@ -1535,11 +1535,7 @@ body {
   inset: 34%;
   display: grid;
   place-items: center;
-  border: 1px solid var(--action-border);
-  border-radius: 22px;
-  background: var(--surface);
   color: var(--logo-green);
-  box-shadow: 0 14px 30px rgba(11, 46, 92, 0.12);
 }
 .overview-hero-capability {
   position: absolute;
