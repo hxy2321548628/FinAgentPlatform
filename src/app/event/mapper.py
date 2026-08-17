@@ -1,0 +1,269 @@
+"""DeepAgents 的流到平台事件的映射，也就是防腐层。
+
+`astream(stream_mode=["updates","messages","custom"], subgraphs=True)` 吐出
+`(ns, mode, payload)` 三元组，本模块把它翻译成平台自己的事件词汇 ——
+前端因此不必知道 LangGraph 的节点命名，框架升级也只需要改这里。
+
+**不认识的形状记警告后跳过，不抛异常。** 一次分析要跑几十分钟，
+不该因为 DeepAgents 多吐了一种没见过的 chunk 就整个失败。
+"""
+
+import logging
+from collections import deque
+from collections.abc import Mapping
+from dataclasses import dataclass
+
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+
+from src.app.event.model import (
+    Event,
+    ReasoningData,
+    ReasoningEvent,
+    TokenData,
+    TokenEvent,
+    ToolCallData,
+    ToolCallEvent,
+    ToolResultData,
+    ToolResultEvent,
+    now_ms,
+)
+
+logger = logging.getLogger(__name__)
+
+# astream 在 stream_mode 传 list 且 subgraphs=True 时吐出的三元组。
+# payload 的形状随 mode 而变，因此只能标到 object，由本模块逐个收窄。
+type StreamChunk = tuple[tuple[str, ...], str, object]
+
+# updates 模式下承载模型输出与工具结果的两个节点名。
+# 工具不按名字分节点 —— 8 个内置工具共用一个 tools 节点。
+MODEL_NODE = "model"
+TOOLS_NODE = "tools"
+TASK_TOOL = "task"
+SUBAGENT_TYPE_ARG = "subagent_type"
+
+REASONING_KEY = "reasoning_content"
+
+
+@dataclass(frozen=True)
+class _Stamp:
+    """一个 chunk 映射出的所有事件共享的信封字段。"""
+
+    ts: int
+    run_id: str
+    path: tuple[str, ...]
+
+
+class EventMapper:
+    """把一个 run 的 DeepAgents chunk 映射成平台事件。
+
+    子图 namespace 只有 ``tools:<uuid>``，不带子智能体名。父图的 ``task``
+    调用先到，因此按调用顺序暂存名字，在第一次看见 uuid 时建立稳定映射。
+    每个 run 必须持有自己的实例，避免并发分析互相污染。
+    """
+
+    def __init__(
+        self,
+        run_id: str,
+        *,
+        known_tool_paths: Mapping[str, tuple[str, ...]] | None = None,
+    ) -> None:
+        self._run_id = run_id
+        self._pending_subagents: deque[str] = deque()
+        self._subagent_by_uuid: dict[str, str] = {}
+        self._seen_task_calls: set[str] = set()
+        self._known_tool_paths = dict(known_tool_paths or {})
+
+    def map_chunk(self, ns: tuple[str, ...], mode: str, payload: object) -> list[Event]:
+        """把一个 DeepAgents chunk 映射成零个或多个平台事件。
+
+        Args:
+            ns: LangGraph 的节点路径，在子图内执行时非空。
+            mode: astream 的流模式。
+            payload: 该模式的载荷，形状随 mode 而变。
+
+        Returns:
+            按发生顺序排列的事件；该 chunk 不对应任何平台事件时为空列表。
+        """
+        self._remember_subagents(ns, mode, payload)
+        stamp = _Stamp(ts=now_ms(), run_id=self._run_id, path=self._map_path(ns))
+        match mode:
+            case "messages":
+                return _map_streamed(payload, stamp)
+            case "updates":
+                return _map_update(payload, stamp)
+            case "custom":
+                # 沙箱工具用 get_stream_writer() 往这个通道写 sandbox.* 事件。
+                # 排队逻辑尚未实现，载荷契约未定，先不映射。
+                return []
+            case _:
+                logger.warning("未知的流模式，已跳过：mode=%s", mode)
+                return []
+
+    def _remember_subagents(self, ns: tuple[str, ...], mode: str, payload: object) -> None:
+        """记住首跑的 task 名称，或从历史工具调用恢复续跑 namespace。"""
+        if ns:
+            self._remember_resumed_subagent(ns, mode, payload)
+            return
+        if mode != "updates" or not isinstance(payload, dict):
+            return
+        update = payload.get(MODEL_NODE)
+        if not isinstance(update, dict):
+            return
+        messages = update.get("messages")
+        if not isinstance(messages, list):
+            return
+        for message in messages:
+            if not isinstance(message, AIMessage):
+                continue
+            for call in message.tool_calls:
+                call_id = call["id"] or ""
+                name = call["args"].get(SUBAGENT_TYPE_ARG)
+                if call["name"] != TASK_TOOL or not isinstance(name, str) or not name:
+                    continue
+                if call_id and call_id in self._seen_task_calls:
+                    continue
+                if call_id:
+                    self._seen_task_calls.add(call_id)
+                self._pending_subagents.append(name)
+
+    def _remember_resumed_subagent(self, ns: tuple[str, ...], mode: str, payload: object) -> None:
+        """续跑时用历史 tool_call_id 把新的映射器接回原子图名称。"""
+        if mode != "updates" or not isinstance(payload, dict):
+            return
+        segment = ns[-1]
+        node, separator, task_uuid = segment.partition(":")
+        if node != TOOLS_NODE or not separator or task_uuid in self._subagent_by_uuid:
+            return
+        for update in payload.values():
+            if not isinstance(update, dict):
+                continue
+            messages = update.get("messages")
+            if not isinstance(messages, list):
+                continue
+            for message in messages:
+                if not isinstance(message, ToolMessage):
+                    continue
+                known = self._known_tool_paths.get(message.tool_call_id)
+                if known:
+                    self._subagent_by_uuid[task_uuid] = known[-1]
+                    return
+
+    def _map_path(self, ns: tuple[str, ...]) -> tuple[str, ...]:
+        """把 ``tools:<uuid>`` 翻译成子智能体名，未知 uuid 保留八位前缀。"""
+        path: list[str] = []
+        for segment in ns:
+            node, separator, task_uuid = segment.partition(":")
+            if not separator:
+                path.append(segment)
+                continue
+            if node == TOOLS_NODE and task_uuid not in self._subagent_by_uuid and self._pending_subagents:
+                self._subagent_by_uuid[task_uuid] = self._pending_subagents.popleft()
+            path.append(self._subagent_by_uuid.get(task_uuid, task_uuid[:8]))
+        return tuple(path)
+
+
+def _map_streamed(payload: object, stamp: _Stamp) -> list[Event]:
+    """映射 messages 模式：模型逐字流出的增量。"""
+    if not isinstance(payload, tuple) or not payload:
+        logger.warning("messages 载荷不是 (message, metadata) 二元组，已跳过")
+        return []
+
+    message = payload[0]
+    if isinstance(message, ToolMessage):
+        # 同一条 ToolMessage 也会从 updates 的 tools 节点流出，在那里映射成 tool_result。
+        # 两处都映射，前端会收到重复的工具结果。
+        return []
+    if not isinstance(message, AIMessageChunk):
+        logger.warning("messages 里出现未知消息类型，已跳过：%s", type(message).__name__)
+        return []
+
+    events: list[Event] = []
+    reasoning = message.additional_kwargs.get(REASONING_KEY)
+    if isinstance(reasoning, str) and reasoning:
+        events.append(
+            ReasoningEvent(ts=stamp.ts, run_id=stamp.run_id, path=stamp.path, data=ReasoningData(text=reasoning))
+        )
+    text = str(message.text)
+    if text:
+        events.append(TokenEvent(ts=stamp.ts, run_id=stamp.run_id, path=stamp.path, data=TokenData(text=text)))
+    # message.tool_call_chunks 是工具参数的逐字流，只有要做参数级流式渲染时才用得上。
+    # 完整调用统一取自 updates 的 model 节点，这里不映射以免同一次调用发两遍。
+    return events
+
+
+def _map_update(payload: object, stamp: _Stamp) -> list[Event]:
+    """映射 updates 模式：节点执行完毕后的状态更新。"""
+    if not isinstance(payload, dict):
+        logger.warning("updates 载荷不是节点字典，已跳过")
+        return []
+
+    events: list[Event] = []
+    for node, update in payload.items():
+        # 中间件节点（如 PatchToolCallsMiddleware.before_agent）不改状态，载荷为 None
+        if update is None:
+            continue
+        events.extend(_map_node(str(node), update, stamp))
+    return events
+
+
+def _map_node(node: str, update: object, stamp: _Stamp) -> list[Event]:
+    if not isinstance(update, dict) or "messages" not in update:
+        logger.warning("updates 节点的载荷里没有 messages，已跳过：node=%s", node)
+        return []
+
+    message = update["messages"]
+    if not isinstance(message, list):
+        logger.warning("updates 节点的 messages 不是列表，已跳过：node=%s", node)
+        return []
+
+    if node == MODEL_NODE:
+        return [event for one in message for event in _map_tool_call(one, stamp)]
+    if node == TOOLS_NODE:
+        return [event for one in message for event in _map_tool_result(one, stamp)]
+
+    logger.warning("未知的 updates 节点，已跳过：node=%s", node)
+    return []
+
+
+def _map_tool_call(message: object, stamp: _Stamp) -> list[Event]:
+    """映射 model 节点：取 AIMessage 决定调用的工具。
+
+    这条 AIMessage 的正文此前已由 messages 模式逐字流过，
+    这里只取 tool_calls，否则整段答复会重复一遍。
+    """
+    if not isinstance(message, AIMessage):
+        logger.warning("model 节点里出现非 AIMessage，已跳过：%s", type(message).__name__)
+        return []
+
+    # ToolCall 的 id 在类型上可空，但 OpenAI 兼容接口必然给值 —— 缺了也只是配不上结果，
+    # 不值得为此丢掉整条事件。
+    return [
+        ToolCallEvent(
+            ts=stamp.ts,
+            run_id=stamp.run_id,
+            path=stamp.path,
+            data=ToolCallData(id=call["id"] or "", name=call["name"], args=dict(call["args"])),
+        )
+        for call in message.tool_calls
+    ]
+
+
+def _map_tool_result(message: object, stamp: _Stamp) -> list[Event]:
+    """映射 tools 节点：取工具执行完毕的返回。"""
+    if not isinstance(message, ToolMessage):
+        logger.warning("tools 节点里出现非 ToolMessage，已跳过：%s", type(message).__name__)
+        return []
+
+    return [
+        ToolResultEvent(
+            ts=stamp.ts,
+            run_id=stamp.run_id,
+            path=stamp.path,
+            data=ToolResultData(
+                tool_call_id=message.tool_call_id,
+                name=message.name or "",
+                content=str(message.text),
+                status=message.status,
+            ),
+        )
+    ]
