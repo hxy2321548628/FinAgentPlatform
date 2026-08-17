@@ -1902,3 +1902,33 @@ body {
   .agent-builder-footer { position: sticky; bottom: 0; align-items: flex-start; flex-direction: column; }
   .agent-builder-footer-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
 }
+
+/* ── 管理后台：与工作台共用侧栏节奏，宽表格只在卡片内部滚动 ── */
+.admin-shell { --admin-page-padding: 32px 36px 48px; }
+.admin-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ws-sidebar-text);
+  font-size: 13px;
+  font-weight: 400;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+.admin-nav-row:hover,
+.admin-nav-row:focus-visible { background: var(--ws-sidebar-hover); color: var(--ws-sidebar-active); }
+.admin-nav-row.active { background: var(--ws-sidebar-accent); color: var(--ws-sidebar-active); font-weight: 600; }
+.admin-group-label-short { display: none; }
+.admin-sidebar.collapsed .admin-group-label-full { display: none; }
+.admin-sidebar.collapsed .admin-group-label-short { display: inline; }
+.admin-section-body { min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; }
+.admin-section-body > table { min-width: 720px; }
+
+@media (max-width: 760px) {
+  .admin-shell { --admin-page-padding: 20px 16px 36px; }
+}
+
+.admin-stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) {
+  .admin-stat-grid { grid-template-columns: 1fr; }
+}

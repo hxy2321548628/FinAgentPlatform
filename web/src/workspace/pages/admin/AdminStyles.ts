@@ -7,7 +7,7 @@ export const pageStyle: CSSProperties = {
   overflowY: 'auto',
   overflowX: 'hidden',
   boxSizing: 'border-box',
-  padding: '28px 32px',
+  padding: 'var(--admin-page-padding)',
   background: 'var(--bg)',
 }
 
@@ -16,16 +16,18 @@ export const pageHeaderStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',
   justifyContent: 'space-between',
+  flexWrap: 'wrap',
   gap: 20,
   marginBottom: 24,
 }
 
 export const eyebrowStyle: CSSProperties = {
   marginBottom: 4,
-  color: 'var(--text-muted)',
+  color: 'var(--action)',
   fontFamily: "'JetBrains Mono', monospace",
   fontSize: 10,
-  letterSpacing: '0.3em',
+  fontWeight: 700,
+  letterSpacing: '0.14em',
   textTransform: 'uppercase',
 }
 
@@ -54,6 +56,7 @@ export const sectionStyle: CSSProperties = {
   border: '1px solid var(--border)',
   borderRadius: 10,
   background: 'var(--surface)',
+  boxShadow: '0 4px 16px rgba(11,46,92,0.04)',
 }
 
 export const sectionHeaderStyle: CSSProperties = {
@@ -66,6 +69,7 @@ export const sectionHeaderStyle: CSSProperties = {
 
 export const tableStyle: CSSProperties = {
   width: '100%',
+  minWidth: 720,
   borderCollapse: 'collapse',
   fontSize: 13,
 }
@@ -73,7 +77,7 @@ export const tableStyle: CSSProperties = {
 export const thStyle: CSSProperties = {
   padding: '10px 16px',
   borderBottom: '1px solid var(--border)',
-  background: 'var(--bg)',
+  background: 'var(--chrome-bg)',
   color: 'var(--text-muted)',
   fontSize: 12,
   fontWeight: 600,

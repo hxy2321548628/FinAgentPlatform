@@ -11,17 +11,19 @@ import {
 interface AdminPageHeaderProps {
   eyebrow: string
   title: string
+  description?: string
   pendingCount?: number
   pendingLabel?: string
   badgeText?: string
 }
 
-export function AdminPageHeader({ eyebrow, title, pendingCount, pendingLabel = '个待审核', badgeText }: AdminPageHeaderProps) {
+export function AdminPageHeader({ eyebrow, title, description, pendingCount, pendingLabel = '个待审核', badgeText }: AdminPageHeaderProps) {
   return (
     <div style={pageHeaderStyle}>
       <div>
         <div style={eyebrowStyle}>{eyebrow}</div>
         <h1 style={pageTitleStyle}>{title}</h1>
+        {description && <p style={{ maxWidth: 760, marginTop: 6, color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.7 }}>{description}</p>}
       </div>
       {pendingCount !== undefined && <span style={pendingBadgeStyle}>{pendingCount} {pendingLabel}</span>}
       {pendingCount === undefined && badgeText && <span style={pendingBadgeStyle}>{badgeText}</span>}
@@ -42,7 +44,7 @@ export function AdminTableSection({ title, action, children }: AdminTableSection
         <span>{title}</span>
         {action}
       </div>
-      {children}
+      <div className="admin-section-body">{children}</div>
     </section>
   )
 }

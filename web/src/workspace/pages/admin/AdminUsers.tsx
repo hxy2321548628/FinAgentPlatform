@@ -151,12 +151,12 @@ export function AdminUsers() {
                 return (
                   <tr key={user.id} style={{ borderBottom: i < filtered.length - 1 ? '1px solid var(--border-light)' : 'none', opacity: user.is_active ? 1 : 0.6 }}>
                     <td style={nameCellStyle}>{user.name}</td>
-                    <td style={{ ...cellStyle, fontSize: 12 }}>{user.email}</td>
+                    <td style={{ ...cellStyle, fontSize: 12, whiteSpace: 'nowrap' }}>{user.email}</td>
                     <td style={cellStyle}>{user.dept || '—'}</td>
-                    <td style={cellStyle}><span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, background: rs.bg, color: rs.color }}>{ROLE_LABEL[user.role]}</span></td>
+                    <td style={cellStyle}><span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', background: rs.bg, color: rs.color }}>{ROLE_LABEL[user.role]}</span></td>
                     {/* 留空表示走角色默认档，显示成「默认」而不是 0 —— 后者读起来像「不给配额」 */}
                     <td style={monoCellStyle}>{user.quota_tokens_daily === null ? '默认' : user.quota_tokens_daily.toLocaleString()}</td>
-                    <td style={cellStyle}><span style={{ fontSize: 12, fontWeight: 600, color: user.is_active ? 'var(--status-done)' : 'var(--text-muted)' }}>{user.is_active ? '● 正常' : '○ 未启用'}</span></td>
+                    <td style={cellStyle}><span style={{ fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', color: user.is_active ? 'var(--status-done)' : 'var(--text-muted)' }}>{user.is_active ? '● 正常' : '○ 未启用'}</span></td>
                     <td style={cellStyle}>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button
@@ -166,14 +166,14 @@ export function AdminUsers() {
                             quota: user.quota_tokens_daily === null ? '' : String(user.quota_tokens_daily),
                             dept: user.dept,
                           })}
-                          style={{ padding: '4px 10px', background: 'transparent', color: 'var(--action)', border: '1px solid var(--action-border)', borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}
+                          style={{ padding: '4px 10px', background: 'transparent', color: 'var(--action)', border: '1px solid var(--action-border)', borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
                         >
                           编辑
                         </button>
                         <button
                           disabled={change.isPending}
                           onClick={() => change.mutate({ id: user.id, body: { is_active: !user.is_active } })}
-                          style={{ padding: '4px 10px', background: 'transparent', color: user.is_active ? 'var(--danger)' : 'var(--status-done)', border: '1px solid ' + (user.is_active ? 'var(--danger-border)' : '#A7F3D0'), borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}
+                          style={{ padding: '4px 10px', background: 'transparent', color: user.is_active ? 'var(--danger)' : 'var(--status-done)', border: '1px solid ' + (user.is_active ? 'var(--danger-border)' : '#A7F3D0'), borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
                         >
                           {user.is_active ? '停用' : '启用'}
                         </button>

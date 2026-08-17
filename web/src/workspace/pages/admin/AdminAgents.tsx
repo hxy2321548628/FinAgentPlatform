@@ -4,7 +4,8 @@ import { decideReview, listReviews, reviewKeys } from '../../../api/reviews'
 import { agentKeys } from '../../../api/agents'
 import { errorMessage } from '../../../api/request'
 import type { ReviewItem } from '../../../api/types'
-import { emptyStyle, pageHeaderStyle, pageStyle, pageTitleStyle, sectionStyle } from './AdminStyles'
+import { emptyStyle, pageStyle, sectionStyle } from './AdminStyles'
+import { AdminPageHeader } from './AdminUi'
 
 /**
  * 智能体审核队列。
@@ -50,14 +51,12 @@ export function AdminAgents() {
 
   return (
     <div style={pageStyle}>
-      <div style={pageHeaderStyle}>
-        <div>
-          <h1 style={pageTitleStyle}>智能体审核</h1>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
-            通过的那一版出现在广场上。被拒的版本作者与组员照常可用 —— 审核管的是别人能不能看见。
-          </p>
-        </div>
-      </div>
+      <AdminPageHeader
+        eyebrow="// AGENT REVIEW"
+        title="智能体审核"
+        description="通过的那一版出现在广场上。被拒的版本作者与组员照常可用 —— 审核管的是别人能不能看见。"
+        pendingCount={pending.length}
+      />
 
       {reviews.isPending && <div style={{ color: 'var(--text-muted)' }}>正在加载审核队列…</div>}
       {reviews.isError && <div role="alert" style={{ color: 'var(--danger)' }}>{errorMessage(reviews.error)}</div>}

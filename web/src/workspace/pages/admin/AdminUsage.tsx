@@ -29,7 +29,7 @@ export function AdminUsage() {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 14, marginBottom: 24 }}>
+      <div className="admin-stat-grid" style={{ display: 'grid', gap: 14, marginBottom: 24 }}>
         {[
           { label: 'TOKENS USED', value: data?.available ? formatTokens(data.total.tokens) : '—', unit: 'tokens 消耗' },
           { label: 'MODEL CALLS', value: data?.available ? data.total.observations.toLocaleString() : '—', unit: '次模型调用' },
