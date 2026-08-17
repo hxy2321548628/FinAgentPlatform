@@ -1,6 +1,6 @@
 """Worker 进程的入口。
 
-    cd app && uv run python -m worker.main
+    cd src && uv run python -m app.worker.main
 
 **它不是一个 HTTP 服务**，因此没有 uvicorn，也不对外开端口 —— 它只跟 Redis、
 Postgres 和 broker 说话。要看它在干什么，看日志。
@@ -13,9 +13,9 @@ import asyncio
 import logging
 import signal
 
+from app.worker.runtime import build_worker
 from config import get_settings
 from log import configure
-from src.app.worker.runtime import build_worker
 
 logger = logging.getLogger(__name__)
 

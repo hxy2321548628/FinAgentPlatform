@@ -39,7 +39,7 @@ services:
       dockerfile: deploy/app.Dockerfile
     # **迁移只由 api 跑**：worker 有多个副本，让它们各自 upgrade 会撞在同一把
     # DDL 锁上。checkpoint 那几张表不在这里 —— LangGraph 自己 setup()
-    command: sh -c "alembic upgrade head && uvicorn api.app:app --host 0.0.0.0 --port 8000"
+    command: sh -c "alembic upgrade head && uvicorn app.api.app:app --host 0.0.0.0 --port 8000"
     env_file:
       - ../.env
     environment:
@@ -80,7 +80,7 @@ services:
       context: ..
       dockerfile: deploy/app.Dockerfile
     # 不是 HTTP 服务，因此没有 uvicorn，也不开端口
-    command: python -m worker.main
+    command: python -m app.worker.main
     # 副本数解决的是「这个进程挂了怎么办」，不是吞吐 ——
     # 吞吐靠 WORKER_CONCURRENCY，一个进程内并发驱动多个 run
     deploy:
@@ -170,7 +170,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/app.Dockerfile
-    command: uvicorn broker.app:app --host 0.0.0.0 --port 8100
+    command: uvicorn app.broker.app:app --host 0.0.0.0 --port 8100
     env_file:
       - ../.env
     environment:

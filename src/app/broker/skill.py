@@ -7,7 +7,7 @@ from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from shutil import rmtree
 
-from src.app.sandbox.path import SKILL_DIR
+from app.sandbox.path import SKILL_DIR
 
 logger = logging.getLogger(__name__)
 

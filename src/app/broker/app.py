@@ -12,8 +12,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from src.app.broker.route import router, skill_router, stat_router
-from src.app.broker.runtime import Broker, build_broker
+from app.broker.route import router, skill_router, stat_router
+from app.broker.runtime import Broker, build_broker
 from config import get_settings
 from log import configure
 

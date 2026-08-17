@@ -6,7 +6,7 @@
 都会让 agent 白跑几轮或让产物在对话里看不见。
 """
 
-from src.app.agent.config import AgentConfig
+from app.agent.config import AgentConfig
 
 # 产物必须落在这里，平台只按这个目录判定哪些文件要交付给教师
 OUTPUT_PATH = "/workspace/outputs/"

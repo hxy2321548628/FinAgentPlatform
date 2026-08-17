@@ -14,13 +14,13 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Cookie, Depends, Response, status
 from sqlalchemy.exc import IntegrityError
 
-from src.app.api.error import invalid, unauthenticated
-from src.app.api.platform import Platform, get_platform
-from src.app.api.schema import LoginRequest, MeResponse, RegisterRequest, RegisterResponse
-from src.app.api.security import CurrentUser, limit_by_address
-from src.app.auth.session import COOKIE_NAME, Session
-from src.app.group.repository import Group
-from src.app.user.model import UserRole
+from app.api.error import invalid, unauthenticated
+from app.api.platform import Platform, get_platform
+from app.api.schema import LoginRequest, MeResponse, RegisterRequest, RegisterResponse
+from app.api.security import CurrentUser, limit_by_address
+from app.auth.session import COOKIE_NAME, Session
+from app.group.repository import Group
+from app.user.model import UserRole
 
 logger = logging.getLogger(__name__)
 

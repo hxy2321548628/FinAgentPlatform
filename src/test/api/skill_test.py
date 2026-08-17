@@ -12,16 +12,16 @@ from fastapi.testclient import TestClient
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.app.api.platform import Platform
-from src.app.auth.password import PasswordHasher
-from src.app.group.repository import Group
-from src.app.preset.model import ResourceKind, ReviewRecord
+from app.api.platform import Platform
+from app.auth.password import PasswordHasher
+from app.group.repository import Group
+from app.preset.model import ResourceKind, ReviewRecord
+from app.user.model import UserRole
+from app.user.repository import User
 from test.api.agent_test import as_user, create_agent
 from test.api.agent_test import release as release_agent
 from test.api.agent_test import submit_review as submit_agent_review
 from test.api.conftest import login, make_group, signup
-from src.app.user.model import UserRole
-from src.app.user.repository import User
 
 SKILL_PATH = "/api/skills"
 REVIEW_PATH = "/api/reviews"

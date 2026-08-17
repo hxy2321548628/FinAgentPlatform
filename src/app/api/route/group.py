@@ -16,9 +16,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 
-from src.app.api.error import invalid, not_found
-from src.app.api.platform import Platform, get_platform
-from src.app.api.schema import (
+from app.api.error import invalid, not_found
+from app.api.platform import Platform, get_platform
+from app.api.schema import (
     AddMemberRequest,
     DecideJoinRequest,
     GroupMemberResponse,
@@ -26,9 +26,9 @@ from src.app.api.schema import (
     JoinRequestResponse,
     MyGroupResponse,
 )
-from src.app.api.security import CurrentUser
-from src.app.auth.session import Session
-from src.app.group.repository import Group, JoinRequestDetail
+from app.api.security import CurrentUser
+from app.auth.session import Session
+from app.group.repository import Group, JoinRequestDetail
 
 logger = logging.getLogger(__name__)
 

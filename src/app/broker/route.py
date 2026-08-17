@@ -30,8 +30,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from src.app.broker.runtime import Broker, BrokerDep
-from src.app.broker.schema import (
+from app.broker.runtime import Broker, BrokerDep
+from app.broker.schema import (
     AcquireErrorData,
     AcquireRequest,
     AlignSkillsRequest,
@@ -68,12 +68,12 @@ from src.app.broker.schema import (
     WorkspaceWriteRequest,
     WriteRequest,
 )
-from src.app.broker.skill import SkillFile as StoredSkillFile
-from src.app.broker.skill import SkillReference
-from src.app.event.model import RunErrorCode
-from src.app.sandbox.browse import DEFAULT_PREVIEW_LINE, MAX_ENTRY, guess_mime, preview, tree
-from src.app.sandbox.path import PathEscapeError
-from src.app.sandbox.pool import SandboxQueueTimeoutError
+from app.broker.skill import SkillFile as StoredSkillFile
+from app.broker.skill import SkillReference
+from app.event.model import RunErrorCode
+from app.sandbox.browse import DEFAULT_PREVIEW_LINE, MAX_ENTRY, guess_mime, preview, tree
+from app.sandbox.path import PathEscapeError
+from app.sandbox.pool import SandboxQueueTimeoutError
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -81,7 +81,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/threads", tags=["broker"])
-skill_router = APIRouter(prefix="/skill", tags=["broker-skill"])
+skill_router = APIRouter(prefix="/skill", tags=["app.broker.skill"])
 # **不挂在 /threads 下**：池是全局的，不属于任何一个会话
 stat_router = APIRouter(tags=["broker-stat"])
 

@@ -14,7 +14,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 from redis.asyncio import Redis
 
-from src.app.run.log import stream_key
+from app.run.log import stream_key
 from test.api.conftest import Agent, drain
 from test.api.run_test import submit, token
 

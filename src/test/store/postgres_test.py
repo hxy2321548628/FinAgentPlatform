@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.store.postgres import NATIVE_DRIVER, PostgresUnavailableError, build_dsn, check, create_engine
+from app.store.postgres import NATIVE_DRIVER, PostgresUnavailableError, build_dsn, check, create_engine
 
 # 一个不会有人监听的端口。连不上是立刻的 ECONNREFUSED，不是超时
 DEAD_DSN = "postgresql+psycopg://zuel:zuel@127.0.0.1:1/zuel"

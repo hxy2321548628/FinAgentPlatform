@@ -11,12 +11,12 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from src.app.api.platform import Platform
-from src.app.auth.password import PasswordHasher
-from src.app.group.repository import Group
+from app.api.platform import Platform
+from app.auth.password import PasswordHasher
+from app.group.repository import Group
+from app.user.model import UserRole
+from app.user.repository import User
 from test.api.conftest import login, make_group, signup
-from src.app.user.model import UserRole
-from src.app.user.repository import User
 
 AGENT_PATH = "/api/agents"
 

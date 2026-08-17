@@ -43,10 +43,10 @@ from deepagents.backends.protocol import (
 )
 from langgraph.config import get_config
 
-from src.app.event.model import RunErrorCode
-from src.app.sandbox.browse import DEFAULT_MIME, Entry, Preview, Tree
-from src.app.sandbox.path import PathEscapeError
-from src.app.sandbox.pool import SandboxQueueTimeoutError
+from app.event.model import RunErrorCode
+from app.sandbox.browse import DEFAULT_MIME, Entry, Preview, Tree
+from app.sandbox.path import PathEscapeError
+from app.sandbox.pool import SandboxQueueTimeoutError
 
 logger = logging.getLogger(__name__)
 

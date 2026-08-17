@@ -9,21 +9,21 @@ from typing import Annotated
 
 from pydantic import BaseModel, Discriminator, EmailStr, Field
 
-from src.app.agent.config import (
+from app.agent.config import (
     MAX_SYSTEM_PROMPT_LENGTH,
     AgentConfigRequest,
     McpReference,
     SkillReference,
     SubagentReference,
 )
-from src.app.event.model import Event, RunErrorCode, RunStatus
-from src.app.group.model import JoinRequestStatus
-from src.app.preset.mcp import McpStatus, McpTransport
-from src.app.preset.model import ResourceKind, ReviewStatus, VersionStatus, Visibility
-from src.app.preset.repository import AgentSource
-from src.app.preset.skill import SkillSource
-from src.app.run.decision import Decision
-from src.app.user.model import UserRole
+from app.event.model import Event, RunErrorCode, RunStatus
+from app.group.model import JoinRequestStatus
+from app.preset.mcp import McpStatus, McpTransport
+from app.preset.model import ResourceKind, ReviewStatus, VersionStatus, Visibility
+from app.preset.repository import AgentSource
+from app.preset.skill import SkillSource
+from app.run.decision import Decision
+from app.user.model import UserRole
 
 # 自助注册的口令下限。**登录不设这个下限**：那会把已有的短口令账号一次性锁在门外，
 # 而它们的强度不会因为登录端点多一条校验而变好

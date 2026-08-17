@@ -9,12 +9,12 @@ import logging
 from typing import Protocol
 from uuid import uuid4
 
-from src.app.agent.config import AgentConfig
-from src.app.event.model import RunStatus
-from src.app.run.log import run_context
-from src.app.run.decision import Decision
-from src.app.run.repository import Run
-from src.app.task.queue import RunTask, TaskQueue
+from app.agent.config import AgentConfig
+from app.event.model import RunStatus
+from app.run.decision import Decision
+from app.run.repository import Run
+from app.task.queue import RunTask, TaskQueue
+from log import run_context
 
 logger = logging.getLogger(__name__)
 

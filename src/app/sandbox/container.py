@@ -12,7 +12,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Protocol
 
-from src.app.sandbox.path import SANDBOX_ROOT
+from app.sandbox.path import SANDBOX_ROOT
 
 logger = logging.getLogger(__name__)
 

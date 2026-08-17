@@ -14,9 +14,9 @@ import logging
 
 from sqlalchemy.exc import IntegrityError
 
-from src.app.auth.password import PasswordHasher
-from src.app.user.model import UserRole
-from src.app.user.repository import UserRepository
+from app.auth.password import PasswordHasher
+from app.user.model import UserRole
+from app.user.repository import UserRepository
 
 logger = logging.getLogger(__name__)
 

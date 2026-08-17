@@ -23,8 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.app.group.model import GroupMemberRecord, GroupRecord, JoinRequestRecord, JoinRequestStatus, new_invite_code
-from src.app.user.model import UserRecord, UserRole
+from app.group.model import GroupMemberRecord, GroupRecord, JoinRequestRecord, JoinRequestStatus, new_invite_code
+from app.user.model import UserRecord, UserRole
 
 logger = logging.getLogger(__name__)
 

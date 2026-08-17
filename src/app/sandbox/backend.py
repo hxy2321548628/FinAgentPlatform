@@ -31,8 +31,8 @@ from deepagents.backends.protocol import (
     WriteResult,
 )
 
-from src.app.sandbox.container import ContainerError, ContainerProtocol
-from src.app.sandbox.path import to_sandbox_path, to_virtual_path
+from app.sandbox.container import ContainerError, ContainerProtocol
+from app.sandbox.path import to_sandbox_path, to_virtual_path
 
 DEFAULT_EXECUTE_TIMEOUT = 120
 

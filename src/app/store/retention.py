@@ -1,6 +1,6 @@
 """保留期清理：把过了保留期的事件与 checkpoint 删掉。
 
-    cd app && uv run python -m store.retention
+    cd src && uv run python -m app.store.retention
 
 **这是 cron 任务，不是常驻进程。** 跑一次删一批，跑完就退出；**随时可以重跑**，
 删的是「早于某个时点」的行，重跑一次不会多删也不会少删。
@@ -20,9 +20,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.store import postgres
 from config import StoreSettings
 from log import configure
-from src.app.store import postgres
 
 logger = logging.getLogger(__name__)
 

@@ -23,15 +23,15 @@ from langchain_deepseek import ChatDeepSeek
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
-from src.app.agent.config import AgentConfig
-from src.app.agent.mcp import McpFailureRecorderProtocol, McpTargetLoaderProtocol, load_mcp_tools
-from src.app.agent.prompt import compose_prompt
-from src.app.agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
-from src.app.agent.subagent import SubagentLoaderProtocol, compile_subagents
-from src.app.agent.trace import attribution, propagation
-from src.app.agent.config import Settings
-from src.app.event.mapper import StreamChunk
-from src.app.event.model import InterruptAction
+from app.agent.config import AgentConfig
+from app.agent.mcp import McpFailureRecorderProtocol, McpTargetLoaderProtocol, load_mcp_tools
+from app.agent.prompt import compose_prompt
+from app.agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
+from app.agent.subagent import SubagentLoaderProtocol, compile_subagents
+from app.agent.trace import attribution, propagation
+from app.event.mapper import StreamChunk
+from app.event.model import InterruptAction
+from config import Settings
 
 # 一次分析实测 17 轮模型调用、16 次工具调用，图上的步数约为其两倍。
 # 取 60 是留够余量又不至于让跑飞的 agent 无限烧 token

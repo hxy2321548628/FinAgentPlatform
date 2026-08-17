@@ -16,10 +16,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 
-from src.app.agent.config import AgentConfig, McpReference, SkillReference, SubagentReference
-from src.app.api.error import invalid, not_found
-from src.app.api.platform import Platform, get_platform
-from src.app.api.schema import (
+from app.agent.config import AgentConfig, McpReference, SkillReference, SubagentReference
+from app.api.error import invalid, not_found
+from app.api.platform import Platform, get_platform
+from app.api.schema import (
     AgentListingResponse,
     AgentVersionResponse,
     CreateAgentRequest,
@@ -30,13 +30,13 @@ from src.app.api.schema import (
     UpdateAgentRequest,
     UpdateDraftRequest,
 )
-from src.app.api.security import CurrentUser
-from src.app.preset.mcp_reference import McpReferenceError, resolve_mcp_references
-from src.app.preset.model import ReviewStatus, VersionStatus
-from src.app.preset.repository import AgentDetail, AgentListing
-from src.app.preset.review import Review
-from src.app.preset.skill_reference import SkillReferenceError, resolve_skill_references
-from src.app.preset.subagent_reference import SubagentReferenceError, resolve_subagent_references
+from app.api.security import CurrentUser
+from app.preset.mcp_reference import McpReferenceError, resolve_mcp_references
+from app.preset.model import ReviewStatus, VersionStatus
+from app.preset.repository import AgentDetail, AgentListing
+from app.preset.review import Review
+from app.preset.skill_reference import SkillReferenceError, resolve_skill_references
+from app.preset.subagent_reference import SubagentReferenceError, resolve_subagent_references
 
 logger = logging.getLogger(__name__)
 

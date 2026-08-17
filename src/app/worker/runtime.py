@@ -13,24 +13,23 @@ from dataclasses import dataclass
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.agent.circuit import McpCircuit
-from src.app.agent.factory import Agent, create_model
-from src.app.agent.trace import create_callback
-from src.app.store import postgres
+from app.agent.circuit import McpCircuit
+from app.agent.factory import Agent, create_model
+from app.agent.trace import create_callback
+from app.preset.mcp import McpRepository, McpTargetLoader
+from app.preset.repository import AgentRepository
+from app.preset.skill_remote import RemoteSkillStore
+from app.run.archive import EventArchive
+from app.run.cancel import CancelFlag
+from app.run.executor import RunExecutor
+from app.run.log import EventLog
+from app.run.repository import RunRepository
+from app.sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool
+from app.store import postgres, redis
+from app.store.checkpoint import CheckpointPool, open_checkpoint
+from app.task.queue import TaskQueue
+from app.worker.loop import Worker
 from config import Settings
-from src.app.preset.mcp import McpRepository, McpTargetLoader
-from src.app.preset.repository import AgentRepository
-from src.app.preset.skill_remote import RemoteSkillStore
-from src.app.run.archive import EventArchive
-from src.app.run.cancel import CancelFlag
-from src.app.run.executor import RunExecutor
-from src.app.run.log import EventLog
-from src.app.run.repository import RunRepository
-from src.app.sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool
-from src.app.store import redis
-from src.app.store.checkpoint import CheckpointPool, open_checkpoint
-from src.app.task.queue import TaskQueue
-from src.app.worker.loop import Worker
 
 logger = logging.getLogger(__name__)
 

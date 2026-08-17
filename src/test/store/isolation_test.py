@@ -9,8 +9,8 @@
 
 import inspect
 
-from src.app.run.repository import RunRepository
-from src.app.thread.repository import ThreadRepository
+from app.run.repository import RunRepository
+from app.thread.repository import ThreadRepository
 
 # 归当前用户所有的那几张表的仓储。**新加一个要往这里补一行** ——
 # 漏了它，这条测试就管不到那一层

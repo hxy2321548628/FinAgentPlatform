@@ -3,9 +3,9 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.sandbox.path import OUTPUT_DIR, PathEscapeError
-from src.app.sandbox.quota import QuotaError
-from src.app.sandbox.workspace import Workspace
+from app.sandbox.path import OUTPUT_DIR, PathEscapeError
+from app.sandbox.quota import QuotaError
+from app.sandbox.workspace import Workspace
 
 
 @pytest.fixture
@@ -271,7 +271,7 @@ def test_a_new_directory_is_handed_to_the_sandbox_user(tmp_path: Path, monkeypat
     症状极具迷惑性：execute 照常成功、没有一条报错指向权限，只是产物一个都没有。
     """
     handed: list[tuple[Path, int, int]] = []
-    monkeypatch.setattr("sandbox.workspace.os.chown", lambda path, uid, gid: handed.append((path, uid, gid)))
+    monkeypatch.setattr("app.sandbox.workspace.os.chown", lambda path, uid, gid: handed.append((path, uid, gid)))
     space = Workspace(root=tmp_path, owner=(1000, 1000))
 
     thread_id = space.create(uuid4().hex)
@@ -282,7 +282,7 @@ def test_a_new_directory_is_handed_to_the_sandbox_user(tmp_path: Path, monkeypat
 def test_without_an_owner_the_directory_is_left_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """直接跑 uvicorn 时进程本就是宿主用户，不该多此一举地 chown。"""
     handed: list[object] = []
-    monkeypatch.setattr("sandbox.workspace.os.chown", lambda *argument: handed.append(argument))
+    monkeypatch.setattr("app.sandbox.workspace.os.chown", lambda *argument: handed.append(argument))
     space = Workspace(root=tmp_path)
 
     space.create(uuid4().hex)

@@ -4,9 +4,9 @@
 而那种失败不会让任何测试变红 —— 只会表现成 token 账单变高。
 """
 
-from src.app.agent.config import AgentConfig
-from src.app.agent.prompt import ANALYSIS_SEGMENT, ENVIRONMENT_SEGMENT, ROLE_SEGMENT, SYSTEM_PROMPT, compose_prompt
-from src.app.sandbox.path import OUTPUT_DIR, SANDBOX_ROOT
+from app.agent.config import AgentConfig
+from app.agent.prompt import ANALYSIS_SEGMENT, ENVIRONMENT_SEGMENT, ROLE_SEGMENT, SYSTEM_PROMPT, compose_prompt
+from app.sandbox.path import OUTPUT_DIR, SANDBOX_ROOT
 
 
 def test_the_prompt_names_the_working_directory() -> None:

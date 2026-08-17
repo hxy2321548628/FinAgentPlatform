@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 from redis.asyncio import Redis
 
-from src.app.broker.cache import KEY_PREFIX, ToolCache
+from app.broker.cache import KEY_PREFIX, ToolCache
 from test.conftest import json_log
 
 SHORT_TTL_SECOND = 60
@@ -102,7 +102,7 @@ async def test_an_unreachable_cache_degrades_instead_of_breaking_the_tool() -> N
     """
     unreachable = ToolCache(Redis(host="127.0.0.1", port=DEAD_PORT, socket_connect_timeout=1))
 
-    with json_log("broker.cache") as recorded:
+    with json_log("app.broker.cache") as recorded:
         assert await unreachable.get("甲", NS) is None
         await unreachable.put("甲", NS, {"path": "/workspace/a.csv"})
 

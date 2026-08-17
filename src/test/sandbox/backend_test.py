@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from src.app.sandbox.backend import SandboxBackend
-from src.app.sandbox.container import CommandResult, ContainerError
+from app.sandbox.backend import SandboxBackend
+from app.sandbox.container import CommandResult, ContainerError
 
 # 判据的最小刻度。写成常量是为了让「差一纳秒」这件事在测试里看得见
 NANOSECOND = 1

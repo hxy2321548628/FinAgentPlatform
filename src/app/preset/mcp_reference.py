@@ -12,9 +12,9 @@
 import logging
 from typing import Protocol
 
-from src.app.agent.config import AgentConfig, McpReference
-from src.app.agent.mcp import MAX_MCP_SERVER, RESERVED_TOOL_NAME
-from src.app.preset.mcp import McpServer, McpStatus
+from app.agent.config import AgentConfig, McpReference
+from app.agent.mcp import MAX_MCP_SERVER, RESERVED_TOOL_NAME
+from app.preset.mcp import McpServer, McpStatus
 
 UNAVAILABLE_MESSAGE = "这个 MCP 现在用不了：可能还没被管理员放行，或者已经停用了。请重新选择"
 TOO_MANY_MESSAGE = f"一次运行最多挂 {MAX_MCP_SERVER} 个 MCP"

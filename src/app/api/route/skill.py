@@ -6,9 +6,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
-from src.app.api.error import invalid, not_found, too_large
-from src.app.api.platform import Platform, get_platform
-from src.app.api.schema import (
+from app.api.error import invalid, not_found, too_large
+from app.api.platform import Platform, get_platform
+from app.api.schema import (
     MySkillResponse,
     SetSharingRequest,
     SkillFileContentResponse,
@@ -18,11 +18,11 @@ from src.app.api.schema import (
     SubmitReviewRequest,
     UpdateSkillRequest,
 )
-from src.app.api.security import CurrentUser
-from src.app.preset.model import ResourceKind, ReviewStatus, Visibility
-from src.app.preset.review import Review
-from src.app.preset.skill import SkillDetail, SkillListing
-from src.app.preset.skill_package import ValidatedSkillPackage, validate_skill_package
+from app.api.security import CurrentUser
+from app.preset.model import ResourceKind, ReviewStatus, Visibility
+from app.preset.review import Review
+from app.preset.skill import SkillDetail, SkillListing
+from app.preset.skill_package import ValidatedSkillPackage, validate_skill_package
 
 logger = logging.getLogger(__name__)
 

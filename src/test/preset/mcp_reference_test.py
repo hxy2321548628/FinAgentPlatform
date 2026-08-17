@@ -5,10 +5,10 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.agent.config import AgentConfig, McpReference
-from src.app.agent.mcp import MAX_MCP_SERVER
-from src.app.preset.mcp import McpServer, McpStatus, McpTransport
-from src.app.preset.mcp_reference import McpReferenceError, resolve_mcp_references
+from app.agent.config import AgentConfig, McpReference
+from app.agent.mcp import MAX_MCP_SERVER
+from app.preset.mcp import McpServer, McpStatus, McpTransport
+from app.preset.mcp_reference import McpReferenceError, resolve_mcp_references
 
 
 def server(

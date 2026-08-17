@@ -6,8 +6,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.preset.mcp import McpApplication, McpRepository, McpStatus, McpTargetLoader, McpTransport
-from src.app.user.repository import User
+from app.preset.mcp import McpApplication, McpRepository, McpStatus, McpTargetLoader, McpTransport
+from app.user.repository import User
 
 
 @pytest.fixture
@@ -198,7 +198,7 @@ async def test_a_missing_credential_is_logged_and_still_attempted(
     assert created is not None
     loader = McpTargetLoader(servers, {})
 
-    with caplog.at_level(logging.WARNING, logger="preset.mcp"):
+    with caplog.at_level(logging.WARNING, logger="app.preset.mcp"):
         target = await loader.load_mcp_target(created.id)
 
     assert target is not None

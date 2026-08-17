@@ -9,7 +9,7 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 
-from src.app.sandbox.workspace import Workspace
+from app.sandbox.workspace import Workspace
 
 
 def upload(client: TestClient, thread_id: str, filename: str, content: bytes = b"a,b\n", **form: str) -> object:

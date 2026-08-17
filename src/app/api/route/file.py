@@ -20,10 +20,10 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 
-from src.app.api.error import invalid, not_found, too_large
-from src.app.api.platform import Platform, get_platform
-from src.app.api.route.thread import require_thread
-from src.app.api.schema import (
+from app.api.error import invalid, not_found, too_large
+from app.api.platform import Platform, get_platform
+from app.api.route.thread import require_thread
+from app.api.schema import (
     DirectoryCreateRequest,
     FileContentResponse,
     FileWriteRequest,
@@ -31,10 +31,10 @@ from src.app.api.schema import (
     WorkspaceEntryResponse,
     WorkspaceTreeResponse,
 )
-from src.app.api.security import CurrentUser
-from src.app.sandbox.browse import DEFAULT_PREVIEW_LINE
-from src.app.sandbox.path import PathEscapeError
-from src.app.sandbox.remote import FileMissingError
+from app.api.security import CurrentUser
+from app.sandbox.browse import DEFAULT_PREVIEW_LINE
+from app.sandbox.path import PathEscapeError
+from app.sandbox.remote import FileMissingError
 
 logger = logging.getLogger(__name__)
 

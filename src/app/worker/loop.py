@@ -13,7 +13,7 @@ import contextlib
 import logging
 from typing import Protocol
 
-from src.app.task.queue import Delivery, RunTask, TaskQueue
+from app.task.queue import Delivery, RunTask, TaskQueue
 
 logger = logging.getLogger(__name__)
 

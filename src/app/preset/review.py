@@ -14,7 +14,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.app.preset.model import (
+from app.preset.model import (
     REVIEWABLE_KIND,
     AgentRecord,
     AgentVersionRecord,
@@ -22,8 +22,8 @@ from src.app.preset.model import (
     ReviewRecord,
     ReviewStatus,
 )
-from src.app.preset.skill import SkillRecord, SkillVersionRecord
-from src.app.user.model import UserRecord
+from app.preset.skill import SkillRecord, SkillVersionRecord
+from app.user.model import UserRecord
 
 logger = logging.getLogger(__name__)
 

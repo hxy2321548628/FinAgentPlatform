@@ -1,10 +1,10 @@
 # 构建上下文是仓库根。这里排掉的东西要么不该进镜像，要么进了就是坏的。
 
-# **虚拟环境必须排掉**：镜像里 uv sync 装好的 .venv 会被 COPY app/ 原样覆盖成
+# **虚拟环境必须排掉**：镜像里 uv sync 装好的 .venv 会被 COPY src/ 原样覆盖成
 # 宿主机那份，而它内部记的是宿主机的绝对路径 —— 症状是
 # 「exec /app/.venv/bin/uvicorn: no such file or directory」，不指向这里。
 .venv/
-app/.venv/
+src/.venv/
 
 __pycache__/
 *.py[cod]

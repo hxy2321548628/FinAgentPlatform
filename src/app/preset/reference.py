@@ -12,8 +12,8 @@ worker 什么时候有空。冻结在提交那一刻，历史 run 的快照因�
 import logging
 from typing import Protocol
 
-from src.app.agent.config import AgentConfig, AgentConfigRequest
-from src.app.preset.repository import ResolvedAgent
+from app.agent.config import AgentConfig, AgentConfigRequest
+from app.preset.repository import ResolvedAgent
 
 logger = logging.getLogger(__name__)
 

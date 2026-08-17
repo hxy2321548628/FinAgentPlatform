@@ -11,9 +11,9 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.thread.repository import ThreadRepository
-from src.app.thread.title import MAX_TITLE_LENGTH, TitleWriter
-from src.app.user.repository import User
+from app.thread.repository import ThreadRepository
+from app.thread.title import MAX_TITLE_LENGTH, TitleWriter
+from app.user.repository import User
 
 
 class RecordingModel(FakeListChatModel):
@@ -131,7 +131,7 @@ async def test_an_answer_that_tidies_to_nothing_is_logged(
     created = await threads.create(user_id=owner.id)
     writer = _writer(FakeListChatModel(responses=[""]), threads)
 
-    with caplog.at_level(logging.WARNING, logger="thread.title"):
+    with caplog.at_level(logging.WARNING, logger="app.thread.title"):
         await writer.compose(created.id, user_id=owner.id, content="一")
 
     assert any("收拾不出标题" in one.getMessage() for one in caplog.records)

@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from src.app.broker.skill import SkillFile, SkillReference, SkillStore
-from src.app.sandbox.workspace import Workspace
+from app.broker.skill import SkillFile, SkillReference, SkillStore
+from app.sandbox.workspace import Workspace
 
 SKILL_ID = "11111111-1111-1111-1111-111111111111"
 SKILL_NAME = "annualized-naming"
@@ -69,7 +69,7 @@ def test_align_restores_changed_content_and_warns(tmp_path: Path, caplog: pytest
     changed = workspace.path(thread_id) / "skill" / SKILL_NAME / "SKILL.md"
     changed.write_bytes(b"broken")
 
-    with caplog.at_level(logging.WARNING, logger="broker.skill"):
+    with caplog.at_level(logging.WARNING, logger="app.broker.skill"):
         store.align(workspace.path(thread_id), _reference())
 
     assert changed.read_bytes() == SKILL_MD
@@ -88,7 +88,7 @@ def test_align_deletes_every_unlisted_file_and_directory_and_warns(
     extra.parent.mkdir(parents=True)
     extra.write_bytes(b"extra")
 
-    with caplog.at_level(logging.WARNING, logger="broker.skill"):
+    with caplog.at_level(logging.WARNING, logger="app.broker.skill"):
         store.align(workspace.path(thread_id), _reference())
 
     assert not (workspace.path(thread_id) / "skill" / "invented").exists()

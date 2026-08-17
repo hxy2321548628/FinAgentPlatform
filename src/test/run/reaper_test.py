@@ -12,12 +12,12 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.event.model import Event, EventType, RunErrorCode, RunStatus, TokenUsage
-from src.app.run.log import LoggedEvent
-from src.app.run.reaper import orphaned, sweep
-from src.app.run.repository import Run, RunRepository
-from src.app.thread.repository import Thread
-from src.app.user.repository import User
+from app.event.model import Event, EventType, RunErrorCode, RunStatus, TokenUsage
+from app.run.log import LoggedEvent
+from app.run.reaper import orphaned, sweep
+from app.run.repository import Run, RunRepository
+from app.thread.repository import Thread
+from app.user.repository import User
 
 # 宽限期取 0：测试里造出来的 run 都是「刚提交的」，留宽限期的话每一条都会被挡住。
 # 宽限期本身由 test_a_run_submitted_within_the_grace_period_is_left_alone 单独验

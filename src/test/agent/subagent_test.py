@@ -8,9 +8,9 @@ from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents.middleware.human_in_the_loop import HumanInTheLoopMiddleware
 from langchain_core.language_models import BaseChatModel
 
-from src.app.agent.config import SubagentReference
-from src.app.agent.prompt import ENVIRONMENT_SEGMENT
-from src.app.agent.subagent import (
+from app.agent.config import SubagentReference
+from app.agent.prompt import ENVIRONMENT_SEGMENT
+from app.agent.subagent import (
     SUBAGENT_RECURSION_LIMIT,
     SubagentDefinition,
     SubagentSnapshotError,
@@ -61,7 +61,7 @@ async def test_a_compiled_subagent_uses_the_frozen_version_and_platform_contract
         created.update(keyword)
         return runnable
 
-    monkeypatch.setattr("agent.subagent.create_agent", fake_create_agent)
+    monkeypatch.setattr("app.agent.subagent.create_agent", fake_create_agent)
     loader = Loader(SubagentDefinition(description="专门计算波动率", system_prompt="只计算波动率。"))
     backend = FakeBackend()
     reference = SubagentReference(agent_id="agent-1", version=3, name="volatility-expert")

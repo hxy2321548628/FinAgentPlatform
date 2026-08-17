@@ -21,20 +21,20 @@ import pytest
 import uvicorn
 from deepagents.backends.protocol import ExecuteResponse, LsResult
 
-from src.app.broker.app import create_app
-from src.app.broker.runtime import AbsentContainer, Broker
-from src.app.broker.skill import SkillStore
-from src.app.sandbox.container import CommandResult
-from src.app.sandbox.path import PathEscapeError
-from src.app.sandbox.pool import PoolStat, QueuePositionCallback, SandboxQueueTimeoutError
-from src.app.sandbox.remote import (
+from app.broker.app import create_app
+from app.broker.runtime import AbsentContainer, Broker
+from app.broker.skill import SkillStore
+from app.sandbox.container import CommandResult
+from app.sandbox.path import PathEscapeError
+from app.sandbox.pool import PoolStat, QueuePositionCallback, SandboxQueueTimeoutError
+from app.sandbox.remote import (
     BrokerConnection,
     FileMissingError,
     RemoteSandboxBackend,
     RemoteSandboxPool,
     RemoteWorkspace,
 )
-from src.app.sandbox.workspace import Workspace
+from app.sandbox.workspace import Workspace
 
 THREAD = "thread-1"
 # 租约的持有者。生产里取的是 run 标识 —— 崩溃恢复接着跑的是同一个 run

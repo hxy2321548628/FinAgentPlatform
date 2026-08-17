@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from src.app.sandbox.container import (
+from app.sandbox.container import (
     DEFAULT_IMAGE,
     ContainerProtocol,
     DockerContainer,
@@ -28,7 +28,7 @@ from src.app.sandbox.container import (
     ManagedContainerProtocol,
     running_sandbox,
 )
-from src.app.sandbox.workspace import Workspace
+from app.sandbox.workspace import Workspace
 
 logger = logging.getLogger(__name__)
 

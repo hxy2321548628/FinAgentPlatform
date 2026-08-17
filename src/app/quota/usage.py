@@ -27,8 +27,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.app.event.model import RunStatus
-from src.app.run.repository import RunRecord
+from app.event.model import RunStatus
+from app.run.repository import RunRecord
 
 # 占着并发名额的状态。**`waiting_approval` 不在其中**（等步骤五落地）：
 # 并发配额限制的是资源占用，而等人确认期间既不占 worker 也不占沙箱 ——

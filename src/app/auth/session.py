@@ -15,7 +15,7 @@ import secrets
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
-from src.app.user.model import UserRole
+from app.user.model import UserRole
 
 # Cookie 名。前缀是为了在浏览器的 Cookie 列表里一眼看出它是谁的
 COOKIE_NAME = "zuel_session"

@@ -2,7 +2,7 @@
 
 清扫是 cron 任务，与 `store.retention`、`run.approval` 同一个形态：
 
-    cd app && uv run python -m run.reaper
+    cd src && uv run python -m app.run.reaper
 
 **为什么需要它。** worker 的 ack 写在主循环的 `finally` 里，无条件执行；而执行器
 起跑阶段有几处调用落在它自己那圈 `try/except` 之外（读取消标志、写 `start()`、
@@ -26,15 +26,14 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-from src.app.store import postgres
+from app.event.model import Event, RunErrorCode, RunFailedData, RunFailedEvent, now_ms
+from app.run.archive import EventArchive
+from app.run.log import EventLog, LoggedEvent
+from app.run.repository import Run, RunRepository
+from app.store import postgres, redis
+from app.task.queue import TaskQueue
 from config import StoreSettings
-from src.app.event.model import Event, RunErrorCode, RunFailedData, RunFailedEvent, now_ms
-from src.app.run.log import configure
-from src.app.run.archive import EventArchive
-from src.app.run.log import EventLog, LoggedEvent
-from src.app.run.repository import Run, RunRepository
-from src.app.store import redis
-from src.app.task.queue import TaskQueue
+from log import configure
 
 logger = logging.getLogger(__name__)
 

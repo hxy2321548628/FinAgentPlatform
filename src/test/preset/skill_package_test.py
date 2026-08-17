@@ -8,7 +8,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 import pytest
 
-from src.app.preset.skill_package import (
+from app.preset.skill_package import (
     ALLOWED_EXTENSION,
     MAX_FILE_COUNT,
     MAX_FILE_SIZE,

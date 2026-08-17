@@ -12,12 +12,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
-from src.app.api.error import install_handler
-from src.app.api.platform import Platform, build_platform
-from src.app.api.route import usage
-from src.app.api.route import admin, agent, auth, file, group, mcp, review, run, skill, thread
-from src.app.api.security import limit_by_user, limit_stream_by_user, require_user
-from src.app.auth.bootstrap import ensure_first_admin
+from app.api.error import install_handler
+from app.api.platform import Platform, build_platform
+from app.api.route import admin, agent, auth, file, group, mcp, review, run, skill, thread, usage
+from app.api.security import limit_by_user, limit_stream_by_user, require_user
+from app.auth.bootstrap import ensure_first_admin
 from config import get_settings
 from log import configure
 

@@ -24,8 +24,8 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import col, select, tuple_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.thread.model import ThreadRecord
 from cursor import DEFAULT_PAGE_SIZE, Page, decode, encode, split
-from src.app.thread.model import ThreadRecord
 
 logger = logging.getLogger(__name__)
 

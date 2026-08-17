@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from src.app.sandbox.browse import preview, tree
+from app.sandbox.browse import preview, tree
 
 
 def paths(root: Path) -> list[str]:

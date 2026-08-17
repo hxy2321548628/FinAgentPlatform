@@ -6,10 +6,10 @@ import pytest
 from redis.asyncio import Redis
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
+from app.run.log import DEFAULT_BLOCK_MILLISECOND as EVENT_BLOCK
+from app.store.redis import DEFAULT_SOCKET_TIMEOUT, RedisUnavailableError, check, create_client
+from app.task.queue import DEFAULT_BLOCK_MILLISECOND as TASK_BLOCK
 from config import StoreSettings
-from src.app.run.log import DEFAULT_BLOCK_MILLISECOND as EVENT_BLOCK
-from src.app.store.redis import DEFAULT_SOCKET_TIMEOUT, RedisUnavailableError, check, create_client
-from src.app.task.queue import DEFAULT_BLOCK_MILLISECOND as TASK_BLOCK
 from test.conftest import TEST_REDIS_DATABASE
 
 # 一个不会有人监听的端口

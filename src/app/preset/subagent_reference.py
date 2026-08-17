@@ -3,9 +3,9 @@
 import logging
 from typing import Protocol
 
-from src.app.agent.config import AgentConfig, SubagentReference
-from src.app.agent.subagent import MAX_SUBAGENT
-from src.app.preset.repository import ResolvedAgent
+from app.agent.config import AgentConfig, SubagentReference
+from app.agent.subagent import MAX_SUBAGENT
+from app.preset.repository import ResolvedAgent
 
 UNAVAILABLE_MESSAGE = "这个子智能体现在用不了：可能作者已经收回共享、没有发布版本或删掉了它。请重新选择"
 NESTED_MESSAGE = "已挂子智能体的场景不能再作为子智能体"

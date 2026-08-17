@@ -6,7 +6,7 @@ B 的调用上 —— 而那种错不报错，只是 agent 做了一件教师没
 
 import pytest
 
-from src.app.run.decision import Decision, DecisionError, DecisionType, EditedAction, check, to_resume
+from app.run.decision import Decision, DecisionError, DecisionType, EditedAction, check, to_resume
 
 
 def _decision(index: int, kind: DecisionType = DecisionType.APPROVE, **extra: object) -> Decision:

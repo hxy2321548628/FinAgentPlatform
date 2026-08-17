@@ -11,8 +11,8 @@ from uuid import uuid4
 import pytest
 from redis.asyncio import Redis
 
-from src.app.task.queue import RunTask, TaskQueue
-from src.app.worker.loop import Worker
+from app.task.queue import RunTask, TaskQueue
+from app.worker.loop import Worker
 
 SHORT_BLOCK_MILLISECOND = 50
 INSTANT_CLAIM_MILLISECOND = 0

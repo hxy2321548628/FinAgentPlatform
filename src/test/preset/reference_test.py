@@ -2,9 +2,9 @@
 
 from uuid import uuid4
 
-from src.app.agent.config import AgentConfigRequest, SubagentReference
-from src.app.preset.reference import resolve_reference
-from src.app.preset.repository import ResolvedAgent
+from app.agent.config import AgentConfigRequest, SubagentReference
+from app.preset.reference import resolve_reference
+from app.preset.repository import ResolvedAgent
 
 
 class Resolver:

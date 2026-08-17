@@ -10,12 +10,12 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from src.app.api.platform import Platform
-from src.app.auth.password import PasswordHasher
+from app.api.platform import Platform
+from app.auth.password import PasswordHasher
+from app.user.model import UserRole
+from app.user.repository import User
 from test.api.agent_test import as_user
 from test.api.conftest import login, signup
-from src.app.user.model import UserRole
-from src.app.user.repository import User
 
 MCP_PATH = "/api/mcp"
 ADMIN_PATH = "/api/mcp/admin"
@@ -308,7 +308,7 @@ async def test_the_application_leaves_a_review_trail(
     client: TestClient, teacher: User, administrator: User, platform: Platform
 ) -> None:
     """审核记录复用 `reviews`：谁提的、谁批的、什么时候，那张表本来就记这些。"""
-    from src.app.preset.model import ResourceKind
+    from app.preset.model import ResourceKind
 
     as_user(client, teacher)
     created = apply_for(client)

@@ -14,13 +14,21 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import SecretStr
 
-from src.app.agent.config import AgentConfig
-from src.app.agent.factory import ALLOWED_DECISION, DELETE_TOOL, INTERRUPT_ON, RECURSION_LIMIT, STREAM_MODE, Agent, create_model
-from src.app.agent.prompt import SYSTEM_PROMPT, compose_prompt
-from src.app.agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
-from src.app.agent.trace import SESSION_KEY, USER_KEY
+from app.agent.config import AgentConfig
+from app.agent.factory import (
+    ALLOWED_DECISION,
+    DELETE_TOOL,
+    INTERRUPT_ON,
+    RECURSION_LIMIT,
+    STREAM_MODE,
+    Agent,
+    create_model,
+)
+from app.agent.prompt import SYSTEM_PROMPT, compose_prompt
+from app.agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
+from app.agent.trace import SESSION_KEY, USER_KEY
+from app.event.mapper import StreamChunk
 from config import Settings
-from src.app.event.mapper import StreamChunk
 
 
 class RecordingAgent:
@@ -64,7 +72,7 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> tuple[RecordingAgent, dict[str,
         built.update(argument)
         return agent
 
-    monkeypatch.setattr("agent.factory.create_deep_agent", fake_create_deep_agent)
+    monkeypatch.setattr("app.agent.factory.create_deep_agent", fake_create_deep_agent)
     return agent, built
 
 
@@ -388,14 +396,14 @@ async def test_an_empty_subagent_snapshot_does_not_touch_the_loader(
 async def test_a_compiled_subagent_list_reaches_deepagents(
     recorded: tuple[RecordingAgent, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from src.app.agent.config import SubagentReference
+    from app.agent.config import SubagentReference
 
     expected: list[Any] = [{"name": "volatility-expert"}]
 
     async def fake_compile(*argument: Any, **keyword: Any) -> list[Any]:  # noqa: ANN401 - 替身照单全收
         return expected
 
-    monkeypatch.setattr("agent.factory.compile_subagents", fake_compile)
+    monkeypatch.setattr("app.agent.factory.compile_subagents", fake_compile)
     _, built = recorded
     runner = Agent(model=DummyModel(), checkpointer=InMemorySaver(), subagent_loader=object())  # type: ignore[arg-type]
     config = AgentConfig(subagents=[SubagentReference(agent_id="agent-1", version=1, name="volatility-expert")])
@@ -429,7 +437,7 @@ async def test_external_tools_reach_both_the_main_graph_and_the_subagents(
     recorded: tuple[RecordingAgent, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """一次分析勾了哪些外部服务是 run 的属性，不是某一层 agent 的属性。"""
-    from src.app.agent.config import McpReference, SubagentReference
+    from app.agent.config import McpReference, SubagentReference
 
     external: list[Any] = [SimpleNamespace(name="search_paper")]
     handed: dict[str, Any] = {}
@@ -441,8 +449,8 @@ async def test_external_tools_reach_both_the_main_graph_and_the_subagents(
         handed.update(keyword)
         return [{"name": "volatility-expert"}]
 
-    monkeypatch.setattr("agent.factory.load_mcp_tools", fake_load)
-    monkeypatch.setattr("agent.factory.compile_subagents", fake_compile)
+    monkeypatch.setattr("app.agent.factory.load_mcp_tools", fake_load)
+    monkeypatch.setattr("app.agent.factory.compile_subagents", fake_compile)
     _, built = recorded
     runner = Agent(
         model=DummyModel(),
@@ -465,7 +473,7 @@ async def test_an_mcp_snapshot_without_a_catalog_fails_loudly(
     recorded: tuple[RecordingAgent, dict[str, Any]],
 ) -> None:
     """静默跑成「没挂 MCP」的话，教师看到的是「我明明勾了，怎么没用上」。"""
-    from src.app.agent.config import McpReference
+    from app.agent.config import McpReference
 
     runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
     config = AgentConfig(mcps=[McpReference(server_id="srv-1", name="paper-search")])
@@ -483,7 +491,7 @@ async def test_asking_whether_anything_is_pending_does_not_reach_out_to_the_netw
     中断 —— 不去掉的话，挂了 MCP 的分析每次都连两遍（实测日志里两条装配相隔 8 秒），
     而每一次都可能失败、都会记进熔断计数。
     """
-    from src.app.agent.config import McpReference
+    from app.agent.config import McpReference
 
     loaded = 0
 
@@ -492,7 +500,7 @@ async def test_asking_whether_anything_is_pending_does_not_reach_out_to_the_netw
         loaded += 1
         return []
 
-    monkeypatch.setattr("agent.factory.load_mcp_tools", counting_load)
+    monkeypatch.setattr("app.agent.factory.load_mcp_tools", counting_load)
     runner = Agent(model=DummyModel(), checkpointer=InMemorySaver(), mcp_loader=object())  # type: ignore[arg-type]
     config = AgentConfig(mcps=[McpReference(server_id="srv-1", name="paper-search")])
 

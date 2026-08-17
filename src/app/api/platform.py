@@ -19,32 +19,31 @@ from fastapi import Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.agent.factory import create_model
-from src.app.auth.password import PasswordHasher
-from src.app.auth.session import SessionStore
-from src.app.store import postgres
+from app.agent.factory import create_model
+from app.auth.password import PasswordHasher
+from app.auth.session import SessionStore
+from app.group.repository import GroupRepository, JoinRequestRepository
+from app.preset.mcp import McpRepository
+from app.preset.repository import AgentRepository
+from app.preset.review import ReviewRepository
+from app.preset.skill import SkillRepository
+from app.preset.skill_remote import RemoteSkillStore
+from app.quota.policy import QuotaPolicy
+from app.quota.rate import RateLimiter
+from app.quota.usage import RunUsage
+from app.run.archive import EventArchive
+from app.run.cancel import CancelFlag
+from app.run.log import EventLog
+from app.run.repository import RunRepository
+from app.run.submitter import RunSubmitter
+from app.sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteWorkspace
+from app.store import postgres, redis
+from app.task.queue import TaskQueue
+from app.thread.repository import ThreadRepository
+from app.thread.title import TitleWriter
+from app.usage.langfuse import LangfuseUsage
+from app.user.repository import UserRepository
 from config import Settings
-from src.app.group.repository import GroupRepository, JoinRequestRepository
-from src.app.preset.mcp import McpRepository
-from src.app.preset.repository import AgentRepository
-from src.app.preset.review import ReviewRepository
-from src.app.preset.skill import SkillRepository
-from src.app.preset.skill_remote import RemoteSkillStore
-from src.app.quota.policy import QuotaPolicy
-from src.app.quota.rate import RateLimiter
-from src.app.quota.usage import RunUsage
-from src.app.run.archive import EventArchive
-from src.app.run.cancel import CancelFlag
-from src.app.run.log import EventLog
-from src.app.run.repository import RunRepository
-from src.app.run.submitter import RunSubmitter
-from src.app.sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteWorkspace
-from src.app.store import redis
-from src.app.task.queue import TaskQueue
-from src.app.thread.repository import ThreadRepository
-from src.app.thread.title import TitleWriter
-from src.app.usage.langfuse import LangfuseUsage
-from src.app.user.repository import UserRepository
 
 # 网关只投递不消费，consumer 名字用不上。给一个显式的常量而不是空串，
 # 是为了万一有人拿它去 XREADGROUP 时能一眼看出是谁干的

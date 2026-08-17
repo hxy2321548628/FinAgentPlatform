@@ -18,7 +18,7 @@ import sqlalchemy as sa
 import sqlmodel.sql.sqltypes
 from alembic import op
 
-from src.app.preset.model import (
+from app.preset.model import (
     AGENT_NAME_CONDITION,
     AGENT_NAME_INDEX,
     AGENT_OWNER_INDEX,

@@ -14,11 +14,11 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from src.app.api.platform import Platform
-from src.app.auth.password import PasswordHasher
-from src.app.sandbox.workspace import Workspace
+from app.api.platform import Platform
+from app.auth.password import PasswordHasher
+from app.sandbox.workspace import Workspace
+from app.user.model import UserRole
 from test.api.conftest import login, signup
-from src.app.user.model import UserRole
 
 # 一个别人的会话里能被够到的每一条路径。**逐条列出来而不是抽样**：
 # 漏掉一条就是一个越权入口，而那种缺口不报错

@@ -8,12 +8,12 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.event.model import EventType, RunStatus, TokenUsage
-from src.app.run.approval import DEFAULT_TIMEOUT_HOUR, expired, pending_count, sweep
-from src.app.run.log import EventLog
-from src.app.run.repository import RunRepository
-from src.app.thread.repository import Thread
-from src.app.user.repository import User
+from app.event.model import EventType, RunStatus, TokenUsage
+from app.run.approval import DEFAULT_TIMEOUT_HOUR, expired, pending_count, sweep
+from app.run.log import EventLog
+from app.run.repository import RunRepository
+from app.thread.repository import Thread
+from app.user.repository import User
 
 NOW = datetime(2026, 8, 8, tzinfo=UTC)
 

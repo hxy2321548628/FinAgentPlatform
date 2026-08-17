@@ -10,7 +10,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from src.app.sandbox.workspace import Workspace
+from app.sandbox.workspace import Workspace
 from test.api.file_test import make
 
 

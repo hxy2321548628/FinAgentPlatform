@@ -19,10 +19,10 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from pydantic import ValidationError
 
-from src.app.agent.config import effective_config
-from src.app.api.error import concurrency_limit, invalid, not_found, quota_exceeded, unauthenticated
-from src.app.api.platform import Platform, get_platform
-from src.app.api.schema import (
+from app.agent.config import effective_config
+from app.api.error import concurrency_limit, invalid, not_found, quota_exceeded, unauthenticated
+from app.api.platform import Platform, get_platform
+from app.api.schema import (
     RunHistoryResponse,
     RunPageResponse,
     RunRequest,
@@ -32,16 +32,16 @@ from src.app.api.schema import (
     ThreadResponse,
     UpdateThreadRequest,
 )
-from src.app.api.security import UNAUTHENTICATED_MESSAGE, CurrentUser
+from app.api.security import UNAUTHENTICATED_MESSAGE, CurrentUser
+from app.event.model import RunStatus
+from app.preset.mcp_reference import McpReferenceError, resolve_mcp_references
+from app.preset.reference import ReferenceUnavailableError, resolve_reference
+from app.preset.skill_reference import SkillReferenceError, resolve_skill_references
+from app.preset.subagent_reference import SubagentReferenceError, resolve_subagent_references
+from app.run.approval import DEFAULT_PENDING_LIMIT, pending_count
+from app.sandbox.remote import BrokerError
+from app.thread.repository import Thread
 from cursor import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, CursorError, Page
-from src.app.event.model import RunStatus
-from src.app.preset.mcp_reference import McpReferenceError, resolve_mcp_references
-from src.app.preset.reference import ReferenceUnavailableError, resolve_reference
-from src.app.preset.skill_reference import SkillReferenceError, resolve_skill_references
-from src.app.preset.subagent_reference import SubagentReferenceError, resolve_subagent_references
-from src.app.run.approval import DEFAULT_PENDING_LIMIT, pending_count
-from src.app.sandbox.remote import BrokerError
-from src.app.thread.repository import Thread
 
 logger = logging.getLogger(__name__)
 

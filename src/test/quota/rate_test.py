@@ -9,7 +9,7 @@ import time
 import pytest
 from redis.asyncio import Redis
 
-from src.app.quota.rate import KEY_PREFIX, RateLimiter
+from app.quota.rate import KEY_PREFIX, RateLimiter
 
 LIMIT = 3
 WINDOW_SECOND = 60

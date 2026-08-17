@@ -10,16 +10,16 @@ from pathlib import Path
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from src.app.auth.session import DEFAULT_TTL_SECOND as DEFAULT_SESSION_TTL_SECOND
-from src.app.quota.policy import (
+from app.auth.session import DEFAULT_TTL_SECOND as DEFAULT_SESSION_TTL_SECOND
+from app.quota.policy import (
     DEFAULT_CONCURRENT_RUN,
     DEFAULT_OUTPUT_WEIGHT,
     DEFAULT_RATE_LIMIT,
     DEFAULT_RATE_WINDOW_SECOND,
     DEFAULT_TOKEN_DAILY,
 )
-from src.app.quota.usage import DEFAULT_RESET_TIMEZONE
-from src.app.sandbox.container import (
+from app.quota.usage import DEFAULT_RESET_TIMEZONE
+from app.sandbox.container import (
     DEFAULT_CPUS,
     DEFAULT_IMAGE,
     DEFAULT_MEMORY,
@@ -29,15 +29,15 @@ from src.app.sandbox.container import (
     DEFAULT_TMP_SIZE,
     Hardening,
 )
-from src.app.sandbox.pool import (
+from app.sandbox.pool import (
     DEFAULT_IDLE_TIMEOUT,
     DEFAULT_LEASE_TIMEOUT,
     DEFAULT_MAX_CONTAINER,
     DEFAULT_QUEUE_TIMEOUT,
 )
-from src.app.sandbox.quota import DEFAULT_DISK_QUOTA, DEFAULT_QUOTA_COMMAND
-from src.app.sandbox.remote import DEFAULT_BROKER_URL
-from src.app.store.postgres import (
+from app.sandbox.quota import DEFAULT_DISK_QUOTA, DEFAULT_QUOTA_COMMAND
+from app.sandbox.remote import DEFAULT_BROKER_URL
+from app.store.postgres import (
     DEFAULT_DATABASE,
     DEFAULT_HOST,
     DEFAULT_PASSWORD,
@@ -47,10 +47,10 @@ from src.app.store.postgres import (
     NATIVE_DRIVER,
     build_dsn,
 )
-from src.app.store.redis import DEFAULT_URL
-from src.app.task.queue import DEFAULT_CLAIM_IDLE_MILLISECOND
-from src.app.user.model import UserRole
-from src.app.worker.loop import DEFAULT_CONCURRENCY, DEFAULT_HEARTBEAT_SECOND
+from app.store.redis import DEFAULT_URL
+from app.task.queue import DEFAULT_CLAIM_IDLE_MILLISECOND
+from app.user.model import UserRole
+from app.worker.loop import DEFAULT_CONCURRENCY, DEFAULT_HEARTBEAT_SECOND
 
 # .env 在仓库根而不在 app/，且门禁（cwd=app/）与 uvicorn（cwd 不定）的工作目录并不一致，
 # 因此按本文件位置解析成绝对路径 —— 相对路径或向上搜索都会在某种场景下静默读到别的文件。

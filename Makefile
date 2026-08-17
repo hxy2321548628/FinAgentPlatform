@@ -3,9 +3,10 @@
 # `make` 一条命令跑完 lint / 类型 / 测试，未全绿不得提交。
 # 门禁目标只读不改文件，将来接 CI 时可原样复用；要自动改代码用 `make fix`。
 #
-# Python 工程在 app/，web 工程在 web/；recipe 先进各自目录，不在根目录复制配置。
+# Python 工程在 src/，web 工程在 web/；recipe 先进各自目录，不在根目录复制配置。
+# 两侧同一个形态：各自持有自己的依赖声明与工具配置，包根就是那个目录。
 
-APP := app
+APP := src
 WEB := web
 UV  := uv run
 
@@ -104,7 +105,7 @@ up: deploy/.env
 down:
 	@$(COMPOSE) down
 
-## rebuild: 改过 app/ 代码后重建并重启三个应用容器（前端跑 vite dev，不在这里）
+## rebuild: 改过 src/ 代码后重建并重启三个应用容器（前端跑 vite dev，不在这里）
 rebuild: deploy/.env
 	@$(COMPOSE) up -d --build --force-recreate $(APP_SERVICE)
 	@$(MAKE) --no-print-directory ps

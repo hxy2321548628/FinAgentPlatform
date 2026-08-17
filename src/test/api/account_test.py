@@ -8,9 +8,9 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from src.app.api.schema import MIN_PASSWORD_LENGTH
+from app.api.schema import MIN_PASSWORD_LENGTH
+from app.user.model import UserRole
 from test.api.conftest import TEST_PASSWORD, as_admin
-from src.app.user.model import UserRole
 
 USER_PATH = "/api/admin/users"
 GROUP_PATH = "/api/admin/groups"

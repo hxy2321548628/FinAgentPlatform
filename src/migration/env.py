@@ -24,14 +24,16 @@ from sqlmodel import SQLModel
 
 from config import StoreSettings
 
-# 导入是为了让表定义注册进 SQLModel.metadata，autogenerate 才看得见它们
-import app.app.group.model  # noqa: F401  isort:skip
-import app.app.preset.mcp  # isort:skip
-import app.app.preset.model  # isort:skip
-import app.app.preset.skill  # noqa: F401  isort:skip
-import app.app.run.repository  # noqa: F401  isort:skip
-import app.app.thread.model  # noqa: F401  isort:skip
-import app.app.user.model  # noqa: F401  isort:skip
+# 导入是为了让表定义注册进 SQLModel.metadata，autogenerate 才看得见它们。
+# 七行都绑同一个名字 `app`，只有最后一行是 pyflakes 眼里那个「未使用」的绑定 ——
+
+import app.group.model  # isort:skip
+import app.preset.mcp  # isort:skip
+import app.preset.model  # isort:skip
+import app.preset.skill  # isort:skip
+import app.run.repository  # isort:skip
+import app.thread.model  # isort:skip
+import app.user.model  # noqa: F401  isort:skip
 
 config = context.config
 

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from src.app.event.model import (
+from app.event.model import (
     TERMINAL_EVENT_TYPE,
     ErrorData,
     EventType,

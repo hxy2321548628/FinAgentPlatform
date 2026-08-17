@@ -30,42 +30,42 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.agent.config import AgentConfig
-from src.app.api.app import create_app
-from src.app.api.platform import Platform
-from src.app.auth.password import PasswordHasher
-from src.app.auth.session import DEFAULT_TTL_SECOND, SessionStore
-from src.app.broker.app import create_app as create_broker_app
-from src.app.broker.runtime import Broker
-from src.app.broker.skill import SkillStore
+from app.agent.config import AgentConfig
+from app.api.app import create_app
+from app.api.platform import Platform
+from app.auth.password import PasswordHasher
+from app.auth.session import DEFAULT_TTL_SECOND, SessionStore
+from app.broker.app import create_app as create_broker_app
+from app.broker.runtime import Broker
+from app.broker.skill import SkillStore
+from app.event.mapper import StreamChunk
+from app.event.model import InterruptAction
+from app.group.repository import Group, GroupRepository, JoinRequestRepository
+from app.preset.mcp import McpRepository
+from app.preset.repository import AgentRepository
+from app.preset.review import ReviewRepository
+from app.preset.skill import SkillRepository
+from app.preset.skill_remote import RemoteSkillStore
+from app.quota.policy import QuotaPolicy
+from app.quota.rate import RateLimiter
+from app.quota.usage import RunUsage
+from app.run.cancel import CancelFlag
+from app.run.executor import RunExecutor
+from app.run.log import EventLog
+from app.run.repository import RunRepository
+from app.run.submitter import RunSubmitter
+from app.sandbox.backend import SandboxBackend
+from app.sandbox.container import CommandResult
+from app.sandbox.pool import PoolStat, QueuePositionCallback
+from app.sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
+from app.sandbox.workspace import Workspace
+from app.task.queue import TaskQueue
+from app.thread.repository import ThreadRepository
+from app.thread.title import TitleWriter
+from app.user.model import UserRole
+from app.user.repository import User, UserRepository
+from app.worker.loop import Worker
 from config import DEFAULT_UPLOAD_MAX_BYTE
-from src.app.event.mapper import StreamChunk
-from src.app.event.model import InterruptAction
-from src.app.group.repository import Group, GroupRepository, JoinRequestRepository
-from src.app.preset.mcp import McpRepository
-from src.app.preset.repository import AgentRepository
-from src.app.preset.review import ReviewRepository
-from src.app.preset.skill import SkillRepository
-from src.app.preset.skill_remote import RemoteSkillStore
-from src.app.quota.policy import QuotaPolicy
-from src.app.quota.rate import RateLimiter
-from src.app.quota.usage import RunUsage
-from src.app.run.cancel import CancelFlag
-from src.app.run.executor import RunExecutor
-from src.app.run.log import EventLog
-from src.app.run.repository import RunRepository
-from src.app.run.submitter import RunSubmitter
-from src.app.sandbox.backend import SandboxBackend
-from src.app.sandbox.container import CommandResult
-from src.app.sandbox.pool import PoolStat, QueuePositionCallback
-from src.app.sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
-from src.app.sandbox.workspace import Workspace
-from src.app.task.queue import TaskQueue
-from src.app.thread.repository import ThreadRepository
-from src.app.thread.title import TitleWriter
-from src.app.user.model import UserRole
-from src.app.user.repository import User, UserRepository
-from src.app.worker.loop import Worker
 
 BROKER_URL = "http://broker.test"
 

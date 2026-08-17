@@ -3,10 +3,10 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from src.app.api.platform import Platform
-from src.app.auth.password import PasswordHasher
-from src.app.event.model import RunStatus
-from src.app.sandbox.workspace import Workspace
+from app.api.platform import Platform
+from app.auth.password import PasswordHasher
+from app.event.model import RunStatus
+from app.sandbox.workspace import Workspace
 from test.api.conftest import FAKE_TITLE, Agent, FakePool, drain, login, signup
 
 # 工作目录里的文件（上传、列结构、预览、下载、删除）全部在 file_test.py

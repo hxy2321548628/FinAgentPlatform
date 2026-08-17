@@ -21,11 +21,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 
-from src.app.agent.circuit import McpCircuit
-from src.app.agent.mcp import probe_mcp_server
-from src.app.api.error import invalid, not_found
-from src.app.api.platform import Platform, get_platform
-from src.app.api.schema import (
+from app.agent.circuit import McpCircuit
+from app.agent.mcp import probe_mcp_server
+from app.api.error import invalid, not_found
+from app.api.platform import Platform, get_platform
+from app.api.schema import (
     AdminMcpServerResponse,
     ApplyMcpRequest,
     DecideMcpRequest,
@@ -33,9 +33,9 @@ from src.app.api.schema import (
     McpServerResponse,
     SetMcpEnabledRequest,
 )
-from src.app.api.security import AdminUser, CurrentUser, ReviewerUser
-from src.app.preset.mcp import McpApplication, McpServer, McpTargetLoader
-from src.app.preset.model import ResourceKind, ReviewStatus
+from app.api.security import AdminUser, CurrentUser, ReviewerUser
+from app.preset.mcp import McpApplication, McpServer, McpTargetLoader
+from app.preset.model import ResourceKind, ReviewStatus
 
 logger = logging.getLogger(__name__)
 

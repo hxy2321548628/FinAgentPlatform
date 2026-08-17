@@ -36,10 +36,10 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.app.agent.config import McpReference, SkillReference, SubagentReference
-from src.app.agent.subagent import SubagentDefinition
-from src.app.group.model import GroupMemberRecord
-from src.app.preset.model import (
+from app.agent.config import McpReference, SkillReference, SubagentReference
+from app.agent.subagent import SubagentDefinition
+from app.group.model import GroupMemberRecord
+from app.preset.model import (
     FIRST_VERSION,
     AgentRecord,
     AgentVersionRecord,
@@ -50,7 +50,7 @@ from src.app.preset.model import (
     VersionStatus,
     Visibility,
 )
-from src.app.user.model import UserRecord
+from app.user.model import UserRecord
 
 logger = logging.getLogger(__name__)
 

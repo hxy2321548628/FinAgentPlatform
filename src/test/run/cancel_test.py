@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from redis.asyncio import Redis
 
-from src.app.run.cancel import KEY_PREFIX, CancelFlag
+from app.run.cancel import KEY_PREFIX, CancelFlag
 
 SHORT_TTL_SECOND = 60
 

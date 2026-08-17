@@ -19,9 +19,9 @@ from typing import Annotated
 import httpx
 from fastapi import APIRouter, Depends
 
-from src.app.api.platform import Platform, get_platform
-from src.app.api.schema import UsageRankingResponse, UsageResponse, UserUsageItem
-from src.app.api.security import AdminUser, CurrentUser
+from app.api.platform import Platform, get_platform
+from app.api.schema import UsageRankingResponse, UsageResponse, UserUsageItem
+from app.api.security import AdminUser, CurrentUser
 
 logger = logging.getLogger(__name__)
 

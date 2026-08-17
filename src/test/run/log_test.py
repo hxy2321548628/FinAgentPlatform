@@ -14,7 +14,7 @@ import asyncio
 import pytest
 from redis.asyncio import Redis
 
-from src.app.event.model import (
+from app.event.model import (
     Event,
     EventType,
     RunErrorCode,
@@ -25,7 +25,7 @@ from src.app.event.model import (
     TokenData,
     TokenEvent,
 )
-from src.app.run.log import EventLog, InvalidEventIdError
+from app.run.log import EventLog, InvalidEventIdError
 
 
 def token(text: str, run_id: str = "run-1") -> Event:

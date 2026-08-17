@@ -21,7 +21,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langfuse import Langfuse, propagate_attributes
 from langfuse.langchain import CallbackHandler
 
-from src.app.agent.config import Settings
+from config import Settings
 
 logger = logging.getLogger(__name__)
 

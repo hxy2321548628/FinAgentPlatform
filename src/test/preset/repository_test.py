@@ -10,14 +10,14 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.agent.config import SkillReference, SubagentReference
-from src.app.group.repository import Group, GroupRepository
-from src.app.preset.model import Visibility
-from src.app.preset.repository import AgentRepository, AgentSource
-from src.app.preset.review import ReviewRepository
+from app.agent.config import SkillReference, SubagentReference
+from app.group.repository import Group, GroupRepository
+from app.preset.model import Visibility
+from app.preset.repository import AgentRepository, AgentSource
+from app.preset.review import ReviewRepository
+from app.user.model import UserRole
+from app.user.repository import User, UserRepository
 from test.conftest import FAKE_HASH
-from src.app.user.model import UserRole
-from src.app.user.repository import User, UserRepository
 
 
 @pytest.fixture

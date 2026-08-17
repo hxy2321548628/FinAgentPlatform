@@ -11,12 +11,12 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.thread.model import ThreadRecord
+from app.thread.repository import ThreadRepository
+from app.user.model import UserRole
+from app.user.repository import User, UserRepository
 from cursor import CursorError
 from test.conftest import FAKE_HASH
-from src.app.thread.model import ThreadRecord
-from src.app.thread.repository import ThreadRepository
-from src.app.user.model import UserRole
-from src.app.user.repository import User, UserRepository
 
 
 @pytest.fixture

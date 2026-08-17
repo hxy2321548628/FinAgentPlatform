@@ -3,7 +3,7 @@
 import pytest
 from redis.asyncio import Redis
 
-from src.app.agent.circuit import MCP_FAILURE_THRESHOLD, McpCircuit
+from app.agent.circuit import MCP_FAILURE_THRESHOLD, McpCircuit
 
 
 class Disabler:

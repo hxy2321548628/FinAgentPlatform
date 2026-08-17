@@ -9,7 +9,7 @@ from contextlib import nullcontext
 import pytest
 from pydantic import SecretStr
 
-from src.app.agent.trace import SESSION_KEY, USER_KEY, attribution, create_callback, propagation
+from app.agent.trace import SESSION_KEY, USER_KEY, attribution, create_callback, propagation
 from config import Settings
 
 BASE_URL = "http://127.0.0.1:3000"

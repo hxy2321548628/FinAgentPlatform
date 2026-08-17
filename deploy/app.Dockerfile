@@ -24,11 +24,13 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app
 
 # 依赖单独一层：改业务代码不必重装依赖
-COPY app/pyproject.toml app/uv.lock ./
+COPY src/pyproject.toml src/uv.lock ./
 RUN uv sync --locked --no-install-project --no-dev
 
-COPY app/ ./
+# 包根是 src/，因此它的内容平铺进 WORKDIR —— 镜像里的模块路径与 `cd src` 时一致，
+# 本地跑得起来的入口在容器里原样成立
+COPY src/ ./
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-# 入口由 compose 的 command 指定：api 是 api.app:app，broker 是 broker.app:app
+# 入口由 compose 的 command 指定：api 是 app.api.app:app，broker 是 app.broker.app:app

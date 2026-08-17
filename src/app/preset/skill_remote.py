@@ -4,9 +4,9 @@ import base64
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from src.app.agent.config import SkillReference
-from src.app.preset.skill_package import SkillFile
-from src.app.sandbox.remote import BrokerConnection
+from app.agent.config import SkillReference
+from app.preset.skill_package import SkillFile
+from app.sandbox.remote import BrokerConnection
 
 
 @dataclass(frozen=True)

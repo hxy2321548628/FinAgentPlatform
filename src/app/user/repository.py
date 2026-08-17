@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.app.user.model import UserRecord, UserRole
+from app.user.model import UserRecord, UserRole
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from src.app.sandbox.path import SANDBOX_ROOT, PathEscapeError, thread_workspace, to_sandbox_path, to_virtual_path
+from app.sandbox.path import SANDBOX_ROOT, PathEscapeError, thread_workspace, to_sandbox_path, to_virtual_path
 
 THREAD_ID = "8f3a2b1c"
 

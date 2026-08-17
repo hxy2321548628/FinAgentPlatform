@@ -14,8 +14,8 @@ import os
 from pathlib import Path
 from shutil import rmtree
 
-from src.app.sandbox.path import SKILL_DIR, PathEscapeError, thread_workspace
-from src.app.sandbox.quota import NoQuota, QuotaProtocol
+from app.sandbox.path import SKILL_DIR, PathEscapeError, thread_workspace
+from app.sandbox.quota import NoQuota, QuotaProtocol
 
 logger = logging.getLogger(__name__)
 

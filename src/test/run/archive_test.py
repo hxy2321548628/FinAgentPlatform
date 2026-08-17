@@ -11,10 +11,10 @@ import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.event.model import Event, RunFinishedData, RunFinishedEvent, TokenData, TokenEvent
-from src.app.run.archive import EventArchive, pack, unpack
-from src.app.run.log import EventLog, stream_key
-from src.app.store.redis import StreamEntry
+from app.event.model import Event, RunFinishedData, RunFinishedEvent, TokenData, TokenEvent
+from app.run.archive import EventArchive, pack, unpack
+from app.run.log import EventLog, stream_key
+from app.store.redis import StreamEntry
 
 
 def token(text: str, run_id: str) -> Event:

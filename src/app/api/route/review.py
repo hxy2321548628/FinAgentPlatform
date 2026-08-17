@@ -16,11 +16,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from src.app.api.error import invalid, not_found
-from src.app.api.platform import Platform, get_platform
-from src.app.api.schema import DecideReviewRequest, ReviewResponse
-from src.app.api.security import ReviewerUser
-from src.app.preset.review import ReviewItem
+from app.api.error import invalid, not_found
+from app.api.platform import Platform, get_platform
+from app.api.schema import DecideReviewRequest, ReviewResponse
+from app.api.security import ReviewerUser
+from app.preset.review import ReviewItem
 
 logger = logging.getLogger(__name__)
 

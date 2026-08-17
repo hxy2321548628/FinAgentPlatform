@@ -15,7 +15,7 @@ import sqlalchemy as sa
 import sqlmodel.sql.sqltypes
 from alembic import op
 
-from src.app.group.model import (
+from app.group.model import (
     MEMBER_GROUP_INDEX,
     MEMBER_TABLE_NAME,
     PENDING_REQUEST_CONDITION,

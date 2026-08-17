@@ -17,7 +17,7 @@ import logging
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from src.app.thread.repository import ThreadRepository
+from app.thread.repository import ThreadRepository
 
 logger = logging.getLogger(__name__)
 

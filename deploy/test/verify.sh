@@ -398,7 +398,7 @@ hostile_cleanup() {
     return 0
 }
 
-# 起一个与平台完全同款的沙箱：加固参数照 app/sandbox/container.py 的 Hardening
+# 起一个与平台完全同款的沙箱：加固参数照 src/app/sandbox/container.py 的 Hardening
 start_sandbox() {
     local thread_id="$1" projid
     WORKSPACE="$WORKSPACE_ROOT/$WORKSPACE_PREFIX-$thread_id"
@@ -408,7 +408,7 @@ start_sandbox() {
     # 平台自己跑时目录属主本就是平台用户，这是本组独有的问题
     chown "$SANDBOX_OWNER" "$WORKSPACE"
 
-    # 配额照 app/sandbox/quota.py 的派生方式算，保证测的是平台真正会用的那个 id
+    # 配额照 src/app/sandbox/quota.py 的派生方式算，保证测的是平台真正会用的那个 id
     projid=$(python3 -c "import zlib,sys; print(zlib.crc32(sys.argv[1].encode()) % 0x7FFFFFFF + 1)" "$thread_id")
     xfs_quota -x -c "project -s -p $WORKSPACE $projid" "$WORKSPACE_ROOT" >/dev/null
     xfs_quota -x -c "limit -p bhard=$DISK_QUOTA $projid" "$WORKSPACE_ROOT" >/dev/null
@@ -3780,9 +3780,9 @@ end
 begin "P9④" "循环子智能体在平台递归额度停止，而不是 9999"
 
 P9_RECURSION_LOG="$WORK_DIR/p9-recursion.log"
-if [[ ! -x $REPO_ROOT/app/.venv/bin/pytest ]]; then
-    undone "app/.venv/bin/pytest 不存在，无法运行本地受限子图探针"
-elif (cd "$REPO_ROOT/app" && UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q test/agent/subagent_test.py -k test_the_bound_limit_stops_a_real_looping_subgraph >"$P9_RECURSION_LOG" 2>&1); then
+if [[ ! -x $REPO_ROOT/src/.venv/bin/pytest ]]; then
+    undone "src/.venv/bin/pytest 不存在，无法运行本地受限子图探针"
+elif (cd "$REPO_ROOT/src" && UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q test/agent/subagent_test.py -k test_the_bound_limit_stops_a_real_looping_subgraph >"$P9_RECURSION_LOG" 2>&1); then
     pass "真实循环子图按 SUBAGENT_RECURSION_LIMIT 停止；测试未落回 9999"
 else
     fail "循环子图递归上限探针失败，详见 $P9_RECURSION_LOG"
@@ -3924,7 +3924,7 @@ end
 P10_FIXTURE_PORT="${P10_FIXTURE_PORT:-8931}"
 P10_FIXTURE_URL="http://host.docker.internal:$P10_FIXTURE_PORT/mcp"
 P10_FIXTURE_SCRIPT="$REPO_ROOT/deploy/test/mcp/server.py"
-P10_VENV_PYTHON="$REPO_ROOT/app/.venv/bin/python"
+P10_VENV_PYTHON="$REPO_ROOT/src/.venv/bin/python"
 P10_FIXTURE_PID=""
 P10_READY=0
 P10_SETUP_NOTE="未开始"
@@ -4028,7 +4028,7 @@ if (( ! P7_READY )); then
 elif [[ ! -f $P10_FIXTURE_SCRIPT ]]; then
     P10_SETUP_NOTE="缺夹具 $P10_FIXTURE_SCRIPT"
 elif [[ ! -x $P10_VENV_PYTHON ]]; then
-    P10_SETUP_NOTE="缺 app/.venv（cd app && uv sync），起不了夹具 MCP server"
+    P10_SETUP_NOTE="缺 src/.venv（cd src && uv sync），起不了夹具 MCP server"
 elif ! p10_port_free; then
     P10_SETUP_NOTE=":$P10_FIXTURE_PORT 上已经有人在应答 —— 先停掉它（开发时手工起的夹具最常见），或换 P10_FIXTURE_PORT"
 elif ! p10_start_fixture; then

@@ -11,10 +11,10 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from src.app.api.platform import Platform
-from src.app.event.model import EventType, InterruptAction, RunStatus
-from src.app.run.approval import DEFAULT_PENDING_LIMIT
-from src.app.run.decision import DecisionType
+from app.api.platform import Platform
+from app.event.model import EventType, InterruptAction, RunStatus
+from app.run.approval import DEFAULT_PENDING_LIMIT
+from app.run.decision import DecisionType
 from test.api.conftest import Agent, drain
 
 # 教师会看到的那次待确认调用

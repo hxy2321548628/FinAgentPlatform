@@ -11,15 +11,15 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
-from src.app.broker.cache import ToolCache
-from src.app.broker.skill import SkillStore
+from app.broker.cache import ToolCache
+from app.broker.skill import SkillStore
+from app.sandbox.backend import SandboxBackend
+from app.sandbox.container import CommandResult, ContainerError
+from app.sandbox.pool import SandboxPool
+from app.sandbox.quota import NoQuota, QuotaProtocol, XfsQuota
+from app.sandbox.workspace import Workspace
+from app.store import redis
 from config import Settings
-from src.app.sandbox.backend import SandboxBackend
-from src.app.sandbox.container import CommandResult, ContainerError
-from src.app.sandbox.pool import SandboxPool
-from src.app.sandbox.quota import NoQuota, QuotaProtocol, XfsQuota
-from src.app.sandbox.workspace import Workspace
-from src.app.store import redis
 
 logger = logging.getLogger(__name__)
 

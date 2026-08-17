@@ -22,14 +22,14 @@ from fastapi.testclient import TestClient
 from redis.asyncio import Redis
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.app.api.platform import Platform
-from src.app.auth.password import PasswordHasher
-from src.app.event.model import TokenUsage
-from src.app.quota.policy import QuotaPolicy
-from src.app.quota.rate import RateLimiter
-from src.app.quota.usage import DEFAULT_RESET_TIMEZONE, next_reset
+from app.api.platform import Platform
+from app.auth.password import PasswordHasher
+from app.event.model import TokenUsage
+from app.quota.policy import QuotaPolicy
+from app.quota.rate import RateLimiter
+from app.quota.usage import DEFAULT_RESET_TIMEZONE, next_reset
+from app.user.model import UserRecord, UserRole
 from test.api.conftest import TEST_RATE_WINDOW_SECOND, login, signup
-from src.app.user.model import UserRecord, UserRole
 
 # 一次「预置用量」的大小。取一个明显超过任何角色档位的数，
 # 免得将来改档位时这个文件要跟着一起改

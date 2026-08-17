@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from src.app.sandbox.container import CommandResult, ContainerError
-from src.app.sandbox.pool import SandboxPool, SandboxQueueTimeoutError
-from src.app.sandbox.workspace import Workspace
+from app.sandbox.container import CommandResult, ContainerError
+from app.sandbox.pool import SandboxPool, SandboxQueueTimeoutError
+from app.sandbox.workspace import Workspace
 
 # 租约的持有者。生产里取的是 run 标识 —— 崩溃恢复接着跑的是同一个 run
 HOLDER = "run-1"
@@ -565,7 +565,7 @@ async def test_reclaim_adopts_containers_left_by_a_previous_broker(
 
     不认领就是既占着内存又不在池账上的孤儿：新申请另起一个，旧的再没人回收。
     """
-    monkeypatch.setattr("sandbox.pool.running_sandbox", lambda: {"thread-1": "abc123", "thread-2": "def456"})
+    monkeypatch.setattr("app.sandbox.pool.running_sandbox", lambda: {"thread-1": "abc123", "thread-2": "def456"})
     pool = make_pool(tmp_path, factory)
 
     await pool.reclaim()
@@ -579,7 +579,7 @@ async def test_a_reclaimed_container_is_reused_instead_of_restarted(
     tmp_path: Path, factory: Factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """认领的意义就在这里：接着用，而不是再起一个把旧的晾在那。"""
-    monkeypatch.setattr("sandbox.pool.running_sandbox", lambda: {"thread-1": "abc123"})
+    monkeypatch.setattr("app.sandbox.pool.running_sandbox", lambda: {"thread-1": "abc123"})
     pool = make_pool(tmp_path, factory)
     await pool.reclaim()
 
@@ -594,7 +594,7 @@ async def test_a_reclaimed_container_is_idle_and_sweepable(
     tmp_path: Path, factory: Factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """用着它的 run 随上一个 broker 一起没了，因此它现在是空闲的，该受 idle 回收管。"""
-    monkeypatch.setattr("sandbox.pool.running_sandbox", lambda: {"thread-1": "abc123"})
+    monkeypatch.setattr("app.sandbox.pool.running_sandbox", lambda: {"thread-1": "abc123"})
     pool = make_pool(tmp_path, factory, idle_timeout=0.0)
     await pool.reclaim()
 
@@ -610,7 +610,7 @@ async def test_reclaim_does_not_disturb_containers_already_in_the_pool(
     """认领可能被重复调用，正在服务某个 run 的容器绝不能被顶掉。"""
     pool = make_pool(tmp_path, factory)
     await pool.acquire("thread-1", holder=HOLDER)
-    monkeypatch.setattr("sandbox.pool.running_sandbox", lambda: {"thread-1": "abc123"})
+    monkeypatch.setattr("app.sandbox.pool.running_sandbox", lambda: {"thread-1": "abc123"})
 
     await pool.reclaim()
 
@@ -622,7 +622,7 @@ async def test_reclaim_does_not_disturb_containers_already_in_the_pool(
 async def test_reclaim_on_a_clean_host_does_nothing(
     tmp_path: Path, factory: Factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("sandbox.pool.running_sandbox", lambda: {})
+    monkeypatch.setattr("app.sandbox.pool.running_sandbox", lambda: {})
     pool = make_pool(tmp_path, factory)
 
     await pool.reclaim()

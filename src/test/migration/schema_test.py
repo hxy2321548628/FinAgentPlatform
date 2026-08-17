@@ -12,7 +12,7 @@ import psycopg
 import pytest
 from alembic import command
 
-from src.app.store.postgres import DRIVER, NATIVE_DRIVER
+from app.store.postgres import DRIVER, NATIVE_DRIVER
 from test.conftest import (
     PROBE_TIMEOUT_SECOND,
     SKIP_POSTGRES,

@@ -15,8 +15,8 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import Field, SQLModel, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.app.group.model import GroupMemberRecord
-from src.app.preset.model import (
+from app.group.model import GroupMemberRecord
+from app.preset.model import (
     FIRST_VERSION,
     ResourceGroupRecord,
     ResourceKind,
@@ -26,7 +26,7 @@ from src.app.preset.model import (
     Visibility,
     _value_enum,
 )
-from src.app.user.model import UserRecord
+from app.user.model import UserRecord
 
 TABLE_NAME = "skills"
 VERSION_TABLE_NAME = "skill_versions"

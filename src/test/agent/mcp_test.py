@@ -28,9 +28,9 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.interceptors import MCPToolCallRequest, MCPToolCallResult
 from langchain_mcp_adapters.sessions import StreamableHttpConnection
 
-from src.app.agent.circuit import McpCircuit
-from src.app.agent.config import McpReference
-from src.app.agent.mcp import RESERVED_TOOL_NAME, McpTarget, _CallGuard, load_mcp_tools, probe_mcp_server
+from app.agent.circuit import McpCircuit
+from app.agent.config import McpReference
+from app.agent.mcp import RESERVED_TOOL_NAME, McpTarget, _CallGuard, load_mcp_tools, probe_mcp_server
 
 FIXTURE_SCRIPT = Path(__file__).resolve().parents[3] / "deploy" / "test" / "mcp" / "server.py"
 
@@ -300,7 +300,7 @@ async def test_a_hung_server_does_not_drag_down_the_others(
     **断言的是真实耗时**，不是「我们给 asyncio.timeout 传了 30」—— 后者验的是意图，
     框架换一种连接实现之后照样绿。
     """
-    monkeypatch.setattr("agent.mcp.MCP_CONNECT_TIMEOUT", PROBE_TIMEOUT_SECOND)
+    monkeypatch.setattr("app.agent.mcp.MCP_CONNECT_TIMEOUT", PROBE_TIMEOUT_SECOND)
     hung = target(hung_url, name="hung")
     good = target(fixture_url, name="fixture")
     loader, recorder = Loader(hung, good), Recorder()
@@ -355,7 +355,7 @@ async def test_a_stale_declared_tool_list_is_logged_not_enforced(
     one = target(fixture_url, declared_tool_name=["search_paper", "已经没有的工具"])
     loader = Loader(one)
 
-    with caplog.at_level(logging.WARNING, logger="agent.mcp"):
+    with caplog.at_level(logging.WARNING, logger="app.agent.mcp"):
         tools = await load_mcp_tools([reference(one)], loader=loader)
 
     assert {tool.name for tool in tools} == FIXTURE_TOOL_NAME - RESERVED_TOOL_NAME
@@ -378,7 +378,7 @@ async def test_a_slow_call_comes_back_as_an_error_result_instead_of_raising(
     fixture_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """§2 第 3 条：抛出去的话，一次慢调用会掀掉一次已经跑了二十分钟的分析。"""
-    monkeypatch.setattr("agent.mcp.MCP_CALL_TIMEOUT", PROBE_TIMEOUT_SECOND)
+    monkeypatch.setattr("app.agent.mcp.MCP_CALL_TIMEOUT", PROBE_TIMEOUT_SECOND)
     one = target(fixture_url)
     tools = {tool.name: tool for tool in await load_mcp_tools([reference(one)], loader=Loader(one))}
 
@@ -445,7 +445,7 @@ async def test_all_three_entry_points_feed_the_same_counter(dead_url: str, monke
     因此断言的不是「三处都调了同名函数」，而是**三处的失败累加到同一个数上**：
     两次装配 + 两次探活 + 一次调用超时，第五次才触发那一次停用。
     """
-    monkeypatch.setattr("agent.mcp.MCP_CALL_TIMEOUT", PROBE_TIMEOUT_SECOND)
+    monkeypatch.setattr("app.agent.mcp.MCP_CALL_TIMEOUT", PROBE_TIMEOUT_SECOND)
     dead = target(dead_url, name="dead")
     disabler = Disabler()
     circuit = circuit_over(disabler)

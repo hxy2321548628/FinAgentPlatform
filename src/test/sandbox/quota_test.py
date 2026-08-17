@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from src.app.sandbox.quota import (
+from app.sandbox.quota import (
     PROJECT_ID_SPACE,
     NoQuota,
     QuotaError,

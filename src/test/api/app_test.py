@@ -7,13 +7,13 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from src.app.api.app import create_app
-from src.app.api.platform import build_platform
+from app.api.app import create_app
+from app.api.platform import build_platform
+from app.sandbox.remote import RemoteWorkspace
+from app.store.postgres import PostgresUnavailableError
+from app.store.redis import RedisUnavailableError
+from app.thread.title import TitleWriter
 from config import Settings
-from src.app.sandbox.remote import RemoteWorkspace
-from src.app.store.postgres import PostgresUnavailableError
-from src.app.store.redis import RedisUnavailableError
-from src.app.thread.title import TitleWriter
 
 # 不会有人监听的端口，连不上是立刻的 ECONNREFUSED
 DEAD_PORT = 1
@@ -155,7 +155,7 @@ def test_an_app_without_an_injected_platform_builds_its_own(tmp_path: Path, monk
     之后那需要一个真的 broker 在跑，那是 deploy/test/ 里的集成验收，不是单测。
     """
     settings = Settings(deepseek_api_key=SecretStr("sk-test"), sandbox_workspace_root=tmp_path)
-    monkeypatch.setattr("api.app.get_settings", lambda: settings)
+    monkeypatch.setattr("app.api.app.get_settings", lambda: settings)
 
     with TestClient(create_app()) as client:
         assert client.app.state.platform.submitter is not None  # type: ignore[attr-defined]

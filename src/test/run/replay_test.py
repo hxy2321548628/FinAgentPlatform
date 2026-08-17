@@ -5,7 +5,7 @@
 因此一条整段与 n 条增量必须渲染成同一个结果。
 """
 
-from src.app.event.model import (
+from app.event.model import (
     EventType,
     InterruptAction,
     InterruptData,
@@ -19,8 +19,8 @@ from src.app.event.model import (
     ToolCallData,
     ToolCallEvent,
 )
-from src.app.run.log import LoggedEvent
-from src.app.run.replay import collapse
+from app.run.log import LoggedEvent
+from app.run.replay import collapse
 
 RUN = "run-1"
 
@@ -125,7 +125,7 @@ def test_a_single_increment_is_left_as_it_is() -> None:
 
 def test_the_interrupt_payload_survives_collapsing() -> None:
     """审批要按最后一条 `interrupt` 的 actions 校验决策数，压缩不能把它弄丢。"""
-    from src.app.event.model import InterruptEvent
+    from app.event.model import InterruptEvent
 
     interrupt = LoggedEvent(
         id="2-0",

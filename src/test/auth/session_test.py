@@ -7,8 +7,8 @@
 import pytest
 from redis.asyncio import Redis
 
-from src.app.auth.session import KEY_PREFIX, Session, SessionStore
-from src.app.user.model import UserRole
+from app.auth.session import KEY_PREFIX, Session, SessionStore
+from app.user.model import UserRole
 
 SHORT_TTL_SECOND = 60
 LONG_TTL_SECOND = 3600

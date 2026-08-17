@@ -6,12 +6,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import StreamingResponse
 
-from src.app.api.error import invalid, not_found
-from src.app.api.platform import Platform, get_platform
-from src.app.api.schema import ApproveRequest, ReplayedEvent, RunReplayResponse, RunResponse
-from src.app.api.security import CurrentUser
-from src.app.api.sse import heartbeat_stream
-from src.app.event.model import (
+from app.api.error import invalid, not_found
+from app.api.platform import Platform, get_platform
+from app.api.schema import ApproveRequest, ReplayedEvent, RunReplayResponse, RunResponse
+from app.api.security import CurrentUser
+from app.api.sse import heartbeat_stream
+from app.event.model import (
     TERMINAL_STATUS,
     InterruptData,
     RunCancelledData,
@@ -19,11 +19,11 @@ from src.app.event.model import (
     RunStatus,
     now_ms,
 )
+from app.run.decision import DecisionError, check
+from app.run.log import InvalidEventIdError, parse_event_id
+from app.run.replay import collapse
+from app.run.repository import Run
 from log import run_context
-from src.app.run.decision import DecisionError, check
-from src.app.run.log import InvalidEventIdError, parse_event_id
-from src.app.run.replay import collapse
-from src.app.run.repository import Run
 
 logger = logging.getLogger(__name__)
 

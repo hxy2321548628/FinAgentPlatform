@@ -23,7 +23,7 @@ import logging
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from src.app.store.redis import check
+from app.store.redis import check
 
 logger = logging.getLogger(__name__)
 

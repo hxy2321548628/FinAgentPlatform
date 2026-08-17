@@ -9,12 +9,12 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from src.app.api.platform import Platform
-from src.app.api.schema import MIN_PASSWORD_LENGTH
-from src.app.auth.session import COOKIE_NAME
+from app.api.platform import Platform
+from app.api.schema import MIN_PASSWORD_LENGTH
+from app.auth.session import COOKIE_NAME
+from app.user.model import UserRole
 from test.api.conftest import TEST_PASSWORD, make_group
 from test.conftest import json_log
-from src.app.user.model import UserRole
 
 REGISTER_PATH = "/api/auth/register"
 
@@ -163,7 +163,7 @@ def test_registering_is_open_to_anonymous_callers(client: TestClient) -> None:
 
 
 def test_the_password_never_shows_up_in_the_log(client: TestClient) -> None:
-    with json_log("api.route.auth") as recorded:
+    with json_log("app.api.route.auth") as recorded:
         client.post(REGISTER_PATH, json={"name": _name(), "email": _email(), "password": NEW_PASSWORD})
         client.post(
             REGISTER_PATH,

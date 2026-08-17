@@ -6,11 +6,11 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.group.model import INVITE_CODE_LENGTH, JoinRequestStatus
-from src.app.group.repository import GroupRepository, JoinRequestRepository
+from app.group.model import INVITE_CODE_LENGTH, JoinRequestStatus
+from app.group.repository import GroupRepository, JoinRequestRepository
+from app.user.model import UserRole
+from app.user.repository import User, UserRepository
 from test.conftest import FAKE_HASH
-from src.app.user.model import UserRole
-from src.app.user.repository import User, UserRepository
 
 
 @pytest.fixture

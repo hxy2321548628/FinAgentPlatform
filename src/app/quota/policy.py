@@ -14,7 +14,7 @@
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from src.app.user.model import UserRole
+from app.user.model import UserRole
 
 # 一次完整分析的实测当量（架构 §6.4，2026-08-02 P0 探针）：
 # 未命中 input 115,328 + output 8,701 ≈ 12.4 万。下面两组初值都从这一个数外推

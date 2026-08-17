@@ -14,8 +14,8 @@ from langchain.agents.middleware.human_in_the_loop import HumanInTheLoopMiddlewa
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from src.app.agent.config import SubagentReference
-from src.app.agent.prompt import ENVIRONMENT_SEGMENT
+from app.agent.config import SubagentReference
+from app.agent.prompt import ENVIRONMENT_SEGMENT
 
 # 子智能体单独计图步数。与主图一样留够正常分析余量，同时避免上游默认的 9999
 # 让一个跑飞的子图烧掉数千次主模型调用。

@@ -10,8 +10,8 @@ from uuid import uuid4
 import pytest
 from redis.asyncio import Redis
 
-from src.app.agent.config import AgentConfig
-from src.app.task.queue import RunTask, TaskQueue
+from app.agent.config import AgentConfig
+from app.task.queue import RunTask, TaskQueue
 
 # 认领阈值取 0：pending 里的消息一律可认领。取一个很小的正数会让断言的真假
 # 取决于两行代码之间过了几毫秒 —— 那种偶发的红比没有测试更糟

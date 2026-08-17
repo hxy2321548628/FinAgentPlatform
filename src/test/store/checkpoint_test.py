@@ -15,7 +15,7 @@ from langgraph.checkpoint.base import CheckpointMetadata, empty_checkpoint
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.store.checkpoint import Checkpoint, open_checkpoint
+from app.store.checkpoint import Checkpoint, open_checkpoint
 from test.conftest import TEST_POSTGRES_CONNINFO
 
 # 框架自己建的表。手工改过就等着下次升级 LangGraph 时冲突，因此它们不进 Alembic

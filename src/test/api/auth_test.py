@@ -11,13 +11,13 @@ import pytest
 from fastapi.testclient import TestClient
 from redis.asyncio import Redis
 
-from src.app.api.platform import Platform
-from src.app.api.route.auth import COOKIE_PATH, COOKIE_SAME_SITE
-from src.app.auth.password import PasswordHasher
-from src.app.auth.session import COOKIE_NAME, KEY_PREFIX
+from app.api.platform import Platform
+from app.api.route.auth import COOKIE_PATH, COOKIE_SAME_SITE
+from app.auth.password import PasswordHasher
+from app.auth.session import COOKIE_NAME, KEY_PREFIX
+from app.user.model import UserRole
 from test.api.conftest import TEST_PASSWORD, login, signup
 from test.conftest import json_log
-from src.app.user.model import UserRole
 
 # 未登录时业务端点的全部入口。**逐条列出来而不是抽样**：漏挂一个端点就是一个
 # 不需要登录的入口，而那种缺口不报错
@@ -135,7 +135,7 @@ def test_the_password_never_shows_up_in_the_log(client: TestClient, platform: Pl
     name = f"teacher-{uuid4().hex[:8]}"
     signup(client, platform, hasher, name=name)
 
-    with json_log("api.route.auth") as recorded:
+    with json_log("app.api.route.auth") as recorded:
         login(client, name)
         client.post("/api/auth/login", json={"name": name, "password": "另一个错口令"})
 

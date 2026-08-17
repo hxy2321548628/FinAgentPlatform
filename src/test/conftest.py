@@ -25,15 +25,15 @@ from psycopg import sql
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.store.postgres import DRIVER, NATIVE_DRIVER, PostgresUnavailableError, build_dsn, create_engine
+from app.store.postgres import check as check_postgres
+from app.store.redis import RedisUnavailableError, create_client
+from app.store.redis import check as check_redis
+from app.thread.repository import Thread, ThreadRepository
+from app.user.model import UserRole
+from app.user.repository import User, UserRepository
 from config import StoreSettings
 from log import JsonFormatter
-from src.app.store.postgres import DRIVER, NATIVE_DRIVER, PostgresUnavailableError, build_dsn, create_engine
-from src.app.store.postgres import check as check_postgres
-from src.app.store.redis import RedisUnavailableError, create_client
-from src.app.store.redis import check as check_redis
-from src.app.thread.repository import Thread, ThreadRepository
-from src.app.user.model import UserRole
-from src.app.user.repository import User, UserRepository
 
 SETTINGS = StoreSettings()
 ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"

@@ -17,9 +17,9 @@ from typing import Protocol
 
 from deepagents.backends.protocol import BackendProtocol
 
-from src.app.agent.config import AgentConfig, SkillReference
-from src.app.event.mapper import EventMapper, StreamChunk
-from src.app.event.model import (
+from app.agent.config import AgentConfig, SkillReference
+from app.event.mapper import EventMapper, StreamChunk
+from app.event.model import (
     Event,
     InterruptAction,
     InterruptData,
@@ -43,13 +43,13 @@ from src.app.event.model import (
     ToolResultEvent,
     now_ms,
 )
-from src.app.run.log import run_context
-from src.app.run.decision import to_resume
-from src.app.run.log import EventLog, LoggedEvent
-from src.app.run.repository import Run, RunStart
-from src.app.sandbox.pool import SandboxQueueTimeoutError
-from src.app.sandbox.remote import AsyncQueuePositionCallback, RemoteBackendFactory
-from src.app.task.queue import RunTask
+from app.run.decision import to_resume
+from app.run.log import EventLog, LoggedEvent
+from app.run.repository import Run, RunStart
+from app.sandbox.pool import SandboxQueueTimeoutError
+from app.sandbox.remote import AsyncQueuePositionCallback, RemoteBackendFactory
+from app.task.queue import RunTask
+from log import run_context
 
 logger = logging.getLogger(__name__)
 

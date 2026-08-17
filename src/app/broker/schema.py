@@ -11,7 +11,7 @@ from datetime import datetime
 
 from pydantic import Base64Bytes, BaseModel, Field
 
-from src.app.event.model import RunErrorCode
+from app.event.model import RunErrorCode
 
 # P3 的工具幂等键（ADR-0014）。本期**不实现去重**，但参数位现在就留出来 ——
 # 等 P3 再加就是一次协议变更，两边都得改。

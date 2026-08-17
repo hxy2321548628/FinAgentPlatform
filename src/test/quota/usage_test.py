@@ -12,11 +12,11 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.event.model import RunStatus, TokenUsage
-from src.app.quota.usage import DEFAULT_RESET_TIMEZONE, RunUsage, day_start, next_reset
-from src.app.run.repository import RunRepository
-from src.app.thread.repository import Thread
-from src.app.user.repository import User
+from app.event.model import RunStatus, TokenUsage
+from app.quota.usage import DEFAULT_RESET_TIMEZONE, RunUsage, day_start, next_reset
+from app.run.repository import RunRepository
+from app.thread.repository import Thread
+from app.user.repository import User
 
 # 一次高命中的调用：input 总数 10000，其中 9000 命中 cache。
 # 按总数扣是 10000，按未命中扣是 1000 —— 这两个数差一个数量级，断言不会含糊
@@ -130,7 +130,7 @@ async def test_only_the_two_active_states_occupy_a_slot() -> None:
     `waiting_approval`（步骤五）与 `cancelled`（步骤四）落地时都不该进这个集合 ——
     等人确认期间既不占 worker 也不占沙箱，算进来的话教师忘了点确认就把自己锁死一整天。
     """
-    from src.app.quota.usage import ACTIVE_STATUS
+    from app.quota.usage import ACTIVE_STATUS
 
     assert set(ACTIVE_STATUS) == {RunStatus.QUEUED, RunStatus.RUNNING}
 

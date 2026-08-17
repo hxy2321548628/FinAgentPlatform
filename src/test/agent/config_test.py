@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from src.app.agent.config import (
+from app.agent.config import (
     MAX_SYSTEM_PROMPT_LENGTH,
     AgentConfig,
     AgentConfigRequest,

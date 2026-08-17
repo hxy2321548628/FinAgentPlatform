@@ -3,8 +3,8 @@
 import logging
 from typing import Protocol
 
-from src.app.agent.config import AgentConfig, SkillReference
-from src.app.preset.skill import ResolvedSkill
+from app.agent.config import AgentConfig, SkillReference
+from app.preset.skill import ResolvedSkill
 
 MAX_SKILLS_PER_RUN = 10
 

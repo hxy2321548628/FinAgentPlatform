@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from src.app.usage.langfuse import LangfuseUsage
+from app.usage.langfuse import LangfuseUsage
 
 BASE_URL = "http://langfuse.test"
 

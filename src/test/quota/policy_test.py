@@ -1,12 +1,12 @@
 """档位的测试：按角色分级，允许逐个用户覆盖。"""
 
-from src.app.quota.policy import (
+from app.quota.policy import (
     DEFAULT_CONCURRENT_RUN,
     DEFAULT_RATE_LIMIT,
     DEFAULT_TOKEN_DAILY,
     QuotaPolicy,
 )
-from src.app.user.model import UserRole
+from app.user.model import UserRole
 
 
 def test_a_user_without_an_override_follows_the_role() -> None:
@@ -87,7 +87,7 @@ def test_an_override_can_only_tighten_an_unlimited_tier() -> None:
 
 def test_the_concurrency_tier_stays_below_the_sandbox_pool() -> None:
     """这道闸拦的就是「单个用户占满整个沙箱池」，它必须明显小于池容量（架构 §8.1 建议 20）。"""
-    from src.app.sandbox.pool import DEFAULT_MAX_CONTAINER
+    from app.sandbox.pool import DEFAULT_MAX_CONTAINER
 
     for limit in DEFAULT_CONCURRENT_RUN.values():
         assert limit < DEFAULT_MAX_CONTAINER

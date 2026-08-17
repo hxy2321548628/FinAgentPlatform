@@ -19,7 +19,7 @@ import sqlalchemy as sa
 import sqlmodel.sql.sqltypes
 from alembic import op
 
-from src.app.user.model import EMAIL_INDEX, TABLE_NAME
+from app.user.model import EMAIL_INDEX, TABLE_NAME
 
 revision: str = "0015_user_email_dept"
 down_revision: str | None = "0014_mcp_catalog"

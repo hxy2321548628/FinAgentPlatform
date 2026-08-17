@@ -20,8 +20,8 @@ from typing import Protocol, cast
 
 from redis.asyncio import Redis
 
-from src.app.event.model import EVENT_ADAPTER, TERMINAL_EVENT_TYPE, Event
-from src.app.store.redis import StreamEntry
+from app.event.model import EVENT_ADAPTER, TERMINAL_EVENT_TYPE, Event
+from app.store.redis import StreamEntry
 
 logger = logging.getLogger(__name__)
 

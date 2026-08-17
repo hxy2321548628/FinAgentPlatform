@@ -15,13 +15,13 @@ from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.agent.config import AgentConfig
-from src.app.event.model import RunErrorCode, RunStatus, TokenUsage
-from src.app.run.repository import RunRepository, RunStart
+from app.agent.config import AgentConfig
+from app.event.model import RunErrorCode, RunStatus, TokenUsage
+from app.run.repository import RunRepository, RunStart
+from app.thread.repository import Thread
+from app.user.model import UserRole
+from app.user.repository import User, UserRepository
 from test.conftest import FAKE_HASH
-from src.app.thread.repository import Thread
-from src.app.user.model import UserRole
-from src.app.user.repository import User, UserRepository
 
 
 @pytest.fixture

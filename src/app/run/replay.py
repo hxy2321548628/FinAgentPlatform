@@ -12,8 +12,8 @@
 
 from collections.abc import Sequence
 
-from src.app.event.model import EventType, ReasoningData, TokenData
-from src.app.run.log import LoggedEvent
+from app.event.model import EventType, ReasoningData, TokenData
+from app.run.log import LoggedEvent
 
 # 只有这两类是「同一段文本的增量」，其余事件各自独立，合并没有意义
 MERGEABLE_TYPE = frozenset({EventType.TOKEN, EventType.REASONING})

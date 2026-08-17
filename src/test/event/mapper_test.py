@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, ToolMessage
 
-from src.app.event.mapper import EventMapper, StreamChunk
-from src.app.event.model import (
+from app.event.mapper import EventMapper, StreamChunk
+from app.event.model import (
     Event,
     EventType,
     ReasoningEvent,
@@ -122,7 +122,7 @@ def _only(events: list[Event]) -> Event:
 
 
 def test_full_replay_recognises_every_chunk(chunk: list[StreamChunk], caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING, logger="event.mapper"):
+    with caplog.at_level(logging.WARNING, logger="app.event.mapper"):
         for one in chunk:
             map_chunk(*one, run_id=RUN_ID)
 
@@ -268,7 +268,7 @@ def test_middleware_node_with_null_payload_produces_no_event(chunk: list[StreamC
 
 def test_custom_mode_produces_no_event_and_no_warning(caplog: pytest.LogCaptureFixture) -> None:
     """沙箱事件走 custom 通道，排队逻辑尚未实现，此处只确认它不被当成未知形状。"""
-    with caplog.at_level(logging.WARNING, logger="event.mapper"):
+    with caplog.at_level(logging.WARNING, logger="app.event.mapper"):
         events = map_chunk((), "custom", {"position": 3}, run_id=RUN_ID)
 
     assert events == []
@@ -276,7 +276,7 @@ def test_custom_mode_produces_no_event_and_no_warning(caplog: pytest.LogCaptureF
 
 
 def test_unknown_mode_warns_instead_of_raising(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING, logger="event.mapper"):
+    with caplog.at_level(logging.WARNING, logger="app.event.mapper"):
         events = map_chunk((), "values", {"messages": []}, run_id=RUN_ID)
 
     assert events == []
@@ -284,7 +284,7 @@ def test_unknown_mode_warns_instead_of_raising(caplog: pytest.LogCaptureFixture)
 
 
 def test_unknown_update_node_warns_instead_of_raising(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING, logger="event.mapper"):
+    with caplog.at_level(logging.WARNING, logger="app.event.mapper"):
         events = map_chunk((), "updates", {"planner": {"messages": []}}, run_id=RUN_ID)
 
     assert events == []
@@ -307,7 +307,7 @@ def test_malformed_payload_warns_instead_of_raising(
     mode: str, payload: object, caplog: pytest.LogCaptureFixture
 ) -> None:
     """DeepAgents 换了结构时，一次分析不该因为看不懂某条 chunk 就整个失败。"""
-    with caplog.at_level(logging.WARNING, logger="event.mapper"):
+    with caplog.at_level(logging.WARNING, logger="app.event.mapper"):
         events = map_chunk((), mode, payload, run_id=RUN_ID)
 
     assert events == []

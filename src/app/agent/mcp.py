@@ -34,7 +34,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.interceptors import MCPToolCallRequest, MCPToolCallResult
 from langchain_mcp_adapters.sessions import Connection, SSEConnection, StreamableHttpConnection
 
-from src.app.agent.config import McpReference
+from app.agent.config import McpReference
 
 logger = logging.getLogger(__name__)
 

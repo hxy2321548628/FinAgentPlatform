@@ -4,9 +4,9 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.agent.config import AgentConfig, SkillReference
-from src.app.preset.skill import ResolvedSkill
-from src.app.preset.skill_reference import SkillReferenceError, resolve_skill_references
+from app.agent.config import AgentConfig, SkillReference
+from app.preset.skill import ResolvedSkill
+from app.preset.skill_reference import SkillReferenceError, resolve_skill_references
 
 
 class Resolver:

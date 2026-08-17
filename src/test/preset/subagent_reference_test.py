@@ -4,10 +4,10 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.agent.config import AgentConfig, SubagentReference
-from src.app.agent.subagent import MAX_SUBAGENT
-from src.app.preset.repository import ResolvedAgent
-from src.app.preset.subagent_reference import SubagentReferenceError, resolve_subagent_references
+from app.agent.config import AgentConfig, SubagentReference
+from app.agent.subagent import MAX_SUBAGENT
+from app.preset.repository import ResolvedAgent
+from app.preset.subagent_reference import SubagentReferenceError, resolve_subagent_references
 
 
 class Resolver:

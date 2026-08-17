@@ -6,10 +6,10 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessageChunk
 from redis.asyncio import Redis
 
-from src.app.api.platform import Platform
-from src.app.api.sse import HEARTBEAT_FRAME, heartbeat_stream
-from src.app.event.mapper import StreamChunk
-from src.app.event.model import (
+from app.api.platform import Platform
+from app.api.sse import HEARTBEAT_FRAME, heartbeat_stream
+from app.event.mapper import StreamChunk
+from app.event.model import (
     Event,
     RunFinishedData,
     RunFinishedEvent,
@@ -17,11 +17,11 @@ from src.app.event.model import (
     TokenData,
     TokenEvent,
 )
-from src.app.run.log import stream_key
+from app.run.log import stream_key
 from test.api.conftest import Agent, drain
 from test.conftest import json_log
 
-RUN_ROUTE_LOGGER = "api.route.run"
+RUN_ROUTE_LOGGER = "app.api.route.run"
 
 
 def finished_event(run_id: str) -> Event:

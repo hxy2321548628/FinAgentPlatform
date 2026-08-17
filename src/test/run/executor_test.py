@@ -17,9 +17,9 @@ from deepagents.backends.protocol import BackendProtocol
 from langchain_core.messages import AIMessage, AIMessageChunk
 from redis.asyncio import Redis
 
-from src.app.agent.config import AgentConfig, SkillReference
-from src.app.event.mapper import StreamChunk
-from src.app.event.model import (
+from app.agent.config import AgentConfig, SkillReference
+from app.event.mapper import StreamChunk
+from app.event.model import (
     EventType,
     InterruptAction,
     InterruptData,
@@ -32,14 +32,14 @@ from src.app.event.model import (
     ToolResultData,
     ToolResultEvent,
 )
+from app.run.decision import Decision, DecisionType
+from app.run.executor import RunExecutor, _known_tool_paths, _pending_action_path
+from app.run.log import EventLog, LoggedEvent
+from app.run.repository import RunStart
+from app.sandbox.pool import SandboxQueueTimeoutError
+from app.sandbox.remote import AsyncQueuePositionCallback
+from app.task.queue import RunTask
 from log import JsonFormatter
-from src.app.run.decision import Decision, DecisionType
-from src.app.run.executor import RunExecutor, _known_tool_paths, _pending_action_path
-from src.app.run.log import EventLog, LoggedEvent
-from src.app.run.repository import RunStart
-from src.app.sandbox.pool import SandboxQueueTimeoutError
-from src.app.sandbox.remote import AsyncQueuePositionCallback
-from src.app.task.queue import RunTask
 
 THREAD = "thread-1"
 

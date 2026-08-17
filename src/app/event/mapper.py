@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
-from src.app.event.model import (
+from app.event.model import (
     Event,
     ReasoningData,
     ReasoningEvent,

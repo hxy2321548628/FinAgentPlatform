@@ -18,9 +18,9 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
-from src.app.agent.config import AgentConfig
-from src.app.run.decision import Decision
-from src.app.store.redis import StreamEntry
+from app.agent.config import AgentConfig
+from app.run.decision import Decision
+from app.store.redis import StreamEntry
 
 logger = logging.getLogger(__name__)
 

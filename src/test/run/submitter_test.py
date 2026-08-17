@@ -10,16 +10,16 @@ from uuid import uuid4
 import pytest
 from redis.asyncio import Redis
 
-from src.app.agent.config import AgentConfig
-from src.app.event.model import RunStatus
-from src.app.run.decision import Decision, DecisionType
-from src.app.run.submitter import RunSubmitter
-from src.app.task.queue import TaskQueue
+from app.agent.config import AgentConfig
+from app.event.model import RunStatus
+from app.run.decision import Decision, DecisionType
+from app.run.submitter import RunSubmitter
+from app.task.queue import TaskQueue
 from test.conftest import json_log
 
 CONSUMER = "submitter-test"
 
-SUBMITTER_LOGGER = "run.submitter"
+SUBMITTER_LOGGER = "app.run.submitter"
 
 # 提交侧不查库，因此这里只要一个形状对的标识
 USER_ID = uuid4().hex

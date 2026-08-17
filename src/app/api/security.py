@@ -10,10 +10,10 @@ from typing import Annotated
 
 from fastapi import Cookie, Depends, Request
 
-from src.app.api.error import forbidden, rate_limited, unauthenticated
-from src.app.api.platform import Platform, get_platform
-from src.app.auth.session import COOKIE_NAME, Session
-from src.app.user.model import UserRole
+from app.api.error import forbidden, rate_limited, unauthenticated
+from app.api.platform import Platform, get_platform
+from app.auth.session import COOKIE_NAME, Session
+from app.user.model import UserRole
 
 # 未登录与 session 过期给同一句话：两者对使用者是同一件事 —— 重新登录
 UNAUTHENTICATED_MESSAGE = "未登录或登录已过期，请重新登录"

@@ -16,15 +16,15 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.event.model import Event, TokenData, TokenEvent
-from src.app.run.archive import EventArchive
-from src.app.run.log import EventLog
-from src.app.run.repository import RunRepository
-from src.app.store.checkpoint import Checkpoint, open_checkpoint
-from src.app.store.retention import purge, purge_checkpoint, purge_event
+from app.event.model import Event, TokenData, TokenEvent
+from app.run.archive import EventArchive
+from app.run.log import EventLog
+from app.run.repository import RunRepository
+from app.store.checkpoint import Checkpoint, open_checkpoint
+from app.store.retention import purge, purge_checkpoint, purge_event
+from app.thread.repository import ThreadRepository
+from app.user.repository import User
 from test.conftest import TEST_POSTGRES_CONNINFO
-from src.app.thread.repository import ThreadRepository
-from src.app.user.repository import User
 
 NOW = datetime(2026, 8, 7, tzinfo=UTC)
 RETENTION_DAY = 180

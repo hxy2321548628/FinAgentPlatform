@@ -6,7 +6,7 @@
 
 import pytest
 
-from src.app.auth.password import MEMORY_COST, PARALLELISM, TIME_COST, PasswordHasher
+from app.auth.password import MEMORY_COST, PARALLELISM, TIME_COST, PasswordHasher
 
 PASSWORD = "口令-correct"
 

@@ -9,7 +9,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from src.app.run.log import LoggedEvent
+from app.run.log import LoggedEvent
 
 # SSE 用空行分隔报文，缺了它这一条永远不会被客户端派发
 FRAME_END = "\n\n"

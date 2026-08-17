@@ -6,7 +6,7 @@ from deepagents.backends.protocol import BackendProtocol, FileDownloadResponse, 
 from deepagents.middleware.skills import SkillsState
 from langgraph.runtime import Runtime
 
-from src.app.agent.skill import ReloadingSkillsMiddleware
+from app.agent.skill import ReloadingSkillsMiddleware
 
 SKILL_MD = b"---\nname: fresh-skill\ndescription: \xe6\x96\xb0\xe8\xa7\x84\xe5\x88\x99\n---\n\n# Fresh\n"
 

@@ -6,8 +6,8 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.user.model import UserRole
-from src.app.user.repository import UserRepository
+from app.user.model import UserRole
+from app.user.repository import UserRepository
 
 HASH = "$argon2id$假的但形状对"
 

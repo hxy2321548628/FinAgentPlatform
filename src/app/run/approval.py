@@ -2,7 +2,7 @@
 
 超时清扫是 cron 任务，与 `store.retention` 同一个形态：
 
-    cd app && uv run python -m run.approval
+    cd src && uv run python -m app.run.approval
 
 **决策的形状与校验不在这里**，在 `run/decision.py` —— 那些要随任务消息走到 worker，
 而任务消息的定义被配置层引用，放在一起会兜出一个循环导入。
@@ -19,14 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.app.store import postgres
+from app.event.model import Event, RunCancelledData, RunCancelledEvent, RunStatus, now_ms
+from app.run.archive import EventArchive
+from app.run.log import EventLog, LoggedEvent
+from app.run.repository import RunRecord, RunRepository
+from app.store import postgres, redis
 from config import StoreSettings
-from src.app.event.model import Event, RunCancelledData, RunCancelledEvent, RunStatus, now_ms
-from src.app.run.log import configure
-from src.app.run.archive import EventArchive
-from src.app.run.log import EventLog, LoggedEvent
-from src.app.run.repository import RunRecord, RunRepository
-from src.app.store import redis
+from log import configure
 
 logger = logging.getLogger(__name__)
 

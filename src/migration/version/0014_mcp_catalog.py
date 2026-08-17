@@ -16,7 +16,7 @@ import sqlmodel.sql.sqltypes
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-from src.app.preset.mcp import MCP_NAME_CONDITION, MCP_NAME_INDEX, TABLE_NAME
+from app.preset.mcp import MCP_NAME_CONDITION, MCP_NAME_INDEX, TABLE_NAME
 
 revision: str = "0014_mcp_catalog"
 down_revision: str | None = "0013_agent_subagents"

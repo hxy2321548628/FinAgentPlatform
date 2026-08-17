@@ -11,12 +11,12 @@ import httpx
 import pytest
 from redis.asyncio import Redis
 
-from src.app.broker.app import create_app
-from src.app.broker.cache import ToolCache
-from src.app.broker.runtime import Broker
-from src.app.broker.skill import SkillStore
-from src.app.sandbox.container import CommandResult
-from src.app.sandbox.workspace import Workspace
+from app.broker.app import create_app
+from app.broker.cache import ToolCache
+from app.broker.runtime import Broker
+from app.broker.skill import SkillStore
+from app.sandbox.container import CommandResult
+from app.sandbox.workspace import Workspace
 
 THREAD = "thread-dedupe"
 

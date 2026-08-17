@@ -29,8 +29,8 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import Column, Field, SQLModel, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.app.agent.mcp import McpTarget
-from src.app.preset.model import _value_enum
+from app.agent.mcp import McpTarget
+from app.preset.model import _value_enum
 
 TABLE_NAME = "mcp_servers"
 

@@ -5,12 +5,12 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.preset.model import ResourceKind, ReviewStatus
-from src.app.preset.repository import AgentRepository
-from src.app.preset.review import ReviewRepository, _item_select
+from app.preset.model import ResourceKind, ReviewStatus
+from app.preset.repository import AgentRepository
+from app.preset.review import ReviewRepository, _item_select
+from app.user.model import UserRole
+from app.user.repository import User, UserRepository
 from test.conftest import FAKE_HASH
-from src.app.user.model import UserRole
-from src.app.user.repository import User, UserRepository
 
 
 @pytest.fixture

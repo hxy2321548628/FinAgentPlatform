@@ -24,8 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import Field, SQLModel, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.app.event.model import EVENT_ADAPTER, Event
-from src.app.run.log import LoggedEvent, parse_event_id
+from app.event.model import EVENT_ADAPTER, Event
+from app.run.log import LoggedEvent, parse_event_id
 
 logger = logging.getLogger(__name__)
 

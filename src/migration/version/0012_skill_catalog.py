@@ -13,7 +13,7 @@ import sqlmodel.sql.sqltypes
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-from src.app.preset.skill import (
+from app.preset.skill import (
     DRAFT_VERSION_CONDITION,
     DRAFT_VERSION_INDEX,
     SKILL_NAME_CONDITION,

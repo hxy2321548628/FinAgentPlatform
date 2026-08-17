@@ -17,9 +17,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.exc import IntegrityError
 
-from src.app.api.error import invalid, not_found
-from src.app.api.platform import Platform, get_platform
-from src.app.api.schema import (
+from app.api.error import invalid, not_found
+from app.api.platform import Platform, get_platform
+from app.api.schema import (
     CreateGroupRequest,
     CreateUserRequest,
     GroupResponse,
@@ -27,9 +27,9 @@ from src.app.api.schema import (
     SystemStatusResponse,
     UserResponse,
 )
-from src.app.api.security import AdminUser
-from src.app.sandbox.remote import BrokerError
-from src.app.user.repository import User
+from app.api.security import AdminUser
+from app.sandbox.remote import BrokerError
+from app.user.repository import User
 
 logger = logging.getLogger(__name__)
 

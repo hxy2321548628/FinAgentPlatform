@@ -11,9 +11,9 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 from redis.asyncio import Redis
 
-from src.app.api.platform import Platform
-from src.app.event.model import EventType, RunStatus
-from src.app.run.cancel import KEY_PREFIX
+from app.api.platform import Platform
+from app.event.model import EventType, RunStatus
+from app.run.cancel import KEY_PREFIX
 from test.api.conftest import Agent, drain
 
 

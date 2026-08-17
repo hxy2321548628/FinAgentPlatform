@@ -5,9 +5,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.preset.model import Visibility
-from src.app.preset.skill import SkillRepository
-from src.app.user.repository import User
+from app.preset.model import Visibility
+from app.preset.skill import SkillRepository
+from app.user.repository import User
 
 
 @pytest.fixture

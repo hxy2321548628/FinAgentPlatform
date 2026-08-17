@@ -9,11 +9,11 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.app.auth.bootstrap import ensure_first_admin
-from src.app.auth.password import PasswordHasher
+from app.auth.bootstrap import ensure_first_admin
+from app.auth.password import PasswordHasher
+from app.user.model import UserRole
+from app.user.repository import UserRepository
 from test.conftest import json_log
-from src.app.user.model import UserRole
-from src.app.user.repository import UserRepository
 
 ADMIN_PASSWORD = "口令-admin"
 
@@ -82,7 +82,7 @@ async def test_an_empty_database_without_configuration_warns_loudly(
     empty: UserRepository, hasher: PasswordHasher
 ) -> None:
     """空库又没配管理员 = 谁都登不进来。它不该是一条静默的分支。"""
-    with json_log("auth.bootstrap") as recorded:
+    with json_log("app.auth.bootstrap") as recorded:
         created = await ensure_first_admin(repository=empty, hasher=hasher, name="", password="")
 
     assert created is False

@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from src.app.sandbox.backend import SandboxBackend
-from src.app.sandbox.container import (
+from app.sandbox.backend import SandboxBackend
+from app.sandbox.container import (
     DEFAULT_IMAGE,
     OUTPUT_LIMIT_BYTE,
     TRUNCATION_MARKER,
@@ -25,7 +25,7 @@ from src.app.sandbox.container import (
     Hardening,
     running_sandbox,
 )
-from src.app.sandbox.path import OUTPUT_DIR
+from app.sandbox.path import OUTPUT_DIR
 
 
 def _docker_ready() -> bool:
@@ -424,7 +424,7 @@ def test_containers_outlive_the_process_that_started_them(workspace: Path) -> No
             "-c",
             f"import sys; sys.path.insert(0, {str(Path.cwd())!r});"
             "from pathlib import Path;"
-            "from sandbox.container import DockerContainer;"
+            "from app.sandbox.container import DockerContainer;"
             f"c = DockerContainer(thread_id={thread_id!r}, workspace=Path({str(workspace)!r}));"
             "c.start(); print(c.id)",
         ],
