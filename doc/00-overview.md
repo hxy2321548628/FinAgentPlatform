@@ -51,15 +51,17 @@
 
 ## 3. 全景：六个服务 + 动态沙箱
 
-先看一张总图。生产环境由 Docker Compose 拉起**六个服务**：nginx、api、worker（两个副本）、broker、Postgres、Redis。注意，**沙箱容器不在这六个里面**——它由 broker 在运行时按会话动态创建和销毁。
+先看一张总图。生产环境由 Docker Compose 拉起**六个服务**：nginx、api、worker、broker、Postgres、Redis。注意，**沙箱容器不在这六个里面**——它由 broker 在运行时按会话动态创建和销毁。
+
+worker 只有一个进程。**吞吐不来自副本数**——一次分析绝大部分时间在等模型和等沙箱，一个进程内并发驱动几十个 run 就够了（`WORKER_CONCURRENCY`）；进程本身出事怎么办，见第 8 节的机制一与机制六。
 
 ```
-教师浏览器 ──REST/SSE──▶ nginx ──/api/*──▶ api ──XADD 任务──▶ Redis Stream ──XREADGROUP──▶ worker ×2
+教师浏览器 ──REST/SSE──▶ nginx ──/api/*──▶ api ──XADD 任务──▶ Redis Stream ──XREADGROUP──▶ worker
                                                                             │
                                broker ◀──── HTTP（仅内部网络）────────────────┘
                                  │ docker.sock
                                  ▼
-                     沙箱容器（gVisor · 无网 · XFS 配额 · 每 Thread 一个）
+                     沙箱容器（gVisor · 可出网 · XFS 配额 · 每 Thread 一个）
 ```
 
 进度回流走另一条线，两边都要过 Redis，但各干各的：
@@ -164,7 +166,7 @@ worker ──XADD 事件──▶ stream:run:{id} ──XREAD 回放──▶ ap
 
 1. **api 和 worker 都不挂 `docker.sock`、都不挂 workspace 目录**。一切沙箱与文件操作走 broker 的 HTTP。谁想碰 Docker，只能通过 broker 的受限接口（ADR-0004）。
 2. **沙箱必须 `--runtime=runsc`**，rootfs 只读、非 root、2 GB 内存、1 CPU、128 进程数、5 GB XFS 配额（ADR-0002、ADR-0015）。生成的代码跑在一个资源受限的 gVisor 容器里。
-3. **数据库迁移只由 api 容器跑**。worker 有两个副本，如果各自 upgrade 会撞同一把 DDL 锁。
+3. **数据库迁移只由 api 容器跑**。worker 由看门狗管着、出事会自动重启，让它也 upgrade 等于把 DDL 放进一条可能反复重来的路上。
 
 沙箱的隔离参数值得展开一句：gVisor 在容器和内核之间加了一层用户态的系统调用拦截，rootfs 只读、去掉 capabilities、非 root 运行。模型请求只由 worker 发起，不经过沙箱。
 
@@ -180,9 +182,9 @@ worker ──XADD 事件──▶ stream:run:{id} ──XREAD 回放──▶ ap
 
 ## 8. 可靠性：挂了怎么办
 
-可靠性设计可以浓缩成五个机制，每个都对应一个真实故障场景：
+可靠性设计可以浓缩成六个机制，每个都对应一个真实故障场景：
 
-**机制一：至少一次投递，ack 写在 `finally` 里。** worker 正常结束和业务失败都会确认消息；只有 `kill -9` 才会留下未确认消息，由其他 worker 通过 `XAUTOCLAIM` 接管。重复执行因此是定义而不是 bug。
+**机制一：至少一次投递，ack 写在 `finally` 里。** worker 正常结束和业务失败都会确认消息；只有「没机会走到 finally」的死法（被强杀、被看门狗结束）才会留下未确认消息，由重启后的 worker 用 `XAUTOCLAIM` 认领回来——那条命令只看消息闲置了多久，不看它归谁，所以单副本下认领的就是重启后的自己。重复执行因此是定义而不是 bug。
 
 **机制二：checkpoint 续跑。** 每个 run 的状态由 LangGraph Checkpointer 持久化在 Postgres。worker 崩溃后任务重投，图从 checkpoint 继续，而不是从头再来。
 
@@ -192,15 +194,17 @@ worker ──XADD 事件──▶ stream:run:{id} ──XREAD 回放──▶ ap
 
 **机制五：人工审批不占资源。** 挂起的 run 不占队列消息、不占沙箱、不占并发配额，教师可以放心地拖到第二天再看。
 
+**机制六：看门狗盯着事件循环。** 进程崩掉退出，Docker 的 `restart` 会把它拉回来；难办的是**进程还活着但事件循环不转了**——任务照领，然后永远不动，而单副本没有兄弟进程能发现这件事。所以 worker 里有一个守护线程盯着事件循环定期盖的时间戳，60 秒没更新就结束进程，把「卡死」变成「退出」交给 Docker。**为什么不用 healthcheck**：compose 的 `restart` 只认进程退出，判出 unhealthy 并不会重启容器，那是 Swarm 才有的行为。判据是「事件循环还调度得动」而不是「有没有进展」——后者会把每一次正常的几十分钟长分析都误杀。
+
 另外还有两个守护性质的定时任务值得一提：`app/run/reaper.py`（孤儿收割——库里还活着、队列里已经没有它的 run）、`app/run/approval.py`（审批超时清扫），加上 `app/store/retention.py`（保留期清理），都是跑一次即退出的形态。
 
-> **本节要点**：至少一次投递 + finally ack + checkpoint 续跑 + 幂等键 + 调用级重试；run 级不自动重试，把决定权交给人。
+> **本节要点**：至少一次投递 + finally ack + checkpoint 续跑 + 幂等键 + 调用级重试 + 看门狗；run 级不自动重试，把决定权交给人。
 
 ---
 
 ## 9. 关键决策一览（ADR 速览）
 
-架构决策记录在 `doc/01design/adr/`，共 17 条。不需要全读，但标注 ★ 的五条建议先读——它们对应代码里最难懂的五处设计：
+架构决策记录在 `doc/01design/adr/`，共 18 条。不需要全读，但标注 ★ 的五条建议先读——它们对应代码里最难懂的五处设计：
 
 | ADR | 决策 | 一句话结论 |
 |---|---|---|
@@ -221,8 +225,9 @@ worker ──XADD 事件──▶ stream:run:{id} ──XREAD 回放──▶ ap
 | 0015 | workspace 配额 | XFS project quota |
 | 0016 | Agent 文件系统 | 自实现 Sandbox Backend |
 | 0017 | 沙箱网络 | 开放出网让 agent 自己装包，加固清单不动 |
+| 0018 | worker 副本数 | 降为单副本，沙箱后端改全异步，进程存活靠看门狗 |
 
-> **本节要点**：17 条 ADR 记录了每个关键取舍的理由；先读 0002、0004、0008、0013、0014 这五条。
+> **本节要点**：18 条 ADR 记录了每个关键取舍的理由；先读 0002、0004、0008、0013、0014 这五条。
 
 ---
 
@@ -245,7 +250,7 @@ worker ──XADD 事件──▶ stream:run:{id} ──XREAD 回放──▶ ap
 | `app/store/` | 连接的建立、体检、关闭 | 不管表结构 |
 | `app/thread/` 等 | 领域实体与 repository | 越权过滤长在这里 |
 | `app/auth/` | 密码与会话 | 登录态在 Redis |
-| `migration/` | 表结构（Alembic） | 15 个脚本，`create_all` 是禁语 |
+| `migration/` | 表结构（Alembic） | 16 个脚本，`create_all` 是禁语 |
 | 根 `config.py` | 平台 Settings | 与 `agent/config.py` 不同 |
 
 包名即职责，但有六组概念最容易搞混，读代码前先记下：

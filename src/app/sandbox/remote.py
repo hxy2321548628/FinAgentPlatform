@@ -6,13 +6,10 @@ api 进程从此**摸不到 `docker.sock`，也摸不到宿主机上的任何 wo
 **`SandboxBackendProtocol` 这层抽象在 P0 就立住了，这里正好兑现它的价值**：
 agent 侧一行不用改，换掉的只是 backend 的实现。
 
-两种客户端不是重复，是两条不同的执行路径：
-
-- **backend 用同步客户端**。DeepAgents 的 `a*` 方法默认实现就是
-  `asyncio.to_thread(自己的同步版本)`，工具本来就跑在工作线程里 —— 写成异步
-  反而要把框架那半边一起重写，而同步版本一个字都不会阻塞事件循环。
-- **workspace 与 pool 用异步客户端**。它们在路由与执行器里被直接 await，
-  尤其申请沙箱可能静默等上几分钟，占着一个线程等是浪费。
+**这里的一切都是异步的，一个工作线程都不占。** DeepAgents 那十个 `a*` 方法的默认
+实现是 `asyncio.to_thread(自己的同步版本)`，沿用它等于把同时能跑的工具调用数悄悄
+封在默认线程池的 `min(32, cpu+4)` 上 —— 那是一道没人配过、随机器核数变动、
+且不会报错的闸。覆写掉之后，并发只由 `WORKER_CONCURRENCY` 一处决定。
 """
 
 import base64
@@ -66,6 +63,12 @@ EXECUTE_TIMEOUT = 180.0
 
 # 排队可能持续几分钟，申请的流不能有读超时 —— 静默正是它的常态
 ACQUIRE_TIMEOUT = httpx.Timeout(None, connect=10.0)
+
+# 到 broker 的连接上限。**要明显高于 WORKER_CONCURRENCY**：并发由那一个显式旋钮定，
+# 而 httpx 的默认值（100 条连接，其中只有 20 条留作长连接）会在它之外再压一道看不见的闸 ——
+# 超出长连接额度的调用每次都要重新握手，而一次分析有几十次工具调用
+MAX_CONNECTION = 100
+CONNECTION_LIMIT = httpx.Limits(max_connections=MAX_CONNECTION, max_keepalive_connections=MAX_CONNECTION)
 
 EXECUTION_FAILED_EXIT_CODE = 1
 
@@ -133,36 +136,32 @@ def _fail(exc: httpx.HTTPError) -> BrokerError:
 class RemoteSandboxBackend(SandboxBackendProtocol):
     """一个会话的文件空间与执行环境，实现全在 broker 那边。
 
-    十个方法的签名与本地实现逐字一致，因此 agent 侧看不出区别。
+    **只实现协议的异步那一半。** 十个同步方法留在基类里抛 `NotImplementedError` ——
+    图全程由 `astream` 驱动，middleware 也只调 `a*`，同步那条路一次都走不到，
+    写出来只会是一份没人调的重复实现。**只有 `delete` 是例外**，原因见它自己那段。
 
     Args:
         thread_id: 会话标识。
-        base_url: broker 的地址。
-        client: 复用的 httpx 客户端，不传则自建。
+        client: 到 broker 的连接，由工厂传入并共用。
     """
 
-    def __init__(
-        self,
-        thread_id: str,
-        base_url: str = DEFAULT_BROKER_URL,
-        client: httpx.Client | None = None,
-    ) -> None:
+    def __init__(self, thread_id: str, client: httpx.AsyncClient) -> None:
         self._thread_id = thread_id
-        self._client = client or httpx.Client(base_url=base_url.rstrip("/"), timeout=DEFAULT_TIMEOUT)
+        self._client = client
 
     @property
     def id(self) -> str:
         """沙箱标识。会话与沙箱一一对应，因此就是会话标识。"""
         return self._thread_id
 
-    def ls(self, path: str) -> LsResult:
+    async def als(self, path: str) -> LsResult:
         """列出目录内容。"""
-        found = self._tool("ls", {"path": path})
+        found = await self._tool("ls", {"path": path})
         return LsResult(error=_text(found.get("error")), entries=_file_info(found.get("entries")))
 
-    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+    async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         """读取文件的一段。"""
-        found = self._tool("read", {"file_path": file_path, "offset": offset, "limit": limit})
+        found = await self._tool("read", {"file_path": file_path, "offset": offset, "limit": limit})
         return ReadResult(
             error=_text(found.get("error")),
             file_data=cast(FileData | None, found.get("file_data")),
@@ -173,14 +172,14 @@ class RemoteSandboxBackend(SandboxBackendProtocol):
             no_lines_requested=bool(found.get("no_lines_requested")),
         )
 
-    def write(self, file_path: str, content: str) -> WriteResult:
+    async def awrite(self, file_path: str, content: str) -> WriteResult:
         """写入文件，已存在则覆盖。"""
-        found = self._tool("write", {"file_path": file_path, "content": content}, dedupe=True)
+        found = await self._tool("write", {"file_path": file_path, "content": content}, dedupe=True)
         return WriteResult(error=_text(found.get("error")), path=_text(found.get("path")))
 
-    def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
+    async def aedit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
         """替换文件里的字符串。"""
-        found = self._tool(
+        found = await self._tool(
             "edit",
             {
                 "file_path": file_path,
@@ -197,38 +196,55 @@ class RemoteSandboxBackend(SandboxBackendProtocol):
         )
 
     def delete(self, file_path: str) -> DeleteResult:
+        """**只为让 DeepAgents 认出这个 backend 支持删除，不会被调用。**
+
+        它探这项能力的办法是看**同步** `delete` 有没有被覆写
+        （`type(backend).delete is not BackendProtocol.delete`），而删除工具在异步图上
+        走的是 `adelete` —— 于是「只实现异步那一半」会让探测静默转 False，
+        **`delete` 工具整个不挂给模型**：agent 想删文件只剩在 `execute` 里跑 `rm`
+        一条路，而人工审批那道闸只认 `delete`，随之整个失效。
+
+        这个失效不报任何错。2026-08-18 的回归验收上它表现为「四种决策各走一遍」与
+        「子智能体的 delete 能中断」五条断言同时红，而没有一条指向沙箱 backend。
+
+        Raises:
+            NotImplementedError: 同步那条路本来就不该有人走。
+        """
+        raise NotImplementedError("图全程异步，删除走 adelete")
+
+    async def adelete(self, file_path: str) -> DeleteResult:
         """删除文件。"""
-        found = self._tool("delete", {"file_path": file_path}, dedupe=True)
+        found = await self._tool("delete", {"file_path": file_path}, dedupe=True)
         return DeleteResult(error=_text(found.get("error")), path=_text(found.get("path")))
 
-    def glob(self, pattern: str, path: str | None = None) -> GlobResult:
+    async def aglob(self, pattern: str, path: str | None = None) -> GlobResult:
         """按通配符找文件。"""
-        found = self._tool("glob", {"pattern": pattern, "path": path})
+        found = await self._tool("glob", {"pattern": pattern, "path": path})
         return GlobResult(
             error=_text(found.get("error")),
             matches=_file_info(found.get("matches")),
             truncated=bool(found.get("truncated")),
         )
 
-    def grep(
+    async def agrep(
         self, pattern: str, path: str | None = None, glob: str | None = None, *, max_count: int | None = None
     ) -> GrepResult:
         """在文件内容里找字面串。"""
-        found = self._tool("grep", {"pattern": pattern, "path": path, "glob": glob, "max_count": max_count})
+        found = await self._tool("grep", {"pattern": pattern, "path": path, "glob": glob, "max_count": max_count})
         return GrepResult(
             error=_text(found.get("error")),
             matches=cast(list[GrepMatch] | None, found.get("matches")),
             truncated=bool(found.get("truncated")),
         )
 
-    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
         """在沙箱容器里执行 shell 命令。
 
         链路本身出问题也转成带错误文本的返回值，与容器执行失败一视同仁 ——
         抛出去会让整个 run 失败，而返回错误能让 LLM 自己决定下一步。
         """
         try:
-            found = self._tool(
+            found = await self._tool(
                 "execute", {"command": command, "timeout": timeout}, timeout=EXECUTE_TIMEOUT, dedupe=True
             )
         except BrokerError as exc:
@@ -239,22 +255,22 @@ class RemoteSandboxBackend(SandboxBackendProtocol):
             truncated=bool(found.get("truncated")),
         )
 
-    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+    async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
         """把字节写进 workspace。批量操作允许部分成功。"""
         payload = {"files": [{"path": path, "content": _encode(content)} for path, content in files]}
         return [
             FileUploadResponse(path=one["path"], error=one.get("error"))
-            for one in _files_of(self._tool("upload", payload))
+            for one in _files_of(await self._tool("upload", payload))
         ]
 
-    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         """从 workspace 取出字节。批量操作允许部分成功。"""
         return [
             FileDownloadResponse(path=one["path"], content=_decode(one.get("content")), error=one.get("error"))
-            for one in _files_of(self._tool("download", {"paths": paths}))
+            for one in _files_of(await self._tool("download", {"paths": paths}))
         ]
 
-    def _tool(
+    async def _tool(
         self,
         name: str,
         payload: Mapping[str, object],
@@ -266,7 +282,7 @@ class RemoteSandboxBackend(SandboxBackendProtocol):
         if dedupe:
             body[IDEMPOTENCY_FIELD] = _checkpoint_ns()
         try:
-            response = self._client.post(f"/threads/{self._thread_id}/tool/{name}", json=body, timeout=timeout)
+            response = await self._client.post(f"/threads/{self._thread_id}/tool/{name}", json=body, timeout=timeout)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise _fail(exc) from exc
@@ -285,16 +301,18 @@ class RemoteBackendFactory:
         client: 复用的 httpx 客户端，不传则自建。
     """
 
-    def __init__(self, base_url: str = DEFAULT_BROKER_URL, client: httpx.Client | None = None) -> None:
-        self._client = client or httpx.Client(base_url=base_url.rstrip("/"), timeout=DEFAULT_TIMEOUT)
+    def __init__(self, base_url: str = DEFAULT_BROKER_URL, client: httpx.AsyncClient | None = None) -> None:
+        self._client = client or httpx.AsyncClient(
+            base_url=base_url.rstrip("/"), timeout=DEFAULT_TIMEOUT, limits=CONNECTION_LIMIT
+        )
 
     def __call__(self, thread_id: str) -> RemoteSandboxBackend:
         """给一个会话造 backend。"""
-        return RemoteSandboxBackend(thread_id, client=self._client)
+        return RemoteSandboxBackend(thread_id, self._client)
 
-    def close(self) -> None:
+    async def aclose(self) -> None:
         """关掉共用的连接。"""
-        self._client.close()
+        await self._client.aclose()
 
 
 class BrokerConnection:

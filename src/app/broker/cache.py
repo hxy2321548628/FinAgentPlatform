@@ -5,8 +5,8 @@ pending write，恢复时会整个重跑 —— 于是 `edit_file` 的 `old_stri
 `delete` 的文件已经没了，两者都会返回一个**首次执行时没有的错误**，使 LLM 的后续
 行为偏离。因此**错误结果也要缓存**：只缓存成功结果等于没解决这个问题。
 
-**去重放在 broker 而不是 worker**：broker 是沙箱的唯一入口，而 worker 可能有多个
-副本、也会崩溃重启 —— 去重状态放在 worker 侧起不到跨副本、跨重启的作用。
+**去重放在 broker 而不是 worker**：broker 是沙箱的唯一入口，而 worker 会崩溃重启 ——
+去重状态放在 worker 侧，正好在最需要它的那一刻（崩溃恢复）跟着进程一起没了。
 
 **去重键是 `(thread_id, checkpoint_ns)`。** `checkpoint_ns` 实测按**工具调用**唯一
 （LangGraph 把每轮的每个工具调用扇出成独立 task），且崩溃重放前后一致。

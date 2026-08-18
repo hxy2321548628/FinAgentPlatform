@@ -1,7 +1,8 @@
 """任务队列：一条 Redis Stream 加一个 consumer group。
 
 **至少一次投递。** 领走的消息进 pending 列表，跑完才 `XACK`；worker 崩了消息还在
-pending 里，另一个 worker 用 `XAUTOCLAIM` 认领过去接着跑。重复执行因此是可能的 ——
+pending 里，`XAUTOCLAIM` 再把它认领回来接着跑 —— 单副本下认领的就是重启后的自己，
+因为那条命令只看消息闲置了多久，不看它归谁。重复执行因此是可能的 ——
 那不是 bug，是至少一次投递的定义。
 
 **ack 的时机是这段代码最容易写错的地方。** 收到就 ack 等于放弃重投，崩溃即丢；
@@ -138,7 +139,7 @@ class TaskQueue:
     async def ensure_group(self) -> None:
         """建好 consumer group，已经有了就当无事发生。
 
-        **每个 worker 启动时都调一次**：谁先起来谁建，不必有一个「负责初始化」的角色。
+        **每次启动都调一次**：不必有一个「负责初始化」的角色，重启后照样自愈。
         """
         try:
             await self._client.xgroup_create(TASK_STREAM, CONSUMER_GROUP, id="0", mkstream=True)

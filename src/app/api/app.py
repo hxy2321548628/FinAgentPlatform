@@ -56,7 +56,7 @@ def create_app(platform: Platform | None = None) -> FastAPI:
             if owned:
                 # 沙箱的起停与 idle 回收都在 broker 那边，这里只有一条到它的连接。
                 # 在跑的 run 也不必等 —— 它们在 worker 进程里，api 重启不影响
-                current.backend_factory.close()
+                await current.backend_factory.aclose()
                 await current.connection.aclose()
                 await current.engine.dispose()
                 await current.cache.aclose()

@@ -1,8 +1,7 @@
 """broker 的测试：8 个工具经 HTTP 全部走通，排队排位能跨进程推回来。
 
-**起一个真的 uvicorn**，不用 ASGI 传输：backend 是同步客户端（框架的工具调用本就
-跑在工作线程里），而 ASGI 传输是纯异步的，顶替掉这一段就等于没验传输层 ——
-而传输层正是本步骤唯一改动的东西。
+**起一个真的 uvicorn，不用 ASGI 传输**：顶替掉传输层就等于没验它，而 backend 与
+broker 之间隔着的正是它。
 
 不起 Docker：容器由假池提供，这里验的是 broker 的接线，不是 Docker。
 """
@@ -12,15 +11,25 @@ import socket
 import threading
 import time
 from base64 import b64encode
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 from uuid import uuid4
 
 import httpx
 import pytest
 import uvicorn
 from deepagents.backends.protocol import ExecuteResponse, LsResult
+from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models.base import LanguageModelInput
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.runnables import Runnable
+from langchain_core.tools import BaseTool
+from langgraph.checkpoint.memory import InMemorySaver
 
+from app.agent.factory import Agent
 from app.broker.app import create_app
 from app.broker.runtime import AbsentContainer, Broker
 from app.broker.skill import SkillStore
@@ -30,6 +39,7 @@ from app.sandbox.pool import PoolStat, QueuePositionCallback, SandboxQueueTimeou
 from app.sandbox.remote import (
     BrokerConnection,
     FileMissingError,
+    RemoteBackendFactory,
     RemoteSandboxBackend,
     RemoteSandboxPool,
     RemoteWorkspace,
@@ -134,9 +144,11 @@ def broker_url(space: Workspace, pool: FakePool, tmp_path: Path) -> Iterator[str
 
 
 @pytest.fixture
-def backend(broker_url: str, space: Workspace) -> RemoteSandboxBackend:
+async def backend(broker_url: str, space: Workspace) -> AsyncIterator[RemoteSandboxBackend]:
     space.path(THREAD)
-    return RemoteSandboxBackend(THREAD, base_url=broker_url)
+    factory = RemoteBackendFactory(base_url=broker_url)
+    yield factory(THREAD)
+    await factory.aclose()
 
 
 @pytest.fixture
@@ -179,109 +191,184 @@ async def test_skill_storage_and_full_alignment_cross_the_http_boundary(
     assert not (skill_root / "invented").exists()
 
 
+# --------------------------------------------------------- DeepAgents 的能力探测
+async def test_deepagents_sees_the_backend_as_delete_capable(backend: RemoteSandboxBackend) -> None:
+    """**没有这一条，`delete` 工具会整个不挂给模型，而没有任何东西会报错。**
+
+    DeepAgents 探「这个 backend 支不支持删除」的办法是看**同步** `delete` 有没有被
+    覆写（`type(backend).delete is not BackendProtocol.delete`），而删除工具在异步图上
+    走的是 `adelete`。把 backend 改成只实现异步那一半时，这个探测会静默转 False：
+    agent 想删文件只剩「execute 里跑 rm」一条路，人工审批那道闸随之整个失效
+    —— 2026-08-18 的回归验收上五条断言同时红，而没有一条指向这里。
+    """
+    from deepagents.backends.protocol import BackendProtocol
+    from deepagents.middleware.filesystem import supports_execution
+
+    # 这一行就是 DeepAgents 那个私有探测函数的判据本身，照抄在这里是为了不 import 私有名字
+    assert type(backend).delete is not BackendProtocol.delete
+    assert supports_execution(backend) is True
+
+
+async def test_the_model_is_actually_handed_the_delete_tool(backend: RemoteSandboxBackend) -> None:
+    """上一条验探测函数，这一条验模型手里真有这个工具。
+
+    **不能拿 `FilesystemMiddleware(...).tools` 断言**：那份清单里 `delete` 一直都在，
+    剔除发生在装配给模型的那一步。照着中间件的清单写，这条判据会在缺陷仍在时照样变绿。
+    """
+    seen: list[str] = []
+
+    class Peek(BaseChatModel):
+        @property
+        def _llm_type(self) -> str:
+            return "peek"
+
+        def bind_tools(
+            self,
+            tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
+            *,
+            tool_choice: str | None = None,
+            **kwargs: Any,  # noqa: ANN401 - 必须匹配 LangChain 抽象签名
+        ) -> Runnable[LanguageModelInput, AIMessage]:
+            seen.extend(one.name if isinstance(one, BaseTool) else str(one) for one in tools)
+            return self
+
+        def _generate(self, *argument: Any, **keyword: Any) -> ChatResult:  # noqa: ANN401 - 基类参数繁杂
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="好"))])
+
+    agent = Agent(model=Peek(), checkpointer=InMemorySaver())
+    async for _ in agent.stream(backend, THREAD, "你好"):
+        pass
+
+    assert "delete" in seen
+    assert "execute" in seen
+
+
 # ------------------------------------------------------------------ 八个工具
-def test_results_come_back_as_objects_not_dicts(backend: RemoteSandboxBackend) -> None:
+async def test_results_come_back_as_objects_not_dicts(backend: RemoteSandboxBackend) -> None:
     """Agent 侧读的是 `result.error` 这样的属性。
 
     把 JSON 原样传回去，类型检查看不出来，而 agent 第一次读字段就 AttributeError。
     """
-    backend.write("/workspace/one.txt", "x")
+    await backend.awrite("/workspace/one.txt", "x")
 
-    assert isinstance(backend.ls("/workspace"), LsResult)
-    assert isinstance(backend.execute("echo hi"), ExecuteResponse)
+    assert isinstance(await backend.als("/workspace"), LsResult)
+    assert isinstance(await backend.aexecute("echo hi"), ExecuteResponse)
 
 
-def test_write_then_read_round_trips(backend: RemoteSandboxBackend) -> None:
-    backend.write("/workspace/data.csv", "a,b\n1,2\n")
+async def test_tool_calls_never_reach_the_thread_pool(backend: RemoteSandboxBackend) -> None:
+    """十个方法要各自发一次异步请求，而不是落回协议基类那个 `to_thread(同步版本)`。
 
-    result = backend.read("/workspace/data.csv")
+    走线程池不会报错，只会让并发悄悄封顶在 `min(32, cpu+4)` —— 而那正是改成
+    全异步要拆掉的那道闸。把线程池打死，落回基类的实现就会当场现形。
+    """
+
+    async def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("工具调用不该丢进线程池")
+
+    with patch("asyncio.to_thread", refuse):
+        assert (await backend.awrite("/workspace/one.txt", "x")).error is None
+        assert (await backend.aread("/workspace/one.txt")).error is None
+        assert (await backend.als("/workspace")).error is None
+        assert (await backend.aglob("*.txt")).error is None
+        assert (await backend.agrep("x")).error is None
+        assert (await backend.aedit("/workspace/one.txt", "x", "y")).error is None
+        assert (await backend.aupload_files([("/workspace/two.bin", b"\x00")]))[0].error is None
+        assert (await backend.adownload_files(["/workspace/two.bin"]))[0].error is None
+        assert (await backend.aexecute("echo hi")).exit_code is not None
+        assert (await backend.adelete("/workspace/one.txt")).error is None
+
+
+async def test_write_then_read_round_trips(backend: RemoteSandboxBackend) -> None:
+    await backend.awrite("/workspace/data.csv", "a,b\n1,2\n")
+
+    result = await backend.aread("/workspace/data.csv")
 
     assert result.error is None
     assert result.file_data is not None
 
 
-def test_ls_lists_what_was_written(backend: RemoteSandboxBackend) -> None:
-    backend.write("/workspace/one.txt", "x")
+async def test_ls_lists_what_was_written(backend: RemoteSandboxBackend) -> None:
+    await backend.awrite("/workspace/one.txt", "x")
 
-    result = backend.ls("/workspace")
+    result = await backend.als("/workspace")
 
     assert result.error is None
     assert any("one.txt" in str(entry) for entry in result.entries or [])
 
 
-def test_paths_come_back_in_the_agent_view(backend: RemoteSandboxBackend) -> None:
+async def test_paths_come_back_in_the_agent_view(backend: RemoteSandboxBackend) -> None:
     """翻译发生在 broker 侧。回来的路径少了 /workspace 前缀，agent 拿它再读就会越界。"""
-    backend.write("/workspace/one.txt", "x")
+    await backend.awrite("/workspace/one.txt", "x")
 
-    result = backend.glob("*.txt")
+    result = await backend.aglob("*.txt")
 
     assert [entry["path"] for entry in result.matches or []] == ["/workspace/one.txt"]
 
 
-def test_edit_replaces_in_place(backend: RemoteSandboxBackend) -> None:
-    backend.write("/workspace/one.txt", "旧的")
+async def test_edit_replaces_in_place(backend: RemoteSandboxBackend) -> None:
+    await backend.awrite("/workspace/one.txt", "旧的")
 
-    backend.edit("/workspace/one.txt", "旧的", "新的")
+    await backend.aedit("/workspace/one.txt", "旧的", "新的")
 
-    assert "新的" in str(backend.read("/workspace/one.txt").file_data)
-
-
-def test_delete_removes_the_file(backend: RemoteSandboxBackend) -> None:
-    backend.write("/workspace/one.txt", "x")
-
-    backend.delete("/workspace/one.txt")
-
-    assert backend.read("/workspace/one.txt").error is not None
+    assert "新的" in str((await backend.aread("/workspace/one.txt")).file_data)
 
 
-def test_grep_finds_the_literal(backend: RemoteSandboxBackend) -> None:
-    backend.write("/workspace/one.txt", "年化波动率\n别的\n")
+async def test_delete_removes_the_file(backend: RemoteSandboxBackend) -> None:
+    await backend.awrite("/workspace/one.txt", "x")
 
-    result = backend.grep("年化波动率")
+    await backend.adelete("/workspace/one.txt")
+
+    assert (await backend.aread("/workspace/one.txt")).error is not None
+
+
+async def test_grep_finds_the_literal(backend: RemoteSandboxBackend) -> None:
+    await backend.awrite("/workspace/one.txt", "年化波动率\n别的\n")
+
+    result = await backend.agrep("年化波动率")
 
     assert result.error is None
     assert result.matches
 
 
-def test_a_path_outside_the_workspace_comes_back_as_an_error(backend: RemoteSandboxBackend) -> None:
+async def test_a_path_outside_the_workspace_comes_back_as_an_error(backend: RemoteSandboxBackend) -> None:
     """越界要变成工具的 error 字段。抛异常会让整个 run 失败，而 LLM 本可以自己改路径。"""
-    result = backend.read("/etc/passwd")
+    result = await backend.aread("/etc/passwd")
 
     assert result.error is not None
 
 
-def test_execute_reaches_the_container(backend: RemoteSandboxBackend, pool: FakePool) -> None:
+async def test_execute_reaches_the_container(backend: RemoteSandboxBackend, pool: FakePool) -> None:
     pool.held[THREAD] = FakeContainer()
 
-    result = backend.execute("python analysis.py")
+    result = await backend.aexecute("python analysis.py")
 
     assert result.exit_code == 0
     assert "python analysis.py" in result.output
 
 
-def test_execute_without_a_container_returns_an_error_not_an_exception(backend: RemoteSandboxBackend) -> None:
+async def test_execute_without_a_container_returns_an_error_not_an_exception(backend: RemoteSandboxBackend) -> None:
     """容器被回收之后 execute 只能失败，但失败要以返回值的形式回给 LLM。"""
-    result = backend.execute("echo hi")
+    result = await backend.aexecute("echo hi")
 
     assert result.exit_code != 0
     assert "沙箱" in result.output
 
 
-def test_file_tools_work_when_the_container_is_gone(backend: RemoteSandboxBackend, pool: FakePool) -> None:
+async def test_file_tools_work_when_the_container_is_gone(backend: RemoteSandboxBackend, pool: FakePool) -> None:
     """七个文件工具直接读写宿主目录 —— 容器回收后翻看历史文件不该要冷启动一个容器。"""
-    backend.write("/workspace/kept.txt", "还在")
+    await backend.awrite("/workspace/kept.txt", "还在")
     pool.container_gone = True
 
-    assert backend.read("/workspace/kept.txt").error is None
-    assert backend.ls("/workspace").error is None
+    assert (await backend.aread("/workspace/kept.txt")).error is None
+    assert (await backend.als("/workspace")).error is None
 
 
-def test_upload_and_download_round_trip_bytes(backend: RemoteSandboxBackend) -> None:
+async def test_upload_and_download_round_trip_bytes(backend: RemoteSandboxBackend) -> None:
     """产物多半是图片，字节接口不能被当成文本处理。"""
     payload = b"\x89PNG\r\n\x1a\n binary"
 
-    backend.upload_files([("/workspace/chart.png", payload)])
-    found = backend.download_files(["/workspace/chart.png"])
+    await backend.aupload_files([("/workspace/chart.png", payload)])
+    found = await backend.adownload_files(["/workspace/chart.png"])
 
     assert found[0].content == payload
     assert found[0].error is None

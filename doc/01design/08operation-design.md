@@ -88,8 +88,9 @@ Agent run 是 **IO 密集**的 —— 绝大部分时间在等 LLM 返回。
 
 | 故障 | 影响 | 恢复方式 |
 |---|---|---|
-| worker 崩溃 | 该 worker 上的 run 中断 | 任务未 ack，pending 超时后重投；从 checkpoint 续跑（§5.3） |
-| 网关崩溃 | SSE 连接断开 | 多副本 + 前端自动重连 + `Last-Event-ID` 补齐（§5.2） |
+| worker 崩溃（进程退出） | 它手上的 run 全部中断 | Docker 按 `restart` 拉回；任务未 ack，pending 超时后由重启后的它自己 `XAUTOCLAIM` 认领，从 checkpoint 续跑（§5.3） |
+| worker 卡死（进程还在，事件循环不转） | 任务照领但永不推进，且不会触发 `restart` | 进程内看门狗超时后结束进程，转成上一行那种情况（ADR-0018） |
+| 网关崩溃 | SSE 连接断开 | 前端自动重连 + `Last-Event-ID` 补齐（§5.2）。**api 是单副本**，重启期间 SSE 全断，这是 P2 明确接受的代价 |
 | sandbox-broker 崩溃 | 无法创建 / 执行沙箱 | 重启后需重建容器映射表；已有容器可依 label 恢复认领 |
 | 沙箱容器崩溃 | 单个 thread 的执行失败 | 重建容器，workspace 从卷恢复（§5.5） |
 | Postgres 故障 | **全局不可用**，且 checkpoint 丢失意味着中断任务无法恢复 | 无冗余。依赖备份恢复（§8.5）。**这是架构中最大的单点** |
@@ -203,6 +204,6 @@ location /api/runs/ {
 - **Redis 重启 = 全员重新登录**（2026-08-08，P3）—— session 存在 Redis（§7.2.2）。这不是故障，但运维要事先知道，否则一次例行重启会变成一片「怎么突然要重新登录」的报障
 - **首个管理员由 `.env` 的 `ADMIN_NAME` / `ADMIN_PASSWORD` 在空库时建一次**（2026-08-08，P3）—— 之后再启动都不看它。**改过管理员口令之后不要把 `.env` 里那两项删掉再重建库**，那会让空库判定再次成立。凭据会出现在进程环境里（`docker inspect` 看得到），这是 §7.1 接受过的同一类判断
 - **三个 cron 任务**（前两个 2026-08-08 P3，第三个 2026-08-09）—— `python -m store.retention`（事件与 checkpoint 的保留期，§6.5）、`python -m run.approval`（挂超过 24 小时的待审批转 `cancelled`，§5.4）、`python -m run.reaper`（库里还活着、队列里已没有的 run 转 `failed` 且 `retryable`）。三个都可重跑
-- **收割器补的是崩溃恢复盖不住的那一半**（2026-08-09）—— worker 挂了靠 Redis 的 pending 列表接管（§5.3），但 ack 写在 worker 主循环的 `finally` 里、无条件执行，而执行器起跑阶段有几处调用落在它自己那圈 `try/except` 之外。那几处抛异常时消息被 ack 而状态没写终态，**此后没有任何东西会再碰这个 run**。判据是「队列里还有没有它」而不是「跑了多久」—— 后者会误杀一次正常的长分析。**收割成 `failed` 而不是重投**：worker 是多副本，两边同时回扫重投会让第二个 worker 的 `start()` 撞上 `running → running` 拿到 `RESUMED` 而照跑不误，同一个 run 并发跑两遍、共用一个沙箱、写同一份 checkpoint
+- **收割器补的是崩溃恢复盖不住的那一半**（2026-08-09）—— worker 挂了靠 Redis 的 pending 列表接管（§5.3），但 ack 写在 worker 主循环的 `finally` 里、无条件执行，而执行器起跑阶段有几处调用落在它自己那圈 `try/except` 之外。那几处抛异常时消息被 ack 而状态没写终态，**此后没有任何东西会再碰这个 run**。判据是「队列里还有没有它」而不是「跑了多久」—— 后者会误杀一次正常的长分析。**收割成 `failed` 而不是重投**：收割器与 worker 是两个各跑各的进程，重投一条 worker 其实还认领得回来的消息，第二份的 `start()` 会撞上 `running → running` 拿到 `RESUMED` 而照跑不误，同一个 run 并发跑两遍、共用一个沙箱、写同一份 checkpoint
 
 ---

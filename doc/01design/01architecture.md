@@ -154,7 +154,7 @@ flowchart TB
 |---|---|---|
 | Nginx | 静态托管、反向代理、屏蔽内部管理端点、SSE 透传 | 无状态 |
 | API | 登录与授权、业务校验、Run 投递、历史查询、事件回放 | 无状态，可多副本 |
-| Agent Worker | 消费任务、驱动 Agent、调用 LLM、产生平台事件 | 无状态，可多副本 |
+| Agent Worker | 消费任务、驱动 Agent、调用 LLM、产生平台事件 | 无状态；**当前是单副本**，并发靠进程内的 `WORKER_CONCURRENCY`，进程存活靠看门狗（ADR-0018） |
 | Sandbox Broker | 管理沙箱、文件和写工具去重；唯一接触 Docker 守护进程 | 持有运行期租约与容器视图 |
 | Postgres | 用户、Thread、Run、事件归档、Artifact 元数据和 checkpoint | 核心持久状态 |
 | Redis | Session、任务队列、Run 热事件、取消标志和限流数据 | 可过期的运行期状态；重启会使 Session 失效 |

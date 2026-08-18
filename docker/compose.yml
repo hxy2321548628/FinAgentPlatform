@@ -1,4 +1,4 @@
-# 内网单机部署：nginx + api + worker×2 + broker + postgres + redis，六个服务。
+# 内网单机部署：nginx + api + worker + broker + postgres + redis，六个服务。
 #
 #   docker compose -f docker/compose.yml up -d --build
 #
@@ -46,8 +46,9 @@ services:
     build:
       context: ../src
       dockerfile: Dockerfile
-    # **迁移只由 api 跑**：worker 有多个副本，让它们各自 upgrade 会撞在同一把
-    # DDL 锁上。checkpoint 那几张表不在这里 —— LangGraph 自己 setup()
+    # **迁移只由 api 跑**：worker 归看门狗管，卡死时会自己重启，让它也 upgrade
+    # 等于把 DDL 放进一条可能反复重来的路上。checkpoint 那几张表不在这里 ——
+    # LangGraph 自己 setup()
     command: sh -c "alembic upgrade head && uvicorn app.api.app:app --host 0.0.0.0 --port 8000"
     env_file:
       - ../.env
@@ -90,10 +91,13 @@ services:
       dockerfile: Dockerfile
     # 不是 HTTP 服务，因此没有 uvicorn，也不开端口
     command: python -m app.worker.main
-    # 副本数解决的是「这个进程挂了怎么办」，不是吞吐 ——
-    # 吞吐靠 WORKER_CONCURRENCY，一个进程内并发驱动多个 run
-    deploy:
-      replicas: 2
+    # **单副本**。吞吐从来不来自副本数（一次分析绝大部分时间在等模型和等沙箱，
+    # 一个进程内并发驱动多个 run 就够，见 WORKER_CONCURRENCY），副本数买的只是
+    # 「这个进程出事了怎么办」，而那件事现在由两样东西接住：进程退出靠下面的
+    # restart，事件循环卡死靠进程内的看门狗把自己变成退出（worker/watchdog.py）。
+    #
+    # **healthcheck 顶不了看门狗的班**：compose 的 restart 只认进程退出，
+    # 判出 unhealthy 不会重启容器 —— 那是 Swarm 才有的行为。
     env_file:
       - ../.env
     environment:
@@ -116,8 +120,8 @@ services:
     # 让上面那个名字解析得出来。**没有这一行，那个主机名在容器里根本不存在**
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # **迁移不由 worker 跑**：多副本会撞在同一把 DDL 锁上，那是 api 的活。
-    # 表还没建好时 worker 起来也无妨 —— 它要等到有任务投进来才碰 runs 表
+    # **迁移不由 worker 跑**，那是 api 的活。表还没建好时 worker 起来也无妨 ——
+    # 它要等到有任务投进来才碰 runs 表
     depends_on:
       broker:
         condition: service_started
@@ -127,7 +131,10 @@ services:
         condition: service_healthy
     # 滚动重启时给优雅停机留出时间：worker 收到 SIGTERM 后不再领新任务，
     # 但会等在跑的 run 结束 —— 一次分析几十分钟，掐掉等于把烧过的 token 扔了。
-    # 默认的 10 秒远远不够
+    # 默认的 10 秒远远不够。
+    #
+    # **代价是单副本下 make rebuild 会静默一段**：这一个进程排空期间没有别人在领任务。
+    # 任务留在 Redis Stream 里不会丢，只是要等；急着发版就先 make down
     stop_grace_period: 30m
     restart: unless-stopped
 

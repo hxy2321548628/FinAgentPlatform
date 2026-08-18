@@ -37,8 +37,9 @@ logger = logging.getLogger(__name__)
 def consumer_name() -> str:
     """本进程在 consumer group 里的名字。
 
-    带上 pid：compose 里两个副本的主机名不同，而本机手工起两个进程时只有 pid 不同。
-    重名会让两个进程共用一份 pending 列表，「谁的任务」就分不清了。
+    带上 pid：本机手工起两个进程时只有 pid 不同，重名会让它们共用一份 pending 列表，
+    「谁的任务」就分不清了。**容器里重启一次拿到的是同一个名字**（主机名与 pid 都没变），
+    这不影响认领 —— `XAUTOCLAIM` 只看闲置多久，不看消息归谁。
     """
     return f"{socket.gethostname()}-{os.getpid()}"
 
@@ -57,7 +58,7 @@ class WorkerRuntime:
 
     async def aclose(self) -> None:
         """归还所有外部连接。"""
-        self.backend_factory.close()
+        await self.backend_factory.aclose()
         await self.connection.aclose()
         await self.engine.dispose()
         await self.cache.aclose()
@@ -99,7 +100,7 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
             callback=create_callback(settings),
             subagent_loader=AgentRepository(engine),
             mcp_loader=McpTargetLoader(mcp_catalog, settings.mcp_credentials),
-            # 计数在 Redis：两个 worker 实例，进程内计数各算各的会把阈值乘一遍
+            # 计数在 Redis 而不是进程内：重启一次就清零的话，熔断阈值等于形同虚设
             mcp_recorder=McpCircuit(cache, mcp_catalog),
         ),
         repository=RunRepository(engine),

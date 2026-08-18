@@ -12,8 +12,8 @@
 教师看到的是一个永远转圈的分析，不报错、不超时、不消失。
 
 **为什么不是重投。** 重投就是自动重试，而这个项目明确不做（见 `run/executor.py`
-的模块 docstring：「重不重试由人决定」）。更硬的理由是多副本：worker 有两个实例，
-两边同时回扫、同时重投，第二个 worker 的 `start()` 会撞上 `running → running`
+的模块 docstring：「重不重试由人决定」）。更硬的理由是并发：这个进程与 worker 各跑各的，
+重投一条 worker 其实还认领得回来的消息，第二份的 `start()` 会撞上 `running → running`
 拿到 `RESUMED` 而照跑不误 —— 同一个 run 并发跑两遍，共用一个沙箱、写同一份
 checkpoint。收割成 `failed` 且 `retryable=True`，把决定权交回给人，两个问题一起没有。
 

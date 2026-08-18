@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # 容器数上限。**不按「每个沙箱都吃满 SANDBOX_MEMORY」推** —— 那个是各自的天花板不是
 # 预留，容器占内存是用多少算多少，空闲的只占十几 MB。真正吃内存的是同时**在执行代码**的
-# 那几个，而它被 worker 并发（WORKER_CONCURRENCY × 副本数）封顶，与这里的容器数无关。
+# 那几个，而它被 WORKER_CONCURRENCY 封顶，与这里的容器数无关。
 # 实测一次 150 万行的面板分析峰值 725 MB，并发满打满算也只有个位数 GB，
 # 总量另有父 cgroup 兜底（见 container.py 的 DEFAULT_CGROUP_PARENT）。
 # 因此这个数管的是「同时能有多少个会话不必排队」，不是内存账。
@@ -74,7 +74,7 @@ class _Slot:
 
     container: ManagedContainerProtocol
     # **谁在用它**，不是「几个人在用」。记名而不是记数，是为了让重复申请变成幂等的：
-    # worker 崩溃后另一个副本会认领同一个 run 接着跑，它再申请一次同一个容器 ——
+    # worker 崩溃重启后会把同一个 run 认领回来接着跑，它再申请一次同一个容器 ——
     # 记数的话那就是第二个租约，而崩掉的那一个永远不会有人来还，
     # 于是这个名额一直到租约超时（默认 30 分钟）才回池。记名则是同一个持有者，不重复计
     holder: set[str] = field(default_factory=set)
@@ -198,7 +198,7 @@ class SandboxPool:
     ) -> ContainerProtocol:
         """取得一个 thread 的容器，必要时排队等待。
 
-        **同一个持有者重复申请是幂等的**：worker 崩溃后另一个副本会认领同一个 run
+        **同一个持有者重复申请是幂等的**：worker 崩溃重启后会把同一个 run 认领回来
         接着跑，它再申请一次同一个容器。记数的话那就成了第二个租约，而崩掉的那一个
         永远不会有人来还 —— 名额要等到租约超时（默认 30 分钟）才回池。
 

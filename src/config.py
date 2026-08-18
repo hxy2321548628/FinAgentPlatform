@@ -250,7 +250,7 @@ class Settings(StoreSettings):
     worker_concurrency: int = Field(
         default=DEFAULT_CONCURRENCY,
         gt=0,
-        description="一个 worker 同时驱动几个 run。副本数解决的是可用性，这一项才是吞吐",
+        description="一个 worker 同时驱动几个 run。worker 单副本，这是进程内唯一的并发闸",
     )
     worker_heartbeat_second: float = Field(
         default=DEFAULT_HEARTBEAT_SECOND,
@@ -260,7 +260,7 @@ class Settings(StoreSettings):
     worker_claim_idle_millisecond: int = Field(
         default=DEFAULT_CLAIM_IDLE_MILLISECOND,
         gt=0,
-        description="任务消息闲置多久后允许别的 worker 认领，毫秒。崩溃恢复的延迟上限就是它",
+        description="任务消息闲置多久后允许重新认领，毫秒。崩溃恢复的延迟上限就是它",
     )
 
     sandbox_image: str = Field(
