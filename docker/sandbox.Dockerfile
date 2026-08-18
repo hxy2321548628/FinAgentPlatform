@@ -1,16 +1,19 @@
 # 沙箱镜像：LLM 生成的代码在这里执行。
 #
-# 加固不在镜像里，而在容器创建参数上（gVisor、只读 rootfs、零出网、资源限制），
+# 加固不在镜像里，而在容器创建参数上（gVisor、只读 rootfs、资源限制），
 # 见 app/sandbox/container.py 的 Hardening。镜像只负责「跑得起来」。
 #
-# 预装科学计算栈与中文字体，是因为容器零出网：agent 装不上任何东西，
-# 缺什么都只能白跑几轮再放弃。**缺库的处置方式是加进本文件重新构建**，
-# 不是给沙箱开网 —— 那是对加固清单的实质放松（P1 计划 §2.2）。
+# 沙箱自 P12 起可以出网装包（装到 workspace，见 container.py 的 USER_BASE），
+# 但**预装仍然有意义**：科学计算栈每个会话各装一遍要几分钟且各吃一份 5g 配额，
+# 而中文字体根本不是 pip 能装的。常用的库仍应加进本文件重新构建。
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
+# PATH 里的 /workspace/.local/bin 对应 container.py 的 USER_BASE：agent 装的包若带
+# 命令行入口（black、jupyter 之类），不加这条就是 command not found，且不指向原因。
 ENV UV_SYSTEM_PYTHON=1 \
     MPLBACKEND=Agg \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH=/workspace/.local/bin:$PATH
 
 RUN uv pip install --system --no-cache pandas numpy matplotlib
 

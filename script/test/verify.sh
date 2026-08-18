@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 平台回归验收：P0–P11 当前 61 条判据，一个文件跑完。
+# 平台回归验收：P0–P12 当前 62 条判据，一个文件跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
@@ -10,17 +10,17 @@
 # 常用跑法：
 #
 #   bash script/test/verify.sh                             # 全部（要 sudo，有 LLM 费用）
-#   SKIP_LLM=1 SKIP_HOSTILE=1 bash script/test/verify.sh   # 只跑免费的 42 条，约 30 分钟
+#   SKIP_LLM=1 SKIP_HOSTILE=1 bash script/test/verify.sh   # 只跑免费的 43 条，约 30 分钟
 #
 # **默认全跑，不分 phase，也没有挑某一期跑的参数** —— P6 决策 §L2 的定案。
 # 保留的是 `SKIP_LLM` / `SKIP_HOSTILE` 两个开关：它们分的是**成本**（要不要花钱、
 # 要不要 root），不是期次。按期挑着跑，等于把刚拆掉的那层级联结构又装回来，
 # 还多一条「以为全验了其实只验了一期」的路。
 #
-# 61 条里 **19 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
+# 62 条里 **19 条要花钱或要 root**：P0 那五条各是一次完整分析上读出来的、
 # P2① 与 P3① 各要一次真实分析，P6①、P7③、P8① 与 P8③ 各要两次真实分析，
 # P9①与 P9② 共用两次真实分析，P9⑤另要一次便宜分析，P10① 要两次、P10⑦ 要一次，
-# P1① 那四条破坏性测试要 root。其余 42 条全免费。
+# P1① 那四条破坏性测试要 root。其余 43 条全免费。
 #
 # ---------------------------------------------------------------------------
 # **P7 那一组是 2026-08-14 随本期开发一起加的**，六条：三档可见性、审核闸门、
@@ -414,7 +414,7 @@ start_sandbox() {
     xfs_quota -x -c "limit -p bhard=$DISK_QUOTA $projid" "$WORKSPACE_ROOT" >/dev/null
 
     CONTAINER=$(docker run -d --rm --pull=never \
-        --runtime=runsc --network=none --read-only \
+        --runtime=runsc --network=bridge --read-only \
         --tmpfs "/tmp:rw,noexec,nosuid,size=$TMP_SIZE" \
         --cap-drop=ALL --security-opt=no-new-privileges \
         --memory=2g --cpus=1 --pids-limit="$PIDS_LIMIT" \
@@ -537,7 +537,7 @@ print(\"未被挡住，创建了\", n, \"个进程\")
     # 容器销毁重建后配额仍在。**重建时不能走 start_sandbox**：它会清掉 workspace
     # 并重设配额，那样验的就成了「刚设的配额生效吗」，而不是「配额熬过了重建吗」
     docker rm -f "$CONTAINER" >/dev/null
-    CONTAINER=$(docker run -d --rm --pull=never --runtime=runsc --network=none \
+    CONTAINER=$(docker run -d --rm --pull=never --runtime=runsc --network=bridge \
         --user "$SANDBOX_OWNER" -v "$WORKSPACE:/workspace" -w /workspace \
         "$SANDBOX_IMAGE" sleep infinity)
     again=$(sandbox_exec 'LC_ALL=C dd if=/dev/zero of=/workspace/again bs=1M count=20000 2>&1')
@@ -2311,7 +2311,7 @@ checks = {
     'workdir': '/workspace' in ENVIRONMENT_SEGMENT,
     'write_execute': all(part in ENVIRONMENT_SEGMENT for part in ('write_file', 'execute')),
     'output': OUTPUT_PATH in ENVIRONMENT_SEGMENT,
-    'offline_pip': all(part in ENVIRONMENT_SEGMENT for part in ('公网', 'pip')),
+    'install': all(part in ENVIRONMENT_SEGMENT for part in ('pip install', 'apt-get')),
     'font': all(part in ENVIRONMENT_SEGMENT for part in ('字体', 'rcParams')),
     'order': prompt.index(custom) < prompt.index(ANALYSIS_SEGMENT) < prompt.index(ENVIRONMENT_SEGMENT),
     'suffix': prompt.endswith(ENVIRONMENT_SEGMENT),
@@ -2320,7 +2320,7 @@ print(json.dumps(checks, ensure_ascii=False))
 " 2>/dev/null)" || P6_PROMPT_CHECK=""
 
 if jq -e '
-    .user and .workdir and .write_execute and .output and .offline_pip and .font and .order and .suffix
+    .user and .workdir and .write_execute and .output and .install and .font and .order and .suffix
 ' >/dev/null 2>&1 <<<"$P6_PROMPT_CHECK"; then
     pass "用户句保留，五条环境契约全在，顺序为用户 → 分析 → 环境且环境整段收尾"
 else
@@ -4963,6 +4963,48 @@ end
 # ===========================================================================
 # 破坏性四条（要 sudo）
 # ===========================================================================
+
+# ------------------------------------------------------- P12① 沙箱自己装包
+begin "P12①" "沙箱能自己装包，且包落在 workspace 里、import 得起来"
+
+# **走真实 broker 起的真实沙箱**，不自己 docker run —— 要验的正是平台交给沙箱的那组
+# 环境变量（PIP_USER / PYTHONUSERBASE / 两个 INDEX_URL），自己拼容器就把它们绕开了。
+#
+# **落点必须一起验**：装进 /tmp 也会「装成功」，但那是 512m 的 noexec tmpfs，
+# 换成带原生扩展的包就会在 import 时才炸，而且报错不指向落点。
+# 探针包取无依赖的小包，装大包会让这条判据慢到分钟级。
+P12_INSTALL="$(in_api_python '
+import httpx, uuid
+
+thread = uuid.uuid4().hex
+holder = "verify-p12"
+with httpx.Client(base_url="http://broker:8100", timeout=300) as c:
+    c.post("/threads", json={"thread_id": thread}).raise_for_status()
+    # **必须先申请沙箱**：建 thread 只开目录，不起容器。漏了这一步 execute 一律报
+    # 「没有运行中的沙箱」，而那个红看着像装包失败 —— 这条判据初版就是这么假红的
+    with c.stream("POST", f"/threads/{thread}/sandbox", json={"holder": holder}) as s:
+        s.read()
+    exec_url = f"/threads/{thread}/tool/execute"
+    # 刻意不加 --user：验的就是 PIP_USER=1 有没有把落点纠正过来
+    installed = c.post(exec_url, json={"command": "pip install wcwidth", "timeout": 240}).json()
+    located = c.post(exec_url, json={"command": "python -c \"import wcwidth; print(wcwidth.__file__)\"", "timeout": 60}).json()
+    c.delete(f"/threads/{thread}/sandbox", params={"holder": holder})
+print(installed["exit_code"], located["exit_code"], located["output"].strip())
+' 2>/dev/null | tr -d '\r')"
+
+read -r P12_RC_INSTALL P12_RC_IMPORT P12_PATH <<<"$P12_INSTALL"
+if [[ -z $P12_INSTALL ]]; then
+    undone "broker 没能给出结果 —— 记未验而不是未过"
+elif [[ $P12_RC_INSTALL != 0 ]]; then
+    fail "装包失败（沙箱出不了网，或索引源不可达）｜ $P12_INSTALL"
+elif [[ $P12_RC_IMPORT != 0 ]]; then
+    fail "装上了却 import 不起来 ｜ $P12_INSTALL"
+elif [[ $P12_PATH != /workspace/.local/* ]]; then
+    fail "装到了 workspace 之外，换成带原生扩展的包就会加载失败 ｜ 落点 $P12_PATH"
+else
+    pass "不加 --user 也装进了 $P12_PATH，且 import 得起来"
+fi
+end
 
 begin "P1①" "四条破坏性测试宿主机不受影响"
 if [[ ${SKIP_HOSTILE:-0} == 1 ]]; then

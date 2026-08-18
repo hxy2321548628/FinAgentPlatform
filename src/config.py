@@ -22,6 +22,7 @@ from app.quota.usage import DEFAULT_RESET_TIMEZONE
 from app.sandbox.container import (
     DEFAULT_CPUS,
     DEFAULT_IMAGE,
+    DEFAULT_INDEX_URL,
     DEFAULT_MEMORY,
     DEFAULT_NETWORK,
     DEFAULT_PIDS_LIMIT,
@@ -303,7 +304,7 @@ class Settings(StoreSettings):
     )
     sandbox_network: str = Field(
         default=DEFAULT_NETWORK,
-        description="沙箱网络。P1 定案为 none，agent 因此装不了任何包",
+        description="沙箱网络。bridge 让 agent 能自己装包，代价是沙箱里的代码可以外发数据；none 回到零出网",
     )
     sandbox_memory: str = Field(
         default=DEFAULT_MEMORY,
@@ -326,6 +327,11 @@ class Settings(StoreSettings):
     sandbox_user: str = Field(
         default="",
         description="沙箱以谁的身份跑，形如 1000:1000。留空即当前进程的 uid:gid；broker 进容器后须显式给宿主用户",
+    )
+
+    sandbox_index_url: str = Field(
+        default=DEFAULT_INDEX_URL,
+        description="agent 装包用的 PyPI 索引源。直连官方源实测 83 KB/s，装 scipy 会撞上执行超时",
     )
 
     sandbox_disk_quota: str = Field(

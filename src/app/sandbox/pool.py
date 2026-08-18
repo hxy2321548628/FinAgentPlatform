@@ -22,6 +22,7 @@ from pathlib import Path
 
 from app.sandbox.container import (
     DEFAULT_IMAGE,
+    DEFAULT_INDEX_URL,
     ContainerProtocol,
     DockerContainer,
     Hardening,
@@ -110,6 +111,7 @@ class SandboxPool:
         lease_timeout: 租约多久没人碰就强制归还，秒。持有方崩溃时的兜底。
         clock: 单调时钟，只在测试里换成可控的。
         hardening: 容器的资源限额与隔离档位，不传则用默认值。
+        index_url: agent 装包时用的 PyPI 索引源。
         container_factory: 造容器的方式，默认是 Docker。测试用它换成假容器。
     """
 
@@ -123,6 +125,7 @@ class SandboxPool:
         queue_timeout: float = DEFAULT_QUEUE_TIMEOUT,
         lease_timeout: float = DEFAULT_LEASE_TIMEOUT,
         hardening: Hardening | None = None,
+        index_url: str = DEFAULT_INDEX_URL,
         container_factory: ContainerFactory | None = None,
         clock: Clock = time.monotonic,
     ) -> None:
@@ -134,7 +137,11 @@ class SandboxPool:
         self._now = clock
         self._factory = container_factory or (
             lambda thread_id, workspace: DockerContainer(
-                thread_id=thread_id, workspace=workspace, image=image, hardening=hardening
+                thread_id=thread_id,
+                workspace=workspace,
+                image=image,
+                hardening=hardening,
+                index_url=index_url,
             )
         )
 

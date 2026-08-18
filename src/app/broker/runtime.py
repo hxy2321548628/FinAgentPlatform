@@ -105,6 +105,7 @@ def build_broker(settings: Settings) -> Broker:
         queue_timeout=settings.sandbox_queue_timeout,
         lease_timeout=settings.sandbox_lease_timeout,
         hardening=settings.hardening(),
+        index_url=settings.sandbox_index_url,
     )
     return Broker(
         workspace=workspace,

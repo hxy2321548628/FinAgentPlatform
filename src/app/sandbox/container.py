@@ -24,6 +24,19 @@ CONTAINER_TMP = "/tmp"
 CONTAINER_HOME = CONTAINER_TMP
 MPL_CONFIG_DIR = "/tmp/mpl"
 
+# agent 自己装的包落在这里 —— 加固清单下**唯一既可写又可执行**的路径。
+# rootfs 只读，而 HOME 所在的 /tmp 是 noexec 的 512m tmpfs：带原生扩展的包在那儿
+# 装得下也加载不起来（scipy 的 .so 直接 ImportError），装得多了还会撑爆宿主内存。
+# 落在 workspace 另有两个好处：被 5g XFS 配额兜住，且随会话持久，同一会话不必重装。
+USER_BASE = f"{SANDBOX_ROOT}/.local"
+
+# pip 缓存同样要躲开 /tmp —— 那是计入沙箱 2g 内存预算的 tmpfs，装一次 scipy 就是 45 MB。
+PIP_CACHE_DIR = f"{SANDBOX_ROOT}/.cache/pip"
+
+# 默认走清华源。实测直连 pypi.org 是 83 KB/s（scipy 一个包就要九分钟，必然撞上执行超时），
+# 换镜像源后同样的包 14 秒 —— 对内网部署这是可用性问题，不是优化。
+DEFAULT_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
+
 # 容器要长驻等后续调用，而不是跑完一条命令就退出
 KEEP_ALIVE_COMMAND = ("sleep", "infinity")
 
@@ -36,7 +49,7 @@ MANAGED_LABEL = "zuel.sandbox"
 THREAD_LABEL = "zuel.thread"
 
 DEFAULT_RUNTIME = "runsc"
-DEFAULT_NETWORK = "none"
+DEFAULT_NETWORK = "bridge"
 DEFAULT_MEMORY = "2g"
 DEFAULT_CPUS = "1"
 DEFAULT_PIDS_LIMIT = 128
@@ -162,6 +175,7 @@ class DockerContainer:
         workspace: 该 thread 在宿主机上的 workspace 目录，会挂进容器的 `/workspace`。
         image: 沙箱镜像。
         hardening: 资源限额与隔离档位，不传则用默认值。
+        index_url: agent 装包时用的 PyPI 索引源。
     """
 
     def __init__(
@@ -170,11 +184,13 @@ class DockerContainer:
         workspace: Path,
         image: str = DEFAULT_IMAGE,
         hardening: Hardening | None = None,
+        index_url: str = DEFAULT_INDEX_URL,
     ) -> None:
         self._thread_id = thread_id
         self._workspace = workspace.resolve()
         self._image = image
         self._hardening = hardening or Hardening()
+        self._index_url = index_url
         self._container_id: str | None = None
 
     @property
@@ -222,7 +238,9 @@ class DockerContainer:
                 f"{THREAD_LABEL}={self._thread_id}",
                 # gVisor。容器逃逸要先过它这一层，是整套隔离的根基
                 f"--runtime={limit.runtime}",
-                # 零出网。装包因此不可能，这是「不部署 devpi」那个决策的另一半
+                # 出网，让 agent 能自己装包。**gVisor 之外没有第二层网络管控** ——
+                # 沙箱里的代码能把 workspace 的东西发到任意地址，这是开网换来装包能力的代价，
+                # 前提是威胁模型里的用户是实名可信的内部教师（ADR-0002）。
                 f"--network={limit.network}",
                 *ALWAYS_ON_ARGUMENT,
                 # HOME 指到这里，所以必须可写；noexec 挡的是往家目录落可执行文件。
@@ -243,6 +261,20 @@ class DockerContainer:
                 f"HOME={CONTAINER_HOME}",
                 "-e",
                 f"MPLCONFIGDIR={MPL_CONFIG_DIR}",
+                "-e",
+                f"PYTHONUSERBASE={USER_BASE}",
+                "-e",
+                f"PIP_CACHE_DIR={PIP_CACHE_DIR}",
+                # 让漏写 `--user` 的 `pip install` 也装到 USER_BASE。不设的话它会去装
+                # 只读的 rootfs，报错后 agent 多半改去装 /tmp —— 那儿 noexec，装完照样跑不起来
+                "-e",
+                "PIP_USER=1",
+                # 两个都要给：实测 uv **完全忽略** PIP_INDEX_URL，只认 UV_INDEX_URL。
+                # 少给一个，agent 用 `uv pip` 时就悄悄退回官方源，症状只是慢到超时
+                "-e",
+                f"PIP_INDEX_URL={self._index_url}",
+                "-e",
+                f"UV_INDEX_URL={self._index_url}",
                 self._image,
                 *KEEP_ALIVE_COMMAND,
             ],

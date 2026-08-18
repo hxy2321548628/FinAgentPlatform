@@ -77,7 +77,7 @@ P0–P4 已于 2026-08-10 全部验收通过。当前状态是“平台链路跑
 |---|---|---|
 | 用户规模 | 教师及课题组研究生，约一两百人 | 单机部署，不引入 K8s 与队列分片 |
 | 部署环境 | 学院内网，单台 32 核 / 64 GB 服务器 | 自建 Postgres 与 Redis，以 Docker Compose 编排 |
-| 模型通路 | Worker 可访问公有云 LLM API | 模型调用留在可信应用层，沙箱保持零出网 |
+| 模型通路 | Worker 可访问公有云 LLM API | 模型调用留在可信应用层，不经过沙箱 |
 | 数据合规 | 当前不承载涉密或受等保约束的数据，可发送至公有云模型 | 本期不增加脱敏、静态加密和服务间 mTLS |
 | 开发资源 | 单人 + AI 辅助，无外部交付截止日 | 控制组件数量，以 ADR 和自动验收降低单人决策风险 |
 
@@ -100,7 +100,7 @@ P0–P4 已于 2026-08-10 全部验收通过。当前状态是“平台链路跑
 
 - **事件驱动，但不提前分布式化。** 长任务要求异步提交、队列消费和事件订阅；当前规模不要求 K8s、服务网格或分库分表。见 [ADR-0001](./adr/0001-single-host-compose.md)。
 - **持久状态离开进程。** Run 元数据和 checkpoint 在 Postgres，任务与热事件在 Redis；API 与 Worker 因而可以重启和扩副本。**产物是唯一的例外** —— 它留在会话 workspace 的宿主机目录里（`0009` 迁移撤掉对象存储之后），因此产物的下载路径绑在那台机器上。
-- **不可信执行面最小化。** 只有 sandbox-broker 持有 `docker.sock`，沙箱零出网，应用服务不直接执行生成代码。见 [ADR-0004](./adr/0004-sandbox-broker-docker-sock.md)。
+- **不可信执行面最小化。** 只有 sandbox-broker 持有 `docker.sock`，应用服务不直接执行生成代码。见 [ADR-0004](./adr/0004-sandbox-broker-docker-sock.md)。沙箱自 P12 起可出网装包，隔离因此全靠 gVisor 与资源限额，见 [ADR-0017](./adr/0017-sandbox-network-and-package-install.md)。
 - **契约隔离框架变化。** Worker 把 DeepAgents/LangGraph 事件映射成平台事件，前端不依赖框架内部结构。见 [ADR-0013](./adr/0013-event-anticorruption-layer-v2-stream.md)。
 - **至少一次投递配合幂等。** 队列允许重投；写工具由 broker 按稳定键去重，避免崩溃恢复重复副作用。见 [ADR-0014](./adr/0014-tool-idempotency-key.md)。
 
@@ -128,7 +128,7 @@ flowchart TB
     end
 
     subgraph EXEC["不可信执行层"]
-        SBX["<b>沙箱容器</b><br/>gVisor · 每 Thread 一个 · 零出网"]
+        SBX["<b>沙箱容器</b><br/>gVisor · 每 Thread 一个 · 可出网装包"]
     end
 
     LLM["<b>LLM API</b>"]

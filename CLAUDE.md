@@ -80,8 +80,8 @@ make sandbox-image  # 新克隆的仓库跑一次，否则沙箱测试静默跳�
 真实验收要六个服务起着，与 `make all` 是两回事：
 
 ```bash
-bash script/test/verify.sh                             # 61 条判据全跑，要 sudo、有 LLM 费用
-SKIP_LLM=1 SKIP_HOSTILE=1 bash script/test/verify.sh   # 免费的 42 条，约 30 分钟
+bash script/test/verify.sh                             # 62 条判据全跑，要 sudo、有 LLM 费用
+SKIP_LLM=1 SKIP_HOSTILE=1 bash script/test/verify.sh   # 免费的 43 条，约 30 分钟
 ```
 
 **判据没触发到要测的场景时记「未验」，不记通过** —— 这条规矩比判据本身更重要。

@@ -286,7 +286,7 @@ execute 执行完 → broker 列出 outputs/ 下本次调用后 mtime 变化的�
 |---|---|
 | 工作目录是 `/workspace` | §4.2 |
 | 图表等产物必须存到 `/workspace/outputs/` | §4.3，否则产物丢失 |
-| 沙箱无公网。装包走内网 pypi 镜像，不要用 `requests` 从公网拉数据 | §7.3.4 |
+| 缺库直接 `pip install`（P12 起沙箱可出网），但装不了系统软件 —— 无 root，`apt-get` 必然失败 | §7.3.3 |
 | 代码先 `write_file` 成 `.py` 文件再 `execute` 运行，不要写成 shell 里的长 heredoc | 便于复查与重跑；P3 上 HITL 后，教师审批时需要看到完整脚本 |
 | **画图直接用中文，不要自己找字体、不要 `pip install` 或 `apt` 装字体** | 见下方观测。镜像已预装中文字体并配好 matplotlib |
 
@@ -299,7 +299,9 @@ execute 执行完 → broker 列出 outputs/ 下本次调用后 mtime 变化的�
 - 工作目录是 /workspace，你的文件工具和代码执行都在这里
 - 写代码时，先用 write_file 存成 .py 文件，再用 execute 运行它
 - 图表、报表等需要交付给用户的产物，一律存到 /workspace/outputs/
-- 环境不能访问公网。装包用 pip（已配置内网镜像），不要从网上下载数据
+- 已预装 pandas、numpy、matplotlib。缺别的库直接 `pip install 包名` 装，
+  已配好镜像源与安装位置，装完当前会话一直在，不用重复装也不用加 --user
+- 装不了系统软件：容器里没有 root，`apt-get` 一定失败，不要试。纯 Python 的替代包才装得上
 - 画图直接用中文，环境已经装好中文字体并配成 matplotlib 默认。不要自己找字体、
   不要设置 rcParams 的字体、更不要用 pip 或 apt 装字体
 
@@ -310,7 +312,8 @@ execute 执行完 → broker 列出 outputs/ 下本次调用后 mtime 变化的�
 
 > **P0 观测到的第一个真实失败模式（2026-08-02）**：agent 画中文标题的图时发现字体缺失，自行执行了
 > `pip install matplotlib --upgrade; apt-cache search chinese font; apt list --installed | grep -i font`
-> 来找中文字体。**这在零出网的沙箱里必然全部失败**，纯浪费轮次与 token。
+> 来找中文字体。当时沙箱零出网，**这些必然全部失败**，纯浪费轮次与 token。P12 开放出网后
+> `pip` 那半边不再必然失败，但字体本来就装好了，去找仍然是纯浪费 —— 这条约束因此保留。
 >
 > 两条应对，缺一不可：
 > 1. **镜像预装中文字体**并配好 matplotlib 默认字体（记入[安全设计 §7.3.5](./07security-design.md) 的预装清单）；

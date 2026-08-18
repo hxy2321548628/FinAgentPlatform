@@ -7,6 +7,7 @@
 import os
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -20,12 +21,28 @@ from app.sandbox.container import (
     DEFAULT_IMAGE,
     OUTPUT_LIMIT_BYTE,
     TRUNCATION_MARKER,
+    USER_BASE,
     ContainerError,
     DockerContainer,
     Hardening,
     running_sandbox,
 )
 from app.sandbox.path import OUTPUT_DIR
+
+# 装包用例的探针包：不在预装栈里、无依赖、几十 KB。选大包会把用例拖成分钟级
+_PROBE_PACKAGE = "wcwidth"
+
+
+def _network_ready() -> bool:
+    """本机能不能连到 pypi。
+
+    装包用例连不上时必须 skip 而不是红 —— 那是环境不具备，不是实现坏了。
+    """
+    try:
+        socket.create_connection((socket.gethostbyname("pypi.org"), 443), timeout=5).close()
+    except OSError:
+        return False
+    return True
 
 
 def _docker_ready() -> bool:
@@ -294,12 +311,48 @@ def test_tmp_is_capped_at_the_configured_size(shared: DockerContainer) -> None:
     assert int(result.output.strip()) == 512
 
 
-def test_the_sandbox_has_no_network(shared: DockerContainer) -> None:
-    """零出网是 P1 定案的网络策略，也是不部署 devpi 的前提。"""
-    result = shared.exec("python -c 'import socket; socket.create_connection((\"1.1.1.1\", 53), 2)'", timeout=20)
+def test_the_workspace_is_executable_unlike_tmp(shared: DockerContainer) -> None:
+    """装包落在 workspace 的全部前提。
 
-    assert result.exit_code != 0
-    assert "unreachable" in result.output.lower() or "network" in result.output.lower()
+    与上面那条 /tmp 的 noexec 是一对：只读 rootfs 下 workspace 是唯一既可写又可执行的
+    地方，带原生扩展的包（scipy 的 .so）只有在这里才既装得下又加载得起来。
+    """
+    written = shared.exec("printf '#!/bin/sh\\necho ran\\n' > /workspace/x && chmod +x /workspace/x", timeout=10)
+    executed = shared.exec("/workspace/x", timeout=10)
+
+    assert written.exit_code == 0
+    assert executed.output.strip() == "ran"
+    assert executed.exit_code == 0
+
+
+def test_the_sandbox_reaches_the_package_index(shared: DockerContainer) -> None:
+    """出网是「agent 自己装包」的前提，P1 的 `--network=none` 已于 P12 放开。"""
+    if not _network_ready():
+        pytest.skip("宿主机连不上 pypi.org —— 记未验，不是通过")
+    result = shared.exec(
+        "python -c \"import socket; socket.create_connection((socket.gethostbyname('pypi.org'), 443), 10)\"",
+        timeout=30,
+    )
+
+    assert result.exit_code == 0, result.output
+
+
+def test_a_pip_installed_package_lands_in_the_workspace_and_imports(workspace: Path) -> None:
+    """装包的端到端判据：能装、落在 workspace、且真的 import 得起来。
+
+    落点必须验 —— 装进 /tmp 也会「装成功」，但那是 512m 的 noexec tmpfs，
+    换成带原生扩展的包就会在 import 时才炸，且报错不指向落点。
+    """
+    if not _network_ready():
+        pytest.skip("宿主机连不上 pypi.org —— 记未验，不是通过")
+    with DockerContainer(thread_id="test-thread", workspace=workspace) as container:
+        installed = container.exec(f"pip install {_PROBE_PACKAGE}", timeout=180)
+        located = container.exec(f"python -c 'import {_PROBE_PACKAGE} as m; print(m.__file__)'", timeout=30)
+
+    assert installed.exit_code == 0, installed.output
+    assert located.exit_code == 0, located.output
+    assert located.output.strip().startswith(USER_BASE)
+    assert (workspace / ".local").is_dir()
 
 
 def test_a_busy_loop_is_capped_to_one_cpu(workspace: Path) -> None:

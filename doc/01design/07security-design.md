@@ -103,7 +103,7 @@ Agent 要写并运行分析代码，内网部署又意味着数据不能交给�
 
 ```
 --runtime=runsc                  # gVisor
---network=none                   # 或自定义 bridge + iptables 白名单（见 7.3.3）
+--network=bridge                 # P12 起开放出网以支持装包，见 7.3.3
 --read-only                      # rootfs 只读
 --tmpfs /tmp:rw,noexec,nosuid,size=512m   # /tmp 必须限容，见 7.3.5
 --cap-drop=ALL
@@ -122,13 +122,25 @@ Agent 要写并运行分析代码，内网部署又意味着数据不能交给�
 
 Agent 一定会想装包。必须给沙箱配一个内网 pypi 镜像（清华 / 阿里源，或自建 devpi），网络策略从 `none` 改成「只允许访问镜像源 + 内网数据源」的白名单 bridge。
 
-> **P1 定案：不做，沙箱保持 `--network=none`**（2026-08-03，理由见 [P1 计划 §2.2](../03plan/P1-plan.md)）。
-> 本条写于 P0 之前，前提是「agent 一定会想装包」，而 P0 实测的前提已经变了：镜像预装了 pandas / numpy / matplotlib 与中文字体，全程没有装包需求。
+> ~~**P1 定案：不做，沙箱保持 `--network=none`**（2026-08-03）~~ —— **已于 P12 推翻，见下**。
 >
-> 更要紧的是**它与加固清单直接冲突**：`--read-only` 使 `pip` 只能装到 `HOME` 下，而 `HOME=/tmp` 是 512MB 且 `noexec` 的 tmpfs —— 装得下的包跑不起来，跑得起来的包装不下。要支持装包，得先给出一条可写且可执行的路径，那是对加固清单的实质放松，不能顺手做。
+> **P12 定案：开放出网，agent 自己装 Python 包**（2026-08-18，见 [ADR-0017](./adr/0017-sandbox-network-and-package-install.md)）。
 >
-> **代价**：agent 遇到预装栈覆盖不到的分析方法（如 `statsmodels`）会直接卡住，且零出网下它的错误信息不会指向「装不了包」。缓解：把可用库清单写进系统提示词；实测缺哪个就加进镜像重新构建。
-> **重新评估的触发条件**：教师的分析需求反复撞到缺库，且加库频率高到无法靠重建镜像跟上。
+> P1 卡住的是「没有一条可写且可执行的路径」，这一条现在有了答案：**装到 `/workspace/.local`**（`PYTHONUSERBASE`）。workspace 是 bind mount，可写、可执行、随会话持久，且本来就被 5 GB XFS 配额兜着 —— 因此**不必碰加固清单的任何一条**，`--read-only` / `--cap-drop=ALL` / `no-new-privileges` 原样保留。
+>
+> 落地要点（实测得出，每条对应一个会静默失效的坑）：
+>
+> | 项 | 为什么 |
+> |---|---|
+> | `PIP_USER=1` | 不设的话，漏写 `--user` 的 `pip install` 会去装只读 rootfs，报错后 agent 多半改去装 `/tmp` —— 那儿 `noexec`，装完照样跑不起来 |
+> | `PIP_CACHE_DIR` 指到 workspace | 默认缓存在 `$HOME/.cache` 即 `/tmp`，而那是计入 2 GB 内存预算的 tmpfs，装一次 scipy 就是 45 MB |
+> | `PIP_INDEX_URL` **与** `UV_INDEX_URL` 都要设 | 实测 **uv 完全忽略 `PIP_INDEX_URL`**。少给一个，agent 用 `uv pip` 时会悄悄退回官方源，症状只是慢到超时 |
+> | 镜像源不是优化而是前提 | 实测直连 pypi.org 只有 83 KB/s：一个 scipy 要 9 分 51 秒，直接撞上单次执行超时；换清华源后同样的包 14 秒 |
+> | 提示词必须同步改 | 与字体那条同理 —— 只放开实现不改提示词，agent 不知道能装包，照样白跑 |
+>
+> **代价**：沙箱里的代码从此可以把 workspace 的内容发到任意地址，**gVisor 之外没有第二层网络管控**。这换来的是 agent 不再因缺库卡死。前提是威胁模型里的用户仍是实名可信的内部教师（[ADR-0002](./adr/0002-sandbox-isolation-gvisor.md)）—— 平台一旦对校外开放，这一条要连同 ADR-0002 一起重估。
+>
+> **仍然装不了系统软件**：容器内非 root 且 `--cap-drop=ALL`，`apt-get` 必然失败（实测 `are you root?`）。这是刻意保留的，已写进提示词让 agent 不要试；缺系统级工具仍走「加进镜像重新构建」。
 
 **陷阱二：不要把 `docker.sock` 挂进 worker 容器。**
 
@@ -136,12 +148,11 @@ Agent 一定会想装包。必须给沙箱配一个内网 pypi 镜像（清华 /
 
 ### 7.3.4 沙箱的网络策略
 
-沙箱**不需要访问公网**。模型调用发生在 worker 侧，不经过沙箱。沙箱的出站访问仅限：
+**P12 起沙箱直连外网**（`--network=bridge`），为的是让 agent 自己装包。模型调用仍然发生在 worker 侧，不经过沙箱。
 
-- 内网 pypi 镜像（装包）
-- 内网数据源（若有）
+这里**没有采用白名单 bridge**，尽管它收得更紧。理由是沙箱容器由 broker 在运行时动态创建与销毁，iptables 规则要跟着每个容器的生命周期走，运维成本压不住；而在「用户是实名可信的内部教师」这个威胁模型下，它挡住的攻击本就不在模型内。**代价写在 7.3.3：数据外发从不可能变成了可能。**
 
-这条策略与 [风险登记的已解除阻塞](./09risk-register.md) 的出网通路是**两件独立的事** —— worker 需要出网，沙箱不需要。
+这条策略与 [风险登记的已解除阻塞](./09risk-register.md) 的出网通路仍是**两件独立的事** —— worker 出网是为了调模型，沙箱出网是为了装包，两者的重估条件不同。
 
 ### 7.3.5 磁盘与 tmpfs 配额
 
@@ -183,7 +194,7 @@ xfs_quota -x -c "limit -p bhard=5g {projid}" /data/sandbox
 | 项 | 为什么必须预装 |
 |---|---|
 | pandas / numpy / matplotlib | 见上方实现提醒 |
-| **中文字体**（如 `fonts-noto-cjk`）并配好 matplotlib 默认字体 | 实测 agent 画中文标题的图时发现字体缺失，自行执行 `pip install matplotlib --upgrade`、`apt-cache search chinese font` 去找 —— 零出网下这些**必然全部失败**，纯浪费轮次与 token。**同时要在提示词里显式禁止 agent 自己找字体**（[智能体设计 §6](./03agent-design.md)），只预装不改提示词仍会浪费轮次，因为 agent 不知道字体已装好 |
+| **中文字体**（如 `fonts-noto-cjk`）并配好 matplotlib 默认字体 | 实测 agent 画中文标题的图时发现字体缺失，自行执行 `pip install matplotlib --upgrade`、`apt-cache search chinese font` 去找 —— 当时零出网，这些**必然全部失败**，纯浪费轮次与 token（P12 开放出网后 pip 那半边不再失败，但字体已装好，去找仍是浪费）。**同时要在提示词里显式禁止 agent 自己找字体**（[智能体设计 §6](./03agent-design.md)），只预装不改提示词仍会浪费轮次，因为 agent 不知道字体已装好 |
 
 **另需在容器启动时设 `HOME` 与 `MPLCONFIGDIR` 指向可写路径。** `--read-only` + 非 root 运行（§7.3.2）使容器内没有可写的家目录，matplotlib 与 pip 会把告警刷到 stdout，**混进 `execute` 的返回值里干扰 LLM**。这不是美观问题 —— agent 会把告警当成执行出错。
 

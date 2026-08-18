@@ -23,13 +23,21 @@ def test_the_prompt_requires_writing_a_file_before_executing() -> None:
     assert "execute" in SYSTEM_PROMPT
 
 
-def test_the_prompt_states_there_is_no_public_network() -> None:
-    """沙箱零出网，不说清楚 agent 会反复尝试联网取数据。"""
-    assert "公网" in SYSTEM_PROMPT
+def test_the_prompt_tells_the_agent_how_to_install_packages() -> None:
+    """不说清楚就白白浪费轮次：agent 猜不到装的包会留在会话里，也猜不到不用加 --user。"""
+    assert "pip install" in SYSTEM_PROMPT
+
+
+def test_the_prompt_rules_out_installing_system_packages() -> None:
+    """容器里没有 root，apt 必然失败。不写明，agent 会拿它试上几轮才放弃。"""
+    assert "apt-get" in SYSTEM_PROMPT
 
 
 def test_the_prompt_forbids_hunting_for_chinese_fonts() -> None:
-    """实测到的第一个真实失败模式：agent 为找中文字体跑了一轮 pip 与 apt，在零出网的沙箱里必然全败。"""
+    """实测到的第一个真实失败模式：agent 为找中文字体跑了一轮 pip 与 apt 去搜。
+
+    开网之后 pip 那半边不再必然失败，但字体本来就装好了，找字体仍然是纯浪费轮次。
+    """
     assert "字体" in SYSTEM_PROMPT
     assert "rcParams" in SYSTEM_PROMPT
 
