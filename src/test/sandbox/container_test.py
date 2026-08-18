@@ -18,8 +18,10 @@ import pytest
 
 from app.sandbox.backend import SandboxBackend
 from app.sandbox.container import (
+    DEFAULT_CGROUP_PARENT,
     DEFAULT_IMAGE,
     OUTPUT_LIMIT_BYTE,
+    SANDBOX_KILLED_MESSAGE,
     TRUNCATION_MARKER,
     USER_BASE,
     ContainerError,
@@ -43,6 +45,20 @@ def _network_ready() -> bool:
     except OSError:
         return False
     return True
+
+
+def _cgroup_v2_ready() -> bool:
+    """宿主是不是 cgroup v2。
+
+    v1 的目录布局完全不同（按控制器分树），父节点那组用例在它上面没有意义。
+    """
+    probe = subprocess.run(
+        ["stat", "-fc", "%T", "/sys/fs/cgroup"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return probe.stdout.strip() == "cgroup2fs"
 
 
 def _docker_ready() -> bool:
@@ -424,6 +440,109 @@ def test_hardening_values_are_configurable_rather_than_baked_in(workspace: Path)
         result = container.exec("df -m /tmp | tail -1 | awk '{print $2}'", timeout=10)
 
     assert int(result.output.strip()) == 16
+
+
+def _cgroup_directory(container_id: str) -> Path | None:
+    """容器在宿主 cgroup 树里的目录，找不到返回 None。
+
+    逐层加深地找而不是拼固定路径：systemd 用 `-` 编码层级，`zuel-sandbox.slice`
+    实际落在 `zuel.slice/zuel-sandbox.slice/` 下，父节点有几层取决于名字里有几个连字符。
+    """
+    root = Path("/sys/fs/cgroup")
+    for depth in range(1, 4):
+        pattern = "/".join(["*"] * depth) + f"/*{container_id}*"
+        for found in root.glob(pattern):
+            if found.is_dir():
+                return found
+    return None
+
+
+@pytest.mark.skipif(not _cgroup_v2_ready(), reason="需要 cgroup v2")
+def test_sandboxes_share_one_cgroup_parent_by_default(workspace: Path) -> None:
+    """默认就要归到公共父节点下。
+
+    忘了配等于没有总量约束 —— 单沙箱的 `--memory` 是各自独立的天花板，
+    20 个 2g 加起来 40g，没有任何东西拦着它们同时吃到。
+    """
+    with DockerContainer(thread_id="test-thread", workspace=workspace) as container:
+        directory = _cgroup_directory(container.id)
+
+    assert directory is not None, "在 cgroup 树里找不到这个容器"
+    assert directory.parent.name == DEFAULT_CGROUP_PARENT
+
+
+@pytest.mark.skipif(not _cgroup_v2_ready(), reason="需要 cgroup v2")
+def test_the_cgroup_parent_is_configurable(workspace: Path) -> None:
+    """父节点要能改：同一台机器上跑第二套环境时，两套的总量不能记在同一个账上。"""
+    grouped = Hardening(cgroup_parent="zuel-test.slice")
+
+    with DockerContainer(thread_id="test-thread", workspace=workspace, hardening=grouped) as container:
+        directory = _cgroup_directory(container.id)
+
+    assert directory is not None, "在 cgroup 树里找不到这个容器"
+    assert directory.parent.name == "zuel-test.slice"
+
+
+def test_a_sandbox_killed_by_the_memory_cap_reports_it_in_plain_chinese(workspace: Path) -> None:
+    """撞上内存限额时 gVisor 吐的是 `urpc method ... WaitPID failed` 这类内部术语。
+
+    原样交给 LLM 它读不出这是超限，最可能的反应是当成平台抖动、原样重试，
+    再撞一次同样的墙 —— 它需要的信息是「改写代码分批处理」而不是一串 RPC 错误。
+    """
+    lean = Hardening(memory="256m")
+
+    with DockerContainer(thread_id="test-thread", workspace=workspace, hardening=lean) as container:
+        result = container.exec(
+            "python -c 'import numpy as np; x = [np.ones((10_000_000,)) for _ in range(20)]'",
+            timeout=90,
+        )
+
+    assert result.exit_code != 0
+    assert "urpc" not in result.output
+    assert result.output == SANDBOX_KILLED_MESSAGE
+
+
+def test_an_ordinary_failure_keeps_its_own_error_message(workspace: Path) -> None:
+    """只有被掀掉才换措辞。普通报错换成「内存超限」会把 LLM 引向完全错误的修法。"""
+    with DockerContainer(thread_id="test-thread", workspace=workspace) as container:
+        result = container.exec("python -c 'raise ValueError(\"字段缺失\")'", timeout=30)
+
+    assert result.exit_code != 0
+    assert "ValueError" in result.output
+    assert SANDBOX_KILLED_MESSAGE not in result.output
+
+
+def test_the_sandbox_cannot_fall_back_to_swap(workspace: Path) -> None:
+    """内存限额之外不许再借 swap。
+
+    借到了任务确实能跑完，但实测同一个负载慢 2.7 倍（18.8 秒 → 51.3 秒，只借了 20 MB）——
+    而单次执行只有 120 秒，这个减速会把它推向超时，症状是「跑了两分钟没结果」，
+    完全不指向内存。直接失败反而给了 LLM 明确的信号。
+    另外父 cgroup 的总量只管内存，**swap 是账外的**，留着它总量控制就有个洞。
+    """
+    lean = Hardening(memory="256m")
+
+    # 400 MB，是限额的 1.5 倍：不借 swap 就必然失败。Docker 默认给等量 swap，
+    # 那时它能一路分配到 480 MB
+    with DockerContainer(thread_id="test-thread", workspace=workspace, hardening=lean) as container:
+        result = container.exec("python -c 'import numpy as np; x = np.ones((50_000_000,))'", timeout=60)
+
+    assert result.exit_code != 0
+
+
+def test_swap_can_be_granted_back_when_a_deployment_wants_it(workspace: Path) -> None:
+    """仍留一个开关：机器内存紧张时，宁可慢也要跑完是个合理的取舍。"""
+    generous = Hardening(memory="256m", memory_swap="512m")
+
+    with DockerContainer(thread_id="test-thread", workspace=workspace, hardening=generous) as container:
+        probe = subprocess.run(
+            ["docker", "inspect", "-f", "{{.HostConfig.MemorySwap}}", container.id],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    assert probe.stdout.strip() == str(512 * 1024 * 1024)
 
 
 # ------------------------------------------------ P1 步骤三：broker 重启认领

@@ -41,6 +41,11 @@ docker info >/dev/null 2>&1 || die "连不上 Docker 守护进程：当前用户
 WORKSPACE_ROOT="$(sed -n 's/^SANDBOX_WORKSPACE_ROOT=//p' "$REPO_ROOT/.env")"
 [[ -n $WORKSPACE_ROOT ]] || WORKSPACE_ROOT="$REPO_ROOT/data/sandbox"
 
+# 沙箱的公共父 cgroup 与它的内存总量。与 config.py 同一个默认值
+CGROUP_PARENT="$(sed -n 's/^SANDBOX_CGROUP_PARENT=//p' "$REPO_ROOT/.env")"
+[[ -n $CGROUP_PARENT ]] || CGROUP_PARENT="zuel-sandbox.slice"
+MEMORY_TOTAL="$(sed -n 's/^SANDBOX_MEMORY_TOTAL=//p' "$REPO_ROOT/.env")"
+
 # ---------------------------------------------------------------- ① gVisor
 #
 # 沙箱靠 runsc 拦住容器逃逸（ADR-0002）。**不装的话 broker 建会话一律失败**，
@@ -78,15 +83,40 @@ else
     make -C "$REPO_ROOT" sandbox-image
 fi
 
-# ---------------------------------------------------------------- ④ 起栈
-log "④ 构建并起六个服务"
+# ---------------------------------------------------------------- ④ 沙箱内存总量
+#
+# SANDBOX_MEMORY 是每个沙箱**各自**的天花板，拦不住 N 个沙箱的和。撑爆物理内存触发的
+# 是内核全局 OOM，按 oom_score 在全机进程里挑最大的杀 —— 很可能是 postgres 或 worker
+# 而不是肇事的沙箱，症状「数据库莫名重启」完全不指向真凶。父 cgroup 的 MemoryMax 把这个
+# 爆炸半径关在沙箱这棵子树内。**没设也能跑**（Docker 自建一个不设限的父节点，行为同以前），
+# 代价是少了这道拦阻线，SANDBOX_MAX_CONTAINER 就只能按最坏情况保守地取。
+log "④ 沙箱内存总量（$CGROUP_PARENT）"
+if [[ -z $MEMORY_TOTAL ]]; then
+    # 六成给沙箱，余下四成留给 postgres / redis / api / worker 与页缓存。
+    # 读 /proc 而不是 free，后者的字段名随 locale 变
+    MEMORY_TOTAL="$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) * 1024 * 6 / 10 ))"
+    printf '    \033[90m未配 SANDBOX_MEMORY_TOTAL，按物理内存六成算\033[0m\n'
+fi
+TARGET_BYTE="$(numfmt --from=iec "$MEMORY_TOTAL")"
+if [[ $(systemctl show "$CGROUP_PARENT" -p MemoryMax --value) == "$TARGET_BYTE" ]]; then
+    skip "总量已是 $(numfmt --to=iec "$TARGET_BYTE")"
+elif [[ -n ${SKIP_HOST_SETUP:-} ]]; then
+    printf '    \033[33m警告：没设内存总量，沙箱撑爆宿主时会触发全局 OOM\033[0m\n'
+else
+    # 不带 --runtime，重启后仍在 —— 与 XFS 那步不同，这个不必每次开机重做
+    sudo systemctl set-property "$CGROUP_PARENT" MemoryMax="$TARGET_BYTE"
+    printf '    沙箱总量 = %s\n' "$(numfmt --to=iec "$TARGET_BYTE")"
+fi
+
+# ---------------------------------------------------------------- ⑤ 起栈
+log "⑤ 构建并起六个服务"
 make -C "$REPO_ROOT" up
 
-# ---------------------------------------------------------------- ⑤ 自检
+# ---------------------------------------------------------------- ⑥ 自检
 #
 # **不能只看 `docker compose ps`**：容器 Up 着而 api 在迁移里卡住、nginx 镜像里
 # 没烤进前端，两种都照样显示 Up。这里要的是「浏览器打得开、api 应答」这两件事本身。
-log "⑤ 自检"
+log "⑥ 自检"
 PORT="$(sed -n 's/^HTTP_PORT=//p' "$REPO_ROOT/.env")"
 BASE_URL="http://127.0.0.1:${PORT:-80}"
 

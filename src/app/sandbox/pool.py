@@ -33,8 +33,13 @@ from app.sandbox.workspace import Workspace
 
 logger = logging.getLogger(__name__)
 
-# 容器数上限。宿主机 64 GB、单沙箱 2 GB，理论上限约 24，留余量取 20
-DEFAULT_MAX_CONTAINER = 20
+# 容器数上限。**不按「每个沙箱都吃满 SANDBOX_MEMORY」推** —— 那个是各自的天花板不是
+# 预留，容器占内存是用多少算多少，空闲的只占十几 MB。真正吃内存的是同时**在执行代码**的
+# 那几个，而它被 worker 并发（WORKER_CONCURRENCY × 副本数）封顶，与这里的容器数无关。
+# 实测一次 150 万行的面板分析峰值 725 MB，并发满打满算也只有个位数 GB，
+# 总量另有父 cgroup 兜底（见 container.py 的 DEFAULT_CGROUP_PARENT）。
+# 因此这个数管的是「同时能有多少个会话不必排队」，不是内存账。
+DEFAULT_MAX_CONTAINER = 50
 
 DEFAULT_IDLE_TIMEOUT = 1800.0
 DEFAULT_QUEUE_TIMEOUT = 600.0

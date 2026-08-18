@@ -18,7 +18,7 @@ from app.task.queue import Delivery, RunTask, TaskQueue
 logger = logging.getLogger(__name__)
 
 # 一个 worker 同时驱动几个 run
-DEFAULT_CONCURRENCY = 8
+DEFAULT_CONCURRENCY = 20
 
 # 多久宣告一次「我还活着」。要**明显小于**队列的认领阈值，
 # 否则健康的 worker 会被别人当成已经死了

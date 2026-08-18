@@ -20,6 +20,7 @@ from app.quota.policy import (
 )
 from app.quota.usage import DEFAULT_RESET_TIMEZONE
 from app.sandbox.container import (
+    DEFAULT_CGROUP_PARENT,
     DEFAULT_CPUS,
     DEFAULT_IMAGE,
     DEFAULT_INDEX_URL,
@@ -310,6 +311,15 @@ class Settings(StoreSettings):
         default=DEFAULT_MEMORY,
         description="单沙箱内存上限，含 /tmp 的 tmpfs 占用",
     )
+    sandbox_memory_swap: str = Field(
+        default="",
+        description="单沙箱内存 + swap 的合计上限。留空即等于 sandbox_memory，也就是不许借 swap",
+    )
+    sandbox_cgroup_parent: str = Field(
+        default=DEFAULT_CGROUP_PARENT,
+        min_length=1,
+        description="沙箱共同的父 cgroup。所有沙箱的内存总量设在这个节点上，由 script/deploy.sh 配",
+    )
     sandbox_cpus: str = Field(
         default=DEFAULT_CPUS,
         description="单沙箱 CPU 核数上限。死循环被限在这个数以内",
@@ -378,9 +388,11 @@ class Settings(StoreSettings):
             runtime=self.sandbox_runtime,
             network=self.sandbox_network,
             memory=self.sandbox_memory,
+            memory_swap=self.sandbox_memory_swap or None,
             cpus=self.sandbox_cpus,
             pids_limit=self.sandbox_pids_limit,
             tmp_size=self.sandbox_tmp_size,
+            cgroup_parent=self.sandbox_cgroup_parent,
             user=self.sandbox_user or None,
         )
 

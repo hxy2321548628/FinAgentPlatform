@@ -55,6 +55,14 @@ DEFAULT_CPUS = "1"
 DEFAULT_PIDS_LIMIT = 128
 DEFAULT_TMP_SIZE = "512m"
 
+# 沙箱共同的父 cgroup。**总量只能设在这里** —— 每个沙箱的 `--memory` 是各自独立的
+# 天花板，20 个 2g 加起来 40g，没有任何东西拦着它们同时吃到，撑爆的是宿主机物理内存。
+# 那时触发的是内核的全局 OOM，按 oom_score 在全机进程里挑最大的杀，很可能是 postgres
+# 或 worker 而不是肇事的沙箱 —— 症状是「数据库莫名重启」，完全不指向真凶。
+# 父节点的 memory.max 把这个爆炸半径关在沙箱这棵子树内，由 script/deploy.sh 设置。
+# **slice 不存在时 Docker 自建一个不设限的**，因此没跑过部署脚本的机器行为不变。
+DEFAULT_CGROUP_PARENT = "zuel-sandbox.slice"
+
 # 这三条**刻意不做成配置项**：它们没有「调小一点」的中间档，只有开和关，
 # 而关掉就是直接开一个缺口。做成开关等于给一个配错了也不会有任何症状的失守留了入口。
 ALWAYS_ON_ARGUMENT = (
@@ -67,6 +75,21 @@ ALWAYS_ON_ARGUMENT = (
 # 原样收进网关就是一次 OOM。
 OUTPUT_LIMIT_BYTE = 1 << 20
 TRUNCATION_MARKER = "…[输出超过 1 MiB，已截断]"
+
+# 沙箱被整个掀掉时的两种痕迹。gVisor 撞上内存或 pids 限额不是让 malloc/fork 失败，
+# 而是直接终止整个沙箱：runsc 下 docker CLI 吐一句 `urpc method ... WaitPID failed`，
+# runc 下则是进程收 SIGKILL（128+9）。
+# **这段术语原样交给 LLM 就是噪音** —— 它读不出是超限，最可能当成平台抖动原样重试，
+# 再撞一次同样的墙。换成人话它才知道该改写代码。
+#
+# 判据刻意不用 `docker inspect` 的 OOMKilled：那个标志**一旦置上就不会复位**，
+# 而沙箱按 thread 复用半小时，据它翻译会让这个会话之后每一次普通报错都被说成内存超限。
+GVISOR_TERMINATION_MARKER = "urpc method"
+SIGKILL_EXIT_CODE = 137
+SANDBOX_KILLED_MESSAGE = (
+    "沙箱被强制终止 —— 通常是内存超过限额，或进程数超限。"
+    "请分批处理数据、及时释放不再用的大对象，或减少并发的子进程后重试。"
+)
 
 
 @dataclass(frozen=True)
@@ -82,9 +105,16 @@ class Hardening:
     runtime: str = DEFAULT_RUNTIME
     network: str = DEFAULT_NETWORK
     memory: str = DEFAULT_MEMORY
+    # 内存 + swap 的合计上限。留空则等于 `memory`，即**不许借 swap**。
+    # Docker 的默认是给等量 swap（合计两倍），那会让沙箱在限额之外还能再借一份 ——
+    # 实测借到之后同一个负载慢 2.7 倍，而单次执行只有 120 秒，减速会把它推向超时，
+    # 症状「跑了两分钟没结果」不指向内存。且父 cgroup 的总量只管内存，swap 是账外的。
+    memory_swap: str | None = None
     cpus: str = DEFAULT_CPUS
     pids_limit: int = DEFAULT_PIDS_LIMIT
     tmp_size: str = DEFAULT_TMP_SIZE
+    # 沙箱共同的父 cgroup，内存总量设在它上面，见 DEFAULT_CGROUP_PARENT
+    cgroup_parent: str = DEFAULT_CGROUP_PARENT
     # 沙箱以谁的身份跑，形如 "1000:1000"。留空则取当前进程的 uid:gid。
     # **broker 进容器之后当前进程是 root**，那时这个值必须显式给成宿主用户 ——
     # 否则 agent 写出的文件是 root 属主，宿主侧读不了，且症状不指向权限。
@@ -248,8 +278,12 @@ class DockerContainer:
                 "--tmpfs",
                 f"{CONTAINER_TMP}:rw,noexec,nosuid,size={limit.tmp_size}",
                 f"--memory={limit.memory}",
+                # 与 memory 相等即关掉 swap，见 Hardening.memory_swap
+                f"--memory-swap={limit.memory_swap or limit.memory}",
                 f"--cpus={limit.cpus}",
                 f"--pids-limit={limit.pids_limit}",
+                # 归到公共父节点下，总量才有地方设，见 DEFAULT_CGROUP_PARENT
+                f"--cgroup-parent={limit.cgroup_parent}",
                 # uid/gid 对齐宿主，否则容器写出的文件宿主侧读不了（架构 §8.5 的部署前提）
                 "--user",
                 limit.user or f"{os.getuid()}:{os.getgid()}",
@@ -357,7 +391,11 @@ class DockerContainer:
         if len(output.encode("utf-8", errors="replace")) >= OUTPUT_LIMIT_BYTE:
             # 不加标记的话，LLM 会把截断处当成程序的全部输出，据此推出错误的结论
             output += TRUNCATION_MARKER
-        return CommandResult(output=output + completed.stderr, exit_code=completed.returncode)
+        merged = output + completed.stderr
+        if _sandbox_was_killed(merged, completed.returncode):
+            # 整段换掉而不是追加：沙箱被掀掉时前面那些字节是半截的、对 LLM 没有价值的噪音
+            merged = SANDBOX_KILLED_MESSAGE
+        return CommandResult(output=merged, exit_code=completed.returncode)
 
     def __enter__(self) -> "DockerContainer":
         """启动容器并返回自身。"""
@@ -403,6 +441,21 @@ def running_sandbox() -> dict[str, str]:
         if separator and thread_id:
             found[thread_id] = container_id
     return found
+
+
+def _sandbox_was_killed(output: str, exit_code: int) -> bool:
+    """这次失败是不是「整个沙箱被掀掉」，而非命令自己报错退出。
+
+    Args:
+        output: 合并后的命令输出。
+        exit_code: 命令退出码。
+
+    Returns:
+        是则 True。
+    """
+    if exit_code == 0:
+        return False
+    return GVISOR_TERMINATION_MARKER in output or exit_code == SIGKILL_EXIT_CODE
 
 
 def _capped(command: str) -> str:
