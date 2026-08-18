@@ -70,6 +70,22 @@ async function settled(page: Page) {
   await expect(page.getByTestId('agent-plaza-list')).toHaveAttribute('data-loaded', 'true')
 }
 
+/**
+ * 在当前这一档审核列表里翻到指定的那一条。
+ *
+ * **必须翻页**：待审按提交时间升序，队列里压着几条早先提交的，刚提审的那条就不在
+ * 第一页。2026-08-18 这条走查正是这么红的 —— 报的是「元素找不到」，一个字都没提分页。
+ */
+async function reviewRow(page: Page, name: string) {
+  const row = page.getByTestId('review-row').filter({ hasText: name })
+  const next = page.getByRole('button', { name: '下一页' })
+  while ((await row.count()) === 0 && (await next.count()) > 0 && (await next.isEnabled())) {
+    await next.click()
+  }
+  await expect(row).toBeVisible()
+  return row
+}
+
 test('三档可见性：组内看得见、别组看不见，审核通过之后才上广场', async ({ page }) => {
   // ---- A：建一个 agent、写提示词、发布一版、共享给自己的组 ----
   await signIn(page, AUTHOR)
@@ -128,11 +144,18 @@ test('三档可见性：组内看得见、别组看不见，审核通过之后�
 
   // ---- reviewer：队列里有它，通过 ----
   await signIn(page, REVIEWER, /\/admin\/agents/)
-  const queued = page.getByTestId('review-row').filter({ hasText: AGENT_NAME })
-  await expect(queued).toBeVisible()
-  await expect(queued.getByText(PROMPT)).toBeVisible()
+  const queued = await reviewRow(page, AGENT_NAME)
+  // **提示词全文在详情抽屉里，不在卡片上** —— 卡片只摆一句说明
+  await queued.getByRole('button', { name: '查看详情' }).click()
+  await expect(page.getByRole('dialog')).toContainText(PROMPT)
+  await page.getByRole('button', { name: '关闭详情' }).click()
   await queued.getByRole('button', { name: '通过' }).click()
-  await expect(page.getByTestId('review-row').filter({ hasText: AGENT_NAME }).getByText('已通过')).toBeVisible()
+
+  // 通过之后它离开待审队列，进「最近处理」。**状态钉 data-status 不钉中文文案**：
+  // 那句文案已经从「已通过」改成「已上架 / 已下架」，而走查是靠它红了才发现的
+  await page.getByRole('button', { name: /^最近处理/ }).click()
+  const decided = await reviewRow(page, AGENT_NAME)
+  await expect(decided.getByTestId('review-status')).toHaveAttribute('data-status', 'approved')
 
   // ---- C：现在广场上看得见了 ----
   await signIn(page, OUTSIDER)

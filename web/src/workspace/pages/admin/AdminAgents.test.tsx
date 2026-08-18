@@ -68,18 +68,18 @@ function mount(records: ReviewItem[]) {
 }
 
 describe('AdminAgents', () => {
-  it('重审核卡片每页两条，处理历史每页十条', async () => {
+  it('重审核卡片每页五条，处理历史每页十条', async () => {
     mount([
-      ...Array.from({ length: 3 }, (_, index) => review(index + 1, 'pending')),
+      ...Array.from({ length: 6 }, (_, index) => review(index + 1, 'pending')),
       ...Array.from({ length: 11 }, (_, index) => review(index + 1, index % 3 === 0 ? 'rejected' : 'approved')),
     ])
 
     expect(await screen.findByText('待审智能体 01')).toBeTruthy()
-    expect(screen.getAllByTestId('review-row')).toHaveLength(2)
-    expect(screen.queryByText('待审智能体 03')).toBeNull()
+    expect(screen.getAllByTestId('review-row')).toHaveLength(5)
+    expect(screen.queryByText('待审智能体 06')).toBeNull()
 
     fireEvent.click(within(screen.getByRole('navigation', { name: '待审记录列表分页' })).getByRole('button', { name: '下一页' }))
-    expect(screen.getByText('待审智能体 03')).toBeTruthy()
+    expect(screen.getByText('待审智能体 06')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: '最近处理 11' }))
     expect(screen.getAllByTestId('review-row')).toHaveLength(10)

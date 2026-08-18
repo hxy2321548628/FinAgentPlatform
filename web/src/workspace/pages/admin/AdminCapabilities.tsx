@@ -176,7 +176,7 @@ function SkillReviewTable({ records, action, stickyActions = false }: { records:
             <td>{item.owner_name}</td>
             <td><span className="admin-tag">{item.subject || '未分类'}</span></td>
             <td className="admin-table-mono">{item.file_count ?? 0} 个文件 · {formatBytes(item.total_bytes ?? 0)}</td>
-            <td>{reviewStatusLabel(item)}{!item.responsibility_confirmed && <div className="admin-review-warning">未勾责任确认</div>}</td>
+            <td data-testid="review-status" data-status={item.status}>{reviewStatusLabel(item)}{!item.responsibility_confirmed && <div className="admin-review-warning">未勾责任确认</div>}</td>
             <td>{action(item)}</td>
           </tr>
         ))}

@@ -87,6 +87,22 @@ function skillMarkdown(name: string): string {
   return `---\nname: ${name}\ndescription: ${DESCRIPTION}\n---\n\n所有结果都要写清口径。\n`
 }
 
+/**
+ * 在当前这一档审核列表里翻到指定的那一条。
+ *
+ * **必须翻页**：待审按提交时间升序，队列里压着几条早先提交的，刚提审的那条就不在
+ * 第一页。2026-08-18 这条走查正是这么红的 —— 报的是「元素找不到」，一个字都没提分页。
+ */
+async function reviewRow(page: Page, name: string) {
+  const row = page.getByTestId('review-row').filter({ hasText: name })
+  const next = page.getByRole('button', { name: '下一页' })
+  while ((await row.count()) === 0 && (await next.count()) > 0 && (await next.isEnabled())) {
+    await next.click()
+  }
+  await expect(row).toBeVisible()
+  return row
+}
+
 test('越界包显示具体理由且不新增，合法包可发布、提审并通过', async ({ page }) => {
   await signIn(page, AUTHOR)
   await page.goto('/workspace/my-skills')
@@ -132,9 +148,13 @@ test('越界包显示具体理由且不新增，合法包可发布、提审并�
 
   await signIn(page, REVIEWER, /\/admin\/agents/)
   await page.goto('/admin/skills')
-  const queued = page.getByTestId('review-row').filter({ hasText: SKILL_NAME })
-  await expect(queued).toBeVisible()
+  const queued = await reviewRow(page, SKILL_NAME)
   await expect(queued).toContainText(DESCRIPTION)
   await queued.getByRole('button', { name: '通过' }).click()
-  await expect(page.getByTestId('review-row').filter({ hasText: SKILL_NAME }).getByText('已通过')).toBeVisible()
+
+  // 通过之后它离开待审队列，进「最近处理」。**状态钉 data-status 不钉中文文案**：
+  // 那句文案已经从「已通过」改成「已上架 / 已下架」，而走查是靠它红了才发现的
+  await page.getByRole('button', { name: /^最近处理/ }).click()
+  const decided = await reviewRow(page, SKILL_NAME)
+  await expect(decided.getByTestId('review-status')).toHaveAttribute('data-status', 'approved')
 })

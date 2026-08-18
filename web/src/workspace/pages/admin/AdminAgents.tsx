@@ -191,7 +191,7 @@ function Header({ item }: { item: ReviewItem }) {
       <span className="admin-review-version">v{item.version}</span>
       <span className="admin-tag">{scenario ? '场景' : '智能体'}</span>
       <span className="admin-review-meta">{item.owner_name} · {item.subject || '未分类'}</span>
-      <span className={`admin-review-status ${reviewStatusClass(item)}`}>{reviewStatusLabel(item)}</span>
+      <span data-testid="review-status" data-status={item.status} className={`admin-review-status ${reviewStatusClass(item)}`}>{reviewStatusLabel(item)}</span>
       {!item.responsibility_confirmed && <span className="admin-review-warning">未勾责任确认</span>}
     </div>
   )
