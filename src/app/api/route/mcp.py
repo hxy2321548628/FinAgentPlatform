@@ -51,6 +51,8 @@ ALREADY_DECIDED_MESSAGE = "这条申请已经处理过了"
 
 REASON_REQUIRED_MESSAGE = "拒绝必须写明理由，申请人要照着它改"
 
+DISABLE_REASON_REQUIRED_MESSAGE = "下架必须写明理由，申请人和管理员需要知道如何恢复"
+
 NOT_TOGGLEABLE_MESSAGE = "只有已放行的服务才能手动启停；待审的要先批，被拒的要重新申请"
 
 # **D3 的硬闸门，不是提示。** 平台既不把 MCP 工具纳入 HITL 审批（F8），也不传幂等键
@@ -173,11 +175,13 @@ async def set_enabled(
     """手动启停。**启用时把失败计数一并清零** —— 不清的话，恢复之后再失败一次就又停。
 
     Raises:
-        ApiError: 没有这条，或者它还没放行 / 已经被拒。
+        ApiError: 没有这条、下架没写理由，或者它还没放行 / 已经被拒。
     """
     if await platform.mcp.get(server_id) is None:
         raise not_found(MCP_NOT_FOUND_MESSAGE)
     reason = None if request.reason is None else request.reason.strip()
+    if not request.enabled and not reason:
+        raise invalid(DISABLE_REASON_REQUIRED_MESSAGE)
     if not await platform.mcp.set_enabled(server_id, enabled=request.enabled, reason=reason):
         raise invalid(NOT_TOGGLEABLE_MESSAGE)
     if request.enabled:

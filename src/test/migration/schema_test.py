@@ -742,3 +742,42 @@ def test_agent_subagent_reference_migration_is_additive_and_reversible(scratch: 
     _downgrade(scratch, BEFORE_AGENT_SUBAGENTS)
 
     assert "subagent_refs" not in _column(scratch, "agent_versions")
+
+
+def test_catalog_lifecycle_migration_keeps_existing_resources_enabled(scratch: str) -> None:
+    """升级不得把既有目录内容整批下架。"""
+    _upgrade(scratch, "0015_user_email_dept")
+    owner, agent, skill = uuid4().hex, uuid4().hex, uuid4().hex
+    with _connect(scratch) as connection:
+        _insert_user(connection, owner)
+        _insert_agent(connection, agent, owner)
+        _insert_skill(connection, skill, owner)
+
+    _upgrade(scratch, "head")
+
+    expected_columns = {
+        "catalog_enabled",
+        "catalog_disabled_reason",
+        "catalog_disabled_by",
+        "catalog_disabled_at",
+    }
+    assert expected_columns <= _column(scratch, "agents")
+    assert expected_columns <= _column(scratch, "skills")
+    with _connect(scratch) as connection:
+        agent_state = connection.execute(
+            "SELECT catalog_enabled, catalog_disabled_reason, catalog_disabled_by, catalog_disabled_at"
+            " FROM agents WHERE id = %s",
+            (agent,),
+        ).fetchone()
+        skill_state = connection.execute(
+            "SELECT catalog_enabled, catalog_disabled_reason, catalog_disabled_by, catalog_disabled_at"
+            " FROM skills WHERE id = %s",
+            (skill,),
+        ).fetchone()
+    assert agent_state == (True, None, None, None)
+    assert skill_state == (True, None, None, None)
+
+    _downgrade(scratch, "0015_user_email_dept")
+
+    assert not expected_columns & _column(scratch, "agents")
+    assert not expected_columns & _column(scratch, "skills")

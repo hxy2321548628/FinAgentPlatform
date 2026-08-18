@@ -115,9 +115,11 @@ export function MySkills() {
                     {!skill.in_catalog && skill.visibility === 'private' && <span style={badgeStyle}>私有</span>}
                     {state.reviewStatus === 'pending' && <span style={warningBadgeStyle}>待审核</span>}
                     {state.reviewStatus === 'rejected' && <span style={rejectedBadgeStyle}>已拒绝</span>}
+                    {state.reviewStatus === 'approved' && !skill.catalog_enabled && <span style={rejectedBadgeStyle}>已下架</span>}
                     <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{skill.call_count} 次调用</span>
                   </div>
                   {state.rejectedReason && <div role="alert" style={reasonStyle}><strong>审核未通过：</strong>{state.rejectedReason}</div>}
+                  {skill.catalog_disabled_reason && <div role="alert" style={reasonStyle}><strong>平台已下架：</strong>{skill.catalog_disabled_reason}</div>}
                   <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 5 }}>{description}</div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     {skill.subject || '未分类'}
@@ -130,7 +132,7 @@ export function MySkills() {
                   <Button variant="secondary" size="sm" onClick={() => setEditingId(skill.id)}>上传新草稿</Button>
                   {state.draft && <Button variant="outline" size="sm" onClick={() => release.mutate(skill.id)} disabled={release.isPending}>发布 v{state.draft.version}</Button>}
                   {state.released && <Button variant="outline" size="sm" onClick={() => setSharingId(skill.id)}>共享设置</Button>}
-                  {state.released && state.reviewStatus !== 'pending' && <Button variant="outline" size="sm" onClick={() => setReviewingId(skill.id)}>{state.reviewStatus === 'rejected' ? '改后重新提审' : '提交审核'}</Button>}
+                  {state.released && state.reviewStatus !== 'pending' && skill.catalog_enabled && <Button variant="outline" size="sm" onClick={() => setReviewingId(skill.id)}>{state.reviewStatus === 'rejected' ? '改后重新提审' : '提交审核'}</Button>}
                   <Button variant="secondary" size="sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger-border)' }} onClick={() => remove.mutate(skill.id)}>删除</Button>
                 </div>
               </div>

@@ -520,6 +520,17 @@ class DecideReviewRequest(BaseModel):
     )
 
 
+class SetCatalogEnabledRequest(BaseModel):
+    """管理员上架或下架一个已过审资源。"""
+
+    enabled: bool = Field(description="是否允许已过审版本进入平台目录")
+    reason: str | None = Field(
+        default=None,
+        max_length=MAX_REVIEW_REASON_LENGTH,
+        description="下架理由。下架时必填，恢复时忽略",
+    )
+
+
 class AgentVersionResponse(BaseModel):
     """作者视角的一个版本，连同它的审核状态。"""
 
@@ -551,6 +562,10 @@ class MyAgentResponse(BaseModel):
     call_count: int = Field(ge=0, description="被引用过几次。**不去重、不实时**")
     is_deleted: bool = Field(description="删过了没有。删掉的只有作者自己看得到")
     in_catalog: bool = Field(description="有没有一个版本在平台目录里")
+    catalog_enabled: bool = Field(description="平台目录是否允许展示这个资源")
+    catalog_disabled_reason: str | None = Field(default=None, description="管理员下架理由")
+    catalog_disabled_by: str | None = Field(default=None, description="执行下架的管理员")
+    catalog_disabled_at: datetime | None = Field(default=None, description="下架时间，UTC")
     group_ids: list[str] = Field(description="共享给了哪些组")
     versions: list[AgentVersionResponse] = Field(description="全部版本，按版本号从小到大")
     created_at: datetime = Field(description="建立时间，UTC")
@@ -651,6 +666,10 @@ class MySkillResponse(BaseModel):
     call_count: int = Field(ge=0)
     is_deleted: bool
     in_catalog: bool
+    catalog_enabled: bool
+    catalog_disabled_reason: str | None = None
+    catalog_disabled_by: str | None = None
+    catalog_disabled_at: datetime | None = None
     group_ids: list[str]
     versions: list[SkillVersionResponse]
     created_at: datetime
@@ -693,10 +712,17 @@ class ReviewResponse(BaseModel):
     agent_id: str | None = Field(default=None, description="Agent 标识；Skill 审核时为空")
     agent_name: str | None = Field(default=None, description="Agent 名称；Skill 审核时为空")
     system_prompt: str | None = Field(default=None, description="Agent 提示词；Skill 审核时为空")
+    skill_refs: list[SkillReference] | None = Field(default=None, description="Agent 版本冻结的 Skill 引用")
+    subagent_refs: list[SubagentReference] | None = Field(default=None, description="Agent 版本冻结的子智能体")
+    mcp_refs: list[McpReference] | None = Field(default=None, description="Agent 版本冻结的 MCP 引用")
     skill_id: str | None = Field(default=None, description="Skill 标识；Agent 审核时为空")
     skill_name: str | None = Field(default=None, description="Skill 名称；Agent 审核时为空")
     file_count: int | None = Field(default=None, ge=1, description="Skill 文件数")
     total_bytes: int | None = Field(default=None, ge=0, description="Skill 文件总字节数")
+    catalog_enabled: bool = Field(description="资源当前是否允许进入平台目录")
+    catalog_disabled_reason: str | None = Field(default=None, description="管理员下架理由")
+    catalog_disabled_by: str | None = Field(default=None, description="执行下架的管理员")
+    catalog_disabled_at: datetime | None = Field(default=None, description="下架时间，UTC")
 
 
 class McpServerResponse(BaseModel):

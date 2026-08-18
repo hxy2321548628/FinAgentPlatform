@@ -36,7 +36,7 @@ describe('AdminLayout', () => {
 
     expect(await screen.findByText('审核老师')).toBeTruthy()
     expect(screen.getByRole('link', { name: '场景与智能体审核' })).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Skill 管理' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Skill 审核' })).toBeTruthy()
     expect(screen.getByRole('link', { name: 'MCP 管理' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: '用户管理' })).toBeNull()
     expect(screen.queryByRole('link', { name: '用量看板' })).toBeNull()
@@ -58,12 +58,19 @@ describe('AdminLayout', () => {
     )
 
     await screen.findByText('审核老师')
+    expect(container.querySelector('#admin-main')?.classList.contains('page-grid-surface')).toBe(true)
     const toggle = screen.getByRole('button', { name: '展开侧栏' })
-    expect(container.querySelector('.admin-sidebar')?.classList.contains('collapsed')).toBe(true)
+    const sidebar = container.querySelector('.admin-sidebar')
+    expect(sidebar?.classList.contains('collapsed')).toBe(true)
+    // 与工作台一样，按钮必须直接锚在侧栏外层，不能进入会被裁切/滚动的内容容器。
+    expect(toggle.parentElement).toBe(sidebar)
+    expect(toggle.closest('.ws-sidebar-content')).toBeNull()
+    expect(toggle.querySelector('polyline')?.getAttribute('points')).toBe('13 17 18 12 13 7')
 
     fireEvent.click(toggle)
 
-    expect(screen.getByRole('button', { name: '折叠侧栏' })).toBeTruthy()
-    expect(container.querySelector('.admin-sidebar')?.classList.contains('collapsed')).toBe(false)
+    expect(screen.getByRole('button', { name: '折叠侧栏' }).querySelector('polyline')?.getAttribute('points')).toBe('11 17 6 12 11 7')
+    expect(sidebar?.classList.contains('collapsed')).toBe(false)
+    expect(screen.getByRole('button', { name: '折叠侧栏' }).parentElement).toBe(sidebar)
   })
 })

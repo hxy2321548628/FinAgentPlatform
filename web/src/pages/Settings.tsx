@@ -24,7 +24,7 @@ export function Settings() {
   const usage = useQuery({ queryKey: usageKeys.mine(), queryFn: myUsage })
 
   return (
-    <div className="grid-bg" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
       <div style={{ maxWidth: 820, margin: '0 auto', padding: 40 }}>
 
         <div style={{ marginBottom: 32 }}>

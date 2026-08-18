@@ -66,6 +66,10 @@ class SkillRecord(SQLModel, table=True):
     visibility: Visibility = Field(sa_column=_value_enum(Visibility))
     call_count: int = Field(default=0)
     is_deleted: bool = Field(default=False)
+    catalog_enabled: bool = Field(default=True)
+    catalog_disabled_reason: str | None = Field(default=None)
+    catalog_disabled_by: UUID | None = Field(default=None, index=False, foreign_key="users.id")
+    catalog_disabled_at: datetime | None = Field(default=None)
     created_at: datetime
     updated_at: datetime
 
@@ -114,6 +118,10 @@ class Skill:
     visibility: Visibility
     call_count: int
     is_deleted: bool
+    catalog_enabled: bool
+    catalog_disabled_reason: str | None
+    catalog_disabled_by: str | None
+    catalog_disabled_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -446,6 +454,35 @@ class SkillRepository:
         logger.info("软删 Skill：skill_id=%s by=%s", skill_id, owner_id)
         return True
 
+    async def set_catalog_enabled(
+        self,
+        skill_id: str,
+        *,
+        enabled: bool,
+        reason: str | None,
+        actor_id: str,
+    ) -> bool:
+        """上架或下架一个 Skill 资源。"""
+        identifier, actor = _parse(skill_id), _parse(actor_id)
+        if identifier is None or actor is None:
+            return False
+        now = datetime.now(UTC)
+        statement = (
+            update(SkillRecord)
+            .where(col(SkillRecord.id) == identifier, col(SkillRecord.is_deleted).is_(False))
+            .values(
+                catalog_enabled=enabled,
+                catalog_disabled_reason=None if enabled else reason,
+                catalog_disabled_by=None if enabled else actor,
+                catalog_disabled_at=None if enabled else now,
+                updated_at=now,
+            )
+            .returning(col(SkillRecord.id))
+        )
+        async with self._engine.begin() as connection:
+            changed = (await connection.execute(statement)).first()
+        return changed is not None
+
     async def list_catalog(self) -> list[SkillListing]:
         """平台目录：展示每个 Skill 最新审核通过的版本。"""
         approved = _latest_approved()
@@ -459,7 +496,7 @@ class SkillRepository:
             )
             .join(UserRecord, onclause=col(UserRecord.id) == col(SkillRecord.owner_id))
             .join(approved, onclause=approved.c.skill_id == col(SkillRecord.id))
-            .where(col(SkillRecord.is_deleted).is_(False))
+            .where(col(SkillRecord.is_deleted).is_(False), col(SkillRecord.catalog_enabled).is_(True))
             .order_by(col(SkillRecord.call_count).desc(), approved.c.released_at.desc())
         )
         return await self._listing(statement)
@@ -551,7 +588,7 @@ class SkillRepository:
         mine = col(SkillRecord.owner_id) == user_id
         group_shared = (col(SkillRecord.visibility) == Visibility.GROUP) & _shared_with(user_id)
         first_hand = (mine | group_shared) & released.c.version_id.is_not(None)
-        in_catalog = approved.c.version_id.is_not(None)
+        in_catalog = approved.c.version_id.is_not(None) & col(SkillRecord.catalog_enabled).is_(True)
         return (
             _listing_select(
                 description=case((first_hand, released.c.description), else_=approved.c.description),
@@ -682,6 +719,10 @@ def _to_skill(record: SkillRecord) -> Skill:
         visibility=record.visibility,
         call_count=record.call_count,
         is_deleted=record.is_deleted,
+        catalog_enabled=record.catalog_enabled,
+        catalog_disabled_reason=record.catalog_disabled_reason,
+        catalog_disabled_by=None if record.catalog_disabled_by is None else record.catalog_disabled_by.hex,
+        catalog_disabled_at=record.catalog_disabled_at,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )

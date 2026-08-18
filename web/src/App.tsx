@@ -39,26 +39,21 @@ export function AppRoutes() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
-        {/* **审核与管理是两道准入。** `reviewer` 只进得来 Agent 与 Skill 两个审核页，
-            账号与配额等管理页仍然只有 admin 打得开。
-
-            **裸 `/admin` 的 index 必须挂在这一块（宽的那道）里。** 挂到 AdminGuard
-            下面的话，reviewer 打开 `/admin` 撞的是管理员守卫 —— 得到 404，
-            看起来就是「审核员进不去后台」。落到哪一页由 AdminHome 按角色分。 */}
+        {/* 后台只挂一份布局，否则管理员在「账号」与「审核」两组页面间
+            切换时会重建侧栏、丢掉用户的折叠状态。ReviewerGuard 负责后台总准入，
+            更窄的 AdminGuard 只下沉到账号、用量与系统三个子路由。 */}
         <Route element={<ReviewerGuard />}>
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<AdminHome />} />
             <Route path="agents" element={<AdminAgents />} />
             <Route path="skills" element={<AdminSkills />} />
             <Route path="mcp" element={<AdminMcp />} />
-          </Route>
-        </Route>
-        <Route element={<AdminGuard />}>
-          <Route path="/admin" element={<AdminLayout />}>
-            <Route path="users" element={<AdminUsers />} />
-            <Route path="usage" element={<AdminUsage />} />
-            <Route path="system" element={<AdminSystem />} />
-            <Route path="*" element={<NotFound title="后台页面不存在" description="该管理页面不存在，或已经被移除。" primaryTo="/admin/users" primaryLabel="返回用户管理" secondaryTo="/workspace" secondaryLabel="返回工作台" />} />
+            <Route element={<AdminGuard />}>
+              <Route path="users" element={<AdminUsers />} />
+              <Route path="usage" element={<AdminUsage />} />
+              <Route path="system" element={<AdminSystem />} />
+            </Route>
+            <Route path="*" element={<NotFound title="后台页面不存在" description="该管理页面不存在，或已经被移除。" primaryTo="/admin" primaryLabel="返回后台首页" secondaryTo="/workspace" secondaryLabel="返回工作台" />} />
           </Route>
         </Route>
         <Route element={<AuthGuard />}>

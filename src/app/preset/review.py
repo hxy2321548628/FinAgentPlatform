@@ -4,6 +4,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import Select, update
@@ -14,6 +15,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.agent.config import McpReference, SkillReference, SubagentReference
 from app.preset.model import (
     REVIEWABLE_KIND,
     AgentRecord,
@@ -53,9 +55,16 @@ class ReviewItem:
     description: str
     subject: str
     version: int
+    catalog_enabled: bool
+    catalog_disabled_reason: str | None
+    catalog_disabled_by: str | None
+    catalog_disabled_at: datetime | None
     agent_id: str | None = None
     agent_name: str | None = None
     system_prompt: str | None = None
+    skill_refs: list[SkillReference] | None = None
+    subagent_refs: list[SubagentReference] | None = None
+    mcp_refs: list[McpReference] | None = None
     skill_id: str | None = None
     skill_name: str | None = None
     file_count: int | None = None
@@ -231,6 +240,13 @@ def _item_select(kind: ResourceKind) -> Select[tuple[object, ...]]:
                 col(AgentRecord.subject).label("subject"),
                 col(AgentVersionRecord.version).label("version"),
                 col(AgentVersionRecord.system_prompt).label("system_prompt"),
+                col(AgentVersionRecord.skill_refs).label("skill_refs"),
+                col(AgentVersionRecord.subagent_refs).label("subagent_refs"),
+                col(AgentVersionRecord.mcp_refs).label("mcp_refs"),
+                col(AgentRecord.catalog_enabled).label("catalog_enabled"),
+                col(AgentRecord.catalog_disabled_reason).label("catalog_disabled_reason"),
+                col(AgentRecord.catalog_disabled_by).label("catalog_disabled_by"),
+                col(AgentRecord.catalog_disabled_at).label("catalog_disabled_at"),
             )
             .join(AgentVersionRecord, onclause=col(AgentVersionRecord.id) == col(ReviewRecord.target_id))
             .join(AgentRecord, onclause=col(AgentRecord.id) == col(AgentVersionRecord.agent_id))
@@ -250,6 +266,10 @@ def _item_select(kind: ResourceKind) -> Select[tuple[object, ...]]:
             col(SkillVersionRecord.version).label("version"),
             col(SkillVersionRecord.file_count).label("file_count"),
             col(SkillVersionRecord.total_bytes).label("total_bytes"),
+            col(SkillRecord.catalog_enabled).label("catalog_enabled"),
+            col(SkillRecord.catalog_disabled_reason).label("catalog_disabled_reason"),
+            col(SkillRecord.catalog_disabled_by).label("catalog_disabled_by"),
+            col(SkillRecord.catalog_disabled_at).label("catalog_disabled_at"),
         )
         .join(SkillVersionRecord, onclause=col(SkillVersionRecord.id) == col(ReviewRecord.target_id))
         .join(SkillRecord, onclause=col(SkillRecord.id) == col(SkillVersionRecord.skill_id))
@@ -278,6 +298,12 @@ def _to_item(row: object, kind: ResourceKind) -> ReviewItem:
         "description": values["description"],  # type: ignore[index]
         "subject": values["subject"],  # type: ignore[index]
         "version": values["version"],  # type: ignore[index]
+        "catalog_enabled": values["catalog_enabled"],  # type: ignore[index]
+        "catalog_disabled_reason": values["catalog_disabled_reason"],  # type: ignore[index]
+        "catalog_disabled_by": (
+            None if values["catalog_disabled_by"] is None else values["catalog_disabled_by"].hex  # type: ignore[index]
+        ),
+        "catalog_disabled_at": values["catalog_disabled_at"],  # type: ignore[index]
     }
     if kind is ResourceKind.AGENT:
         return ReviewItem(
@@ -285,6 +311,9 @@ def _to_item(row: object, kind: ResourceKind) -> ReviewItem:
             agent_id=values["resource_id"].hex,  # type: ignore[index]
             agent_name=values["resource_name"],  # type: ignore[index]
             system_prompt=values["system_prompt"],  # type: ignore[index]
+            skill_refs=_load_skill_refs(values["skill_refs"]),  # type: ignore[index]
+            subagent_refs=_load_subagent_refs(values["subagent_refs"]),  # type: ignore[index]
+            mcp_refs=_load_mcp_refs(values["mcp_refs"]),  # type: ignore[index]
         )
     if kind is ResourceKind.MCP:
         raise ValueError("MCP 的审核由管理员在 MCP 后台处理，不进 reviewer 队列")
@@ -310,6 +339,30 @@ def _to_review(record: ReviewRecord) -> Review:
         created_at=record.created_at,
         decided_at=record.decided_at,
     )
+
+
+def _load_skill_refs(value: object) -> list[SkillReference] | None:
+    """把版本 JSON 还原成 Skill 引用。"""
+    if value is None:
+        return None
+    raw = cast(list[dict[str, object]], value)
+    return [SkillReference.model_validate(one) for one in raw]
+
+
+def _load_subagent_refs(value: object) -> list[SubagentReference] | None:
+    """把版本 JSON 还原成子智能体引用。"""
+    if value is None:
+        return None
+    raw = cast(list[dict[str, object]], value)
+    return [SubagentReference.model_validate(one) for one in raw]
+
+
+def _load_mcp_refs(value: object) -> list[McpReference] | None:
+    """把版本 JSON 还原成 MCP 引用。"""
+    if value is None:
+        return None
+    raw = cast(list[dict[str, object]], value)
+    return [McpReference.model_validate(one) for one in raw]
 
 
 def _parse(identifier: str) -> UUID | None:

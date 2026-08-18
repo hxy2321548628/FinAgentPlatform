@@ -182,6 +182,10 @@ export interface MyAgent {
   call_count: number
   is_deleted: boolean
   in_catalog: boolean
+  catalog_enabled: boolean
+  catalog_disabled_reason: string | null
+  catalog_disabled_by: string | null
+  catalog_disabled_at: string | null
   group_ids: string[]
   versions: AgentVersion[]
   created_at: string
@@ -238,10 +242,17 @@ export interface ReviewItem {
   agent_id: string | null
   agent_name: string | null
   system_prompt: string | null
+  skill_refs: SkillReference[] | null
+  subagent_refs: SubagentReference[] | null
+  mcp_refs: McpReference[] | null
   skill_id: string | null
   skill_name: string | null
   file_count: number | null
   total_bytes: number | null
+  catalog_enabled: boolean
+  catalog_disabled_reason: string | null
+  catalog_disabled_by: string | null
+  catalog_disabled_at: string | null
 }
 
 export type SkillSource = 'owned' | 'group' | 'catalog'
@@ -269,6 +280,10 @@ export interface MySkill {
   call_count: number
   is_deleted: boolean
   in_catalog: boolean
+  catalog_enabled: boolean
+  catalog_disabled_reason: string | null
+  catalog_disabled_by: string | null
+  catalog_disabled_at: string | null
   group_ids: string[]
   versions: SkillVersion[]
   created_at: string

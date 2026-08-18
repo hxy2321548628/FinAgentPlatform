@@ -322,7 +322,11 @@ def _to_my_skill(detail: SkillDetail, latest: dict[str, Review], approved: set[s
         visibility=detail.skill.visibility,
         call_count=detail.skill.call_count,
         is_deleted=detail.skill.is_deleted,
-        in_catalog=any(one.id in approved for one in detail.versions),
+        in_catalog=detail.skill.catalog_enabled and any(one.id in approved for one in detail.versions),
+        catalog_enabled=detail.skill.catalog_enabled,
+        catalog_disabled_reason=detail.skill.catalog_disabled_reason,
+        catalog_disabled_by=detail.skill.catalog_disabled_by,
+        catalog_disabled_at=detail.skill.catalog_disabled_at,
         group_ids=detail.group_ids,
         versions=[
             SkillVersionResponse(

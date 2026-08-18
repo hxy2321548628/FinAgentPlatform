@@ -97,6 +97,9 @@ def test_the_openapi_document_is_served(client: TestClient) -> None:
         "/api/mcp/admin/{server_id}/probe",
         "/api/reviews",
         "/api/reviews/{review_id}",
+        "/api/reviews/{review_id}/files",
+        "/api/reviews/{review_id}/files/content",
+        "/api/reviews/{review_id}/catalog",
     }
 
 

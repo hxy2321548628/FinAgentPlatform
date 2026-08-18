@@ -106,6 +106,10 @@ class Agent:
     visibility: Visibility
     call_count: int
     is_deleted: bool
+    catalog_enabled: bool
+    catalog_disabled_reason: str | None
+    catalog_disabled_by: str | None
+    catalog_disabled_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -543,6 +547,35 @@ class AgentRepository:
         logger.info("软删智能体：agent_id=%s by=%s", agent_id, owner_id)
         return True
 
+    async def set_catalog_enabled(
+        self,
+        agent_id: str,
+        *,
+        enabled: bool,
+        reason: str | None,
+        actor_id: str,
+    ) -> bool:
+        """上架或下架一个智能体资源。"""
+        identifier, actor = _parse(agent_id), _parse(actor_id)
+        if identifier is None or actor is None:
+            return False
+        now = datetime.now(UTC)
+        statement = (
+            update(AgentRecord)
+            .where(col(AgentRecord.id) == identifier, col(AgentRecord.is_deleted).is_(False))
+            .values(
+                catalog_enabled=enabled,
+                catalog_disabled_reason=None if enabled else reason,
+                catalog_disabled_by=None if enabled else actor,
+                catalog_disabled_at=None if enabled else now,
+                updated_at=now,
+            )
+            .returning(col(AgentRecord.id))
+        )
+        async with self._engine.begin() as connection:
+            changed = (await connection.execute(statement)).first()
+        return changed is not None
+
     async def list_catalog(self) -> list[AgentListing]:
         """平台目录（广场）：**有一个版本审核通过**的那些，展示最新过审的那一版。
 
@@ -564,7 +597,7 @@ class AgentRepository:
             )
             .join(UserRecord, onclause=col(UserRecord.id) == col(AgentRecord.owner_id))
             .join(approved, onclause=approved.c.agent_id == col(AgentRecord.id))
-            .where(col(AgentRecord.is_deleted).is_(False))
+            .where(col(AgentRecord.is_deleted).is_(False), col(AgentRecord.catalog_enabled).is_(True))
             .order_by(col(AgentRecord.call_count).desc(), approved.c.released_at.desc())
         )
         return await self._listing(statement)
@@ -744,7 +777,7 @@ class AgentRepository:
         # 组内与自己的都要求「有一个已发布的版本」：草稿是没定稿的东西，
         # 连作者自己也不该在会话里引用到它
         first_hand = (mine | group_shared) & released.c.version_id.is_not(None)
-        in_catalog = approved.c.version_id.is_not(None)
+        in_catalog = approved.c.version_id.is_not(None) & col(AgentRecord.catalog_enabled).is_(True)
         # 同一个 agent 同时满足多条可见性时，广场版本优先，其次组内共享，最后才是作者自己的版本。
         # 这样用户在广场看到的永远是审核过的那一版，而不是被自己的未提审版本遮住。
         use_first_hand = first_hand & ~in_catalog
@@ -900,6 +933,10 @@ def _to_agent(record: AgentRecord) -> Agent:
         visibility=record.visibility,
         call_count=record.call_count,
         is_deleted=record.is_deleted,
+        catalog_enabled=record.catalog_enabled,
+        catalog_disabled_reason=record.catalog_disabled_reason,
+        catalog_disabled_by=None if record.catalog_disabled_by is None else record.catalog_disabled_by.hex,
+        catalog_disabled_at=record.catalog_disabled_at,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )

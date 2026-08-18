@@ -6,7 +6,7 @@ export function WorkspaceLayout() {
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
       <a className="skip-link" href="#workspace-main">跳到主要内容</a>
       <WorkspaceSidebar />
-      <main id="workspace-main" tabIndex={-1} style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <main id="workspace-main" className="page-grid-surface" tabIndex={-1} style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <Outlet />
       </main>
     </div>

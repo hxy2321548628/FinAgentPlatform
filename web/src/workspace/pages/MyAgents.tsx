@@ -102,11 +102,17 @@ export function MyAgents({ kind = 'agent' }: { kind?: 'agent' | 'scenario' }) {
                     ))}
                     {state.reviewStatus === 'pending' && <span style={badgeStyle('var(--warn-bg)', 'var(--status-warn)', 'var(--warn-border)')}>待审核</span>}
                     {state.reviewStatus === 'rejected' && <span style={badgeStyle('var(--danger-bg)', 'var(--danger)', 'var(--danger-border)')}>已拒绝</span>}
+                    {state.reviewStatus === 'approved' && !agent.catalog_enabled && <span style={badgeStyle('var(--danger-bg)', 'var(--danger)', 'var(--danger-border)')}>已下架</span>}
                     <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{agent.call_count} 次调用</span>
                   </div>
                   {state.rejectedReason && (
                     <div role="alert" style={{ fontSize: 12, color: 'var(--danger)', background: 'var(--danger-bg)', border: '1px solid #FECACA', borderRadius: 6, padding: '7px 12px', margin: '4px 0' }}>
                       <span style={{ fontWeight: 600 }}>审核未通过：</span>{state.rejectedReason}
+                    </div>
+                  )}
+                  {agent.catalog_disabled_reason && (
+                    <div role="alert" style={{ fontSize: 12, color: 'var(--danger)', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 6, padding: '7px 12px', margin: '4px 0' }}>
+                      <span style={{ fontWeight: 600 }}>平台已下架：</span>{agent.catalog_disabled_reason}
                     </div>
                   )}
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
@@ -119,7 +125,7 @@ export function MyAgents({ kind = 'agent' }: { kind?: 'agent' | 'scenario' }) {
                   <Button variant="secondary" size="sm" onClick={() => navigate(editPath(agent.id))}>编辑</Button>
                   {state.draft && <Button variant="outline" size="sm" onClick={() => release.mutate(agent.id)} disabled={release.isPending}>发布 v{state.draft.version}</Button>}
                   {state.released && <Button variant="outline" size="sm" onClick={() => setSharingId(agent.id)}>共享设置</Button>}
-                  {state.released && state.reviewStatus !== 'pending' && (
+                  {state.released && state.reviewStatus !== 'pending' && agent.catalog_enabled && (
                     <Button variant="outline" size="sm" onClick={() => setReviewingId(agent.id)}>
                       {state.reviewStatus === 'rejected' ? '改后重新提审' : '提交审核'}
                     </Button>
@@ -239,6 +245,5 @@ function DialogActions({ onClose, onSubmit, pending, disabled = false, label }: 
 function badgeStyle(background: string, color: string, border: string): React.CSSProperties {
   return { padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background, color, border: `1px solid ${border}` }
 }
-
 
 

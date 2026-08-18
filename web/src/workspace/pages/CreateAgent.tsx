@@ -11,14 +11,19 @@ import { MAX_SYSTEM_PROMPT_LENGTH, systemPromptError } from '../config'
 
 const MAX_NAME_LENGTH = 32
 const MAX_DESCRIPTION_LENGTH = 200
+const PICKER_PAGE_SIZE = 6
 const SUBJECTS = ['公司金融', '量化投资', '资产管理', '风险管理', '学术科研', '会计审计', '其他']
 
 type BuilderStep = 'basics' | 'prompt' | 'capabilities' | 'orchestration'
 type CapabilityTab = 'skills' | 'mcps'
 
-const STEPS: Array<{ id: BuilderStep; title: string; description: string }> = [
+const AGENT_STEPS: Array<{ id: BuilderStep; title: string; description: string }> = [
   { id: 'basics', title: '基本信息', description: '名称、说明与学科' },
   { id: 'prompt', title: '行为设定', description: '编写系统提示词' },
+]
+
+const SCENARIO_STEPS: Array<{ id: BuilderStep; title: string; description: string }> = [
+  ...AGENT_STEPS,
   { id: 'capabilities', title: '能力组件', description: '组合 Skills 与 MCP' },
   { id: 'orchestration', title: '协作编排', description: '选择子智能体并检查' },
 ]
@@ -37,13 +42,14 @@ export function CreateAgent() {
   const location = useLocation()
   const scenarioMode = location.pathname.includes('/my-scenarios')
   const noun = scenarioMode ? '场景' : '智能体'
+  const steps = scenarioMode ? SCENARIO_STEPS : AGENT_STEPS
   const returnPath = scenarioMode ? '/workspace/my-scenarios' : '/workspace/my-agents'
   const queryClient = useQueryClient()
   const editing = Boolean(agentId)
 
-  const availableSkills = useQuery({ queryKey: skillKeys.available(), queryFn: listAvailableSkills })
-  const availableSubagents = useQuery({ queryKey: agentKeys.subagentCandidates(), queryFn: listSubagentCandidates })
-  const availableMcps = useQuery({ queryKey: mcpKeys.catalog(), queryFn: listMcpCatalog })
+  const availableSkills = useQuery({ queryKey: skillKeys.available(), queryFn: listAvailableSkills, enabled: scenarioMode })
+  const availableSubagents = useQuery({ queryKey: agentKeys.subagentCandidates(), queryFn: listSubagentCandidates, enabled: scenarioMode })
+  const availableMcps = useQuery({ queryKey: mcpKeys.catalog(), queryFn: listMcpCatalog, enabled: scenarioMode })
   const existing = useQuery({
     queryKey: agentKeys.detail(agentId ?? ''),
     queryFn: () => getMine(agentId ?? ''),
@@ -74,11 +80,11 @@ export function CreateAgent() {
     const draft = agent.versions.find(one => one.status === 'draft')
     const released = [...agent.versions].reverse().find(one => one.status === 'released')
     setPrompt(draft?.system_prompt ?? released?.system_prompt ?? '')
-    setSelectedSkillIds((draft?.skill_refs ?? released?.skill_refs ?? []).map(one => one.skill_id))
-    setSelectedSubagentIds((draft?.subagent_refs ?? released?.subagent_refs ?? []).map(one => one.agent_id))
-    setSelectedMcpIds((draft?.mcp_refs ?? released?.mcp_refs ?? []).map(one => one.server_id))
+    setSelectedSkillIds(scenarioMode ? (draft?.skill_refs ?? released?.skill_refs ?? []).map(one => one.skill_id) : [])
+    setSelectedSubagentIds(scenarioMode ? (draft?.subagent_refs ?? released?.subagent_refs ?? []).map(one => one.agent_id) : [])
+    setSelectedMcpIds(scenarioMode ? (draft?.mcp_refs ?? released?.mcp_refs ?? []).map(one => one.server_id) : [])
     setLoaded(true)
-  }, [existing.data, loaded])
+  }, [existing.data, loaded, scenarioMode])
 
   const skillItems = useMemo<PickerItem[]>(() => (availableSkills.data ?? []).map(skill => ({
     id: skill.id,
@@ -101,9 +107,12 @@ export function CreateAgent() {
 
   const save = useMutation({
     async mutationFn() {
-      if (!agentId) return createAgent({ name, description, subject, system_prompt: prompt, skills: selectedSkillIds, subagents: selectedSubagentIds, mcps: selectedMcpIds })
+      const skills = scenarioMode ? selectedSkillIds : []
+      const subagents = scenarioMode ? selectedSubagentIds : []
+      const mcps = scenarioMode ? selectedMcpIds : []
+      if (!agentId) return createAgent({ name, description, subject, system_prompt: prompt, skills, subagents, mcps })
       await updateAgent(agentId, { name, description, subject })
-      return writeDraft(agentId, prompt, selectedSkillIds, selectedSubagentIds, selectedMcpIds)
+      return writeDraft(agentId, prompt, skills, subagents, mcps)
     },
     async onSuccess() {
       await queryClient.invalidateQueries({ queryKey: agentKeys.all })
@@ -139,7 +148,7 @@ export function CreateAgent() {
     save.mutate()
   }
 
-  const currentIndex = STEPS.findIndex(step => step.id === activeStep)
+  const currentIndex = steps.findIndex(step => step.id === activeStep)
   const goStep = (step: BuilderStep) => {
     setActiveStep(step)
     setError('')
@@ -165,7 +174,9 @@ export function CreateAgent() {
         <div>
           <div className="page-eyebrow">// {editing ? 'EDIT' : 'CREATE'} {scenarioMode ? 'SCENARIO' : 'AGENT'}</div>
           <h1 className="page-title">{editing ? `编辑${noun}` : `创建${noun}`}</h1>
-          <p className="page-desc">分步完成角色设定、能力组合与协作编排，保存后生成仅自己可见的草稿。</p>
+          <p className="page-desc">{scenarioMode
+            ? '分步完成基本信息、系统提示词、能力组件与协作编排，保存后生成仅自己可见的草稿。'
+            : '智能体由基本信息与系统提示词定义，保存后生成仅自己可见的草稿。'}</p>
         </div>
         <Button variant="secondary" size="sm" onClick={() => navigate(returnPath)}>返回列表</Button>
       </header>
@@ -174,23 +185,21 @@ export function CreateAgent() {
         <div className="agent-builder-workbench">
           <nav className="agent-builder-steps" aria-label={`${noun}配置步骤`}>
             <div className="agent-builder-steps-title">配置流程</div>
-            {STEPS.map((step, index) => (
+            {steps.map((step, index) => (
               <button key={step.id} type="button" className={`agent-builder-step${activeStep === step.id ? ' active' : ''}`} onClick={() => goStep(step.id)}>
                 <span className={`agent-builder-step-index${completed[step.id] ? ' done' : ''}`}>{completed[step.id] ? <Check size={13} /> : index + 1}</span>
                 <span><strong>{step.title}</strong><small>{step.description}</small></span>
               </button>
             ))}
             <div className="agent-builder-type-note">
-              <Network size={15} />
+              {scenarioMode ? <Network size={15} /> : <Bot size={15} />}
               <span>{scenarioMode
-                ? '场景通过子智能体完成多角色协作。'
-                : selectedSubagentIds.length > 0
-                  ? '已组合子智能体，保存后会被归类为场景。'
-                  : '不组合子智能体时，它是可独立使用的智能体。'}</span>
+                ? '场景可组合 Skill、MCP 与子智能体，完成多角色协作。'
+                : '智能体仅通过系统提示词定义角色、方法与输出。'}</span>
             </div>
           </nav>
 
-          <main className="agent-builder-canvas">
+          <main className={`agent-builder-canvas${activeStep === 'capabilities' || activeStep === 'orchestration' ? ' picker' : ''}`}>
             {activeStep === 'basics' && (
               <BuilderSection eyebrow="STEP 01" title={`${noun}的基本信息`} description="这些信息会出现在你的列表与公共目录卡片中。">
                 <Field label={`${noun}名称`} required hint="保持清晰、具体，说明它负责解决什么问题。">
@@ -224,33 +233,33 @@ export function CreateAgent() {
             )}
 
             {activeStep === 'capabilities' && (
-              <BuilderSection eyebrow="STEP 03" title="组合能力组件" description="发布版本时会冻结所选 Skill 的版本；MCP 则引用管理员放行的服务目录。">
+              <BuilderSection picker eyebrow="STEP 03" title="组合能力组件" description="发布版本时会冻结所选 Skill 的版本；MCP 则引用管理员放行的服务目录。">
                 <div className="agent-builder-tabs" role="tablist" aria-label="能力组件类型">
                   <button type="button" role="tab" aria-selected={capabilityTab === 'skills'} className={capabilityTab === 'skills' ? 'active' : ''} onClick={() => setCapabilityTab('skills')}><Boxes size={15} /> Skills <span>{selectedSkillIds.length}</span></button>
                   <button type="button" role="tab" aria-selected={capabilityTab === 'mcps'} className={capabilityTab === 'mcps' ? 'active' : ''} onClick={() => setCapabilityTab('mcps')}><Network size={15} /> MCP <span>{selectedMcpIds.length}</span></button>
                 </div>
                 {capabilityTab === 'skills' ? (
-                  <CapabilityPicker items={skillItems} selectedIds={selectedSkillIds} onToggle={id => toggle(setSelectedSkillIds, id)} search={skillSearch} onSearch={setSkillSearch} placeholder="搜索 Skill 名称、作者或说明" loading={availableSkills.isPending} error={availableSkills.isError ? errorMessage(availableSkills.error) : ''} empty="当前没有可用 Skill。" />
+                  <CapabilityPicker label="Skill" items={skillItems} selectedIds={selectedSkillIds} onToggle={id => toggle(setSelectedSkillIds, id)} search={skillSearch} onSearch={setSkillSearch} placeholder="搜索 Skill 名称、作者或说明" loading={availableSkills.isPending} error={availableSkills.isError ? errorMessage(availableSkills.error) : ''} empty="当前没有可用 Skill。" />
                 ) : (
-                  <CapabilityPicker items={mcpItems} selectedIds={selectedMcpIds} onToggle={id => toggle(setSelectedMcpIds, id)} search={mcpSearch} onSearch={setMcpSearch} placeholder="搜索 MCP 名称、工具或说明" loading={availableMcps.isPending} error={availableMcps.isError ? errorMessage(availableMcps.error) : ''} empty="还没有管理员放行的 MCP。" />
+                  <CapabilityPicker label="MCP" items={mcpItems} selectedIds={selectedMcpIds} onToggle={id => toggle(setSelectedMcpIds, id)} search={mcpSearch} onSearch={setMcpSearch} placeholder="搜索 MCP 名称、工具或说明" loading={availableMcps.isPending} error={availableMcps.isError ? errorMessage(availableMcps.error) : ''} empty="还没有管理员放行的 MCP。" />
                 )}
               </BuilderSection>
             )}
 
             {activeStep === 'orchestration' && (
-              <BuilderSection eyebrow="STEP 04" title="协作编排" description={scenarioMode ? '至少选择一个子智能体，组成可以分工协作的分析场景。' : '仅当它需要协调其他专家角色时选择；选择后会被归类为场景。'}>
-                <CapabilityPicker items={subagentItems} selectedIds={selectedSubagentIds} onToggle={id => { toggle(setSelectedSubagentIds, id); setError('') }} search={subagentSearch} onSearch={setSubagentSearch} placeholder="搜索子智能体名称、作者或说明" loading={availableSubagents.isPending} error={availableSubagents.isError ? errorMessage(availableSubagents.error) : ''} empty="当前没有可用子智能体。" />
+              <BuilderSection picker eyebrow="STEP 04" title="协作编排" description={scenarioMode ? '至少选择一个子智能体，组成可以分工协作的分析场景。' : '仅当它需要协调其他专家角色时选择；选择后会被归类为场景。'}>
+                <CapabilityPicker label="子智能体" items={subagentItems} selectedIds={selectedSubagentIds} onToggle={id => { toggle(setSelectedSubagentIds, id); setError('') }} search={subagentSearch} onSearch={setSubagentSearch} placeholder="搜索子智能体名称、作者或说明" loading={availableSubagents.isPending} error={availableSubagents.isError ? errorMessage(availableSubagents.error) : ''} empty="当前没有可用子智能体。" />
               </BuilderSection>
             )}
           </main>
 
           <aside className="agent-builder-summary">
             <div className="agent-builder-summary-title">配置摘要</div>
-            <div className="agent-builder-summary-name"><span>{scenarioMode ? 'SCENARIO' : selectedSubagentIds.length > 0 ? 'SCENARIO' : 'AGENT'}</span><strong>{name.trim() || `未命名${noun}`}</strong><small>{subject}</small></div>
+            <div className="agent-builder-summary-name"><span>{scenarioMode ? 'SCENARIO' : 'AGENT'}</span><strong>{name.trim() || `未命名${noun}`}</strong><small>{subject}</small></div>
             <SummaryRow label="系统提示词" value={prompt.trim() ? `${prompt.length} 字` : '未填写'} ready={Boolean(prompt.trim())} />
-            <SummaryRow label="Skills" value={`${selectedSkillIds.length} 个`} ready />
-            <SummaryRow label="MCP" value={`${selectedMcpIds.length} 个`} ready />
-            <SummaryRow label="子智能体" value={`${selectedSubagentIds.length} 个`} ready={!scenarioMode || selectedSubagentIds.length > 0} />
+            {scenarioMode && <SummaryRow label="Skills" value={`${selectedSkillIds.length} 个`} ready />}
+            {scenarioMode && <SummaryRow label="MCP" value={`${selectedMcpIds.length} 个`} ready />}
+            {scenarioMode && <SummaryRow label="子智能体" value={`${selectedSubagentIds.length} 个`} ready={selectedSubagentIds.length > 0} />}
             <div className="agent-builder-summary-divider" />
             <p>{editing ? '保存会更新元信息，并写入当前草稿版本。' : '创建后先进入草稿状态；发布、共享与提审在列表页完成。'}</p>
           </aside>
@@ -259,11 +268,11 @@ export function CreateAgent() {
         <footer className="agent-builder-footer">
           <div className="agent-builder-footer-message">
             {(error || save.isError) && <span role="alert">{error || errorMessage(save.error)}</span>}
-            {!error && !save.isError && <span>第 {currentIndex + 1} / {STEPS.length} 步 · {STEPS[currentIndex].title}</span>}
+            {!error && !save.isError && <span>第 {currentIndex + 1} / {steps.length} 步 · {steps[currentIndex].title}</span>}
           </div>
           <div className="agent-builder-footer-actions">
-            <Button variant="secondary" size="sm" disabled={currentIndex === 0} onClick={() => goStep(STEPS[currentIndex - 1].id)}><ChevronLeft size={14} /> 上一步</Button>
-            {currentIndex < STEPS.length - 1 && <Button variant="secondary" size="sm" onClick={() => goStep(STEPS[currentIndex + 1].id)}>下一步 <ChevronRight size={14} /></Button>}
+            <Button variant="secondary" size="sm" disabled={currentIndex === 0} onClick={() => goStep(steps[currentIndex - 1].id)}><ChevronLeft size={14} /> 上一步</Button>
+            {currentIndex < steps.length - 1 && <Button variant="secondary" size="sm" onClick={() => goStep(steps[currentIndex + 1].id)}>下一步 <ChevronRight size={14} /></Button>}
             <Button variant="primary" size="sm" type="submit" disabled={save.isPending}><Save size={14} /> {save.isPending ? '正在保存…' : editing ? '保存草稿' : '创建草稿'}</Button>
           </div>
         </footer>
@@ -272,8 +281,8 @@ export function CreateAgent() {
   )
 }
 
-function BuilderSection({ eyebrow, title, description, children }: { eyebrow: string; title: string; description: string; children: React.ReactNode }) {
-  return <section className="agent-builder-section"><div className="agent-builder-section-head"><span>{eyebrow}</span><h2>{title}</h2><p>{description}</p></div>{children}</section>
+function BuilderSection({ eyebrow, title, description, picker = false, children }: { eyebrow: string; title: string; description: string; picker?: boolean; children: React.ReactNode }) {
+  return <section className={`agent-builder-section${picker ? ' picker' : ''}`}><div className="agent-builder-section-head"><span>{eyebrow}</span><h2>{title}</h2><p>{description}</p></div>{children}</section>
 }
 
 function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
@@ -288,7 +297,8 @@ function PromptGuide({ icon, title, text }: { icon: React.ReactNode; title: stri
   return <div>{icon}<span><strong>{title}</strong><small>{text}</small></span></div>
 }
 
-function CapabilityPicker({ items, selectedIds, onToggle, search, onSearch, placeholder, loading, error, empty }: {
+function CapabilityPicker({ label, items, selectedIds, onToggle, search, onSearch, placeholder, loading, error, empty }: {
+  label: string
   items: PickerItem[]
   selectedIds: string[]
   onToggle: (id: string) => void
@@ -299,28 +309,55 @@ function CapabilityPicker({ items, selectedIds, onToggle, search, onSearch, plac
   error: string
   empty: string
 }) {
+  const [requestedPage, setRequestedPage] = useState(1)
   const normalized = search.trim().toLocaleLowerCase('zh-CN')
   const filtered = items.filter(item => `${item.title} ${item.subtitle}`.toLocaleLowerCase('zh-CN').includes(normalized))
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PICKER_PAGE_SIZE))
+  const page = Math.min(requestedPage, totalPages)
+  const start = (page - 1) * PICKER_PAGE_SIZE
+  const visible = filtered.slice(start, start + PICKER_PAGE_SIZE)
+  const updateSearch = (value: string) => {
+    setRequestedPage(1)
+    onSearch(value)
+  }
   return (
     <div className="agent-builder-picker">
-      <label className="agent-builder-search"><Search size={14} /><input value={search} onChange={event => onSearch(event.target.value)} placeholder={placeholder} /></label>
-      <div className="agent-builder-picker-meta"><span>已选择 {selectedIds.length} 个</span><span>共 {items.length} 个可用项</span></div>
-      {loading && <div className="agent-builder-picker-state">正在加载…</div>}
+      <div className="agent-builder-picker-toolbar">
+        <label className="agent-builder-search"><Search size={15} /><input aria-label={placeholder} value={search} onChange={event => updateSearch(event.target.value)} placeholder={placeholder} /></label>
+        <div className="agent-builder-picker-selected" aria-live="polite"><Check size={14} /><strong>{selectedIds.length}</strong><span>已选</span></div>
+      </div>
+      <div className="agent-builder-picker-meta">
+        <span>可用 {items.length} 项{normalized && ` · 匹配 ${filtered.length} 项`}</span>
+        {!loading && !error && filtered.length > 0 && <span>每页最多 {PICKER_PAGE_SIZE} 项</span>}
+      </div>
+      {loading && <div role="status" className="agent-builder-picker-state">正在加载…</div>}
       {error && <div role="alert" className="agent-builder-picker-state error">{error}</div>}
-      {!loading && !error && filtered.length === 0 && <div className="agent-builder-picker-state">{normalized ? '没有匹配项。' : empty}</div>}
-      <div className="agent-builder-picker-list">
-        {filtered.map(item => {
+      {!loading && !error && filtered.length === 0 && <div role="status" className="agent-builder-picker-state">{normalized ? '没有匹配项。' : empty}</div>}
+      {!loading && !error && visible.length > 0 && <div className="agent-builder-picker-list" role="group" aria-label={`${label} 可选项`}>
+        {visible.map(item => {
           const selected = selectedIds.includes(item.id)
           return (
             <label key={item.id} className={`agent-builder-picker-item${selected ? ' selected' : ''}`}>
               <input type="checkbox" checked={selected} onChange={() => onToggle(item.id)} aria-label={item.title} />
               <span className="agent-builder-picker-check">{selected && <Check size={13} />}</span>
-              <span className="agent-builder-picker-copy"><strong>{item.title}</strong><small>{item.subtitle}</small></span>
+              <span className="agent-builder-picker-copy"><strong title={item.title}>{item.title}</strong><small title={item.subtitle}>{item.subtitle}</small></span>
               {item.badge && <span className="agent-builder-picker-badge">{item.badge}</span>}
             </label>
           )
         })}
-      </div>
+      </div>}
+      {!loading && !error && filtered.length > 0 && (
+        <div className="agent-builder-picker-pagination">
+          <span>显示 {start + 1}–{Math.min(start + PICKER_PAGE_SIZE, filtered.length)} / {filtered.length}</span>
+          {totalPages > 1 && (
+            <nav aria-label={`${label} 分页`}>
+              <button type="button" aria-label={`${label} 上一页`} disabled={page === 1} onClick={() => setRequestedPage(current => Math.max(1, current - 1))}><ChevronLeft size={14} /></button>
+              <strong>第 {page} / {totalPages} 页</strong>
+              <button type="button" aria-label={`${label} 下一页`} disabled={page === totalPages} onClick={() => setRequestedPage(current => Math.min(totalPages, current + 1))}><ChevronRight size={14} /></button>
+            </nav>
+          )}
+        </div>
+      )}
     </div>
   )
 }

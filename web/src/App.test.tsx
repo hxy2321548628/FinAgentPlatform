@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import type { Me } from './api/types'
@@ -28,14 +28,8 @@ vi.mock('./api/auth', async importOriginal => ({
 }))
 
 // 页面本身不是这一组要测的东西，换成认得出的桩，免得把它们的数据请求也拖进来
-vi.mock('./workspace/pages/admin/AdminAgents', () => ({ AdminAgents: () => <div>审核队列</div> }))
-vi.mock('./workspace/pages/admin/AdminUsers', () => ({ AdminUsers: () => <div>用户管理</div> }))
-// 布局自己也有一份按角色过滤的导航，标签文字会和上面的页面桩撞车。
-// 这一组测的是「哪个守卫接住了这个路径」，把布局换成一个纯粹的 Outlet
-vi.mock('./workspace/pages/admin/AdminLayout', async () => {
-  const { Outlet } = await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
-  return { AdminLayout: () => <Outlet /> }
-})
+vi.mock('./workspace/pages/admin/AdminAgents', () => ({ AdminAgents: () => <div data-testid="admin-agents-page">审核队列</div> }))
+vi.mock('./workspace/pages/admin/AdminUsers', () => ({ AdminUsers: () => <div data-testid="admin-users-page">用户管理</div> }))
 
 afterEach(() => {
   cleanup()
@@ -67,7 +61,7 @@ describe('后台落点', () => {
 
     open('/admin')
 
-    expect(await screen.findByText('审核队列')).toBeTruthy()
+    expect(await screen.findByTestId('admin-agents-page')).toBeTruthy()
     expect(screen.getByTestId('location').textContent).toBe('/admin/agents')
   })
 
@@ -76,7 +70,7 @@ describe('后台落点', () => {
 
     open('/admin')
 
-    expect(await screen.findByText('用户管理')).toBeTruthy()
+    expect(await screen.findByTestId('admin-users-page')).toBeTruthy()
     expect(screen.getByTestId('location').textContent).toBe('/admin/users')
   })
 
@@ -94,6 +88,27 @@ describe('后台落点', () => {
     open('/admin/users')
 
     expect(await screen.findByText('404')).toBeTruthy()
-    expect(screen.queryByText('用户管理')).toBeNull()
+    expect(screen.queryByTestId('admin-users-page')).toBeNull()
+  })
+
+  it('管理员跨越管理与审核页时保留侧栏状态', async () => {
+    mocks.me.mockResolvedValue(ADMIN)
+
+    const { container } = open('/admin/users')
+
+    await screen.findByTestId('admin-users-page')
+    const sidebar = container.querySelector('.admin-sidebar')
+    expect(sidebar?.classList.contains('collapsed')).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: '展开侧栏' }))
+    expect(sidebar?.classList.contains('collapsed')).toBe(false)
+
+    fireEvent.click(screen.getByRole('link', { name: '场景与智能体审核' }))
+
+    expect(await screen.findByTestId('admin-agents-page')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/admin/agents')
+    expect(container.querySelector('.admin-sidebar')).toBe(sidebar)
+    expect(sidebar?.classList.contains('collapsed')).toBe(false)
+    expect(screen.getByRole('button', { name: '折叠侧栏' })).toBeTruthy()
   })
 })

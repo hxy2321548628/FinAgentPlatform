@@ -1,25 +1,19 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import * as DialogPrimitive from '@radix-ui/react-dialog'
+import { Plus, Search } from 'lucide-react'
 import { adminKeys, createUser, listUsers, updateUser } from '../../../api/admin'
 import { errorMessage } from '../../../api/request'
 import type { AdminUser, UserRole } from '../../../api/types'
-import { AdminPageHeader, AdminTableSection } from './AdminUi'
-import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { Button } from '../../../components/ui/Button'
-import {
-  approveButtonStyle,
-  cellStyle,
-  monoCellStyle,
-  nameCellStyle,
-  pageStyle,
-  tableStyle,
-  thStyle,
-} from './AdminStyles'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
+import { ADMIN_LIST_PAGE_SIZE } from './AdminPaging'
+import { AdminEmptyState, AdminPageHeader, AdminPagination, AdminTableLoading, AdminTableSection } from './AdminUi'
 
 interface EditModal {
   user: AdminUser
   role: UserRole
-  // 空串表示「跟着角色的默认档走」。**它与 0 是两回事** —— 0 是「一个 token 都不给」
+  // 空串表示「跟着角色的默认档走」。它与 0 是两回事。
   quota: string
   dept: string
 }
@@ -31,23 +25,24 @@ const ROLE_LABEL: Record<UserRole, string> = {
   reviewer: '审核员',
 }
 
-const ROLE_STYLE: Record<UserRole, { bg: string; color: string }> = {
-  teacher: { bg: '#EFF6FF', color: '#2563EB' },
-  student: { bg: '#F5F3FF', color: '#7C3AED' },
-  admin: { bg: '#FEF2F2', color: '#DC2626' },
-  reviewer: { bg: '#FFF7ED', color: '#EA580C' },
+const ROLE_CLASS: Record<UserRole, string> = {
+  teacher: 'teacher',
+  student: 'student',
+  admin: 'admin',
+  reviewer: 'reviewer',
 }
 
 const CREATABLE_ROLE: UserRole[] = ['teacher', 'student', 'reviewer', 'admin']
-
 export function AdminUsers() {
   const queryClient = useQueryClient()
   const users = useQuery({ queryKey: adminKeys.users(), queryFn: listUsers })
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState<'all' | UserRole>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'disabled'>('all')
+  const [page, setPage] = useState(1)
   const [editModal, setEditModal] = useState<EditModal | null>(null)
   const [creating, setCreating] = useState(false)
+  const [disableTarget, setDisableTarget] = useState<AdminUser | null>(null)
   const [failure, setFailure] = useState('')
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: adminKeys.users() })
@@ -55,20 +50,26 @@ export function AdminUsers() {
   const change = useMutation({
     mutationFn: (input: { id: string; body: Parameters<typeof updateUser>[1] }) =>
       updateUser(input.id, input.body),
-    onSuccess: () => { setFailure(''); void refresh() },
+    onSuccess: () => { setPage(1); setFailure(''); void refresh() },
     onError: (reason) => setFailure(errorMessage(reason, '保存失败')),
   })
 
   const all = users.data ?? []
-  // **等激活的排最前** —— 管理员打开这一页的头等大事就是它
-  const pending = all.filter(one => !one.is_active)
-  const filtered = all.filter(one => {
-    const matchSearch = one.name.includes(search) || one.email.includes(search)
+  // 待激活账号是管理员的首要任务，同表内置顶即可，无需再复制一张表。
+  const ordered = [...all].sort((left, right) => Number(left.is_active) - Number(right.is_active))
+  const pending = ordered.filter(one => !one.is_active)
+  const normalizedSearch = search.trim().toLocaleLowerCase()
+  const filtered = ordered.filter(one => {
+    const matchSearch = !normalizedSearch
+      || one.name.toLocaleLowerCase().includes(normalizedSearch)
+      || one.email.toLocaleLowerCase().includes(normalizedSearch)
     const matchRole = roleFilter === 'all' || one.role === roleFilter
-    const matchStatus =
-      statusFilter === 'all' || (statusFilter === 'active' ? one.is_active : !one.is_active)
+    const matchStatus = statusFilter === 'all' || (statusFilter === 'active' ? one.is_active : !one.is_active)
     return matchSearch && matchRole && matchStatus
   })
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ADMIN_LIST_PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  const visibleUsers = filtered.slice((safePage - 1) * ADMIN_LIST_PAGE_SIZE, safePage * ADMIN_LIST_PAGE_SIZE)
 
   const saveEdit = () => {
     if (!editModal) return
@@ -78,127 +79,145 @@ export function AdminUsers() {
       body: {
         role: editModal.role,
         dept: editModal.dept,
-        // **空串要传 null，不是不传** —— 传 null 才是「清回默认档」，
-        // 不传是「这一项不动」，两者在后端是两件事
+        // 空串要传 null 才会清回默认档；不传表示这一项不动。
         quota_tokens_daily: trimmed === '' ? null : Number(trimmed),
       },
     })
     setEditModal(null)
   }
 
+  const setStatus = (status: 'all' | 'active' | 'disabled') => {
+    setStatusFilter(status)
+    setPage(1)
+  }
+
   return (
-    <div style={pageStyle}>
-      <AdminPageHeader eyebrow="// USER MANAGEMENT" title="用户管理" pendingCount={pending.length} pendingLabel="个待处理" />
+    <div className="admin-page">
+      <AdminPageHeader
+        eyebrow="ADMIN · ACCOUNTS"
+        title="用户管理"
+        description="集中管理账号、角色、院系与每日配额；待激活账号已自动排在最前。"
+        pendingCount={pending.length}
+        pendingLabel="个待处理"
+        actions={<Button variant="primary" size="md" onClick={() => setCreating(true)}><Plus size={16} aria-hidden="true" />创建账号</Button>}
+      />
 
-      {users.isError && <div role="alert" style={alertStyle}>{errorMessage(users.error)}</div>}
-      {failure && <div role="alert" style={alertStyle}>{failure}</div>}
+      {users.isError && <div role="alert" className="admin-alert">{errorMessage(users.error)}</div>}
+      {failure && <div role="alert" className="admin-alert">{failure}</div>}
 
-      <AdminTableSection title="待激活账号">
+      <AdminTableSection title="账号目录" action={<span className="admin-section-meta">{filtered.length} / {all.length} 个账号</span>}>
+        <div className="admin-toolbar">
+          <div className="admin-filter-tabs" role="group" aria-label="按账号状态筛选">
+            {[
+              { value: 'all' as const, label: '全部', count: all.length },
+              { value: 'disabled' as const, label: '待激活', count: pending.length },
+              { value: 'active' as const, label: '正常', count: all.length - pending.length },
+            ].map(option => (
+              <button
+                key={option.value}
+                type="button"
+                className={`admin-filter-tab${statusFilter === option.value ? ' active' : ''}`}
+                aria-pressed={statusFilter === option.value}
+                onClick={() => setStatus(option.value)}
+              >
+                {option.label} <span>{option.count}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="admin-toolbar-fields">
+            <label className="admin-search-field">
+              <span className="sr-only">搜索账号</span>
+              <Search size={16} aria-hidden="true" />
+              <input
+                type="search"
+                aria-label="搜索账号"
+                value={search}
+                onChange={event => { setSearch(event.target.value); setPage(1) }}
+                placeholder="搜索用户名或邮箱"
+              />
+            </label>
+            <select
+              className="admin-field admin-select"
+              aria-label="按角色筛选"
+              value={roleFilter}
+              onChange={event => { setRoleFilter(event.target.value as 'all' | UserRole); setPage(1) }}
+            >
+              <option value="all">全部角色</option>
+              {CREATABLE_ROLE.map(role => <option key={role} value={role}>{ROLE_LABEL[role]}</option>)}
+            </select>
+          </div>
+        </div>
+
         {users.isPending ? (
-          <div style={emptyStyle}>正在加载…</div>
-        ) : pending.length === 0 ? (
-          <div style={emptyStyle}>暂无待激活账号</div>
+          <AdminTableLoading label="正在加载账号列表…" />
+        ) : filtered.length === 0 ? (
+          <AdminEmptyState title="没有匹配的账号" description="请调整关键词、角色或状态筛选。" />
         ) : (
-          <table style={tableStyle}>
-            <thead><tr>{['用户名', '邮箱', '院系', '角色', '操作'].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
-            <tbody>
-              {pending.map((one, i) => (
-                <tr key={one.id} style={{ borderBottom: i < pending.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
-                  <td style={nameCellStyle}>{one.name}</td>
-                  <td style={cellStyle}>{one.email}</td>
-                  <td style={cellStyle}>{one.dept || '—'}</td>
-                  <td style={cellStyle}>{ROLE_LABEL[one.role]}</td>
-                  <td style={cellStyle}>
-                    <button
-                      type="button"
-                      disabled={change.isPending}
-                      onClick={() => change.mutate({ id: one.id, body: { is_active: true } })}
-                      style={approveButtonStyle}
-                    >
-                      激活
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </AdminTableSection>
-
-      <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' as const }}>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索用户名或邮箱" style={{ padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-primary)', width: 200 }} />
-        <select value={roleFilter} onChange={e => setRoleFilter(e.target.value as 'all' | UserRole)} style={selectStyle}>
-          <option value="all">全部角色</option>
-          {CREATABLE_ROLE.map(role => <option key={role} value={role}>{ROLE_LABEL[role]}</option>)}
-        </select>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as 'all' | 'active' | 'disabled')} style={selectStyle}>
-          <option value="all">全部状态</option><option value="active">正常</option><option value="disabled">未启用</option>
-        </select>
-      </div>
-
-      <AdminTableSection
-        title="全部账号"
-        action={<button type="button" onClick={() => setCreating(true)} style={approveButtonStyle}>+ 创建账号</button>}
-      >
-        {users.isPending ? (
-          <div style={emptyStyle}>正在加载…</div>
-        ) : (
-          <table style={tableStyle}>
-            <thead><tr>{['用户名', '邮箱', '院系', '角色', '日配额', '状态', '操作'].map(h => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
-            <tbody>
-              {filtered.map((user, i) => {
-                const rs = ROLE_STYLE[user.role]
-                return (
-                  <tr key={user.id} style={{ borderBottom: i < filtered.length - 1 ? '1px solid var(--border-light)' : 'none', opacity: user.is_active ? 1 : 0.6 }}>
-                    <td style={nameCellStyle}>{user.name}</td>
-                    <td style={{ ...cellStyle, fontSize: 12, whiteSpace: 'nowrap' }}>{user.email}</td>
-                    <td style={cellStyle}>{user.dept || '—'}</td>
-                    <td style={cellStyle}><span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', background: rs.bg, color: rs.color }}>{ROLE_LABEL[user.role]}</span></td>
-                    {/* 留空表示走角色默认档，显示成「默认」而不是 0 —— 后者读起来像「不给配额」 */}
-                    <td style={monoCellStyle}>{user.quota_tokens_daily === null ? '默认' : user.quota_tokens_daily.toLocaleString()}</td>
-                    <td style={cellStyle}><span style={{ fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', color: user.is_active ? 'var(--status-done)' : 'var(--text-muted)' }}>{user.is_active ? '● 正常' : '○ 未启用'}</span></td>
-                    <td style={cellStyle}>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button
-                          onClick={() => setEditModal({
-                            user,
-                            role: user.role,
-                            quota: user.quota_tokens_daily === null ? '' : String(user.quota_tokens_daily),
-                            dept: user.dept,
-                          })}
-                          style={{ padding: '4px 10px', background: 'transparent', color: 'var(--action)', border: '1px solid var(--action-border)', borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
-                        >
-                          编辑
-                        </button>
-                        <button
-                          disabled={change.isPending}
-                          onClick={() => change.mutate({ id: user.id, body: { is_active: !user.is_active } })}
-                          style={{ padding: '4px 10px', background: 'transparent', color: user.is_active ? 'var(--danger)' : 'var(--status-done)', border: '1px solid ' + (user.is_active ? 'var(--danger-border)' : '#A7F3D0'), borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
-                        >
-                          {user.is_active ? '停用' : '启用'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+          <>
+            <div className="admin-table-scroll">
+              <table className="admin-table admin-table-users admin-table--actions">
+                <thead><tr>{['用户名', '邮箱', '院系', '角色', '日配额', '状态', '操作'].map(label => <th key={label}>{label}</th>)}</tr></thead>
+                <tbody>
+                  {visibleUsers.map(user => (
+                    <tr key={user.id}>
+                      <td className="admin-table-name"><span className="admin-truncate" title={user.name}>{user.name}</span></td>
+                      <td><span className="admin-truncate admin-email" title={user.email}>{user.email}</span></td>
+                      <td>{user.dept || '—'}</td>
+                      <td><span className={`admin-role-badge ${ROLE_CLASS[user.role]}`}>{ROLE_LABEL[user.role]}</span></td>
+                      <td className="admin-table-mono">{user.quota_tokens_daily === null ? '默认' : user.quota_tokens_daily.toLocaleString()}</td>
+                      <td><span className={`admin-status ${user.is_active ? 'success' : 'muted'}`}>{user.is_active ? '正常' : '待激活'}</span></td>
+                      <td>
+                        <div className="admin-table-actions">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setEditModal({
+                              user,
+                              role: user.role,
+                              quota: user.quota_tokens_daily === null ? '' : String(user.quota_tokens_daily),
+                              dept: user.dept,
+                            })}
+                          >
+                            编辑
+                          </Button>
+                          {user.is_active ? (
+                            <Button variant="secondary" size="sm" className="admin-danger-action" onClick={() => setDisableTarget(user)}>停用</Button>
+                          ) : (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="admin-success-action"
+                              disabled={change.isPending}
+                              onClick={() => change.mutate({ id: user.id, body: { is_active: true } })}
+                            >
+                              激活
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <AdminPagination page={safePage} pageSize={ADMIN_LIST_PAGE_SIZE} totalItems={filtered.length} itemName="账号" onPageChange={setPage} />
+          </>
         )}
       </AdminTableSection>
 
       {editModal && (
         <Modal title={`编辑账号：${editModal.user.name}`} onClose={() => setEditModal(null)} onSubmit={saveEdit}>
-          <Labelled label="角色">
-            <select value={editModal.role} onChange={e => setEditModal({ ...editModal, role: e.target.value as UserRole })} style={modalInputStyle}>
+          <Labelled id="edit-user-role" label="角色">
+            <select id="edit-user-role" value={editModal.role} onChange={event => setEditModal({ ...editModal, role: event.target.value as UserRole })} className="admin-form-control">
               {CREATABLE_ROLE.map(role => <option key={role} value={role}>{ROLE_LABEL[role]}</option>)}
             </select>
           </Labelled>
-          <Labelled label="院系">
-            <input value={editModal.dept} onChange={e => setEditModal({ ...editModal, dept: e.target.value })} style={modalInputStyle} />
+          <Labelled id="edit-user-dept" label="院系">
+            <input id="edit-user-dept" value={editModal.dept} onChange={event => setEditModal({ ...editModal, dept: event.target.value })} className="admin-form-control" />
           </Labelled>
-          <Labelled label="每日 Token 配额（留空＝跟随角色默认档）">
-            <input type="number" min={0} value={editModal.quota} placeholder="默认" onChange={e => setEditModal({ ...editModal, quota: e.target.value })} style={modalInputStyle} />
+          <Labelled id="edit-user-quota" label="每日 Token 配额（留空＝跟随角色默认档）">
+            <input id="edit-user-quota" type="number" min={0} value={editModal.quota} placeholder="默认" onChange={event => setEditModal({ ...editModal, quota: event.target.value })} className="admin-form-control" />
           </Labelled>
         </Modal>
       )}
@@ -210,6 +229,19 @@ export function AdminUsers() {
           onError={setFailure}
         />
       )}
+
+      <ConfirmDialog
+        open={disableTarget !== null}
+        title={`停用账号「${disableTarget?.name ?? ''}」？`}
+        message="停用后该账号将无法登录或发起分析，之后仍可由管理员重新启用。"
+        confirmLabel="确认停用"
+        danger
+        onCancel={() => setDisableTarget(null)}
+        onConfirm={() => {
+          if (disableTarget) change.mutate({ id: disableTarget.id, body: { is_active: false } })
+          setDisableTarget(null)
+        }}
+      />
     </div>
   )
 }
@@ -230,13 +262,13 @@ function CreateUserModal({ onClose, onDone, onError }: { onClose: () => void; on
   })
 
   return (
-    <Modal title="创建账号" onClose={onClose} onSubmit={() => ready && create.mutate()} submitDisabled={!ready || create.isPending}>
-      <Labelled label="用户名"><input value={name} onChange={e => setName(e.target.value)} style={modalInputStyle} /></Labelled>
-      <Labelled label="邮箱（登录认它也认用户名）"><input type="email" value={email} onChange={e => setEmail(e.target.value)} style={modalInputStyle} /></Labelled>
-      <Labelled label="初始口令（至少 8 位）"><input type="password" value={password} onChange={e => setPassword(e.target.value)} style={modalInputStyle} /></Labelled>
-      <Labelled label="院系"><input value={dept} onChange={e => setDept(e.target.value)} style={modalInputStyle} /></Labelled>
-      <Labelled label="角色">
-        <select value={role} onChange={e => setRole(e.target.value as UserRole)} style={modalInputStyle}>
+    <Modal title="创建账号" submitLabel="创建账号" onClose={onClose} onSubmit={() => ready && create.mutate()} submitDisabled={!ready || create.isPending}>
+      <Labelled id="create-user-name" label="用户名"><input id="create-user-name" autoComplete="off" value={name} onChange={event => setName(event.target.value)} className="admin-form-control" /></Labelled>
+      <Labelled id="create-user-email" label="邮箱（可作为登录账号）"><input id="create-user-email" type="email" autoComplete="off" value={email} onChange={event => setEmail(event.target.value)} className="admin-form-control" /></Labelled>
+      <Labelled id="create-user-password" label="初始口令（至少 8 位）"><input id="create-user-password" type="password" autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} className="admin-form-control" /></Labelled>
+      <Labelled id="create-user-dept" label="院系"><input id="create-user-dept" value={dept} onChange={event => setDept(event.target.value)} className="admin-form-control" /></Labelled>
+      <Labelled id="create-user-role" label="角色">
+        <select id="create-user-role" value={role} onChange={event => setRole(event.target.value as UserRole)} className="admin-form-control">
           {CREATABLE_ROLE.map(one => <option key={one} value={one}>{ROLE_LABEL[one]}</option>)}
         </select>
       </Labelled>
@@ -244,12 +276,13 @@ function CreateUserModal({ onClose, onDone, onError }: { onClose: () => void; on
   )
 }
 
-function Modal({ title, children, onClose, onSubmit, submitDisabled }: {
+function Modal({ title, children, onClose, onSubmit, submitDisabled, submitLabel = '保存' }: {
   title: string
   children: React.ReactNode
   onClose: () => void
   onSubmit: () => void
   submitDisabled?: boolean
+  submitLabel?: string
 }) {
   return (
     <DialogPrimitive.Root defaultOpen onOpenChange={open => {
@@ -257,12 +290,12 @@ function Modal({ title, children, onClose, onSubmit, submitDisabled }: {
     }}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="dialog-overlay" onClick={onClose} />
-        <DialogPrimitive.Content className="dialog-content" style={{ width: 440 }} aria-describedby={undefined}>
-          <DialogPrimitive.Title className="dialog-title" style={{ fontSize: 17, marginBottom: 18 }}>{title}</DialogPrimitive.Title>
+        <DialogPrimitive.Content className="dialog-content admin-account-dialog" aria-describedby={undefined}>
+          <DialogPrimitive.Title className="dialog-title admin-account-dialog-title">{title}</DialogPrimitive.Title>
           {children}
           <div className="dialog-actions">
             <Button variant="secondary" size="md" onClick={onClose}>取消</Button>
-            <Button variant="primary" size="md" onClick={onSubmit} disabled={submitDisabled}>保存</Button>
+            <Button variant="primary" size="md" onClick={onSubmit} disabled={submitDisabled}>{submitLabel}</Button>
           </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
@@ -270,16 +303,11 @@ function Modal({ title, children, onClose, onSubmit, submitDisabled }: {
   )
 }
 
-function Labelled({ label, children }: { label: string; children: React.ReactNode }) {
+function Labelled({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 16 }}>
-      <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: 'var(--text-muted)', marginBottom: 6 }}>{label}</label>
+    <div className="admin-form-field">
+      <label htmlFor={id}>{label}</label>
       {children}
     </div>
   )
 }
-
-const selectStyle: React.CSSProperties = { padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer' }
-const modalInputStyle: React.CSSProperties = { width: '100%', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text-primary)', boxSizing: 'border-box' }
-const alertStyle: React.CSSProperties = { marginBottom: 14, padding: '9px 12px', border: '1px solid #FECACA', borderRadius: 6, background: 'var(--danger-bg)', color: 'var(--danger)', fontSize: 13 }
-const emptyStyle: React.CSSProperties = { padding: '48px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }

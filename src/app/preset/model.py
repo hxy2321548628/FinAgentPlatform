@@ -152,6 +152,11 @@ class AgentRecord(SQLModel, table=True):
     # 软删：作者的「我的」里还看得到（能看出自己删过什么），别处一律当它不存在。
     # 硬删会撞上 run 快照里那个 agent_id —— 那是历史，删掉等于往账本里挖洞
     is_deleted: bool = Field(default=False)
+    # 审核通过只说明内容合格；平台级下架是独立的运维闸门，不改写审核历史
+    catalog_enabled: bool = Field(default=True)
+    catalog_disabled_reason: str | None = Field(default=None)
+    catalog_disabled_by: UUID | None = Field(default=None, index=False, foreign_key="users.id")
+    catalog_disabled_at: datetime | None = Field(default=None)
     created_at: datetime
     updated_at: datetime
 

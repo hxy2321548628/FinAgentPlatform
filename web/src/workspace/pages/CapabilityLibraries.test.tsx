@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import { ApiError } from '../../api/request'
-import { SkillsLibrary } from './CapabilityLibraries'
+import type { McpServer } from '../../api/types'
+import { McpLibrary, SkillsLibrary } from './CapabilityLibraries'
 
 const mocks = vi.hoisted(() => ({
   listCatalog: vi.fn(async () => [{
@@ -18,6 +19,12 @@ const mocks = vi.hoisted(() => ({
   readVersionFile: vi.fn(async (_skillId: string, _version: number, path: string) => ({
     path, size: 22, is_binary: false, content: path === 'SKILL.md' ? '# 年化规则\n默认按 252 日。' : 'print("252 个交易日")',
   })),
+  listMcpCatalog: vi.fn(async (): Promise<McpServer[]> => [{
+    id: 'mcp-real', name: '论文检索', description: '按关键词检索论文', url: 'https://mcp.example.edu/mcp',
+    transport: 'streamable_http', has_credential: false, tool_names: ['search_paper'], latency_note: '1 秒',
+    stores_user_data: false, sends_data_out: true, has_write_operation: false, status: 'enabled', disabled_reason: null,
+    created_at: '2026-08-14T00:00:00Z', updated_at: '2026-08-14T00:00:00Z',
+  }]),
 }))
 
 vi.mock('../../api/skills', async importOriginal => ({
@@ -25,6 +32,11 @@ vi.mock('../../api/skills', async importOriginal => ({
   listCatalog: mocks.listCatalog,
   listVersionFiles: mocks.listVersionFiles,
   readVersionFile: mocks.readVersionFile,
+}))
+
+vi.mock('../../api/mcp', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../api/mcp')>()),
+  listCatalog: mocks.listMcpCatalog,
 }))
 
 afterEach(() => { cleanup(); sessionStorage.clear(); vi.clearAllMocks() })
@@ -81,4 +93,19 @@ describe('SkillsLibrary', () => {
     expect(screen.queryByRole('textbox')).toBeNull()
   })
 
+})
+
+describe('McpLibrary', () => {
+  it('与后台共用同一套 MCP 能力抽屉', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<MemoryRouter><QueryClientProvider client={client}><McpLibrary /></QueryClientProvider></MemoryRouter>)
+
+    fireEvent.click(await screen.findByRole('button', { name: '查看 MCP 能力' }))
+
+    const detail = screen.getByRole('dialog')
+    expect(detail.classList.contains('dialog-drawer')).toBe(true)
+    expect(within(detail).getByText('https://mcp.example.edu/mcp')).toBeTruthy()
+    expect(within(detail).getByText('search_paper')).toBeTruthy()
+    expect(within(detail).getByText('声明会转发给第三方')).toBeTruthy()
+  })
 })

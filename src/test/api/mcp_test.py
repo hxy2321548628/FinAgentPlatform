@@ -220,6 +220,18 @@ async def test_a_disabled_server_drops_out_of_both_the_catalog_and_the_submit_pa
     assert refused.status_code == 422, refused.text
 
 
+async def test_disabling_an_mcp_requires_a_reason(client: TestClient, teacher: User, administrator: User) -> None:
+    """下架理由是后端闸门，不能只靠管理页表单校验。"""
+    as_user(client, teacher)
+    created = apply_for(client)
+    as_user(client, administrator)
+    approve(client, str(created["id"]))
+
+    stopped = client.post(f"{ADMIN_PATH}/{created['id']}/enabled", json={"enabled": False, "reason": "  "})
+
+    assert stopped.status_code == 422, stopped.text
+
+
 async def test_more_than_the_limit_is_a_gate_not_a_hint(client: TestClient, teacher: User, administrator: User) -> None:
     """`MAX_MCP_SERVER` 是闸门：超了当场 422，不是悄悄截断成前三个。"""
     as_user(client, teacher)
