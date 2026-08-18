@@ -33,6 +33,16 @@ def test_the_prompt_rules_out_installing_system_packages() -> None:
     assert "apt-get" in SYSTEM_PROMPT
 
 
+def test_the_prompt_routes_file_removal_through_the_delete_tool() -> None:
+    """删除要教师点头，而 `execute` 里的 `rm` 同样会被拦下来。
+
+    不写这条，agent 会自己选 `rm`（2026-08-18 实测四次全选了它），于是每一次删除
+    都要多跑一轮审批往返 —— 闸门拦得住，但白花一次等待。
+    """
+    assert "delete" in ENVIRONMENT_SEGMENT
+    assert "rm" in ENVIRONMENT_SEGMENT
+
+
 def test_the_prompt_forbids_hunting_for_chinese_fonts() -> None:
     """实测到的第一个真实失败模式：agent 为找中文字体跑了一轮 pip 与 apt 去搜。
 

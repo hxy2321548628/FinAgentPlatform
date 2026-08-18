@@ -87,7 +87,7 @@
 | 子 agent | P0 关，**P9 开** | 见 §2.1 的 2026-08-13 补记：一层、最多 5 个、共享沙箱、用主模型 |
 | skill | P0 关，**P8 开** | 见 §1.2。**注意 `SkillsMiddleware` 经 backend 读文件，而本平台 backend 的根是会话 workspace** —— skill 必须先物化进 `/workspace/skill/`，这是 [P6 决策 D4](../03plan/P6-decision.md) 的由来 |
 | 外部 MCP 工具 | P0 关，**P10 开** | 只从已放行目录勾选，服务在校外（[F1 / F3](../03plan/P6-decision.md)） |
-| HITL 中断（`interrupt_on`） | P0 关，**P3 开** | 触发范围未定，见主文档 §5.3 的 TODO。**MCP 工具一个都不拦**（[F8](../03plan/P6-decision.md)） |
+| HITL 中断（`interrupt_on`） | P0 关，**P3 开** | 拦 `delete` 与「在删文件的 `execute`」两个，主图与子图共用同一份配置（`app.agent.interrupt`），范围与边界见主文档 §5.3。**MCP 工具一个都不拦**（[F8](../03plan/P6-decision.md)） |
 
 ### 2.3 模型
 

@@ -10,12 +10,10 @@
 
 from collections.abc import AsyncIterator
 from contextlib import nullcontext
-from types import MappingProxyType
 from typing import Protocol, cast
 
 from deepagents import create_deep_agent
 from deepagents.backends.protocol import BackendProtocol
-from langchain.agents.middleware.human_in_the_loop import DecisionType, InterruptOnConfig
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -24,6 +22,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
 from app.agent.config import AgentConfig
+from app.agent.interrupt import ALLOWED_DECISION, DELETE_TOOL, INTERRUPT_ON
 from app.agent.mcp import McpFailureRecorderProtocol, McpTargetLoaderProtocol, load_mcp_tools
 from app.agent.prompt import compose_prompt
 from app.agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
@@ -41,27 +40,8 @@ RECURSION_LIMIT = 60
 # custom 留给工具自己写的事件
 STREAM_MODE = ["updates", "messages", "custom"]
 
-# **只全量拦 `delete`，不写任何 `when` 谓词。**
-#
-# P0 实测一次完整分析里 agent 调了 16 次工具，`delete` 一次都没调 —— 低频高危，
-# 全量拦不伤可用性。反过来，若给 `execute` 全量加审批，那一次分析就要教师点十几次确认，
-# 平台会变得没法用。
-#
-# > **将来加 `execute` 的条件拦截时，`when` 谓词必须是工具调用的纯函数。**
-# > 多个 interrupt 靠**位置索引**匹配 resume 值，官方明确警告：非确定性逻辑会破坏
-# > 基于索引的匹配。「代码涉及删除文件时拦截」只看 args，安全；
-# > 「预估 token 超阈值时拦截」若掺入外部状态或时间，重放时索引就会错位 ——
-# > 而它坏掉的方式是静默的：把 A 的决策套到 B 的调用上。
-# >
-# > **加它之前先补上观察项**：量一次真实分析里谓词命中几次。命中 0 次说明太严，
-# > 命中十几次说明平台没法用，不量就定是在猜。
-DELETE_TOOL = "delete"
-
-ALLOWED_DECISION: tuple[DecisionType, ...] = ("approve", "reject", "edit", "respond")
-
-INTERRUPT_ON: MappingProxyType[str, InterruptOnConfig] = MappingProxyType(
-    {DELETE_TOOL: InterruptOnConfig(allowed_decisions=list(ALLOWED_DECISION))}
-)
+# 中断配置在 app.agent.interrupt：子图要装同一份，而本模块 import 子图模块，
+# 反过来 import 会成环。改拦截范围去那里改，别在这里再写一份
 
 RESUME_KEY = "decisions"
 

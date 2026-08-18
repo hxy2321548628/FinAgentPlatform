@@ -9,6 +9,7 @@ from langchain.agents.middleware.human_in_the_loop import HumanInTheLoopMiddlewa
 from langchain_core.language_models import BaseChatModel
 
 from app.agent.config import SubagentReference
+from app.agent.interrupt import INTERRUPT_ON
 from app.agent.prompt import ENVIRONMENT_SEGMENT
 from app.agent.subagent import (
     SUBAGENT_RECURSION_LIMIT,
@@ -94,7 +95,10 @@ async def test_a_compiled_subagent_uses_the_frozen_version_and_platform_contract
         "execute",
     }
     assert any(isinstance(one, PatchToolCallsMiddleware) for one in middleware)
-    assert any(isinstance(one, HumanInTheLoopMiddleware) for one in middleware)
+    # **子图装的必须是主图那一份中断配置。** 各写一份就会漏掉一整条绕行路：
+    # 2026-08-18 验收实测子智能体不调 delete、改用 execute 跑 rm，审批一次都没响
+    hitl = next(one for one in middleware if isinstance(one, HumanInTheLoopMiddleware))
+    assert hitl.interrupt_on == dict(INTERRUPT_ON)
 
 
 async def test_a_missing_frozen_version_fails_instead_of_falling_back() -> None:

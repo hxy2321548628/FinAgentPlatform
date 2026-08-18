@@ -10,7 +10,7 @@ const SUBAGENT_NAME = required('E2E_SUBAGENT_NAME')
 const QUESTION = process.env.E2E_SUBAGENT_QUESTION ?? [
   '只做这一件事：固定收益率数组 [0.01,-0.005,0.008,-0.002,0.006] 的样本标准差是 0.00654217089351845，乘以 sqrt(252) 后年化波动率是 0.10385374331241026。',
   '如果存在名为 volatility-expert 的可委派子智能体，必须把整项工作委派给它，自己不得代做。',
-  '只调用一次 write_file，把这段计算写进 outputs/p9-browser.txt；不调用其他工具。完成后只回答输出文件名。',
+  '只调用一次 write_file，把这段计算写进 outputs/volatility-result.txt；不调用其他工具。完成后只回答输出文件名。',
 ].join(' ')
 
 function required(name: string): string {

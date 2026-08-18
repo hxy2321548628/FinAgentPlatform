@@ -16,14 +16,12 @@ from pydantic import SecretStr
 
 from app.agent.config import AgentConfig
 from app.agent.factory import (
-    ALLOWED_DECISION,
-    DELETE_TOOL,
-    INTERRUPT_ON,
     RECURSION_LIMIT,
     STREAM_MODE,
     Agent,
     create_model,
 )
+from app.agent.interrupt import ALLOWED_DECISION, DELETE_TOOL, INTERRUPT_ON
 from app.agent.prompt import SYSTEM_PROMPT, compose_prompt
 from app.agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
 from app.agent.trace import SESSION_KEY, USER_KEY
@@ -270,18 +268,20 @@ def test_the_model_is_deterministic() -> None:
 
 
 # ------------------------------------------------------------------ HITL
-async def test_only_delete_is_intercepted(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
-    """**只全量拦 `delete`**。
+async def test_the_graph_gets_the_shared_interrupt_config(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    """**主图装的必须是共用那一份。**
 
-    P0 实测一次分析里 agent 调了 16 次工具、`delete` 一次都没调 —— 低频高危，
-    全量拦不伤可用性。给 `execute` 全量加审批则要教师点十几次确认，平台会变得没法用。
+    拦哪些工具、怎么拦由 `app.agent.interrupt` 一处说了算（子图装的是同一份）。
+    这里只验它确实被交了下去 —— 各写一份就会漏掉一整条绕行路。
     """
     _, built = recorded
     runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
 
     await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
 
-    assert set(built["interrupt_on"]) == {DELETE_TOOL}
+    assert built["interrupt_on"] == dict(INTERRUPT_ON)
 
 
 async def test_all_four_decisions_are_offered(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
@@ -294,10 +294,12 @@ async def test_all_four_decisions_are_offered(recorded: tuple[RecordingAgent, di
     assert built["interrupt_on"][DELETE_TOOL]["allowed_decisions"] == list(ALLOWED_DECISION)
 
 
-async def test_no_when_predicate_is_configured() -> None:
-    """本期不写任何 `when`：非确定性谓词会破坏基于索引的匹配，而它坏掉的方式是静默的。"""
-    for config in INTERRUPT_ON.values():
-        assert "when" not in config
+async def test_the_config_handed_over_is_a_copy() -> None:
+    """`MappingProxyType` 是为了不构成可变全局状态，交出去的那份改了不能回写。"""
+    handed = dict(INTERRUPT_ON)
+    handed.pop(DELETE_TOOL)
+
+    assert DELETE_TOOL in INTERRUPT_ON
 
 
 async def test_resuming_carries_the_decisions(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:

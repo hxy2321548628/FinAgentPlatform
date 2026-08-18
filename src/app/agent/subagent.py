@@ -15,6 +15,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from app.agent.config import SubagentReference
+from app.agent.interrupt import INTERRUPT_ON
 from app.agent.prompt import ENVIRONMENT_SEGMENT
 
 # 子智能体单独计图步数。与主图一样留够正常分析余量，同时避免上游默认的 9999
@@ -77,9 +78,9 @@ async def compile_subagents(
             FilesystemMiddleware(backend=backend),
             create_summarization_middleware(model, backend),
             PatchToolCallsMiddleware(),
-            HumanInTheLoopMiddleware(
-                interrupt_on={"delete": {"allowed_decisions": ["approve", "reject", "edit", "respond"]}}
-            ),
+            # **与主图同一份配置。** 子智能体绕过审批的路子与主图一模一样：
+            # 不调 delete，改用 execute 跑 rm（2026-08-18 验收 P9⑤ 实测）
+            HumanInTheLoopMiddleware(interrupt_on=dict(INTERRUPT_ON)),
         ]
         runnable = create_agent(
             model,

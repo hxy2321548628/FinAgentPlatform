@@ -143,7 +143,7 @@ HOLDER='{"holder":"zuel-regression"}'
 # 崩溃恢复的观察窗口，秒。要大于 WORKER_CLAIM_IDLE_MILLISECOND（默认 60 秒）
 # 再加一次沙箱申请与一轮模型调用的时间
 RECOVER_WINDOW=300
-# 探针用的任务条数。要多于 worker 副本数，才看得出「分给了谁」
+# 探针用的任务条数。要多于 worker 进程数，才看得出「分给了谁」
 PROBE_TASK=6
 # 等第一条 tool_result 最多等多久，秒。等到它才动刀，见 P2① 处说明
 KILL_WINDOW=180
@@ -288,7 +288,7 @@ wait_broker() {
     return 1
 }
 
-# 等某个 worker 副本重新起来。**不能只数进程数**：被 kill -9 之后 compose 会立刻
+# 等 worker 重新起来。**不能只数进程数**：被 kill -9 之后 compose 会立刻
 # 重建，而重建中的容器已经能被 docker ps 数到，却还没连上 Redis
 wait_worker() {
     local expect="$1" deadline=$((SECONDS + 120))
@@ -777,7 +777,7 @@ if [[ ${SKIP_HOSTILE:-0} != 1 ]]; then
     sudo -v || { echo "破坏性那一组要 sudo，或用 SKIP_HOSTILE=1 跳过" >&2; exit 1; }
 fi
 
-info "网关 $BASE_URL ｜ workspace $WORKSPACE_ROOT ｜ worker 副本 $WORKER_COUNT 个"
+info "网关 $BASE_URL ｜ workspace $WORKSPACE_ROOT ｜ worker $WORKER_COUNT 个"
 
 # **冒烟造一个号、建一个会话再往下走。** 除破坏性那四条外，每一条判据的第一个动作
 # 都是建会话，而它最容易在一个与被测功能毫无关系的地方失败 —— 不拦的话，十几条判据
@@ -1262,8 +1262,9 @@ else
 
     # pending owner 就是当前执行这个 run 的 worker。consumer 名由
     # worker.runtime.consumer_name() 生成，形状为「容器短 id-pid」，可以无歧义映射回
-    # compose 的两个副本。先在等 checkpoint 之前定位，避免 tool_result 出现后再扫日志
-    # 的那一两秒里 run 已经收尾，最后退化成随机砍一个副本。
+    # 具体容器 —— 单副本下只有一个，但这一步仍要做：**它同时证明了这个 run 真的落在
+    # 队列的 pending 列表里**，否则下面那一刀砍完什么都验不到。先在等 checkpoint 之前
+    # 定位，避免 tool_result 出现后再扫日志的那一两秒里 run 已经收尾。
     P2_CONSUMER=""
     for _ in $(seq 10); do
         P2_CONSUMER="$(p2_consumer "$RUN_P2" 2>/dev/null)"
@@ -1341,7 +1342,15 @@ else
         info "队列确认 run 由 consumer $P2_CONSUMER 执行"
         WORKER_TOUCHED=1
         docker kill -s KILL "$VICTIM" >/dev/null 2>&1
-        info "已 kill -9 worker $VICTIM，等另一个副本认领（阈值 60 秒）"
+        # **杀完必须自己把它拉回来。** Docker 把外部的 kill / stop 记成「人工停止」，
+        # `restart: unless-stopped` 对这一类**故意不重启**（实测 RestartCount 停在 0）；
+        # 而真实崩溃是进程自己退出，那一类它会重启。容器内也没有别的办法制造真崩溃 ——
+        # PID 1 收不到来自本命名空间的 SIGKILL。
+        #
+        # 双副本时这一步可以省，因为接管的是另一个副本；**单副本下省掉它，验的就成了
+        # 「杀死之后永远没人接管」**，那是判据自己造出来的场景，产品里不存在。
+        docker start "$VICTIM" >/dev/null 2>&1
+        info "已 kill -9 worker $VICTIM 并拉回（真实崩溃由 Docker 自动重启），等它认领回消息（阈值 60 秒）"
     fi
 
     if (( CHECKPOINT_READY )) && [[ -n $VICTIM ]]; then
@@ -1397,9 +1406,8 @@ else
     info "【观察项】工具调用 $tool_call 次、返回 $tool_result 次 —— 差值即崩在工具执行途中的重跑次数"
     info "【观察项】这个数是 P2 §7 那项「幂等键先量后定」的输入，请记进计划文档"
 
-    # **`docker kill` 不会触发 restart 策略**：守护进程把外部下的 kill 记成「人为停止」，
-    # 从此不再自动拉起。真崩溃（进程自己死在容器里）走的是另一条路，`unless-stopped` 照常生效 ——
-    # 所以这里副本没回来不说明策略有问题，手工拉一把，好让后面几组仍在满编下跑
+    # 兜底：worker 正常情况下在上面判据开始前就已经被拉回来了（那里说明了为什么必须
+    # 由脚本自己拉），这一句只管「那一步没成」与「后面几组要满编」两种情况
     compose up -d --no-recreate worker >/dev/null 2>&1
     wait_worker "$WORKER_COUNT" || info "worker 没回到 $WORKER_COUNT 个副本，后面几组会在减员状态下跑"
 
@@ -2204,11 +2212,60 @@ if session_for p6; then
     P6_JAR_READY=1
 fi
 
+# 探针撞上审批闸时最多替它拒绝几次。超过就撒手，让这条判据以超时如实收场 ——
+# 一直拒下去只会把一次探针变成一串付费往返
+P6_GUARD_ROUND=3
+# 看守多久看一眼 run 的状态
+P6_GUARD_INTERVAL=5
+
+# 这次中断里有几个待确认的调用。**从 SSE 落盘那份里读**（`curl -N` 不缓冲，
+# 中断事件写进去时就在）—— 那正是教师看到的那一份，用它算决策数才对得上平台的校验
+p6_pending_action() {
+    grep '^data:' "$1" 2>/dev/null | sed 's/^data: *//' |
+        jq -c 'select(.type == "interrupt")' 2>/dev/null | tail -1 |
+        jq '.data.actions | length' 2>/dev/null
+}
+
+# 停在 waiting_approval 的探针：一律拒绝，让它接着走到终态。
+#
+# **探针提问都写明「不要删除任何文件」，但模型偶尔仍会提删除请求。** 2026-08-18 的
+# P9① 就是这么红的：子智能体写出的文件名与提问要的对不上，主智能体自己补写一份之后
+# 要去删掉多余的两个，撞上 `delete` 全量拦截。而中断不是终态、SSE 照设计不关
+# （前端要靠它等教师决策），于是判据静默等满窗口，报出来的是「cancelled」——
+# 一个指不到审批闸的状态，15 分钟里一行输出都没有。
+#
+# **拒绝不改变这些判据在验的东西**：子图走没走到、提示词生没生效、MCP 挂没挂上，
+# 与那次删除批不批毫无关系。**但必须打出观察项** —— 替教师做了决定却不吭声的看守，
+# 与静默跳过的门禁是一回事
+p6_approval_guard() {
+    local jar="$1" run_id="$2" sse="$3" deadline=$((SECONDS + $4)) round=0 count payload got
+    while (( SECONDS < deadline )); do
+        sleep "$P6_GUARD_INTERVAL"
+        [[ $(run_status "$jar" "$run_id" 2>/dev/null) == waiting_approval ]] || continue
+        if (( round >= P6_GUARD_ROUND )); then
+            info "【观察项】探针已被拒绝 $round 次仍在提审批，看守撒手，这条判据将以超时收场"
+            return
+        fi
+        count="$(p6_pending_action "$sse")"
+        if [[ ! $count =~ ^[1-9][0-9]*$ ]]; then
+            info "【观察项】run $run_id 停在 waiting_approval，但事件流里读不出待确认的调用数"
+            return
+        fi
+        payload="$(jq -nc --argjson n "$count" \
+            '{decisions: [range($n) | {index: ., type: "reject", message: "探针不允许删除或改动已有文件，跳过这一步，直接给出结论"}]}')"
+        got="$(code "$jar" -X POST "$BASE_URL/api/runs/$run_id/approve" \
+            -H 'Content-Type: application/json' -d "$payload")"
+        round=$((round + 1))
+        info "【观察项】探针命中审批闸（$count 个待确认调用），看守已代为拒绝第 $round 次：HTTP $got"
+        [[ $got == 202 ]] || return
+    done
+}
+
 # 跑一句简单分析并从 SSE 里拼回主 agent 的正式答复。结果放在
 # P6_LAST_* 里，不用 command substitution：答复可能有换行，拿制表符之类的分隔符
 # 来回传会把“以喵开头”这条判据自己改掉。
 p6_analyse() {
-    local jar="$1" thread_id="$2" stem="$3" window="${4:-$RUN_WINDOW}" run_body
+    local jar="$1" thread_id="$2" stem="$3" window="${4:-$RUN_WINDOW}" run_body guard streamed
     P6_LAST_RUN=""
     P6_LAST_STATUS=""
     P6_LAST_ANSWER=""
@@ -2218,8 +2275,16 @@ p6_analyse() {
     P6_LAST_RUN="$(jq -r '.id // empty' <<<"$run_body")"
     [[ -n $P6_LAST_RUN ]] || return 1
 
-    if ! timeout "$window" curl -fsS -b "$jar" -N \
-        "$BASE_URL/api/runs/$P6_LAST_RUN/events" > "$WORK_DIR/$stem.sse"; then
+    : > "$WORK_DIR/$stem.sse"
+    p6_approval_guard "$jar" "$P6_LAST_RUN" "$WORK_DIR/$stem.sse" "$window" &
+    guard=$!
+    timeout "$window" curl -fsS -b "$jar" -N \
+        "$BASE_URL/api/runs/$P6_LAST_RUN/events" > "$WORK_DIR/$stem.sse"
+    streamed=$?
+    kill "$guard" >/dev/null 2>&1
+    wait "$guard" >/dev/null 2>&1
+
+    if (( streamed != 0 )); then
         curl -s --connect-timeout 5 --max-time 20 -b "$jar" -X POST \
             "$BASE_URL/api/runs/$P6_LAST_RUN/cancel" >/dev/null 2>&1
         P6_LAST_STATUS="$(run_status "$jar" "$P6_LAST_RUN" 2>/dev/null)"
@@ -3505,6 +3570,10 @@ end
 # P9：子智能体主判据与 token 汇总
 # ===========================================================================
 
+# **夹具的提示词与下面那句提问必须指着同一个文件名。** 两边各写各的时，主智能体
+# 会发现子智能体交回来的文件不是它要的那个：再委派一次、自己补写一份、然后去删掉多余
+# 的两个 —— 撞上 `delete` 全量拦截，run 停在 waiting_approval 再也不动。2026-08-18
+# 实测过一次，红在「两条 run 没都跑到 succeeded」，没有一处指向文件名对不上
 P9_FIXTURE="$REPO_ROOT/script/test/subagent/volatility-expert.json"
 P9_DELETE_FIXTURE="$REPO_ROOT/script/test/subagent/delete-expert.json"
 P9_READY=0
@@ -3831,10 +3900,16 @@ else
                 | select(.type == "tool_call" and (.path | length == 0))
                 | select(.data.name == "task" and .data.args.subagent_type == "delete-expert")
             ] | length' "$WORK_DIR/p9-hitl-before.json")"
+            # **两种形态都算数**：子智能体可能调 delete，也可能在 execute 里 rm ——
+            # 后者 2026-08-18 起同样会被拦下（谓词看命令名位置），而判据要验的是
+            # 「子图里的删除动作停得下来、目标路径准确」，不是它选了哪个工具
             P9_HITL_INTERRUPTS="$(jq -s '[.[]
                 | select(.type == "interrupt" and .path == ["delete-expert"])
                 | .data.actions[]
-                | select(.tool_name == "delete" and .args.file_path == "/workspace/nested-hitl.txt")
+                | select(
+                    (.tool_name == "delete" and .args.file_path == "/workspace/nested-hitl.txt")
+                    or (.tool_name == "execute" and (.args.command | test("/workspace/nested-hitl\\.txt")))
+                )
             ] | length' "$WORK_DIR/p9-hitl-before.json")"
             if (( P9_HITL_TASKS > 0 && P9_HITL_INTERRUPTS == 1 )); then
                 pass "delete 来自 delete-expert 子图，目标路径准确"
@@ -3901,7 +3976,7 @@ else
         E2E_PASSWORD="$P7_SECRET" \
         E2E_AUTHOR="$NAME_P7_A" \
         E2E_SUBAGENT_NAME="volatility-expert" \
-        E2E_SUBAGENT_QUESTION="${P6_QUESTION:-只做这一件事：固定收益率数组 [0.01,-0.005,0.008,-0.002,0.006] 的样本标准差是 0.00654217089351845，乘以 sqrt(252) 后年化波动率是 0.10385374331241026。如果存在名为 volatility-expert 的可委派子智能体，必须把整项工作委派给它，只调用一次 write_file，把结果写进 outputs/p9-browser.txt。}" \
+        E2E_SUBAGENT_QUESTION="${P6_QUESTION:-只做这一件事：固定收益率数组 [0.01,-0.005,0.008,-0.002,0.006] 的样本标准差是 0.00654217089351845，乘以 sqrt(252) 后年化波动率是 0.10385374331241026。如果存在名为 volatility-expert 的可委派子智能体，必须把整项工作委派给它，只调用一次 write_file，把结果写进 outputs/volatility-result.txt。}" \
         pnpm exec playwright test e2e/subagent-workspace.spec.ts >"$P9_E2E_LOG" 2>&1); then
         pass "子智能体浏览器链路通过：选择、真实事件、命名折叠与 write_file 均可见"
     else
@@ -4276,7 +4351,7 @@ else
     # **走探活这条路**：它是真实场景（管理员点「测试连接」），不是为测试造的后门；
     # 免费且确定 —— 跑 5 次真实分析既贵又不受控（模型这次会不会调那个工具是运气）。
     # 三条路共用同一个计数器这件事由 `make all` 里那条单测钉住，见 P10 计划 §4.4
-    P10_THRESHOLD="$(in_api_python 'from agent.circuit import MCP_FAILURE_THRESHOLD; print(MCP_FAILURE_THRESHOLD)' | tr -d '[:space:]')"
+    P10_THRESHOLD="$(in_api_python 'from app.agent.circuit import MCP_FAILURE_THRESHOLD; print(MCP_FAILURE_THRESHOLD)' | tr -d '[:space:]')"
     p10_stop_fixture
     P10_PROBE_LAST=""
     for _ in $(seq 1 "${P10_THRESHOLD:-5}"); do
@@ -4862,6 +4937,29 @@ if [[ -z $P0_BLOCKED ]]; then
             P0_BLOCKED="提交分析失败"
         else
             info "run_id=$RUN_P0，订阅事件流，收满 $CUT_AFTER_EVENT 条后主动断开"
+            # **后台盯着这条 run，停在审批上就批准。** 2026-08-18 起 `execute` 里的 rm
+            # 也要教师确认，而 `waiting_approval` 不是终态、事件流不会关 —— 没人批的话
+            # 下面那两个 curl 会一直读到 RUN_TIMEOUT 才罢休，而报出来的是「事件流不完整」，
+            # 一个字都不指向审批。批准次数同时就是 05runtime-design.md 要的那条观察项
+            echo 0 > "$WORK_DIR/p0-approvals"
+            (
+                p0_deadline=$((SECONDS + RUN_TIMEOUT))
+                p0_hits=0
+                while (( SECONDS < p0_deadline )); do
+                    case "$(run_status "$JAR_P0" "$RUN_P0")" in
+                        waiting_approval)
+                            code "$JAR_P0" -X POST "$BASE_URL/api/runs/$RUN_P0/approve" \
+                                -H 'Content-Type: application/json' \
+                                -d '{"decisions":[{"index":0,"type":"approve"}]}' >/dev/null 2>&1
+                            p0_hits=$((p0_hits + 1))
+                            echo "$p0_hits" > "$WORK_DIR/p0-approvals"
+                            ;;
+                        succeeded | failed | cancelled) break ;;
+                    esac
+                    sleep 5
+                done
+            ) &
+            P0_APPROVER=$!
             # --max-time 之外还要 head -n：SSE 是长连接，不主动切就要等到 run 结束
             timeout $RUN_TIMEOUT curl -fsS -b "$JAR_P0" -N "$BASE_URL/api/runs/$RUN_P0/events" \
                 | head -n $((CUT_AFTER_EVENT * 3)) > "$WORK_DIR/first.sse"
@@ -4869,6 +4967,10 @@ if [[ -z $P0_BLOCKED ]]; then
             info "断开于 Last-Event-ID=$LAST_ID，带它重连补齐剩下的"
             timeout $RUN_TIMEOUT curl -fsS -b "$JAR_P0" -N "$BASE_URL/api/runs/$RUN_P0/events" \
                 -H "Last-Event-ID: $LAST_ID" > "$WORK_DIR/rest.sse"
+
+            wait "$P0_APPROVER" 2>/dev/null || true
+            info "【观察项】这一次分析里 execute 的删除审批命中 $(cat "$WORK_DIR/p0-approvals") 次"
+            info "【观察项】命中 0 次说明谓词太严，命中十几次说明平台没法用 —— 请记进 05runtime-design.md §5.3"
 
             cat "$WORK_DIR/first.sse" "$WORK_DIR/rest.sse" > "$WORK_DIR/all.sse"
             grep '^data:' "$WORK_DIR/all.sse" | sed 's/^data: *//' | jq -c . > "$WORK_DIR/all.json" 2>/dev/null
