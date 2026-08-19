@@ -198,3 +198,47 @@ def test_cost_is_reported_alongside_the_raw_token_counts() -> None:
 
     assert facts.cost_yuan == cost_of(cached=1_000_000, uncached=0, output=0)
     assert facts.cost_yuan > 0
+
+
+def test_a_question_is_counted_apart_from_an_approval() -> None:
+    """**两者混在一起就答不出「提问会不会滥用」。**
+
+    `interrupt_count` 里既有删文件的审批也有 agent 的提问，而这两件事对教师
+    完全不同：一个是「你批不批」，一个是「你说句话」。
+    """
+    facts = extract(
+        [
+            {
+                "type": "interrupt",
+                "ts": 1,
+                "data": {"actions": [{"index": 0, "tool_name": "delete", "allowed_decisions": ["approve"]}]},
+            },
+            {
+                "type": "interrupt",
+                "ts": 2,
+                "data": {"actions": [{"index": 0, "tool_name": "ask_user_question", "allowed_decisions": ["respond"]}]},
+            },
+        ]
+    )
+
+    assert facts.interrupt_count == 2
+    assert facts.question_count == 1
+
+
+def test_todo_updates_are_counted() -> None:
+    facts = extract(
+        [
+            {"type": "todo.updated", "ts": 1, "data": {"todos": [{"content": "读数据", "status": "in_progress"}]}},
+            {"type": "todo.updated", "ts": 2, "data": {"todos": [{"content": "读数据", "status": "completed"}]}},
+        ]
+    )
+
+    assert facts.todo_update_count == 2
+
+
+def test_a_run_that_never_asked_or_planned_reads_zero_not_missing() -> None:
+    """**0 是有意义的读数**，正是「这个功能对教师不存在」的那个数。"""
+    facts = extract([{"type": "token", "ts": 1, "data": {"text": "年化波动率 = 标准差 × √252"}}])
+
+    assert facts.question_count == 0
+    assert facts.todo_update_count == 0

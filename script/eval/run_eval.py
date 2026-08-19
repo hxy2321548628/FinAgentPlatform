@@ -95,6 +95,8 @@ def _summarise(
     compaction = sum(one["facts"].compaction_count for one in rounds)
     offload = sum(one["facts"].offload_count for one in rounds)
     interrupts = sum(one["facts"].interrupt_count for one in rounds)
+    questions = sum(one["facts"].question_count for one in rounds)
+    todo_updates = sum(one["facts"].todo_update_count for one in rounds)
     installed = any(one["facts"].installed_package for one in rounds)
     total_input = total_cached + total_uncached
     return {
@@ -114,6 +116,8 @@ def _summarise(
         "offload_count": offload,
         "cost_yuan": sum(one["facts"].cost_yuan for one in rounds),
         "interrupt_count": interrupts,
+        "question_count": questions,
+        "todo_update_count": todo_updates,
         "installed_package": installed,
         "tool_calls": sum(one["facts"].tool_calls for one in rounds),
         "tool_error_rate": facts.tool_error_rate,
@@ -194,6 +198,26 @@ def run_evaluators(*, item_results: list[Any], **_: Any) -> list[Evaluation]:  #
                 comment=f"{len(hit)}/{len(probed)} 道题真的触发了要测的场景",
             )
         )
+    # P14 的两个新读数。**报的是「多少道题用到了」而不是总次数** ——
+    # 一道题问了五次和五道题各问一次，对教师是完全不同的两件事。
+    # **为 0 时也发**：那正是「这个功能对教师不存在」的读数，与 probe_coverage
+    # 那条「算不出就别发」的规矩不冲突 —— 这里 0 是量出来的，不是缺数据
+    scores.append(
+        Evaluation(
+            name="question_rate",
+            value=sum(1 for one in rows if one.get("question_count", 0) > 0) / len(rows),
+            data_type="NUMERIC",
+            comment=f"共问了 {sum(one.get('question_count', 0) for one in rows)} 次",
+        )
+    )
+    scores.append(
+        Evaluation(
+            name="todo_rate",
+            value=sum(1 for one in rows if one.get("todo_update_count", 0) > 0) / len(rows),
+            data_type="NUMERIC",
+            comment=f"共刷新清单 {sum(one.get('todo_update_count', 0) for one in rows)} 次",
+        )
+    )
     noise = _cost_spread(rows)
     if noise is not None:
         scores.append(

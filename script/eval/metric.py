@@ -23,6 +23,10 @@ INSTALL_MARKER = ("pip install", "pip3 install", "uv pip install")
 # （`middleware/_message_eviction.py` 的 TOO_LARGE_TOOL_MSG），升级依赖时要对一眼
 OFFLOAD_MARKER = "Tool result too large"
 
+# 提问工具的名字。**与后端 `app/agent/question.py` 各写一处** ——
+# 它改名的话这里会静默数成 0，而 0 与「一次都没问」长得一模一样
+QUESTION_TOOL = "ask_user_question"
+
 # 模型单价，每百万 token 人民币。**默认值与 `docker/.env` 的三项同源** ——
 # 那里改了这里也要改，否则算出来的钱和账单对不上。
 # 命中与不命中差 30 倍，这个倍数就是「成本作主判据」的全部意义：
@@ -51,6 +55,12 @@ class RunFacts:
     # 说明阈值仍然够不着，而不是「没数据」
     offload_count: int
     interrupt_count: int
+    # agent 主动提问了几次。**它是 interrupt_count 的一个子集** —— 那个数里
+    # 还混着删文件的审批，两者混在一起就答不出「提问会不会滥用」这个问题
+    question_count: int
+    # 清单被改写了几次。**一次都没有也是有意义的读数**：说明这道题模型不认为
+    # 值得列清单，而不是「没数据」
+    todo_update_count: int
     tool_calls: int
     tool_errors: int
     tool_error_rate: float
@@ -88,7 +98,7 @@ def extract(events: list[dict[str, Any]]) -> RunFacts:
     """把事件流折成一组事实。"""
     answer: list[str] = []
     tokens = {"input_cache_read": 0, "input_uncached": 0, "output": 0}
-    counter = {"compaction": 0, "interrupt": 0, "call": 0, "error": 0, "offload": 0}
+    counter = {"compaction": 0, "interrupt": 0, "call": 0, "error": 0, "offload": 0, "question": 0, "todo": 0}
     status, code, installed = "unknown", None, False
     stamp: dict[str, int] = {}
 
@@ -100,8 +110,15 @@ def extract(events: list[dict[str, Any]]) -> RunFacts:
         match kind:
             case "token":
                 answer.append(str(data.get("text", "")))
-            case "compaction" | "interrupt":
+            case "compaction":
                 counter[kind] += 1
+            case "interrupt":
+                counter[kind] += 1
+                counter["question"] += sum(
+                    1 for action in data.get("actions") or [] if action.get("tool_name") == QUESTION_TOOL
+                )
+            case "todo.updated":
+                counter["todo"] += 1
             case "tool_call":
                 counter["call"] += 1
                 installed = installed or _is_install(data)
@@ -127,6 +144,8 @@ def extract(events: list[dict[str, Any]]) -> RunFacts:
         compaction_count=counter["compaction"],
         offload_count=counter["offload"],
         interrupt_count=counter["interrupt"],
+        question_count=counter["question"],
+        todo_update_count=counter["todo"],
         tool_calls=counter["call"],
         tool_errors=counter["error"],
         tool_error_rate=counter["error"] / counter["call"] if counter["call"] else 0.0,
