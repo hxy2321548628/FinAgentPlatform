@@ -68,7 +68,9 @@ function groupNestedItems(items: RunViewItem[]): RenderEntry[] {
 function ToolView({ item, nested = false }: { item: Extract<RunViewItem, { kind: 'tool' }>; nested?: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const color = item.status === 'error' ? 'var(--danger)' : item.status === 'running' ? 'var(--action)' : 'var(--status-done)'
-  return <div style={{ marginLeft: nested ? 0 : 44, border: '1px solid var(--border-light)', borderRadius: 7, background: 'var(--surface)', overflow: 'hidden' }}>
+  // `data-tool` 是给走查用的：按可见文字找工具名会连教师问题里提到的那个词一起命中，
+  // 而那种红指向的是「卡片没收编掉」这个完全不相干的结论
+  return <div data-tool={item.name} style={{ marginLeft: nested ? 0 : 44, border: '1px solid var(--border-light)', borderRadius: 7, background: 'var(--surface)', overflow: 'hidden' }}>
     <button type="button" onClick={() => setExpanded(value => !value)} style={{ width: '100%', padding: '8px 12px', border: 'none', background: 'transparent', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--text-secondary)' }}>
       <span style={{ color, fontWeight: 700 }}>{item.status === 'running' ? '◉' : item.status === 'success' ? '✓' : '✗'}</span>
       <strong>{item.name}</strong>
@@ -165,7 +167,9 @@ function ApprovalBatch({ actions, onApprove }: { actions: InterruptAction[]; onA
     {actions.map(action => {
       const draft = drafts[action.index] ?? { type: null, message: '', args: jsonArgs(action.args) }
       const asking = isQuestion(action)
-      return <fieldset key={action.index} style={{ border: '1px solid #FDE68A', borderRadius: 7, margin: '0 0 10px', padding: 12 }}>
+      // `data-interrupt` 与工具卡片的 `data-tool` 同一个用途：走查要钉到这张卡片上，
+      // 而问题原文同时还出现在教师自己的提问气泡、清单条目和思考过程里
+      return <fieldset key={action.index} data-interrupt={action.tool_name} style={{ border: '1px solid #FDE68A', borderRadius: 7, margin: '0 0 10px', padding: 12 }}>
         <legend style={{ padding: '0 6px', color: 'var(--warn)', fontSize: 12, fontWeight: 600 }}>#{action.index + 1} {asking ? '智能体的提问' : action.tool_name}</legend>
         {asking
           // 提问显示问题原文，不显示参数 JSON —— 教师要读的是那句话，不是一个调用

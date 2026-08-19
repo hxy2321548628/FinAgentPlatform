@@ -5385,7 +5385,7 @@ fi
 end
 
 # --------------------------------------------- P14① 提问真的挂起、真的接着跑
-begin "P14①" "提问挂起不占队列不占沙箱，教师的口径真的进了模型的上下文"
+begin "P14①" "提问挂起不占队列消息，教师的口径真的进了模型的上下文"
 P14_RUN=""
 if (( P14_READY )) && [[ ${SKIP_LLM:-0} != 1 ]]; then
     P14_RUN="$(api "$JAR_P14" -X POST "$BASE_URL/api/threads/$THREAD_P14/runs" \
@@ -5401,15 +5401,19 @@ if (( P14_READY )) && [[ ${SKIP_LLM:-0} != 1 ]]; then
         undone "这一轮 agent 没调 ask_user_question（run 停在 $P14_STOP），没触发到要测的场景"
     else
         ALLOWED="$(jq -c '.[0].allowed_decisions' <<<"$P14_ASK")"
-        SANDBOX_LEFT="$(docker ps -q --filter "label=zuel.thread=$THREAD_P14" | wc -l | tr -d '[:space:]')"
         QUEUE_LEFT="$(p14_queue_pending)"
+        # **观察项，不是判据。** 「挂起不占沙箱」说的是这个 run 不再是那个池位的
+        # **持有者**，不是容器被销毁 —— `pool.release()` 的契约就写着「容器不销毁，
+        # 留给同一 thread 的后续 run 复用」。持有者集合是 broker 进程内的状态，外面看不到，
+        # 这条性质由 `executor_test` 的 `test_an_interrupted_run_gives_its_sandbox_back` 盯着。
+        # **2026-08-19 这里错过一次**：拿「容器还在不在」当判据，红得像挂起没放手，
+        # 其实是把复用当成了泄漏
+        info "【观察项】挂起期间该会话的容器 $(docker ps -q --filter "label=zuel.thread=$THREAD_P14" | wc -l | tr -d '[:space:]') 个（留着复用是设计如此）"
         info "【观察项】提问原文：$(jq -r '.[0].args.question // ""' <<<"$P14_ASK" | head -c 120)"
         P14_FINAL="$(p14_settle "$JAR_P14" "$P14_RUN")"
         P14_TEXT="$(p14_answer_text "$JAR_P14" "$P14_RUN")"
         if [[ $ALLOWED != '["respond"]' ]]; then
             fail "提问的 allowed_decisions 是 $ALLOWED —— 批准一个不执行的调用没有意义"
-        elif (( SANDBOX_LEFT != 0 )); then
-            fail "挂起期间还占着 $SANDBOX_LEFT 个沙箱"
         elif [[ ${QUEUE_LEFT:-1} != 0 ]]; then
             undone "挂起期间消费组还压着 ${QUEUE_LEFT:-?} 条消息 —— 可能是别的 run 在跑，这一条读不准"
         elif [[ $P14_FINAL != succeeded ]]; then
@@ -5417,7 +5421,7 @@ if (( P14_READY )) && [[ ${SKIP_LLM:-0} != 1 ]]; then
         elif ! grep -qF "$P14_MARK" <<<"$P14_TEXT"; then
             fail "run 跑完了，但最终答复里没有教师给的口径 —— 那句话没进模型的上下文"
         else
-            pass "只允许 respond、挂起不占沙箱不占队列、答完接着跑且最终答复带着教师给的口径"
+            pass "只允许 respond、挂起不占队列消息、答完接着跑且最终答复带着教师给的口径"
         fi
     fi
 else
@@ -5426,11 +5430,21 @@ fi
 end
 
 # ------------------------------------------------------- P14③ 清单真的在勾
-begin "P14③" "任务清单真的在勾：事件 ≥2 条、有一条走完 pending→in_progress→completed、条目是中文"
+begin "P14③" "任务清单真的在勾：事件 ≥2 条、有一条的状态真的变过并勾掉、条目是中文"
 if [[ -n $P14_RUN ]]; then
     P14_EVENTS="$(api "$JAR_P14" "$BASE_URL/api/runs/$P14_RUN/replay" || echo '{"items":[]}')"
     TODO_COUNT="$(jq '[.items[] | select(.event.type == "todo.updated")] | length' <<<"$P14_EVENTS")"
-    # 同一条 todo 在各次快照里的状态串起来，看有没有一条真的走完了三段
+    # 同一条 todo 在各次快照里的状态串起来。
+    #
+    # **判据认的是「变过并且勾掉了」，不是「走完三段」** —— 三段至少要三次快照，
+    # 而刷新几次由模型自己决定：2026-08-19 实测有一轮只发了 2 条，每条都从
+    # pending/in_progress 直接变成 completed，清单确实在勾，判据却红了。
+    # 三段的条数留作观察项
+    TODO_TICKED="$(jq -r '
+        [.items[] | select(.event.type == "todo.updated") | .event.data.todos] as $snaps
+        | ($snaps | map(.[].content) | unique) as $names
+        | [$names[] | . as $c | ($snaps | map(.[] | select(.content == $c) | .status))]
+        | map(select((unique | length) > 1 and (.[-1] == "completed"))) | length' <<<"$P14_EVENTS")"
     TODO_MOVED="$(jq -r '
         [.items[] | select(.event.type == "todo.updated") | .event.data.todos] as $snaps
         | ($snaps | map(.[].content) | unique) as $names
@@ -5438,18 +5452,18 @@ if [[ -n $P14_RUN ]]; then
         | map(select(test("pending.*in_progress.*completed"))) | length' <<<"$P14_EVENTS")"
     TODO_CJK="$(jq -r '[.items[] | select(.event.type == "todo.updated") | .event.data.todos[].content] | join(" ")' <<<"$P14_EVENTS" \
         | grep -cP '[\x{4e00}-\x{9fff}]' || true)"
-    info "【观察项】todo.updated $TODO_COUNT 条，走完三段的条目 $TODO_MOVED 条"
+    info "【观察项】todo.updated $TODO_COUNT 条，状态变过并勾掉的 $TODO_TICKED 条，走完三段的 $TODO_MOVED 条"
     if (( TODO_COUNT == 0 )); then
         # **不记未过**：模型一次都没调用属于「工具描述该不该更硬」，不是这条判据的失败
         undone "这一轮 agent 一次都没调 write_todos，没触发到要测的场景"
     elif (( TODO_COUNT < 2 )); then
         undone "只发了 $TODO_COUNT 条 todo.updated —— 一次写死的清单看不出「在勾」"
-    elif (( TODO_MOVED < 1 )); then
-        fail "$TODO_COUNT 条清单事件里没有任何一条走完 pending→in_progress→completed"
+    elif (( TODO_TICKED < 1 )); then
+        fail "$TODO_COUNT 条清单事件里没有任何一条的状态变过并勾掉 —— 那是一张写死的清单，不叫「在勾」"
     elif (( TODO_CJK < 1 )); then
         fail "清单条目里一个中文都没有 —— 中文版工具描述没真的替换掉英文原版"
     else
-        pass "todo.updated $TODO_COUNT 条，$TODO_MOVED 条走完三段状态，条目是中文"
+        pass "todo.updated $TODO_COUNT 条，$TODO_TICKED 条状态真的变过并勾掉，条目是中文"
     fi
 else
     undone "${P14_BLOCKED:-P14① 那一轮没跑起来，没有清单可看}"
