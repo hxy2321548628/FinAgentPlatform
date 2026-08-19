@@ -1,0 +1,39 @@
+{
+  "run_name": "a9-trigger-probe",
+  "dataset": "zuel-finance-eval-v1",
+  "items": [
+    {
+      "item_id": "zuel-eval-v1-E10-anchor",
+      "probe": "none",
+      "success": false,
+      "detail": "答复里没有这些数：年化波动率",
+      "status": "failed",
+      "error_code": "INTERNAL",
+      "run_ids": [
+        "fea50ae8f69444daa63148b8187f7acd"
+      ],
+      "thread_id": "69dce1d7625a4f6eb30cda8005cd58e5",
+      "tokens_uncached": 0,
+      "tokens_cache_read": 0,
+      "tokens_output": 0,
+      "cache_hit_rate": 0.0,
+      "compaction_count": 0,
+      "offload_count": 0,
+      "cost_yuan": 0.0,
+      "interrupt_count": 0,
+      "installed_package": false,
+      "tool_calls": 2,
+      "tool_error_rate": 0.0,
+      "llm_rounds": 3,
+      "latency_second": 0.0,
+      "artifacts": [
+        "outputs/volatility.txt"
+      ],
+      "probe_hit": null,
+      "answer": "",
+      "turns": [
+        "固定收益率数组 [0.01, -0.005, 0.008, -0.002, 0.006]，按样本标准差乘以 √252 计算年化波动率。把计算过程和最终结果写进 outputs/volatility.txt，并在答复里给出这个数值。"
+      ]
+    }
+  ]
+}

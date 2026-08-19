@@ -17,13 +17,26 @@ import httpx
 # 一次分析最长等多久。真实分析实测几分钟，大数据那题会更久
 RUN_TIMEOUT_SECOND = 1800
 POLL_INTERVAL_SECOND = 5
-# 审批闸门：评估集里有题故意去撞它，没人批的话 run 会一直挂着
-APPROVE_DECISION = {"decisions": [{"index": 0, "type": "approve"}]}
+# 审批闸门：评估集里有题故意去撞它，没人批的话 run 会一直挂着。
+# **决策要覆盖全部待确认调用** —— 只批第一个是 422，而那个红看着像 agent 没做好
+APPROVE = "approve"
 FINAL_STATUS = frozenset({"succeeded", "failed", "cancelled"})
 
 
 class PlatformError(RuntimeError):
     """平台接口没按预期响应。"""
+
+
+def _decision_for(action: dict[str, Any]) -> str:
+    """这个调用该回什么决策。
+
+    **评估一律放行** —— 要测的是 agent 做得对不对，不是教师会不会拦；
+    但工具只允许别的决策时（例如只能改参数）就按它允许的来。
+    """
+    allowed = [str(one) for one in action.get("allowed_decisions") or []]
+    if not allowed or APPROVE in allowed:
+        return APPROVE
+    return allowed[0]
 
 
 class PlatformClient:
@@ -38,9 +51,13 @@ class PlatformClient:
         self._base = base_url.rstrip("/")
         self._client = client
 
-    def login(self, *, username: str, password: str) -> str:
-        """登录并把 cookie 留在客户端里，返回用户标识。"""
-        self._post("/api/auth/login", json={"username": username, "password": password})
+    def login(self, *, name: str, password: str) -> str:
+        """登录并把 cookie 留在客户端里，返回用户标识。
+
+        字段是 `name` 不是 `username` —— 平台的登录接口认前者。
+        写错了是 422，而报错指向请求体，不指向账号。
+        """
+        self._post("/api/auth/login", json={"name": name, "password": password})
         return str(self._get("/api/auth/me")["id"])
 
     def create_thread(self) -> str:
@@ -75,10 +92,33 @@ class PlatformClient:
             if status in FINAL_STATUS:
                 return status, approvals
             if status == "waiting_approval":
-                self._post(f"/api/runs/{run_id}/approve", json=APPROVE_DECISION)
-                approvals += 1
+                approvals += int(self._approve_all(run_id))
             time.sleep(POLL_INTERVAL_SECOND)
         raise PlatformError(f"run {run_id} 超过 {RUN_TIMEOUT_SECOND} 秒仍未结束")
+
+    def _approve_all(self, run_id: str) -> bool:
+        """批准这一次中断里的**每一个**待确认调用，返回是否真的批了。
+
+        一次中断可能停下不止一个调用（实测 E05 那题停了 2 个），而平台要求决策覆盖
+        全部 —— 少一个就是 422。**事件还没落进日志时先不批**，下一轮轮询再来，
+        比拿着空列表硬发一次要好。
+        """
+        actions = self._pending_actions(run_id)
+        if not actions:
+            return False
+        decisions = [
+            {"index": int(one.get("index", position)), "type": _decision_for(one)}
+            for position, one in enumerate(actions)
+        ]
+        self._post(f"/api/runs/{run_id}/approve", json={"decisions": decisions})
+        return True
+
+    def _pending_actions(self, run_id: str) -> list[dict[str, Any]]:
+        """取最后一次中断里待确认的调用。"""
+        for event in reversed(self.replay(run_id)):
+            if event.get("type") == "interrupt":
+                return list((event.get("data") or {}).get("actions") or [])
+        return []
 
     def replay(self, run_id: str) -> list[dict[str, Any]]:
         """取回一个 run 的全部事件。"""

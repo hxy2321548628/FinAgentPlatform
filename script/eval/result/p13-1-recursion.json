@@ -1,0 +1,35 @@
+{
+  "run_name": "p13-1-recursion",
+  "dataset": "zuel-finance-eval-v1",
+  "items": [
+    {
+      "item_id": "zuel-eval-v1-E01-industry-weight",
+      "probe": "none",
+      "success": false,
+      "detail": "没有产出匹配 outputs/*.png 的非空文件；答复里没有这些数：食品饮料占比、银行占比",
+      "status": "failed",
+      "error_code": "RECURSION_LIMIT",
+      "run_ids": [
+        "da4634044a8649d08046760d5a7c8493"
+      ],
+      "thread_id": "4625706aea724a79b4705af028e6e4df",
+      "tokens_uncached": 0,
+      "tokens_cache_read": 0,
+      "tokens_output": 0,
+      "cache_hit_rate": 0.0,
+      "compaction_count": 0,
+      "interrupt_count": 0,
+      "installed_package": false,
+      "tool_calls": 1,
+      "tool_error_rate": 0.0,
+      "llm_rounds": 2,
+      "latency_second": 0.0,
+      "artifacts": [],
+      "probe_hit": null,
+      "answer": "",
+      "turns": [
+        "读取 holdings.csv，用 2025-06-03 这一期的收盘价乘以持股数计算各行业的持仓市值占比，画一张柱状图保存到 outputs/ 目录，并在最终答复里逐个列出每个行业的占比数值（保留两位小数的百分比）。"
+      ]
+    }
+  ]
+}
