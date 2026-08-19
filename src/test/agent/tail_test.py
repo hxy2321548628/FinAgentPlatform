@@ -4,7 +4,7 @@
 位置错一格就是每轮打掉整段 prompt cache，而那件事不报错，只是变贵。
 """
 
-from typing import Any
+from typing import Any, ClassVar
 
 from langchain.agents.middleware.types import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage
@@ -329,3 +329,66 @@ def test_the_progress_section_is_dropped_first_when_over_budget() -> None:
 
     assert "已用约 3 轮" in block
     assert "已完成" not in block
+
+
+# --------------------------------------------- 真图：进度节到底读不读得到 state
+
+
+async def test_a_real_graph_feeds_the_progress_section_from_state() -> None:
+    """**这一条走的是真图。**
+
+    进度节读的是 `request.state["todos"]`，而那个键由另一个中间件（`TodoListMiddleware`）
+    声明在它自己的 state schema 上。两个中间件各自装、schema 由 deepagents 合并 ——
+    「合并之后尾部这一节还看不看得见」是个装配问题，配置断言验不出来。
+    """
+    from deepagents.backends.state import StateBackend
+    from langchain_core.language_models import BaseChatModel
+    from langchain_core.outputs import ChatGeneration, ChatResult
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from app.agent.factory import Agent
+
+    class Planner(BaseChatModel):
+        """第一轮列一张清单，第二轮收工。"""
+
+        seen: ClassVar[list[list[Any]]] = []
+        calls: ClassVar[int] = 0
+
+        @property
+        def _llm_type(self) -> str:
+            return "planner"
+
+        def bind_tools(self, tools: Any, **keyword: Any) -> "Planner":  # noqa: ANN401 - 替身照单全收
+            return self
+
+        def _generate(self, messages: list[Any], *argument: Any, **keyword: Any) -> ChatResult:  # noqa: ANN401
+            Planner.seen.append(list(messages))
+            Planner.calls += 1
+            if Planner.calls > 1:
+                return ChatResult(generations=[ChatGeneration(message=AIMessage(content="做完了"))])
+            call = {
+                "name": TODO_TOOL,
+                "args": {
+                    "todos": [
+                        {"content": "读取数据", "status": "completed"},
+                        {"content": "算年化波动率", "status": "in_progress"},
+                    ]
+                },
+                "id": "call-todo",
+                "type": "tool_call",
+            }
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="", tool_calls=[call]))])
+
+    Planner.seen, Planner.calls = [], 0
+    agent = Agent(model=Planner(), checkpointer=InMemorySaver())
+
+    async for _ in agent.stream(StateBackend(), "thread-progress", "算一下各行业年化波动率"):
+        pass
+
+    block = "".join(
+        str(one.content)
+        for call in Planner.seen
+        for one in call
+        if isinstance(one, HumanMessage) and str(one.content).startswith(BLOCK_HEADER)
+    )
+    assert "任务进度：已完成 1/2 条，正在做「算年化波动率」" in block
