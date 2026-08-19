@@ -16,6 +16,8 @@ from types import MappingProxyType
 from langchain.agents.middleware.human_in_the_loop import DecisionType, InterruptOnConfig
 from langgraph.prebuilt.tool_node import ToolCallRequest
 
+from app.agent.question import QUESTION_ALLOWED_DECISION, QUESTION_TOOL
+
 DELETE_TOOL = "delete"
 EXECUTE_TOOL = "execute"
 
@@ -78,9 +80,15 @@ def _when_removing(request: ToolCallRequest) -> bool:
 # 条件拦截 2026-08-08 定过一次「推后」，2026-08-18 推翻：那次定案假设不拦 `execute`
 # 只是少拦一点，而验收照出的是**闸门整个被绕过** —— 同一句提问，模型换用
 # `execute` 跑 `rm` 就一次都不停（P3① 四种决策、P9⑤ 嵌套审批，五条断言全红）。
+#
+# **`ask_user_question` 与这两个不是一回事。** 那两个停下来是「教师，这件事我做不做」，
+# 它停下来是「教师，这句话你怎么说」—— 平台侧走的是同一条挂起路径（不占队列、不占沙箱、
+# 24 小时超时），但决策只允许 `respond`：批准一个不执行的调用没有意义。
+# **前端按 `tool_name` 分流**，不加 `kind` 字段：工具名就是那个客观事实。
 INTERRUPT_ON: MappingProxyType[str, InterruptOnConfig] = MappingProxyType(
     {
         DELETE_TOOL: InterruptOnConfig(allowed_decisions=list(ALLOWED_DECISION)),
         EXECUTE_TOOL: InterruptOnConfig(allowed_decisions=list(ALLOWED_DECISION), when=_when_removing),
+        QUESTION_TOOL: InterruptOnConfig(allowed_decisions=list(QUESTION_ALLOWED_DECISION)),
     }
 )

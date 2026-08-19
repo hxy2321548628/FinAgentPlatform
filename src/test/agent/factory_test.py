@@ -24,6 +24,7 @@ from app.agent.factory import (
 )
 from app.agent.interrupt import ALLOWED_DECISION, DELETE_TOOL, INTERRUPT_ON
 from app.agent.prompt import SYSTEM_PROMPT, compose_prompt
+from app.agent.question import QUESTION_ALLOWED_DECISION, QUESTION_TOOL
 from app.agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
 from app.agent.trace import SESSION_KEY, USER_KEY
 from app.event.mapper import StreamChunk
@@ -492,7 +493,8 @@ async def test_an_empty_mcp_snapshot_does_not_touch_the_catalog(
 
     await drain(runner.stream(FakeBackend(), "thread-1", "一", AgentConfig()))  # type: ignore[arg-type]
 
-    assert built["tools"] == []
+    # 提问工具不是「外部工具」，没勾任何 MCP 的分析照样带着它
+    assert [one.name for one in built["tools"]] == [QUESTION_TOOL]
 
 
 async def test_external_tools_reach_both_the_main_graph_and_the_subagents(
@@ -527,7 +529,10 @@ async def test_external_tools_reach_both_the_main_graph_and_the_subagents(
 
     await drain(runner.stream(FakeBackend(), "thread-1", "一", config))  # type: ignore[arg-type]
 
-    assert built["tools"] is external
+    # 外部工具原样传下去，只是排在平台自己那个提问工具之后
+    assert built["tools"][1:] == external
+    assert built["tools"][0].name == QUESTION_TOOL
+    # 子图那份不在这里加提问工具 —— 它自己加，见 `subagent.compile_subagents`
     assert handed["tools"] is external
 
 
@@ -572,3 +577,35 @@ async def test_asking_whether_anything_is_pending_does_not_reach_out_to_the_netw
     await runner.pending(FakeBackend(), "thread-1", config)  # type: ignore[arg-type]
 
     assert loaded == 1
+
+
+async def test_the_question_tool_is_on_the_main_graph(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
+    """装不上的话模型调用它只会得到「没有这个工具」，而那看着像模型胡编了一个名字。"""
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+
+    assert QUESTION_TOOL in {one.name for one in built["tools"]}
+
+
+async def test_the_question_tool_only_allows_a_reply(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
+    """批准一个不执行的调用没有意义，改参数改的也只是「问什么」。"""
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+
+    assert built["interrupt_on"][QUESTION_TOOL]["allowed_decisions"] == list(QUESTION_ALLOWED_DECISION)
+
+
+async def test_the_todo_list_is_on_the_main_graph_only(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
+    """清单是给教师看的**单一**进度。两张清单就是两个真相源，前端还要回答「哪张是当前的」。"""
+    from langchain.agents.middleware.todo import TodoListMiddleware
+
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+
+    assert any(isinstance(one, TodoListMiddleware) for one in built["middleware"])

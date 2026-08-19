@@ -9,10 +9,11 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 from deepagents.backends import FilesystemBackend
 from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.base import LanguageModelInput
-from langchain_core.messages import AIMessage, ToolCall
+from langchain_core.messages import AIMessage, ToolCall, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
@@ -27,6 +28,7 @@ from app.agent.interrupt import (
     INTERRUPT_ON,
     removes_files,
 )
+from app.agent.question import QUESTION_ALLOWED_DECISION, QUESTION_TOOL
 
 
 class ToolCallingModel(BaseChatModel):
@@ -156,7 +158,18 @@ def test_both_tools_offer_the_same_four_decisions() -> None:
 
 
 def test_nothing_else_is_intercepted() -> None:
-    assert set(INTERRUPT_ON) == {DELETE_TOOL, EXECUTE_TOOL}
+    assert set(INTERRUPT_ON) == {DELETE_TOOL, EXECUTE_TOOL, QUESTION_TOOL}
+
+
+def test_a_question_only_offers_a_reply() -> None:
+    """**提问型中断与审批型不是一回事。**
+
+    审批停下来是「这件事做不做」，提问停下来是「这句话你怎么说」。批准一个不执行的
+    调用没有意义，改参数改的也只是「问什么」—— 因此只剩 `respond` 一条路。
+    """
+    assert INTERRUPT_ON[QUESTION_TOOL]["allowed_decisions"] == list(QUESTION_ALLOWED_DECISION)
+    assert INTERRUPT_ON[QUESTION_TOOL]["allowed_decisions"] == ["respond"]
+    assert "when" not in INTERRUPT_ON[QUESTION_TOOL]
 
 
 # ---------------------------------------------- 真图：闸门到底响不响
@@ -188,3 +201,98 @@ async def test_a_real_graph_runs_a_harmless_execute_without_stopping(tmp_path: P
         pass
 
     assert await agent.pending(backend, "thread-harmless") == []
+
+
+class QuestioningModel(BaseChatModel):
+    """第一轮问教师一句，第二轮把收到的回答复述出来。
+
+    第二轮的复述是这条用例的要害：它证明**教师那句话真的进了模型的上下文**，
+    而不只是「没报错」。
+    """
+
+    question: str = "收益率按日频还是月频？"
+    calls: int = 0
+    heard: str = ""
+
+    @property
+    def _llm_type(self) -> str:
+        return "questioning"
+
+    def bind_tools(
+        self,
+        tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: Any,  # noqa: ANN401 - 必须匹配 LangChain 抽象签名
+    ) -> Runnable[LanguageModelInput, AIMessage]:
+        return self
+
+    def _generate(self, *argument: Any, **keyword: Any) -> ChatResult:  # noqa: ANN401 - 基类参数繁杂
+        self.calls += 1
+        if self.calls > 1:
+            messages = argument[0] if argument else keyword["messages"]
+            answers = [one for one in messages if isinstance(one, ToolMessage) and one.name == QUESTION_TOOL]
+            self.heard = str(answers[-1].content) if answers else ""
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content=f"按{self.heard}算完了"))])
+        message = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": QUESTION_TOOL,
+                    "args": {"question": self.question},
+                    "id": "call-question",
+                    "type": "tool_call",
+                }
+            ],
+        )
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+
+async def test_a_real_graph_stops_on_a_question(tmp_path: Path) -> None:
+    """**这条走的是真图。** 「配置里写着拦」与「跑起来真的停」是两件事。"""
+    agent = Agent(model=QuestioningModel(), checkpointer=InMemorySaver())
+    backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+
+    async for _ in agent.stream(backend, "thread-question", "算一下波动率"):
+        pass
+    actions = await agent.pending(backend, "thread-question")
+
+    assert [one.tool_name for one in actions] == [QUESTION_TOOL]
+    assert actions[0].args["question"] == "收益率按日频还是月频？"
+    assert actions[0].allowed_decisions == ["respond"]
+
+
+async def test_the_teachers_answer_reaches_the_model(tmp_path: Path) -> None:
+    """P14① 的离线一半：教师的话作为工具结果回到上下文，run 从 checkpoint 接着跑。
+
+    **验的是「口径带上了」而不是「没报错」** —— 后者在教师那句话被丢掉时同样会绿。
+    """
+    model = QuestioningModel()
+    agent = Agent(model=model, checkpointer=InMemorySaver())
+    backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+
+    async for _ in agent.stream(backend, "thread-answer", "算一下波动率"):
+        pass
+    async for _ in agent.resume(backend, "thread-answer", [{"type": "respond", "message": "用月频"}]):
+        pass
+
+    assert model.heard == "用月频"
+    assert await agent.pending(backend, "thread-answer") == []
+
+
+async def test_a_reply_without_a_message_is_what_the_platform_must_never_forward(tmp_path: Path) -> None:
+    """**这一条钉的是平台那道校验为什么必须存在。**
+
+    库里 `_process_decision` 对 `respond` 直接取 `decision["message"]`。平台放行的话
+    就炸在这里 —— 而这时决策早已 202、run 已经重投，教师看到的是一次 `INTERNAL`，
+    错误信息一个字都不指向「少了一句话」。
+    """
+    agent = Agent(model=QuestioningModel(), checkpointer=InMemorySaver())
+    backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+
+    async for _ in agent.stream(backend, "thread-bare", "算一下波动率"):
+        pass
+
+    with pytest.raises(KeyError):
+        async for _ in agent.resume(backend, "thread-bare", [{"type": "respond"}]):
+            pass

@@ -16,6 +16,7 @@ from app.agent.config import SubagentReference
 from app.agent.context import create_offloader, create_squeezer
 from app.agent.interrupt import INTERRUPT_ON
 from app.agent.prompt import ENVIRONMENT_SEGMENT
+from app.agent.question import create_question_tool
 
 # 子智能体单独计图步数。与主图一样留够正常分析余量，同时避免上游默认的 9999
 # 让一个跑飞的子图烧掉数千次主模型调用。
@@ -83,7 +84,10 @@ async def compile_subagents(
         ]
         runnable = create_agent(
             model,
-            tools=list(tools or []),
+            # **子智能体也要能问**，理由与 HITL 那份配置同源：卡住却问不出来的
+            # 子智能体只会瞎猜着往下做，而教师看不到它在猜。
+            # 任务清单反过来只装主图（两张清单就是两个真相源），见 P14 §2.6 第 1 条
+            tools=[create_question_tool(), *(tools or [])],
             system_prompt=prompt,
             middleware=middleware,
             name=reference.name,

@@ -12,6 +12,7 @@ from app.agent.config import SubagentReference
 from app.agent.context import CONTEXT_TRIGGER_TOKEN, TOOL_RESULT_EVICT_TOKEN
 from app.agent.interrupt import INTERRUPT_ON
 from app.agent.prompt import ENVIRONMENT_SEGMENT
+from app.agent.question import QUESTION_TOOL
 from app.agent.subagent import (
     SUBAGENT_RECURSION_LIMIT,
     SubagentDefinition,
@@ -176,3 +177,50 @@ async def test_the_bound_limit_stops_a_real_looping_subgraph(tmp_path: pytest.Te
         compiled[0]["runnable"].invoke({"messages": [{"role": "user", "content": "开始"}]})
 
     assert model.calls < SUBAGENT_RECURSION_LIMIT
+
+
+async def test_a_subagent_can_ask_the_teacher_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**与清单相反，提问工具两处都装。**
+
+    理由和 HITL 那份配置同源：卡住却问不出来的子智能体只会瞎猜着往下做，
+    而教师看不到它在猜 —— 它的中间过程连事件都在子图的 path 下面。
+    """
+    created: dict[str, Any] = {}
+
+    def fake_create_agent(*argument: Any, **keyword: Any) -> Runnable:  # noqa: ANN401 - 替身照单全收
+        created.update(keyword)
+        return Runnable()
+
+    monkeypatch.setattr("app.agent.subagent.create_agent", fake_create_agent)
+
+    await compile_subagents(
+        [SubagentReference(agent_id="agent-1", version=3, name="volatility-expert")],
+        loader=Loader(SubagentDefinition(description="算波动率", system_prompt="只算波动率。")),
+        model=DummyModel(),
+        backend=FakeBackend(),  # type: ignore[arg-type]
+    )
+
+    assert QUESTION_TOOL in {one.name for one in created["tools"]}
+
+
+async def test_a_subagent_has_no_todo_list_of_its_own(monkeypatch: pytest.MonkeyPatch) -> None:
+    """清单是给教师看的单一进度，两张清单就是两个真相源。"""
+    from langchain.agents.middleware.todo import TodoListMiddleware
+
+    created: dict[str, Any] = {}
+
+    def fake_create_agent(*argument: Any, **keyword: Any) -> Runnable:  # noqa: ANN401 - 替身照单全收
+        created.update(keyword)
+        return Runnable()
+
+    monkeypatch.setattr("app.agent.subagent.create_agent", fake_create_agent)
+
+    await compile_subagents(
+        [SubagentReference(agent_id="agent-1", version=3, name="volatility-expert")],
+        loader=Loader(SubagentDefinition(description="算波动率", system_prompt="只算波动率。")),
+        model=DummyModel(),
+        backend=FakeBackend(),  # type: ignore[arg-type]
+    )
+
+    assert not any(isinstance(one, TodoListMiddleware) for one in created["middleware"])
+    assert "write_todos" not in {one.name for one in created["tools"]}

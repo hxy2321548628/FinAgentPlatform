@@ -49,12 +49,29 @@ MCP_CALL_TIMEOUT = 30.0
 # 加上内置 8 个已经 20 个，再多模型选不准。**这个数是猜的，列为观察项**
 MAX_MCP_SERVER = 3
 
-# 外部工具不许占用的名字：DeepAgents 的八个内置文件工具，加上派子智能体的 `task`。
+# 外部工具不许占用的名字：DeepAgents 的八个内置文件工具、派子智能体的 `task`，
+# 再加上平台自己装的任务清单与提问工具。
 # **硬编码是有意的** —— 装配层要在拿到工具的那一刻就判断，而这时 agent 还没建起来。
-# `agent/test` 里有一条用例拿真实的 FilesystemMiddleware 对着它核，上游加了第九个
-# 内置工具时那条会红
+# `agent/test` 里有几条用例拿真实的 FilesystemMiddleware / TodoListMiddleware / 提问工具
+# 对着它核，上游加名字或改名时那几条会红。
+#
+# **顶掉 `ask_user_question` 比顶掉 `read_file` 更坏**：外部工具会静默顶掉内置的
+# （P10 §2 实测），而这个工具接的是教师的嘴 —— 被顶掉之后 agent 的提问与教师的回答
+# 会一起发去校外那台服务器，且它看着像内置工具，外发标注不会标它
 RESERVED_TOOL_NAME = frozenset(
-    {"ls", "read_file", "write_file", "edit_file", "delete", "glob", "grep", "execute", "task"}
+    {
+        "ls",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "delete",
+        "glob",
+        "grep",
+        "execute",
+        "task",
+        "write_todos",
+        "ask_user_question",
+    }
 )
 
 CALL_TIMEOUT_MESSAGE = f"调用超时（{MCP_CALL_TIMEOUT:.0f} 秒），这个外部服务这次没有响应。"

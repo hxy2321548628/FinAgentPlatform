@@ -32,9 +32,11 @@ from app.agent.context import (
 from app.agent.interrupt import ALLOWED_DECISION, DELETE_TOOL, INTERRUPT_ON
 from app.agent.mcp import McpFailureRecorderProtocol, McpTargetLoaderProtocol, load_mcp_tools
 from app.agent.prompt import compose_prompt
+from app.agent.question import create_question_tool
 from app.agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
 from app.agent.subagent import SubagentLoaderProtocol, compile_subagents
 from app.agent.tail import InstalledPackageSection, StepBudgetSection, TailContextMiddleware
+from app.agent.todo import create_todo_middleware
 from app.agent.trace import attribution, propagation
 from app.event.mapper import StreamChunk
 from app.event.model import InterruptAction
@@ -245,7 +247,10 @@ class Agent:
             SupportsAgent,
             create_deep_agent(
                 model=self._model,
-                tools=mcp_tools,
+                # **提问工具与 MCP 工具排在一起，但它不是可选的** —— 它是 `INTERRUPT_ON`
+                # 里那三个键之一，装不上的话模型调用它只会得到「没有这个工具」，
+                # 而那种失败看着像模型胡编了一个工具名
+                tools=[create_question_tool(), *mcp_tools],
                 backend=backend,
                 system_prompt=compose_prompt(agent_config),
                 checkpointer=self._checkpointer,
@@ -268,6 +273,9 @@ class Agent:
                 sources=[("/workspace/skill/", "平台")],
                 system_prompt=PLATFORM_SKILLS_SYSTEM_PROMPT,
             ),
+            # **只装主图。** 清单是给教师看的单一进度，子图再来一张就是两个真相源，
+            # 而前端还要回答「哪张是当前的」。它注入的是静态 prose，前缀仍逐字节稳定
+            create_todo_middleware(),
             create_squeezer(self._model, backend, trigger_token=self._context_trigger_token),
             # **大工具结果挪到磁盘**，模型只看到一句路径。不挪的话它整段留在历史里，
             # 此后每一轮都按未命中价重算一遍 —— 首轮实测最贵那题因此烧掉 12.5 万 token

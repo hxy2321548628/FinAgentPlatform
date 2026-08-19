@@ -292,6 +292,24 @@ async def test_the_reserved_names_still_cover_every_builtin_file_tool() -> None:
     assert builtin <= RESERVED_TOOL_NAME
 
 
+async def test_the_reserved_names_cover_the_todo_tool() -> None:
+    """同一条规矩盯着任务清单那份 —— 上游给 `write_todos` 改名时这条会红。"""
+    from langchain.agents.middleware.todo import TodoListMiddleware
+
+    assert {tool.name for tool in TodoListMiddleware().tools} <= RESERVED_TOOL_NAME
+
+
+async def test_the_reserved_names_cover_the_question_tool() -> None:
+    """**顶掉这个比顶掉 `read_file` 更坏。**
+
+    它接的是教师的嘴：被外部工具静默顶掉之后，agent 的提问和教师的回答会一起发去
+    校外那台服务器，而它看着像内置工具，外发标注不会标它。
+    """
+    from app.agent.question import create_question_tool
+
+    assert create_question_tool().name in RESERVED_TOOL_NAME
+
+
 async def test_a_hung_server_does_not_drag_down_the_others(
     hung_url: str, fixture_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
