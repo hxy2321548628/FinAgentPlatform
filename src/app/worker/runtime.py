@@ -102,6 +102,9 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
             mcp_loader=McpTargetLoader(mcp_catalog, settings.mcp_credentials),
             # 计数在 Redis 而不是进程内：重启一次就清零的话，熔断阈值等于形同虚设
             mcp_recorder=McpCircuit(cache, mcp_catalog),
+            recursion_limit=settings.agent_recursion_limit,
+            context_trigger_token=settings.agent_context_trigger_token,
+            tool_result_evict_token=settings.agent_tool_result_evict_token,
         ),
         repository=RunRepository(engine),
         cancel=CancelFlag(cache),

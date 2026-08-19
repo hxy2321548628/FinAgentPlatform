@@ -5124,6 +5124,135 @@ end
 
 
 # ===========================================================================
+# P13：失败归因与压缩阈值（P13-plan §4.1）
+# ===========================================================================
+#
+# **两条判据都要「配成极端值再跑一次」**：判据要能回答「这次真的触发了要测的场景吗」，
+# 而不是「这次没报错吗」。因此两条都必须能在正常配置下复原为不触发 ——
+# 只会红的判据和只会绿的判据一样没用。
+#
+# **改配置只重建 worker，且必须 `--no-deps`**：worker 的 `depends_on` 里有 broker，
+# 不加的话 compose 会连带重建 broker，而这个 shell 里没有 `SANDBOX_QUOTA_DEVICE`
+# —— 设备回落成 `/dev/null`，配额 fail-closed，此后每次建会话都 500，
+# 而症状一个字都不指向这里（2026-08-19 实测踩过）。
+
+P13_QUESTION='读取 holdings.csv，按行业算持仓市值占比，画成柱状图存到 outputs/ 目录。'
+P13_ENV_BACKUP="$WORK_DIR/env.before-p13"
+P13_READY=0
+P13_BLOCKED=""
+
+p13_configure() {
+    local key="$1" value="$2"
+    [[ -f $P13_ENV_BACKUP ]] || cp "$REPO_ROOT/docker/.env" "$P13_ENV_BACKUP"
+    grep -v "^$key=" "$P13_ENV_BACKUP" > "$REPO_ROOT/docker/.env"
+    printf '%s=%s\n' "$key" "$value" >> "$REPO_ROOT/docker/.env"
+    compose up -d --no-deps --force-recreate worker >/dev/null 2>&1 || return 1
+    wait_worker "$WORKER_COUNT"
+}
+
+p13_restore_env() {
+    [[ -f $P13_ENV_BACKUP ]] || return 0
+    cp "$P13_ENV_BACKUP" "$REPO_ROOT/docker/.env"
+    compose up -d --no-deps --force-recreate worker >/dev/null 2>&1
+    wait_worker "$WORKER_COUNT"
+}
+
+# 跑一道分析到终态，标准输出是 run_id。跑不起来时输出空串
+p13_analyse() {
+    local jar="$1" thread="$2" run_id
+    run_id="$(api "$jar" -X POST "$BASE_URL/api/threads/$thread/runs" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg c "$P13_QUESTION" '{content:$c}')" | jq -r '.id // empty')"
+    [[ -n $run_id ]] || return 1
+    local deadline=$((SECONDS + RUN_TIMEOUT))
+    while (( SECONDS < deadline )); do
+        case "$(run_status "$jar" "$run_id")" in
+            succeeded | failed | cancelled) printf '%s\n' "$run_id"; return 0 ;;
+            waiting_approval)
+                # 这道题不该撞闸门；真撞上了就放行，免得整条判据卡在这里超时
+                api "$jar" -X POST "$BASE_URL/api/runs/$run_id/approve" \
+                    -H 'Content-Type: application/json' \
+                    -d '{"decisions":[{"index":0,"type":"approve"}]}' >/dev/null 2>&1 || true
+                ;;
+        esac
+        sleep 5
+    done
+    return 1
+}
+
+p13_event_count() { api "$1" "$BASE_URL/api/runs/$2/replay" | jq "[.items[] | select(.event.type == \"$3\")] | length"; }
+p13_error_code() { api "$1" "$BASE_URL/api/runs/$2" >/dev/null 2>&1; psql_query "SELECT coalesce(error_code, '') FROM runs WHERE id = '$2';" | tr -d '[:space:]'; }
+
+log "P13 失败归因与压缩阈值（要 LLM，有费用）"
+
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    P13_BLOCKED="SKIP_LLM=1，这一组要真实调用模型"
+elif [[ ! -f $SAMPLE_CSV ]]; then
+    P13_BLOCKED="缺样例数据 $SAMPLE_CSV"
+elif ! session_for p13; then
+    P13_BLOCKED="造不出账号"
+fi
+
+if [[ -z $P13_BLOCKED ]]; then
+    JAR_P13="$SESSION_JAR"
+    THREAD_P13="$(new_thread "$JAR_P13")"
+    if curl -fsS -b "$JAR_P13" -X POST "$BASE_URL/api/threads/$THREAD_P13/files" -F "file=@$SAMPLE_CSV" >/dev/null; then
+        P13_READY=1
+    else
+        P13_BLOCKED="样例数据上传失败"
+    fi
+fi
+
+begin "P13①" "撞递归上限记成 RECURSION_LIMIT，不再混进 INTERNAL"
+if (( P13_READY )) && p13_configure AGENT_RECURSION_LIMIT 4; then
+    RUN_P13_1="$(p13_analyse "$JAR_P13" "$THREAD_P13" || true)"
+    if [[ -z $RUN_P13_1 ]]; then
+        undone "分析没跑到终态，这一条没触发到要测的场景"
+    else
+        CODE_P13_1="$(p13_error_code "$JAR_P13" "$RUN_P13_1")"
+        if [[ $CODE_P13_1 == RECURSION_LIMIT ]]; then
+            pass "步数上限配成 4，run 以 RECURSION_LIMIT 失败"
+        elif [[ -z $CODE_P13_1 ]]; then
+            undone "这一轮没撞上上限（run 在 4 步内跑完了），既不记通过也不记失败"
+        else
+            fail "撞上限却记成了 $CODE_P13_1 —— 失败归因那一栏仍然是坏的"
+        fi
+    fi
+else
+    undone "${P13_BLOCKED:-worker 没能按新配置重建}"
+fi
+end
+
+begin "P13②" "压缩按平台阈值触发，且恢复默认后不再触发"
+if (( P13_READY )) && p13_configure AGENT_CONTEXT_TRIGGER_TOKEN 2000; then
+    RUN_P13_LOW="$(p13_analyse "$JAR_P13" "$THREAD_P13" || true)"
+    LOW_COUNT="$(p13_event_count "$JAR_P13" "${RUN_P13_LOW:-none}" compaction 2>/dev/null || echo 0)"
+    if p13_restore_env; then
+        THREAD_P13_N="$(new_thread "$JAR_P13")"
+        curl -fsS -b "$JAR_P13" -X POST "$BASE_URL/api/threads/$THREAD_P13_N/files" -F "file=@$SAMPLE_CSV" >/dev/null
+        RUN_P13_NORMAL="$(p13_analyse "$JAR_P13" "$THREAD_P13_N" || true)"
+        NORMAL_COUNT="$(p13_event_count "$JAR_P13" "${RUN_P13_NORMAL:-none}" compaction 2>/dev/null || echo 0)"
+    else
+        NORMAL_COUNT=-1
+    fi
+    info "【观察项】阈值 2000 压了 $LOW_COUNT 次，默认阈值压了 ${NORMAL_COUNT} 次"
+    if [[ -z $RUN_P13_LOW || -z ${RUN_P13_NORMAL:-} ]]; then
+        undone "两轮分析没都跑到终态"
+    elif (( LOW_COUNT < 1 )); then
+        fail "阈值配成 2000 也没压过 —— 平台那份中间件没生效，或 keep 反而比 trigger 还大"
+    elif (( NORMAL_COUNT != 0 )); then
+        fail "默认阈值下也在压（$NORMAL_COUNT 次）—— 这条判据无法证明是阈值起的作用"
+    else
+        pass "阈值 2000 压了 $LOW_COUNT 次，恢复默认后 0 次"
+    fi
+else
+    undone "${P13_BLOCKED:-worker 没能按新配置重建}"
+fi
+p13_restore_env || echo "P13 收尾没能还原 docker/.env，请人工核对 $P13_ENV_BACKUP" >&2
+end
+
+
+# ===========================================================================
 # 结果
 # ===========================================================================
 

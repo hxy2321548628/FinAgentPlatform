@@ -16,6 +16,7 @@ export const RUN_EVENT_NAMES = [
   'subagent.started',
   'subagent.finished',
   'interrupt',
+  'compaction',
 ] as const
 
 export type RunEventName = (typeof RUN_EVENT_NAMES)[number]
@@ -33,6 +34,7 @@ const SUPPORTED_EVENT_NAMES = [
   'tool_call',
   'tool_result',
   'interrupt',
+  'compaction',
 ] as const
 
 type SupportedEventName = (typeof SUPPORTED_EVENT_NAMES)[number]
@@ -76,6 +78,8 @@ export type RunEvent =
       status: 'success' | 'error'
     }>
   | EventEnvelope<'interrupt', { actions: InterruptAction[] }>
+  /** 上下文被折成了摘要。**不是错误** —— 长对话里的正常机制，但之后的回答基于摘要而非原文。 */
+  | EventEnvelope<'compaction', { cutoff_index: number; file_path: string | null }>
 
 export interface NamedRunEventMessage {
   eventName: string
@@ -106,6 +110,7 @@ const RUN_ERROR_CODES: readonly RunErrorCode[] = [
   'SANDBOX_QUEUE_TIMEOUT',
   'ORPHANED',
   'INTERNAL',
+  'RECURSION_LIMIT',
 ]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -183,6 +188,10 @@ function isSupportedEventData(eventName: SupportedEventName, data: Record<string
         && (data.status === 'success' || data.status === 'error')
     case 'interrupt':
       return Array.isArray(data.actions) && data.actions.every(isInterruptAction)
+    case 'compaction':
+      return isInteger(data.cutoff_index)
+        && data.cutoff_index >= 0
+        && (data.file_path === null || typeof data.file_path === 'string')
   }
 }
 

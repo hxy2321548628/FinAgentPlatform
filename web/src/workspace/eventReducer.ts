@@ -121,6 +121,18 @@ export function runViewReducer(state: RunViewState, action: RunViewAction): RunV
         ...state,
         items: [...state.items, { kind: 'notice', message: event.data.message, tone: 'warning', path: event.path }],
       }
+    case 'compaction':
+      // info 而不是 warning：压缩是正常机制，不是出了事。但必须显示 ——
+      // 它是「后面的回答为什么像是忘了前面」的唯一解释
+      return {
+        ...state,
+        items: [...state.items, {
+          kind: 'notice',
+          message: '对话变长，更早的内容已折成摘要，后续回答基于摘要而非原文',
+          tone: 'info',
+          path: event.path,
+        }],
+      }
     case 'token':
       return { ...state, items: appendDelta(state.items, 'answer', event.data.text, event.path) }
     case 'reasoning':

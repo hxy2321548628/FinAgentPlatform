@@ -6,8 +6,10 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, ToolMessage
 
+from app.agent.tail import BLOCK_FOOTER, BLOCK_HEADER
 from app.event.mapper import EventMapper, StreamChunk
 from app.event.model import (
+    CompactionEvent,
     Event,
     EventType,
     ReasoningEvent,
@@ -200,6 +202,67 @@ def test_model_node_maps_to_tool_call_events(chunk: list[StreamChunk]) -> None:
     assert event.data.id == message.tool_calls[0]["id"]
     assert event.data.name == message.tool_calls[0]["name"]
     assert event.data.args == message.tool_calls[0]["args"]
+
+
+def test_a_summarization_update_becomes_a_compaction_event() -> None:
+    """压缩是 A1 的主指标，而它只在这一处露过面。
+
+    实测（2026-08-19 探针）：压缩发生那一轮，model 节点的 update 里带着
+    `_summarization_event`；把阈值调高到不触发，同一道题的 update 里就没有这个键。
+    """
+    update = {
+        "model": {
+            "messages": [AIMessage(content="接着算")],
+            "_summarization_event": {
+                "cutoff_index": 12,
+                "summary_message": HumanMessage(content="前面聊了这些"),
+                "file_path": "/workspace/.compaction/history-1.md",
+            },
+        }
+    }
+
+    events = map_chunk((), "updates", update, run_id=RUN_ID)
+
+    compaction = _only([one for one in events if isinstance(one, CompactionEvent)])
+    assert isinstance(compaction, CompactionEvent)
+    assert compaction.type is EventType.COMPACTION
+    assert compaction.data.cutoff_index == 12
+    assert compaction.data.file_path == "/workspace/.compaction/history-1.md"
+
+
+def test_an_ordinary_update_emits_no_compaction_event() -> None:
+    """不触发压缩的那些轮次一条都不该发 —— 否则计数永远是「每轮都压了」。"""
+    update = {"model": {"messages": [AIMessage(content="接着算")]}}
+
+    assert [one for one in map_chunk((), "updates", update, run_id=RUN_ID) if isinstance(one, CompactionEvent)] == []
+
+
+def test_the_platform_status_block_is_not_mistaken_for_a_bad_shape(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """平台自己注入的状态块会跟着模型回复一起出现在 model 节点里，不该告警。
+
+    **不能一刀切放行非 AIMessage**：那条告警本来是有用的信号（框架吐了没见过的形状），
+    被自己人污染之后就再也指不出真问题了 —— 与压缩事件那次是同一种收窄。
+    """
+    block = HumanMessage(content=f"{BLOCK_HEADER}\n步数：已用约 3 轮\n{BLOCK_FOOTER}")
+    payload = {"model": {"messages": [block, AIMessage(content="好的")]}}
+
+    with caplog.at_level(logging.WARNING, logger="app.event.mapper"):
+        event = map_chunk((), "updates", payload, run_id=RUN_ID)
+
+    assert event == []
+    assert caplog.records == []
+
+
+def test_an_unknown_message_in_the_model_node_still_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """豁免只给状态块 —— 别的意外形状仍要喊出来。"""
+    payload = {"model": {"messages": [HumanMessage(content="这不是状态块")]}}
+
+    with caplog.at_level(logging.WARNING, logger="app.event.mapper"):
+        map_chunk((), "updates", payload, run_id=RUN_ID)
+
+    assert caplog.records != []
 
 
 def test_model_node_without_tool_calls_produces_no_event(chunk: list[StreamChunk]) -> None:

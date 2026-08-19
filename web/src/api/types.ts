@@ -338,7 +338,7 @@ export interface CursorPage<T> {
 
 export type RunStatus = 'queued' | 'running' | 'waiting_approval' | 'succeeded' | 'failed' | 'cancelled'
 
-export type RunErrorCode = 'SANDBOX_QUEUE_TIMEOUT' | 'ORPHANED' | 'INTERNAL'
+export type RunErrorCode = 'SANDBOX_QUEUE_TIMEOUT' | 'ORPHANED' | 'INTERNAL' | 'RECURSION_LIMIT'
 
 export interface RunSummary {
   id: string

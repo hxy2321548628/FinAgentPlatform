@@ -9,6 +9,7 @@ from langchain.agents.middleware.human_in_the_loop import HumanInTheLoopMiddlewa
 from langchain_core.language_models import BaseChatModel
 
 from app.agent.config import SubagentReference
+from app.agent.context import CONTEXT_TRIGGER_TOKEN, TOOL_RESULT_EVICT_TOKEN
 from app.agent.interrupt import INTERRUPT_ON
 from app.agent.prompt import ENVIRONMENT_SEGMENT
 from app.agent.subagent import (
@@ -81,9 +82,15 @@ async def test_a_compiled_subagent_uses_the_frozen_version_and_platform_contract
     assert created["system_prompt"] == f"只计算波动率。\n\n{ENVIRONMENT_SEGMENT}"
     assert runnable.config == {"recursion_limit": SUBAGENT_RECURSION_LIMIT}
 
+    squeezer = next(one for one in created["middleware"] if one.name == "SummarizationMiddleware")
+    # 主图钉了阈值而子图没钉的话，同一次分析里两个 agent 的压缩时机差二十倍
+    assert squeezer._lc_helper.trigger == ("tokens", CONTEXT_TRIGGER_TOKEN)
+
     middleware = created["middleware"]
     filesystem = next(one for one in middleware if isinstance(one, FilesystemMiddleware))
     assert cast(object, filesystem.backend) is backend
+    # 主图卸大结果而子图不卸的话，同一次分析里两边的历史增长速度差一个量级
+    assert filesystem._tool_token_limit_before_evict == TOOL_RESULT_EVICT_TOKEN
     assert {tool.name for tool in filesystem.tools} == {
         "ls",
         "read_file",

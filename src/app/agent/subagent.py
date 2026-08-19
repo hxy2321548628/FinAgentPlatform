@@ -5,9 +5,7 @@ from typing import Any, Protocol
 
 from deepagents import CompiledSubAgent
 from deepagents.backends.protocol import BackendProtocol
-from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
-from deepagents.middleware.summarization import create_summarization_middleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.human_in_the_loop import HumanInTheLoopMiddleware
@@ -15,6 +13,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from app.agent.config import SubagentReference
+from app.agent.context import create_offloader, create_squeezer
 from app.agent.interrupt import INTERRUPT_ON
 from app.agent.prompt import ENVIRONMENT_SEGMENT
 
@@ -75,8 +74,8 @@ async def compile_subagents(
             )
         prompt = "\n\n".join((definition.system_prompt, ENVIRONMENT_SEGMENT))
         middleware: list[AgentMiddleware[Any, Any, Any]] = [
-            FilesystemMiddleware(backend=backend),
-            create_summarization_middleware(model, backend),
+            create_offloader(backend),
+            create_squeezer(model, backend),
             PatchToolCallsMiddleware(),
             # **与主图同一份配置。** 子智能体绕过审批的路子与主图一模一样：
             # 不调 delete，改用 execute 跑 rm（2026-08-18 验收 P9⑤ 实测）

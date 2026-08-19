@@ -69,6 +69,20 @@ describe('runViewReducer', () => {
     expect(state.items).toMatchObject([{ kind: 'answer', text: '已完成的内容' }])
   })
 
+  it('shows compaction as an informational notice, not an error', () => {
+    // 压缩是长对话里的正常机制。记成 error 会让教师白紧张一次，
+    // 而完全不显示则解释不了「后面的回答怎么忘了前面说过的话」
+    let state = createRunViewState('running')
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'compaction', ts: 1, run_id: 'r1', path: [],
+      data: { cutoff_index: 12, file_path: '/workspace/.compaction/history-1.md' },
+    }) })
+
+    expect(state.status).toBe('running')
+    expect(state.items).toMatchObject([{ kind: 'notice', tone: 'info' }])
+    expect((state.items[0] as { message: string }).message).toContain('摘要')
+  })
+
   it('records terminal state and nonfatal errors', () => {
     let state = createRunViewState('running')
     state = runViewReducer(state, { kind: 'event', event: event({

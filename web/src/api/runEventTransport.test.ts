@@ -61,7 +61,7 @@ describe('runEventTransport', () => {
     expect(options.onOpen).toHaveBeenCalledOnce()
   })
 
-  it('omits Last-Event-ID without an initial cursor and forwards all 15 named events', () => {
+  it('omits Last-Event-ID without an initial cursor and forwards all 16 named events', () => {
     const { options } = connect()
     const init = capturedInit()
 
@@ -73,13 +73,14 @@ describe('runEventTransport', () => {
         data: JSON.stringify({ type: eventName }),
       })
     }
-    init.onmessage({ event: 'unknown.event', id: '16-0', data: '{}' })
+    init.onmessage({ event: 'unknown.event', id: '17-0', data: '{}' })
 
-    expect(options.onMessage).toHaveBeenCalledTimes(15)
+    expect(options.onMessage).toHaveBeenCalledTimes(RUN_EVENT_NAMES.length)
+    const last = RUN_EVENT_NAMES[RUN_EVENT_NAMES.length - 1]
     expect(options.onMessage).toHaveBeenLastCalledWith({
-      eventName: 'interrupt',
-      lastEventId: '15-0',
-      data: JSON.stringify({ type: 'interrupt' }),
+      eventName: last,
+      lastEventId: `${RUN_EVENT_NAMES.length}-0`,
+      data: JSON.stringify({ type: last }),
     })
   })
 

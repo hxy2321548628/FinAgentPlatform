@@ -13,9 +13,12 @@ from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
+from app.agent.tail import BLOCK_HEADER
 from app.event.model import (
+    CompactionData,
+    CompactionEvent,
     Event,
     ReasoningData,
     ReasoningEvent,
@@ -42,6 +45,10 @@ TASK_TOOL = "task"
 SUBAGENT_TYPE_ARG = "subagent_type"
 
 REASONING_KEY = "reasoning_content"
+
+# 压缩中间件把「这一轮压了一次」写在这个私有 state 字段里。**名字由 deepagents 定**，
+# 平台只是读它 —— 它换名字的话这里会静默失灵，因此 P13② 那条判据要真跑一次压缩
+SUMMARIZATION_KEY = "_summarization_event"
 
 
 @dataclass(frozen=True)
@@ -202,8 +209,43 @@ def _map_update(payload: object, stamp: _Stamp) -> list[Event]:
         # 中间件节点（如 PatchToolCallsMiddleware.before_agent）不改状态，载荷为 None
         if update is None:
             continue
+        compaction = _map_compaction(update, stamp)
+        events.extend(compaction)
+        # 只带压缩痕迹、没有消息的更新是正常的，不按「载荷里没有 messages」告警。
+        # **豁免只给这一种** —— 其余没有 messages 的更新仍要告警，那是 DeepAgents
+        # 换了结构的信号，静默掉就等于把它藏起来
+        if compaction and isinstance(update, dict) and "messages" not in update:
+            continue
         events.extend(_map_node(str(node), update, stamp))
     return events
+
+
+def _map_compaction(update: object, stamp: _Stamp) -> list[Event]:
+    """压缩发生的那一轮，state 更新里会多出一条压缩痕迹。
+
+    **这是平台唯一能看见压缩的地方。** 中间件把它写在私有 state 字段里，
+    实测（2026-08-19 探针）它确实流得到 updates；阈值调高到不触发时这个键就不出现，
+    因此「有这个键」等价于「这一轮压了一次」。
+    """
+    if not isinstance(update, dict):
+        return []
+    event = update.get(SUMMARIZATION_KEY)
+    if not isinstance(event, dict):
+        return []
+
+    index = event.get("cutoff_index")
+    path = event.get("file_path")
+    if not isinstance(index, int) or index < 0:
+        logger.warning("压缩痕迹里的 cutoff_index 不可用，已跳过：%r", index)
+        return []
+    return [
+        CompactionEvent(
+            ts=stamp.ts,
+            run_id=stamp.run_id,
+            path=stamp.path,
+            data=CompactionData(cutoff_index=index, file_path=path if isinstance(path, str) else None),
+        )
+    ]
 
 
 def _map_node(node: str, update: object, stamp: _Stamp) -> list[Event]:
@@ -231,6 +273,11 @@ def _map_tool_call(message: object, stamp: _Stamp) -> list[Event]:
     这条 AIMessage 的正文此前已由 messages 模式逐字流过，
     这里只取 tool_calls，否则整段答复会重复一遍。
     """
+    # 平台自己注入的状态块会跟着模型回复一起写回 state（尾部注入改成持久追加之后）。
+    # **豁免只给它一种** —— 那条告警本来是「框架吐了没见过的形状」的信号，
+    # 一刀切放行非 AIMessage 就等于把这个信号自己弄哑了
+    if isinstance(message, HumanMessage) and str(message.content).startswith(BLOCK_HEADER):
+        return []
     if not isinstance(message, AIMessage):
         logger.warning("model 节点里出现非 AIMessage，已跳过：%s", type(message).__name__)
         return []

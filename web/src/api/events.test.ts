@@ -16,10 +16,13 @@ const validEventData = [
     tokens: { input_cache_read: 1, input_uncached: 2, output: 3 },
   }],
   ['run.failed', { code: 'INTERNAL', message: '失败', retryable: true }],
+  ['run.failed', { code: 'RECURSION_LIMIT', message: '这次分析走的步数超过了上限', retryable: false }],
   ['run.cancelled', { tokens: { input_cache_read: 1, input_uncached: 2, output: 3 } }],
   ['sandbox.queued', { position: 1 }],
   ['sandbox.ready', {}],
   ['error', { code: 'ORPHANED', message: '告警' }],
+  ['compaction', { cutoff_index: 12, file_path: '/workspace/.compaction/history-1.md' }],
+  ['compaction', { cutoff_index: 0, file_path: null }],
   ['token', { text: '答案' }],
   ['reasoning', { text: '思考' }],
   ['tool_call', { id: 'call-1', name: 'execute', args: { command: 'pwd' } }],
@@ -50,7 +53,7 @@ function message(eventName: string, data: unknown, envelope: Record<string, unkn
 }
 
 describe('run event subscription', () => {
-  it('registers all 15 named events and forwards a supported event', () => {
+  it('registers all 16 named events and forwards a supported event', () => {
     let options: RunEventConnectionOptions | undefined
     const close = vi.fn()
     const transport: RunEventTransport = {
@@ -118,6 +121,8 @@ describe('run event subscription', () => {
     ['sandbox.queued', { position: 0 }],
     ['sandbox.ready', { sandbox_id: 'unexpected' }],
     ['error', { code: 'INTERNAL', message: false }],
+  ['compaction', { cutoff_index: -1, file_path: null }],
+  ['compaction', { cutoff_index: '12', file_path: null }],
     ['token', { text: 1 }],
     ['reasoning', { text: false }],
     ['tool_call', { id: 'call-1', name: 'execute', args: [] }],

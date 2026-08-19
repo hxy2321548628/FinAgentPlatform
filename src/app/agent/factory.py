@@ -10,10 +10,11 @@
 
 from collections.abc import AsyncIterator
 from contextlib import nullcontext
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from deepagents import create_deep_agent
 from deepagents.backends.protocol import BackendProtocol
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -22,18 +23,26 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
 from app.agent.config import AgentConfig
+from app.agent.context import (
+    CONTEXT_TRIGGER_TOKEN,
+    TOOL_RESULT_EVICT_TOKEN,
+    create_offloader,
+    create_squeezer,
+)
 from app.agent.interrupt import ALLOWED_DECISION, DELETE_TOOL, INTERRUPT_ON
 from app.agent.mcp import McpFailureRecorderProtocol, McpTargetLoaderProtocol, load_mcp_tools
 from app.agent.prompt import compose_prompt
 from app.agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
 from app.agent.subagent import SubagentLoaderProtocol, compile_subagents
+from app.agent.tail import InstalledPackageSection, StepBudgetSection, TailContextMiddleware
 from app.agent.trace import attribution, propagation
 from app.event.mapper import StreamChunk
 from app.event.model import InterruptAction
 from config import Settings
 
 # 一次分析实测 17 轮模型调用、16 次工具调用，图上的步数约为其两倍。
-# 取 60 是留够余量又不至于让跑飞的 agent 无限烧 token
+# 取 60 是留够余量又不至于让跑飞的 agent 无限烧 token。
+# **这是默认值，真正生效的是 Settings 里那一项** —— 调到极小值才验得出「撞上限记成哪个码」
 RECURSION_LIMIT = 60
 
 # 三个模式缺一不可：token 与 reasoning 增量在 messages，工具调用与结果在 updates，
@@ -105,9 +114,15 @@ class Agent:
         subagent_loader: SubagentLoaderProtocol | None = None,
         mcp_loader: McpTargetLoaderProtocol | None = None,
         mcp_recorder: McpFailureRecorderProtocol | None = None,
+        recursion_limit: int = RECURSION_LIMIT,
+        context_trigger_token: int = CONTEXT_TRIGGER_TOKEN,
+        tool_result_evict_token: int = TOOL_RESULT_EVICT_TOKEN,
     ) -> None:
         self._model = model
         self._checkpointer = checkpointer
+        self._recursion_limit = recursion_limit
+        self._context_trigger_token = context_trigger_token
+        self._tool_result_evict_token = tool_result_evict_token
         self._callback = callback
         self._subagent_loader = subagent_loader
         self._mcp_loader = mcp_loader
@@ -235,17 +250,37 @@ class Agent:
                 system_prompt=compose_prompt(agent_config),
                 checkpointer=self._checkpointer,
                 subagents=subagents,
-                middleware=[
-                    ReloadingSkillsMiddleware(
-                        backend=backend,
-                        sources=[("/workspace/skill/", "平台")],
-                        system_prompt=PLATFORM_SKILLS_SYSTEM_PROMPT,
-                    )
-                ],
+                middleware=self._middleware(backend),
                 # `MappingProxyType` 是为了不构成可变全局状态，交出去时复制一份
                 interrupt_on=dict(INTERRUPT_ON),
             ),
         )
+
+    def _middleware(self, backend: BackendProtocol) -> list[AgentMiddleware[Any, Any, Any]]:
+        """本平台往 DeepAgents 的基础栈里加的那几个中间件。
+
+        **压缩那一份是按名替换基础栈里的默认份**（deepagents 按 `.name` 合并自定义中间件），
+        不是再叠一套 —— 两套压缩都会改写历史，谁先触发不确定，而且都会打掉前缀缓存。
+        """
+        return [
+            ReloadingSkillsMiddleware(
+                backend=backend,
+                sources=[("/workspace/skill/", "平台")],
+                system_prompt=PLATFORM_SKILLS_SYSTEM_PROMPT,
+            ),
+            create_squeezer(self._model, backend, trigger_token=self._context_trigger_token),
+            # **大工具结果挪到磁盘**，模型只看到一句路径。不挪的话它整段留在历史里，
+            # 此后每一轮都按未命中价重算一遍 —— 首轮实测最贵那题因此烧掉 12.5 万 token
+            create_offloader(backend, evict_token=self._tool_result_evict_token),
+            # **每轮都变的内容一律走这里**，不许进系统提示词 —— 落进前缀就是每轮
+            # 打掉整段 prompt cache，而平台的价签是命中与不命中差 30 倍
+            TailContextMiddleware(
+                sections=[
+                    StepBudgetSection(limit=self._recursion_limit),
+                    InstalledPackageSection(),
+                ]
+            ),
+        ]
 
     async def _mcp_tools(self, agent_config: AgentConfig | None) -> list[BaseTool]:
         if agent_config is None or not agent_config.mcps:
@@ -261,7 +296,7 @@ class Agent:
     def _config(self, thread_id: str, *, user_id: str | None = None) -> dict[str, object]:
         config: dict[str, object] = {
             "configurable": {"thread_id": thread_id},
-            "recursion_limit": RECURSION_LIMIT,
+            "recursion_limit": self._recursion_limit,
         }
         # 没配 Langfuse 时连 metadata 都不放：那几个键对 LangGraph 毫无意义，
         # 而一个总是带着陌生键的 config 会让排障时多一个「这是干嘛的」

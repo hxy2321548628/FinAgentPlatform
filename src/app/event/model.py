@@ -40,6 +40,7 @@ class EventType(StrEnum):
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     TODO_UPDATED = "todo.updated"
+    COMPACTION = "compaction"
     SUBAGENT_STARTED = "subagent.started"
     SUBAGENT_FINISHED = "subagent.finished"
     INTERRUPT = "interrupt"
@@ -65,6 +66,10 @@ class RunErrorCode(StrEnum):
 
     SANDBOX_QUEUE_TIMEOUT = "SANDBOX_QUEUE_TIMEOUT"
     INTERNAL = "INTERNAL"
+    # 撞上图的步数上限。**与 INTERNAL 分开是因为教师要做的事不一样** —— INTERNAL 多半
+    # 重试一次就过去了，而这个重试只会再撞一次；有救的做法是把问题拆开问。
+    # 混在一起的时候，「有多少次是跑飞了」这个问题一个字都答不出来
+    RECURSION_LIMIT = "RECURSION_LIMIT"
     # 库里还活着、队列里却没有它了：没有任何东西会再碰这个 run。
     # **与 INTERNAL 分开是因为教师要做的事不一样** —— INTERNAL 是这次分析炸了，
     # 而这个是它根本没跑起来（或者跑完了没人记账），重新提交是有意义的
@@ -315,6 +320,30 @@ class ToolResultEvent(EventEnvelope):
     data: ToolResultData
 
 
+class CompactionData(BaseModel):
+    """`compaction` 事件的载荷。
+
+    **教师需要知道这件事**：压缩之后的回答是基于摘要而非原文的，前面的细节可能已经不在
+    模型眼前了。答复突然「忘了前面说过什么」时，这条事件是唯一能解释原因的东西。
+    """
+
+    cutoff_index: int = Field(ge=0, description="这条消息之前的历史被折成了摘要")
+    file_path: str | None = Field(
+        default=None,
+        description="被折起来的历史转存到了哪个文件，agent 可以重新打开它。None 表示转存失败",
+    )
+
+
+class CompactionEvent(EventEnvelope):
+    """上下文被压缩了一次。
+
+    **不是错误**：这是长对话里的正常机制，与 `error` 分开正是为了不让教师白紧张一次。
+    """
+
+    type: Literal[EventType.COMPACTION] = EventType.COMPACTION
+    data: CompactionData
+
+
 class InterruptEvent(EventEnvelope):
     """agent 停在一次敏感调用之前，等教师确认。
 
@@ -339,6 +368,7 @@ type Event = (
     | ToolCallEvent
     | ToolResultEvent
     | InterruptEvent
+    | CompactionEvent
 )
 
 # 出现即代表 run 已经结束，事件流可以收尾。SSE 端点靠它决定何时关闭连接。

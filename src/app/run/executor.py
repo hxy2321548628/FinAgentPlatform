@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Protocol
 
 from deepagents.backends.protocol import BackendProtocol
+from langgraph.errors import GraphRecursionError
 
 from app.agent.config import AgentConfig, SkillReference
 from app.event.mapper import EventMapper, StreamChunk
@@ -269,7 +270,12 @@ class RunExecutor:
                 # 取消不是失败。沙箱在 finally 里归还，已经写入的 checkpoint 原样留着 ——
                 # 那是「从该点还能续跑」的全部依据
                 logger.info("run 已按教师的要求停下")
-            # 智能体那一侧什么都可能抛：模型断连、图跑飞、工具越界。宽捕获是刻意的 ——
+            # 跑飞要与「模型断连」分开记：教师对这两件事该做的处置不一样，
+            # 而混在一起之后「这次分析是不是太复杂了」就永远查不出来
+            except GraphRecursionError as exc:
+                logger.warning("run 撞上递归上限", exc_info=True)
+                await self._fail(run, RunErrorCode.RECURSION_LIMIT, str(exc), retryable=False)
+            # 智能体那一侧什么都可能抛：模型断连、工具越界。宽捕获是刻意的 ——
             # 让异常逃出去只会让后台任务无声无息地死掉，订阅这个 run 的连接则永远等不到终态。
             except Exception as exc:
                 logger.warning("run 执行失败", exc_info=True)

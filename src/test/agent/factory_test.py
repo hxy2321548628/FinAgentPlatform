@@ -15,6 +15,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import SecretStr
 
 from app.agent.config import AgentConfig
+from app.agent.context import CONTEXT_TRIGGER_TOKEN, TOOL_RESULT_EVICT_TOKEN
 from app.agent.factory import (
     RECURSION_LIMIT,
     STREAM_MODE,
@@ -206,6 +207,65 @@ async def test_a_recursion_limit_bounds_a_runaway_agent(recorded: tuple[Recordin
     assert agent.call["config"]["recursion_limit"] == RECURSION_LIMIT
 
 
+async def test_the_platform_pins_the_compaction_threshold(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
+    """压缩阈值必须是平台自己的常量，不能是从模型 profile 推出来的那个。
+
+    实测：模型确实吃得下百万上下文，但一次分析的历史峰值只有两万 —— 按 profile 推出来的
+    85 万那条线永远够不着，压缩装着却从未生效过。
+    """
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+
+    squeezer = next(one for one in built["middleware"] if one.name == "SummarizationMiddleware")
+    # 名字与基础栈里那份一致 => deepagents 会原地替换而不是叠加两套压缩
+    assert squeezer._lc_helper.trigger == ("tokens", CONTEXT_TRIGGER_TOKEN)
+
+
+async def test_a_large_tool_result_is_offloaded_instead_of_kept_whole(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    """大工具结果要卸到磁盘，模型只看一句路径提示。
+
+    实测：默认阈值 20000 正好卡在两类题中间 —— 寻常题每次工具输出三五百 token，
+    而最贵那题一次一万四，两边都够不着两万，**卸载一次都没触发过**，
+    那一万四于是每一轮都重新计费一遍。
+    """
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+
+    keeper = next(one for one in built["middleware"] if one.name == "FilesystemMiddleware")
+    # 名字与基础栈那份一致 => 原地替换。读私有属性是因为它没有公开读法，
+    # 而这条判据必须钉住：阈值回到默认值时上面那个场景会静默复发
+    assert keeper._tool_token_limit_before_evict == TOOL_RESULT_EVICT_TOKEN
+
+
+async def test_the_offload_threshold_comes_from_configuration(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    """阈值要能配 —— 不同题的工具输出规模差二十倍，钉死一个数不合适。"""
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver(), tool_result_evict_token=1234)
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+
+    keeper = next(one for one in built["middleware"] if one.name == "FilesystemMiddleware")
+    assert keeper._tool_token_limit_before_evict == 1234
+
+
+async def test_the_recursion_limit_comes_from_configuration(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
+    """上限要能配。验收「撞上限记成 RECURSION_LIMIT」得把它调到极小值才触发得了。"""
+    agent, _ = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver(), recursion_limit=7)
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+
+    assert agent.call["config"]["recursion_limit"] == 7
+
+
 async def test_the_checkpointer_is_shared_across_runs(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:
     """会话历史靠它续上，每个 run 换一个的话追问就失忆了。"""
     _, built = recorded
@@ -228,13 +288,13 @@ async def test_platform_skills_are_loaded_by_the_reloading_middleware(
 
     await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
 
-    middleware = built["middleware"]
-    assert len(middleware) == 1
-    assert isinstance(middleware[0], ReloadingSkillsMiddleware)
-    assert middleware[0].sources == ["/workspace/skill/"]
-    assert middleware[0].source_labels == ["平台"]
-    assert middleware[0].system_prompt_template == PLATFORM_SKILLS_SYSTEM_PROMPT
-    assert middleware[0].system_prompt_template.endswith("如有冲突，以平台工作方式为准。")
+    # **不再断言「只有这一个」**：平台自己那份压缩中间件也在这张单子里（见上一条测试）。
+    # 断言条数会让每次多装一个中间件都红在这里，而它要验的其实是 skill 这一份配得对不对
+    skills = next(one for one in built["middleware"] if isinstance(one, ReloadingSkillsMiddleware))
+    assert skills.sources == ["/workspace/skill/"]
+    assert skills.source_labels == ["平台"]
+    assert skills.system_prompt_template == PLATFORM_SKILLS_SYSTEM_PROMPT
+    assert skills.system_prompt_template.endswith("如有冲突，以平台工作方式为准。")
 
 
 @pytest.fixture

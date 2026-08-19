@@ -15,6 +15,7 @@ from uuid import uuid4
 import pytest
 from deepagents.backends.protocol import BackendProtocol
 from langchain_core.messages import AIMessage, AIMessageChunk
+from langgraph.errors import GraphRecursionError
 from redis.asyncio import Redis
 
 from app.agent.config import AgentConfig, SkillReference
@@ -578,6 +579,30 @@ async def test_an_unclassified_error_is_not_retryable(pool: FakePool, log: Event
 
     failed = (await log.read(run.run_id))[-1].event
     assert failed.data.code is RunErrorCode.INTERNAL  # type: ignore[union-attr]
+    assert failed.data.retryable is False  # type: ignore[union-attr]
+
+
+async def test_hitting_the_recursion_limit_is_told_apart_from_other_failures(pool: FakePool, log: EventLog) -> None:
+    """撞上限与「模型断连」是两回事：前者是这次分析太复杂，教师拆开问还有救。
+
+    分不出来的话，`error_code` 那一栏的失败归因就是坏的 —— 库里 268 条失败有 224 条
+    压在 INTERNAL 上，其中有多少是撞了上限，现在一个字都答不出来。
+    """
+
+    def runaway(backend: BackendProtocol, thread_id: str, content: str) -> AsyncIterator[StreamChunk]:
+        async def stream() -> AsyncIterator[StreamChunk]:
+            raise GraphRecursionError("Recursion limit of 60 reached")
+            yield  # pragma: no cover - 让函数成为异步生成器
+
+        return stream()
+
+    executor, _ = make_executor_with(pool, log, runaway)
+
+    run = a_task(content="一")
+    await executor.execute(run)
+
+    failed = (await log.read(run.run_id))[-1].event
+    assert failed.data.code is RunErrorCode.RECURSION_LIMIT  # type: ignore[union-attr]
     assert failed.data.retryable is False  # type: ignore[union-attr]
 
 

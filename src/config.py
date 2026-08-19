@@ -159,6 +159,25 @@ class Settings(StoreSettings):
         default="deepseek-v4-flash",
         description="辅助模型，承担意图分类等轻量调用",
     )
+    # **可配是为了验收**：撞上限记成哪个错误码，只有把它调到极小值才验得出来。
+    # 默认值的由来见 app.agent.factory
+    agent_recursion_limit: int = Field(
+        default=60,
+        ge=1,
+        description="一次分析在图上最多走多少步，撞上即以 RECURSION_LIMIT 失败",
+    )
+    # **同样是为了验收**：压缩到底触没触发，只有把阈值调到极小值才验得出来。
+    # 默认值的由来见 app.agent.context
+    agent_context_trigger_token: int = Field(
+        default=40_000,
+        ge=1_000,
+        description="消息历史达到多少 token 就折成摘要",
+    )
+    agent_tool_result_evict_token: int = Field(
+        default=4_000,
+        ge=100,
+        description="单次工具结果超过多少 token 就挪到磁盘，模型只看到存放路径",
+    )
 
     # **Langfuse 是外部服务，不由本项目的 compose 编排**（2026-08-13）。
     # 三项任缺其一即整个关掉：宁可没有追踪，也不要一个「配了一半、以为在记其实没记」的状态。
