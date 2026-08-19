@@ -98,3 +98,48 @@ describe('runViewReducer', () => {
     expect(state.tokens).toEqual({ input_cache_read: 1, input_uncached: 2, output: 3 })
   })
 })
+
+describe('任务清单', () => {
+  it('每条 todo.updated 都整张替换，最后一条就是当前清单', () => {
+    let state = createRunViewState('running')
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'todo.updated', ts: 1, run_id: 'r1', path: [],
+      data: { todos: [{ content: '读取数据', status: 'in_progress' }, { content: '算波动率', status: 'pending' }] },
+    }) })
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'todo.updated', ts: 2, run_id: 'r1', path: [],
+      data: { todos: [{ content: '读取数据', status: 'completed' }, { content: '算波动率', status: 'in_progress' }] },
+    }) })
+
+    expect(state.todos).toEqual([
+      { content: '读取数据', status: 'completed' },
+      { content: '算波动率', status: 'in_progress' },
+    ])
+  })
+
+  it('收编 write_todos 那张工具卡片，同一件事不显示两遍', () => {
+    // 不收编的话教师会同时看到一张中文清单，和一张正文是英文
+    // `Updated todo list to [...]` 的工具卡
+    let state = createRunViewState('running')
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'tool_call', ts: 1, run_id: 'r1', path: [],
+      data: { id: 'call-todo', name: 'write_todos', args: { todos: [] } },
+    }) })
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'tool_result', ts: 2, run_id: 'r1', path: [],
+      data: { tool_call_id: 'call-todo', name: 'write_todos', content: 'Updated todo list to [...]', status: 'success' },
+    }) })
+
+    expect(state.items).toEqual([])
+  })
+
+  it('别的工具照旧出卡片 —— 收编只针对清单那一个', () => {
+    let state = createRunViewState('running')
+    state = runViewReducer(state, { kind: 'event', event: event({
+      type: 'tool_call', ts: 1, run_id: 'r1', path: [],
+      data: { id: 'call-1', name: 'write_file', args: { file_path: 'a.py' } },
+    }) })
+
+    expect(state.items).toHaveLength(1)
+  })
+})

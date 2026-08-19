@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 平台回归验收：P0–P12 当前 62 条判据，一个文件跑完。
+# 平台回归验收：P0–P14 当前 68 条判据，一个文件跑完。
 #
 #   export SANDBOX_USER="$(id -u):$(id -g)" SANDBOX_WORKSPACE_ROOT="$(pwd)/data/sandbox"
 #   export SANDBOX_QUOTA_DEVICE="$(findmnt -no SOURCE --target "$(pwd)/data/sandbox")"
@@ -5251,6 +5251,237 @@ fi
 p13_restore_env || echo "P13 收尾没能还原 docker/.env，请人工核对 $P13_ENV_BACKUP" >&2
 end
 
+
+# ===========================================================================
+# P14：提问与任务清单（①③④ 要 LLM，有费用；② 免费）
+# ===========================================================================
+#
+# **这一组的两条判据都可能「没触发到」**：问不问、列不列清单由模型自己判断，
+# 平台只能把工具与提示词摆好。判据没触发到要测的场景时记「未验」，不记通过 ——
+# 这条规矩比判据本身更要紧。
+
+log "P14 提问与任务清单"
+
+P14_BLOCKED=""
+P14_READY=0
+JAR_P14=""
+# **一道故意缺口径的题。** 「上次说好的口径」不在上下文里，agent 推不出来也编不出来 ——
+# 2026-08-19 实测它在这道题上调了 ask_user_question，而在能自己拿主意的题上没调
+P14_QUESTION="用工作目录里那份数据，按我们上次说好的那个口径算一下波动率，别改口径，也别自己另定一个。"
+# 回给它的那句话里带一个它此前不可能知道的短语。**判据认的是这个短语出现在最终答复里** ——
+# 只验「没报错」的话，教师那句话被整个丢掉时同样会绿
+P14_ANSWER='按月频对数收益率、年化因子 12 来算，并在最终答复里原样写上「口径：月频对数收益率」这几个字。'
+P14_MARK='口径：月频对数收益率'
+
+# **名字与口令要留得住**：P14④ 那条走查要拿它们进浏览器登录，而 `session_for`
+# 只回 id 与 cookie 罐 —— 与 P7 同一套做法，另起一份
+P14_TAG="$$-$(date +%s%N | tail -c 5)"
+P14_NAME="zuel-p14-$P14_TAG"
+P14_SECRET="zuel-p14-$$"
+
+if [[ ! -f $SAMPLE_CSV ]]; then
+    P14_BLOCKED="缺样例数据 $SAMPLE_CSV"
+elif ! make_user "$P14_NAME" "$P14_SECRET" teacher || ! login "$P14_NAME" "$P14_SECRET" "$WORK_DIR/cookie-p14"; then
+    P14_BLOCKED="造不出账号"
+else
+    JAR_P14="$WORK_DIR/cookie-p14"
+    THREAD_P14="$(new_thread "$JAR_P14")"
+    if curl -fsS -b "$JAR_P14" -X POST "$BASE_URL/api/threads/$THREAD_P14/files" -F "file=@$SAMPLE_CSV" >/dev/null; then
+        P14_READY=1
+    else
+        P14_BLOCKED="样例数据上传失败"
+    fi
+fi
+
+# 等一个 run 停到 waiting_approval 或进终态，标准输出是那时的状态
+p14_wait_stop() {
+    local jar="$1" run_id="$2" deadline=$((SECONDS + RUN_TIMEOUT)) status
+    while (( SECONDS < deadline )); do
+        status="$(run_status "$jar" "$run_id")"
+        case "$status" in
+            waiting_approval | succeeded | failed | cancelled) printf '%s\n' "$status"; return 0 ;;
+        esac
+        sleep 5
+    done
+    printf 'timeout\n'
+}
+
+# 最后一次中断里的待确认调用，整个 JSON 数组
+p14_actions() {
+    api "$1" "$BASE_URL/api/runs/$2/replay" \
+        | jq -c '[.items[] | select(.event.type == "interrupt")] | last | .event.data.actions // []'
+}
+
+# 消费组手上还压着几条没 ack 的任务消息。**这是「挂起不占队列消息」那半句的读数** ——
+# 它是全组的数，不是这一个 run 的：非零时只能说明有别的东西在跑，因此记未验而不是未过
+p14_queue_pending() {
+    compose exec -T redis redis-cli XINFO GROUPS zuel:task:run 2>/dev/null \
+        | tr -d '\r' | awk '/^pending$/{getline; print; exit}'
+}
+
+# 把一个已经停在中断上的 run 一路送到终态，标准输出是终态。
+#
+# **必须循环。** 那道题实测停了三次：先问一句口径，之后清理中间文件又撞了两次删除审批。
+# 只答第一次就去等终态，等到的是第二次 `waiting_approval` —— 而那个红看着像
+# 「答完之后 run 没跑完」，与本条判据要验的东西毫无关系
+p14_settle() {
+    local jar="$1" run_id="$2" status decisions
+    status="$(run_status "$jar" "$run_id")"
+    while [[ $status == waiting_approval ]]; do
+        # 提问回那句带标记的话，别的一律放行 —— 这一条验的不是教师会不会拦
+        decisions="$(p14_actions "$jar" "$run_id" | jq -c --arg m "$P14_ANSWER" \
+            '[.[] | if .tool_name == "ask_user_question"
+                    then {index: .index, type: "respond", message: $m}
+                    else {index: .index, type: "approve"} end]')"
+        api "$jar" -X POST "$BASE_URL/api/runs/$run_id/approve" \
+            -H 'Content-Type: application/json' -d "{\"decisions\": $decisions}" >/dev/null 2>&1 || true
+        status="$(p14_wait_stop "$jar" "$run_id")"
+        [[ $status == timeout ]] && break
+    done
+    printf '%s\n' "$status"
+}
+
+p14_answer_text() {
+    api "$1" "$BASE_URL/api/runs/$2/replay" \
+        | jq -r '[.items[] | select(.event.type == "token") | .event.data.text] | join("")'
+}
+
+# ------------------------------------------------- P14② respond 缺话被挡住
+#
+# **它排在①之前，且不用等模型问出问题** —— 校验在平台侧，任何一次中断都能验。
+# 用一道删文件的题去撞审批闸门：那条路 2026-08-18 起就是确定会停的
+begin "P14②" "respond 不带话被平台挡住，而不是 202 之后 run 以 INTERNAL 炸掉"
+if (( P14_READY )) && [[ ${SKIP_LLM:-0} != 1 ]]; then
+    THREAD_P14_D="$(new_thread "$JAR_P14")"
+    curl -fsS -b "$JAR_P14" -X POST "$BASE_URL/api/threads/$THREAD_P14_D/files" -F "file=@$SAMPLE_CSV" >/dev/null || true
+    RUN_P14_D="$(api "$JAR_P14" -X POST "$BASE_URL/api/threads/$THREAD_P14_D/runs" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg c "把工作目录里的 $(basename "$SAMPLE_CSV") 删掉，我不要它了。" '{content:$c}')" | jq -r '.id // empty')"
+    if [[ -z $RUN_P14_D ]] || [[ "$(p14_wait_stop "$JAR_P14" "$RUN_P14_D")" != waiting_approval ]]; then
+        undone "这一轮没停到审批上（模型没去调 delete），没触发到要测的场景"
+    else
+        P14_N="$(p14_actions "$JAR_P14" "$RUN_P14_D" | jq 'length')"
+        BARE="$(jq -nc --argjson n "$P14_N" '{decisions: [range($n) | {index: ., type: "respond"}]}')"
+        BARE_CODE="$(code "$JAR_P14" -X POST "$BASE_URL/api/runs/$RUN_P14_D/approve" -H 'Content-Type: application/json' -d "$BARE")"
+        BARE_BODY="$(body "$JAR_P14" -X POST "$BASE_URL/api/runs/$RUN_P14_D/approve" -H 'Content-Type: application/json' -d "$BARE")"
+        # 收尾：不管上面判成什么都要把这个 run 处理掉，否则它一直占着教师的待审批名额
+        FULL="$(jq -nc --argjson n "$P14_N" '{decisions: [range($n) | {index: ., type: "reject", message: "验收脚本：不删"}]}')"
+        api "$JAR_P14" -X POST "$BASE_URL/api/runs/$RUN_P14_D/approve" -H 'Content-Type: application/json' -d "$FULL" >/dev/null 2>&1 || true
+        # 送到终态，别让它占着教师那 5 个待审批名额 —— P14① 紧接着还要挂起一个
+        p14_settle "$JAR_P14" "$RUN_P14_D" >/dev/null 2>&1 || true
+        if [[ $BARE_CODE == 2* ]]; then
+            fail "不带 message 的 respond 被接受了（HTTP $BARE_CODE）—— run 会炸在恢复那一刻，报错不指向「少了一句话」"
+        elif [[ $BARE_CODE == 4* ]] && grep -q respond <<<"$BARE_BODY"; then
+            pass "不带 message 的 respond 被挡住（HTTP $BARE_CODE），提示里点名了 respond"
+        elif [[ $BARE_CODE == 4* ]]; then
+            fail "挡是挡住了（HTTP $BARE_CODE），但提示读不出是哪一项缺了：$(head -c 200 <<<"$BARE_BODY")"
+        else
+            undone "approve 返回 $BARE_CODE，不是这条判据要看的东西"
+        fi
+    fi
+else
+    undone "${P14_BLOCKED:-SKIP_LLM=1，这一条要一次真实分析去撞审批闸门}"
+fi
+end
+
+# --------------------------------------------- P14① 提问真的挂起、真的接着跑
+begin "P14①" "提问挂起不占队列不占沙箱，教师的口径真的进了模型的上下文"
+P14_RUN=""
+if (( P14_READY )) && [[ ${SKIP_LLM:-0} != 1 ]]; then
+    P14_RUN="$(api "$JAR_P14" -X POST "$BASE_URL/api/threads/$THREAD_P14/runs" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg c "$P14_QUESTION" '{content:$c}')" | jq -r '.id // empty')"
+    P14_STOP="$([[ -n $P14_RUN ]] && p14_wait_stop "$JAR_P14" "$P14_RUN" || echo none)"
+    P14_ASK="$([[ $P14_STOP == waiting_approval ]] && p14_actions "$JAR_P14" "$P14_RUN" \
+        | jq -c '[.[] | select(.tool_name == "ask_user_question")]' || echo '[]')"
+    if [[ -z $P14_RUN ]]; then
+        undone "提交失败，没跑起来"
+    elif [[ $(jq 'length' <<<"$P14_ASK") == 0 ]]; then
+        # **这不是本条判据的失败**：模型自己没去问，属于「工具描述够不够硬」那个问题
+        undone "这一轮 agent 没调 ask_user_question（run 停在 $P14_STOP），没触发到要测的场景"
+    else
+        ALLOWED="$(jq -c '.[0].allowed_decisions' <<<"$P14_ASK")"
+        SANDBOX_LEFT="$(docker ps -q --filter "label=zuel.thread=$THREAD_P14" | wc -l | tr -d '[:space:]')"
+        QUEUE_LEFT="$(p14_queue_pending)"
+        info "【观察项】提问原文：$(jq -r '.[0].args.question // ""' <<<"$P14_ASK" | head -c 120)"
+        P14_FINAL="$(p14_settle "$JAR_P14" "$P14_RUN")"
+        P14_TEXT="$(p14_answer_text "$JAR_P14" "$P14_RUN")"
+        if [[ $ALLOWED != '["respond"]' ]]; then
+            fail "提问的 allowed_decisions 是 $ALLOWED —— 批准一个不执行的调用没有意义"
+        elif (( SANDBOX_LEFT != 0 )); then
+            fail "挂起期间还占着 $SANDBOX_LEFT 个沙箱"
+        elif [[ ${QUEUE_LEFT:-1} != 0 ]]; then
+            undone "挂起期间消费组还压着 ${QUEUE_LEFT:-?} 条消息 —— 可能是别的 run 在跑，这一条读不准"
+        elif [[ $P14_FINAL != succeeded ]]; then
+            fail "答完之后 run 没跑完，终态是 $P14_FINAL"
+        elif ! grep -qF "$P14_MARK" <<<"$P14_TEXT"; then
+            fail "run 跑完了，但最终答复里没有教师给的口径 —— 那句话没进模型的上下文"
+        else
+            pass "只允许 respond、挂起不占沙箱不占队列、答完接着跑且最终答复带着教师给的口径"
+        fi
+    fi
+else
+    undone "${P14_BLOCKED:-SKIP_LLM=1，这一条要一次真实分析}"
+fi
+end
+
+# ------------------------------------------------------- P14③ 清单真的在勾
+begin "P14③" "任务清单真的在勾：事件 ≥2 条、有一条走完 pending→in_progress→completed、条目是中文"
+if [[ -n $P14_RUN ]]; then
+    P14_EVENTS="$(api "$JAR_P14" "$BASE_URL/api/runs/$P14_RUN/replay" || echo '{"items":[]}')"
+    TODO_COUNT="$(jq '[.items[] | select(.event.type == "todo.updated")] | length' <<<"$P14_EVENTS")"
+    # 同一条 todo 在各次快照里的状态串起来，看有没有一条真的走完了三段
+    TODO_MOVED="$(jq -r '
+        [.items[] | select(.event.type == "todo.updated") | .event.data.todos] as $snaps
+        | ($snaps | map(.[].content) | unique) as $names
+        | [$names[] | . as $c | ($snaps | map(.[] | select(.content == $c) | .status) | join(">"))]
+        | map(select(test("pending.*in_progress.*completed"))) | length' <<<"$P14_EVENTS")"
+    TODO_CJK="$(jq -r '[.items[] | select(.event.type == "todo.updated") | .event.data.todos[].content] | join(" ")' <<<"$P14_EVENTS" \
+        | grep -cP '[\x{4e00}-\x{9fff}]' || true)"
+    info "【观察项】todo.updated $TODO_COUNT 条，走完三段的条目 $TODO_MOVED 条"
+    if (( TODO_COUNT == 0 )); then
+        # **不记未过**：模型一次都没调用属于「工具描述该不该更硬」，不是这条判据的失败
+        undone "这一轮 agent 一次都没调 write_todos，没触发到要测的场景"
+    elif (( TODO_COUNT < 2 )); then
+        undone "只发了 $TODO_COUNT 条 todo.updated —— 一次写死的清单看不出「在勾」"
+    elif (( TODO_MOVED < 1 )); then
+        fail "$TODO_COUNT 条清单事件里没有任何一条走完 pending→in_progress→completed"
+    elif (( TODO_CJK < 1 )); then
+        fail "清单条目里一个中文都没有 —— 中文版工具描述没真的替换掉英文原版"
+    else
+        pass "todo.updated $TODO_COUNT 条，$TODO_MOVED 条走完三段状态，条目是中文"
+    fi
+else
+    undone "${P14_BLOCKED:-P14① 那一轮没跑起来，没有清单可看}"
+fi
+end
+
+# --------------------------------------------------- P14④ 浏览器里的清单与提问
+begin "P14④" "浏览器里清单在勾、write_todos 不出工具卡、提问答完接着跑（playwright）"
+if [[ ${SKIP_LLM:-0} == 1 ]]; then
+    undone "SKIP_LLM=1，这一条要一次真实分析"
+elif (( P14_READY == 0 )); then
+    undone "${P14_BLOCKED:-P14 账号没备好}"
+elif ! command -v pnpm >/dev/null 2>&1; then
+    undone "没有 pnpm，跑不了 playwright"
+elif [[ ! -d $REPO_ROOT/web/node_modules/@playwright ]]; then
+    undone "web/ 没装 @playwright/test：cd web && pnpm install"
+elif ! (cd "$REPO_ROOT/web" && pnpm exec playwright install --dry-run chromium >/dev/null 2>&1); then
+    undone "查不到 chromium 二进制：cd web && pnpm exec playwright install chromium"
+else
+    P14_E2E_LOG="$WORK_DIR/p14-e2e.log"
+    if (cd "$REPO_ROOT/web" && \
+        E2E_API_TARGET="$BASE_URL" \
+        E2E_PASSWORD="$P14_SECRET" \
+        E2E_AUTHOR="$P14_NAME" \
+        pnpm exec playwright test e2e/todo-question.spec.ts >"$P14_E2E_LOG" 2>&1); then
+        pass "清单区随事件刷新并勾得动、write_todos 不再以工具卡片出现、提问答完 run 接着跑"
+    else
+        fail "playwright 未全过，详见 $P14_E2E_LOG"
+        tail -30 "$P14_E2E_LOG" >&2 || true
+    fi
+fi
+end
 
 # ===========================================================================
 # 结果

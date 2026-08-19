@@ -35,7 +35,12 @@ from app.agent.prompt import compose_prompt
 from app.agent.question import create_question_tool
 from app.agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
 from app.agent.subagent import SubagentLoaderProtocol, compile_subagents
-from app.agent.tail import InstalledPackageSection, StepBudgetSection, TailContextMiddleware
+from app.agent.tail import (
+    InstalledPackageSection,
+    StepBudgetSection,
+    TailContextMiddleware,
+    TodoProgressSection,
+)
 from app.agent.todo import create_todo_middleware
 from app.agent.trace import attribution, propagation
 from app.event.mapper import StreamChunk
@@ -286,6 +291,7 @@ class Agent:
                 sections=[
                     StepBudgetSection(limit=self._recursion_limit),
                     InstalledPackageSection(),
+                    TodoProgressSection(),
                 ]
             ),
         ]

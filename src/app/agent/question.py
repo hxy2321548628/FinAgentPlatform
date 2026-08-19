@@ -13,13 +13,14 @@ run 转 `waiting_approval`，教师给的话作为 `status="success"` 的工具�
 的 agent 教师用两次就不想再用了 —— 这份描述里的硬话是平台唯一能拦住它的地方。
 """
 
+from langchain.agents.middleware.human_in_the_loop import DecisionType
 from langchain_core.tools import BaseTool, tool
 
 QUESTION_TOOL = "ask_user_question"
 
 # 只允许 `respond`：这个工具没有别的执行路径，approve 一个不执行的调用毫无意义，
 # 而 edit 改的是「问什么」，改完还是要人回答。**它是平台第一个只允许 respond 的工具**
-QUESTION_ALLOWED_DECISION: tuple[str, ...] = ("respond",)
+QUESTION_ALLOWED_DECISION: tuple[DecisionType, ...] = ("respond",)
 
 # 函数体走不到时的返回值。留一句可读的，是为了万一有人把这个工具装到没有 HITL 的图上时
 # 模型能看懂发生了什么 —— 那种情况下它至少不会以为自己得到了回答

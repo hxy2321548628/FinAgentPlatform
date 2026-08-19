@@ -6,7 +6,7 @@
 | 当前版本 | v0.7 |
 | 作者 | hxy |
 | 日期 | 2026-08-19 |
-| 下游文档 | [P13-plan.md](./P13-plan.md)（**已写就 2026-08-19**）· P14-plan.md · P15-plan.md（后两份未撰写，按 §6 的 D1 分期） |
+| 下游文档 | [P13-plan.md](./P13-plan.md)（**已写就 2026-08-19**）· [P14-plan.md](./P14-plan.md)（**已写就 2026-08-19**）· P15-plan.md（未撰写，按 §6 的 D1 分期） |
 | 上游文档 | [P6-decision.md](./P6-decision.md)（分期口径的先例）· [P12-plan.md](./P12-plan.md) · [智能体设计](../01design/03agent-design.md) |
 
 ### 版本历史

@@ -1,5 +1,7 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'vitest'
+import type { InterruptAction } from '../../api/events'
+import type { Decision } from '../../api/types'
 import type { RunViewItem } from '../eventReducer'
 import { MessageList } from './MessageList'
 
@@ -108,5 +110,64 @@ describe('MessageList 未知工具', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /slow_query/ }))
     expect(screen.getByText(/调用超时/)).toBeTruthy()
+  })
+})
+
+describe('MessageList 提问与审批分流', () => {
+  // 这一组同一段文案会渲染多次，不清干净上一次的 DOM 会撞上「找到多个」
+  afterEach(cleanup)
+
+  const question: InterruptAction = {
+    index: 0,
+    tool_name: 'ask_user_question',
+    args: { question: '收益率按日频还是月频算？' },
+    allowed_decisions: ['respond'],
+  }
+  const removal: InterruptAction = {
+    index: 1,
+    tool_name: 'delete',
+    args: { file_path: '/workspace/raw.csv' },
+    allowed_decisions: ['approve', 'reject', 'edit', 'respond'],
+  }
+
+  it('提问显示问题原文，不显示参数 JSON，也不摆一排只有一个选项的按钮', () => {
+    render(<MessageList items={[]} pendingActions={[question]} onApprove={async () => {}} />)
+
+    expect(screen.getByText('收益率按日频还是月频算？')).toBeTruthy()
+    expect(screen.getByText('智能体在问你 1 个问题')).toBeTruthy()
+    // 只允许 respond，决策已经替教师选好，输入框直接就在
+    expect(screen.getByLabelText('回答第 1 个问题')).toBeTruthy()
+    expect(screen.queryByText('回复智能体')).toBeNull()
+    expect(document.body.textContent).not.toContain('ask_user_question')
+  })
+
+  it('审批照旧显示参数与四个决策按钮 —— 分流不能把闸门一起改掉', () => {
+    render(<MessageList items={[]} pendingActions={[removal]} onApprove={async () => {}} />)
+
+    expect(screen.getByText('智能体请求执行 1 个敏感操作')).toBeTruthy()
+    expect(screen.getByText('允许执行')).toBeTruthy()
+    expect(document.body.textContent).toContain('/workspace/raw.csv')
+  })
+
+  it('一次中断里既有提问又有审批时，两张卡片各是各的', () => {
+    // `check()` 要求决策覆盖**全部** index，因此混合中断时教师必须能对每个
+    // action 分别选 —— 少一个是 422，而那个红看着像 agent 没做好
+    render(<MessageList items={[]} pendingActions={[question, removal]} onApprove={async () => {}} />)
+
+    expect(screen.getByText('智能体在问你 1 个问题，另有 1 个敏感操作待确认')).toBeTruthy()
+    expect(screen.getByText('收益率按日频还是月频算？')).toBeTruthy()
+    expect(screen.getByLabelText('回答第 1 个问题')).toBeTruthy()
+    expect(screen.getByText('允许执行')).toBeTruthy()
+  })
+
+  it('提问答完之后按 index 原样回传，且带着那句话', async () => {
+    const sent: Decision[][] = []
+    render(<MessageList items={[]} pendingActions={[question]} onApprove={async decisions => { sent.push(decisions) }} />)
+
+    fireEvent.change(screen.getByLabelText('回答第 1 个问题'), { target: { value: '按月频' } })
+    fireEvent.click(screen.getByText('提交回答'))
+    await screen.findByText('提交回答')
+
+    expect(sent).toEqual([[{ index: 0, type: 'respond', message: '按月频' }]])
   })
 })

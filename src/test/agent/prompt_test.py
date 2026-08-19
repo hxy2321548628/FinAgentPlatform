@@ -6,6 +6,7 @@
 
 from app.agent.config import AgentConfig
 from app.agent.prompt import ANALYSIS_SEGMENT, ENVIRONMENT_SEGMENT, ROLE_SEGMENT, SYSTEM_PROMPT, compose_prompt
+from app.agent.question import QUESTION_TOOL
 from app.sandbox.path import OUTPUT_DIR, SANDBOX_ROOT
 
 
@@ -41,6 +42,20 @@ def test_the_prompt_routes_file_removal_through_the_delete_tool() -> None:
     """
     assert "delete" in ENVIRONMENT_SEGMENT
     assert "rm" in ENVIRONMENT_SEGMENT
+
+
+def test_the_prompt_draws_the_line_between_approval_and_asking() -> None:
+    """**只界定，不优化措辞。**
+
+    上一行原本写着「你直接调工具就行，不要在答复里先问一遍」，那句话与新的提问工具
+    正面冲突：agent 读完会以为「一律不许问」。界定的是两件不同的事 ——
+    「要不要做」由平台自己向教师确认，「按什么口径做」才由 agent 用工具问。
+
+    **审批那半句必须一字不动地留着**：没有它，agent 会自己选 `rm`
+    （2026-08-18 实测四次全选了它），每次删除都白跑一轮审批往返。
+    """
+    assert QUESTION_TOOL in ENVIRONMENT_SEGMENT
+    assert "不要在答复里先问一遍" in ENVIRONMENT_SEGMENT
 
 
 def test_the_prompt_forbids_hunting_for_chinese_fonts() -> None:

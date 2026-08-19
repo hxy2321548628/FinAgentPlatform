@@ -33,6 +33,7 @@ const SUPPORTED_EVENT_NAMES = [
   'reasoning',
   'tool_call',
   'tool_result',
+  'todo.updated',
   'interrupt',
   'compaction',
 ] as const
@@ -50,6 +51,13 @@ export interface InterruptAction {
   tool_name: string
   args: Record<string, unknown>
   allowed_decisions: string[]
+}
+
+export type TodoStatus = 'pending' | 'in_progress' | 'completed'
+
+export interface TodoItem {
+  content: string
+  status: TodoStatus
 }
 
 interface EventEnvelope<Type extends SupportedEventName, Data> {
@@ -77,6 +85,8 @@ export type RunEvent =
       content: string
       status: 'success' | 'error'
     }>
+  /** 整张清单，不是增量 —— 那个工具的语义就是整表替换，最后一条就是当前清单。 */
+  | EventEnvelope<'todo.updated', { todos: TodoItem[] }>
   | EventEnvelope<'interrupt', { actions: InterruptAction[] }>
   /** 上下文被折成了摘要。**不是错误** —— 长对话里的正常机制，但之后的回答基于摘要而非原文。 */
   | EventEnvelope<'compaction', { cutoff_index: number; file_path: string | null }>
@@ -148,6 +158,15 @@ function isTokenUsage(value: unknown): value is TokenUsage {
     && isNonNegativeInteger(value.output)
 }
 
+const TODO_STATUSES: readonly TodoStatus[] = ['pending', 'in_progress', 'completed']
+
+function isTodoItem(value: unknown): value is TodoItem {
+  return isRecord(value)
+    && isNonEmptyString(value.content)
+    && typeof value.status === 'string'
+    && (TODO_STATUSES as readonly string[]).includes(value.status)
+}
+
 function isInterruptAction(value: unknown): value is InterruptAction {
   return isRecord(value)
     && isNonNegativeInteger(value.index)
@@ -186,6 +205,9 @@ function isSupportedEventData(eventName: SupportedEventName, data: Record<string
         && typeof data.name === 'string'
         && typeof data.content === 'string'
         && (data.status === 'success' || data.status === 'error')
+    case 'todo.updated':
+      // 空清单是合法的：agent 把清单清空也是一次改动
+      return Array.isArray(data.todos) && data.todos.every(isTodoItem)
     case 'interrupt':
       return Array.isArray(data.actions) && data.actions.every(isInterruptAction)
     case 'compaction':

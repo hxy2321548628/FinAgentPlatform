@@ -11,6 +11,7 @@ import { isTerminalStatus } from '../../api/events'
 import { takeHandedOffConfig } from '../pickedAgent'
 import { ThreadSidebar } from '../components/ThreadSidebar'
 import { MessageList } from '../components/MessageList'
+import { TodoList } from '../components/TodoList'
 import { ArtifactStrip } from '../components/ArtifactStrip'
 import { ChatInput } from '../components/ChatInput'
 import { WorkspaceFiles } from '../components/WorkspaceFiles'
@@ -83,7 +84,7 @@ function RunTurn({ run, threadId, onContentChange }: { run: RunHistory; threadId
 
   useLayoutEffect(() => {
     onContentChange()
-  }, [onContentChange, view.items, view.pendingActions, view.status])
+  }, [onContentChange, view.items, view.pendingActions, view.status, view.todos])
 
   const submitDecisions = async (decisions: Decision[]) => {
     await approve.mutateAsync(decisions)
@@ -95,6 +96,7 @@ function RunTurn({ run, threadId, onContentChange }: { run: RunHistory; threadId
         <div style={{ padding: '11px 15px', borderRadius: '12px 12px 2px 12px', background: 'var(--brand)', color: '#fff', fontSize: 14, lineHeight: 1.65 }}>{run.content ?? '（这条历史提问未保留原文）'}</div>
       </div>
     </div>
+    <TodoList todos={view.todos} />
     <MessageList items={view.items} pendingActions={view.pendingActions} onApprove={submitDecisions} threadId={threadId} live={LIVE_STATUS.includes(view.status)} />
     {isTerminalStatus(view.status) && <ArtifactStrip threadId={threadId} startedAt={run.started_at} />}
     {approve.isError && <div role="alert" style={{ margin: '8px 0 0 44px', color: 'var(--danger)', fontSize: 12 }}>{errorMessage(approve.error)}</div>}

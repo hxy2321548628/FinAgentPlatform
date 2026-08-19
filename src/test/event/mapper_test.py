@@ -441,3 +441,84 @@ def test_path_mappers_are_isolated_when_two_real_runs_are_interleaved(
 
     assert first_event.path == ("volatility-expert",)
     assert second_event.path == ("returns-expert",)
+
+
+def test_a_todo_update_becomes_a_todo_event() -> None:
+    """改过清单的那一轮，`tools` 节点的 update 里多一个 `todos` 键。
+
+    形状与压缩痕迹同型：整张清单跟着 state 更新流到 `updates`，
+    因此「有这个键」等价于「这一轮改过清单」。
+    """
+    payload = {
+        "tools": {
+            "todos": [
+                {"content": "读取数据", "status": "in_progress"},
+                {"content": "算波动率", "status": "pending"},
+            ],
+            "messages": [ToolMessage(content="Updated todo list to [...]", tool_call_id="call-1", name="write_todos")],
+        }
+    }
+
+    events = EventMapper("run-1").map_chunk((), "updates", payload)
+
+    todo = next(one for one in events if one.type is EventType.TODO_UPDATED)
+    assert [(one.content, one.status) for one in todo.data.todos] == [
+        ("读取数据", "in_progress"),
+        ("算波动率", "pending"),
+    ]
+    assert todo.path == ()
+
+
+def test_an_update_without_todos_produces_no_todo_event() -> None:
+    """**反向的这一条才是判据。** 只验正向的话，无条件发事件也能过。"""
+    payload = {"tools": {"messages": [ToolMessage(content="写完了", tool_call_id="call-2", name="write_file")]}}
+
+    events = EventMapper("run-1").map_chunk((), "updates", payload)
+
+    assert not [one for one in events if one.type is EventType.TODO_UPDATED]
+
+
+def test_the_english_tool_result_still_comes_through() -> None:
+    """**不在映射层拦掉它。** 事件流是唯一真相源，删事件等于让重放看不见发生过什么。
+
+    同一件事显示两遍是前端的问题，由前端把这张卡片收编进清单区。
+    """
+    payload = {
+        "tools": {
+            "todos": [{"content": "读取数据", "status": "in_progress"}],
+            "messages": [ToolMessage(content="Updated todo list to [...]", tool_call_id="call-1", name="write_todos")],
+        }
+    }
+
+    events = EventMapper("run-1").map_chunk((), "updates", payload)
+
+    assert [one.type for one in events] == [EventType.TODO_UPDATED, EventType.TOOL_RESULT]
+
+
+def test_an_emptied_todo_list_is_still_an_event() -> None:
+    """清空也是一次改动 —— 不发的话前端会一直显示上一张已经作废的清单。"""
+    payload: dict[str, object] = {"tools": {"todos": [], "messages": []}}
+
+    events = EventMapper("run-1").map_chunk((), "updates", payload)
+
+    todo = next(one for one in events if one.type is EventType.TODO_UPDATED)
+    assert todo.data.todos == []
+
+
+def test_an_unreadable_todo_item_is_skipped_not_fatal() -> None:
+    """一条读不懂不该掀掉整次分析，也不该让另外几条跟着消失。"""
+    payload = {
+        "tools": {
+            "todos": [
+                {"content": "读取数据", "status": "in_progress"},
+                {"content": "算波动率", "status": "确认中"},
+                "整条不是字典",
+            ],
+            "messages": [],
+        }
+    }
+
+    events = EventMapper("run-1").map_chunk((), "updates", payload)
+
+    todo = next(one for one in events if one.type is EventType.TODO_UPDATED)
+    assert [one.content for one in todo.data.todos] == ["读取数据"]

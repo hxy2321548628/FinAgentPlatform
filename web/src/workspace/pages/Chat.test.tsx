@@ -125,6 +125,7 @@ beforeEach(() => {
   mocks.useRunEvents.mockImplementation((runId: string, status: RunHistory['status']) => ({
     status,
     items: mocks.loadedRuns.has(runId) ? [{ kind: 'answer', path: [], text: '已回放' }] : [],
+    todos: [],
     pendingActions: null,
     connectionAvailable: true,
     connectionError: mocks.connectionError,

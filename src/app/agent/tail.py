@@ -25,6 +25,8 @@ from typing import Protocol
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 
+from app.agent.todo import TODO_STATE_KEY, TODO_TOOL
+
 logger = logging.getLogger(__name__)
 
 # 整块的字符预算。**宁可截断也不挤掉对话** —— 尾部块是辅助信息，
@@ -252,3 +254,70 @@ def _installed_from(command: str) -> list[str]:
 def _bare_name(argument: str) -> str:
     """去掉版本约束与 extras，只留包名。"""
     return re.split(r"[=<>!\[]", argument, maxsplit=1)[0].strip()
+
+
+class TodoProgressSection:
+    """任务清单的进度：已完成几条、正在做哪一条。
+
+    **只报读数，不复述整张清单。** 清单原文就在轨迹里的 `ToolMessage` 上，模型
+    要看细节回翻就是了；每轮再抄一遍等于对同一份内容重复计费。书里那个形态是
+    「读数 + 策略」，不是把数据再搬一次。
+
+    **上一问的清单不许报。** `todos` 按 thread 存在 checkpoint 里，第二问一开始
+    读到的是上一问那张已经全绿的清单 —— 照报的话模型会以为活儿已经干完了。
+    因此只在「最近一条教师消息之后真的调过 `write_todos`」时才开口，
+    与 tail「没话说就闭嘴」一致。
+    """
+
+    @property
+    def title(self) -> str:
+        """本节标题。"""
+        return "任务进度"
+
+    @property
+    def policy(self) -> str:
+        """读数配套的操作策略。
+
+        **「做完了 3/5」推不出「接下来该干嘛」**，尤其推不出「标完最后一条还要再说一段话」——
+        那正是教师唯一真正要的东西，而模型很容易以为标成完成就算交付了。
+        """
+        return "做完一条就立刻标掉，别攒着；最后一条标完之后还要再说一段话把结论给出来，标完不等于答完"
+
+    def render(self, request: ModelRequest) -> str:
+        """报出已完成条数与正在做的那一条。"""
+        if not _todos_written_this_turn(request.messages):
+            return ""
+        todos = request.state.get(TODO_STATE_KEY) if isinstance(request.state, dict) else None
+        if not isinstance(todos, list) or not todos:
+            return ""
+
+        done = sum(1 for one in todos if _status(one) == "completed")
+        doing = [_content(one) for one in todos if _status(one) == "in_progress"]
+        reading = f"已完成 {done}/{len(todos)} 条"
+        if doing:
+            return f"{reading}，正在做「{'」「'.join(doing)}」"
+        if done == len(todos):
+            return f"{reading}，全部标完了"
+        return f"{reading}，当前没有一条标着进行中"
+
+
+def _status(todo: object) -> str:
+    return str(todo.get("status", "")) if isinstance(todo, dict) else ""
+
+
+def _content(todo: object) -> str:
+    return str(todo.get("content", "")) if isinstance(todo, dict) else ""
+
+
+def _todos_written_this_turn(messages: Sequence[AnyMessage]) -> bool:
+    """最近一条教师消息之后，有没有真的改过清单。
+
+    **状态块自己也是 HumanMessage**（持久追加的代价），因此按块头把它们排除掉 ——
+    不排的话「最近一条教师消息」永远是上一轮自己写的块，这个闸门就形同虚设。
+    """
+    for message in reversed(list(messages)):
+        if isinstance(message, HumanMessage) and not str(message.content).startswith(BLOCK_HEADER):
+            return False
+        if isinstance(message, AIMessage) and any(call["name"] == TODO_TOOL for call in message.tool_calls):
+            return True
+    return False

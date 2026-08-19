@@ -22,6 +22,9 @@ from app.event.model import (
     Event,
     ReasoningData,
     ReasoningEvent,
+    TodoItem,
+    TodoUpdatedData,
+    TodoUpdatedEvent,
     TokenData,
     TokenEvent,
     ToolCallData,
@@ -49,6 +52,11 @@ REASONING_KEY = "reasoning_content"
 # 压缩中间件把「这一轮压了一次」写在这个私有 state 字段里。**名字由 deepagents 定**，
 # 平台只是读它 —— 它换名字的话这里会静默失灵，因此 P13② 那条判据要真跑一次压缩
 SUMMARIZATION_KEY = "_summarization_event"
+
+# 任务清单中间件把整张清单写在这个 state 字段里。**名字由上游定**，与压缩痕迹同型：
+# 键在就是「这一轮改过清单」，不在就不出事件
+TODO_KEY = "todos"
+TODO_STATUS = frozenset({"pending", "in_progress", "completed"})
 
 
 @dataclass(frozen=True)
@@ -209,12 +217,12 @@ def _map_update(payload: object, stamp: _Stamp) -> list[Event]:
         # 中间件节点（如 PatchToolCallsMiddleware.before_agent）不改状态，载荷为 None
         if update is None:
             continue
-        compaction = _map_compaction(update, stamp)
-        events.extend(compaction)
-        # 只带压缩痕迹、没有消息的更新是正常的，不按「载荷里没有 messages」告警。
-        # **豁免只给这一种** —— 其余没有 messages 的更新仍要告警，那是 DeepAgents
+        traces = [*_map_compaction(update, stamp), *_map_todos(update, stamp)]
+        events.extend(traces)
+        # 只带状态痕迹（压缩、清单）、没有消息的更新是正常的，不按「载荷里没有 messages」
+        # 告警。**豁免只给这两种** —— 其余没有 messages 的更新仍要告警，那是 DeepAgents
         # 换了结构的信号，静默掉就等于把它藏起来
-        if compaction and isinstance(update, dict) and "messages" not in update:
+        if traces and isinstance(update, dict) and "messages" not in update:
             continue
         events.extend(_map_node(str(node), update, stamp))
     return events
@@ -244,6 +252,42 @@ def _map_compaction(update: object, stamp: _Stamp) -> list[Event]:
             run_id=stamp.run_id,
             path=stamp.path,
             data=CompactionData(cutoff_index=index, file_path=path if isinstance(path, str) else None),
+        )
+    ]
+
+
+def _map_todos(update: object, stamp: _Stamp) -> list[Event]:
+    """改过清单的那一轮，`tools` 节点的 update 里会多一个 `todos` 键。
+
+    **形状与压缩痕迹同型**（2026-08-19 探针）：那个工具返回的是一条 `Command`，
+    整张清单跟着 state 更新一起流到 `updates`。因此「有这个键」等价于
+    「这一轮改过清单」，没改的轮次这个键根本不出现。
+
+    **同一次调用还会照常产出一条 `tool_result`**，正文是英文的
+    `Updated todo list to [...]` —— 那条不在这里拦掉：事件流是唯一真相源，
+    删事件等于让重放看不见发生过什么。收编成一张卡片是前端的事。
+    """
+    if not isinstance(update, dict) or TODO_KEY not in update:
+        return []
+    todos = update[TODO_KEY]
+    if not isinstance(todos, list):
+        logger.warning("清单不是列表，已跳过：%s", type(todos).__name__)
+        return []
+
+    items: list[TodoItem] = []
+    for one in todos:
+        content = one.get("content") if isinstance(one, dict) else None
+        status = one.get("status") if isinstance(one, dict) else None
+        if not isinstance(content, str) or status not in TODO_STATUS:
+            logger.warning("清单条目形状不认识，已跳过：%r", one)
+            continue
+        items.append(TodoItem(content=content, status=status))
+    return [
+        TodoUpdatedEvent(
+            ts=stamp.ts,
+            run_id=stamp.run_id,
+            path=stamp.path,
+            data=TodoUpdatedData(todos=items),
         )
     ]
 

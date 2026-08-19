@@ -9,7 +9,15 @@ from typing import Any
 from langchain.agents.middleware.types import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agent.tail import InstalledPackageSection, StepBudgetSection, TailContextMiddleware
+from app.agent.tail import (
+    BLOCK_FOOTER,
+    BLOCK_HEADER,
+    InstalledPackageSection,
+    StepBudgetSection,
+    TailContextMiddleware,
+    TodoProgressSection,
+)
+from app.agent.todo import TODO_STATE_KEY, TODO_TOOL
 
 
 class FixedSection:
@@ -54,12 +62,17 @@ class FakeResponse:
         self.result: list[Any] = [AIMessage(content="好的")]
 
 
-def a_request(*message: Any) -> Any:  # noqa: ANN401 - 测试替身
-    """造一个只带消息的最小请求替身。"""
+def a_request(*message: Any, state: dict[str, Any] | None = None) -> Any:  # noqa: ANN401 - 测试替身
+    """造一个带消息与 state 的最小请求替身。
+
+    `state` 是进度节要读的那一个 —— 清单由中间件写在图状态上，不在消息里。
+    """
+    carried = dict(state or {})
 
     class Request:
         def __init__(self, messages: list[Any] | None = None) -> None:
             self.messages = list(message) if messages is None else messages
+            self.state = carried
 
         def override(self, **change: Any) -> "Request":  # noqa: ANN401
             return Request(change.get("messages", self.messages))
@@ -203,3 +216,116 @@ def test_the_step_section_reports_on_every_turn() -> None:
 
     early = section.render(a_request(HumanMessage(content="问题"), AIMessage(content="一轮")))
     assert "1" in early
+
+
+# ---------------------------------------------------------------- 任务进度那一节
+
+
+def _todo_call() -> AIMessage:
+    """一次真的改过清单的模型回复。"""
+    return AIMessage(
+        content="",
+        tool_calls=[{"name": TODO_TOOL, "args": {"todos": []}, "id": "call-todo", "type": "tool_call"}],
+    )
+
+
+TWO_DONE_ONE_DOING = [
+    {"content": "读取数据", "status": "completed"},
+    {"content": "清洗缺失值", "status": "completed"},
+    {"content": "算年化波动率", "status": "in_progress"},
+    {"content": "画柱状图", "status": "pending"},
+]
+
+
+def test_the_progress_section_reports_counts_and_the_current_item() -> None:
+    """**读数 + 一句策略，不复述整张清单。**
+
+    清单原文就在轨迹里的 `ToolMessage` 上，每轮再抄一遍等于对同一份内容重复计费。
+    """
+    request = a_request(
+        HumanMessage(content="算一下各行业年化波动率"),
+        _todo_call(),
+        state={TODO_STATE_KEY: TWO_DONE_ONE_DOING},
+    )
+
+    body = TodoProgressSection().render(request)
+
+    assert body == "已完成 2/4 条，正在做「算年化波动率」"
+    # 复述整张清单的话这两条也会在里面 —— 它们不该在
+    assert "读取数据" not in body
+    assert "画柱状图" not in body
+
+
+def test_the_progress_section_says_nothing_without_a_list() -> None:
+    """没清单就闭嘴，与 tail 其余各节一致。"""
+    request = a_request(HumanMessage(content="年化波动率怎么算"), state={})
+
+    assert TodoProgressSection().render(request) == ""
+
+
+def test_the_progress_section_refuses_a_leftover_list_from_the_previous_question() -> None:
+    """**这一条是本节存在的最大风险。**
+
+    `todos` 按 thread 存在 checkpoint 里，第二问一开始读到的是上一问那张已经全绿的
+    清单。照报的话模型会以为活儿已经干完了 —— 而它读到的每个字都是「真的」，
+    没有任何东西会报错。
+    """
+    request = a_request(
+        HumanMessage(content="第一问：算波动率"),
+        _todo_call(),
+        AIMessage(content="算完了"),
+        HumanMessage(content="第二问：再画张图"),
+        state={TODO_STATE_KEY: [{"content": "算年化波动率", "status": "completed"}]},
+    )
+
+    assert TodoProgressSection().render(request) == ""
+
+
+def test_a_state_block_does_not_count_as_a_new_question() -> None:
+    """状态块自己也是 `HumanMessage`（持久追加的代价）。
+
+    不把它排除掉的话，「最近一条教师消息」永远是上一轮自己写的块，
+    上面那道闸门就形同虚设 —— 而它失效的样子是「一直不开口」，不报错。
+    """
+    request = a_request(
+        HumanMessage(content="算一下各行业年化波动率"),
+        _todo_call(),
+        HumanMessage(content=f"{BLOCK_HEADER}\n步数：已用约 2 轮\n{BLOCK_FOOTER}"),
+        state={TODO_STATE_KEY: TWO_DONE_ONE_DOING},
+    )
+
+    assert TodoProgressSection().render(request).startswith("已完成 2/4 条")
+
+
+def test_a_finished_list_is_reported_as_finished() -> None:
+    """全标完时不能说「正在做」，那是编的。"""
+    request = a_request(
+        HumanMessage(content="算一下"),
+        _todo_call(),
+        state={TODO_STATE_KEY: [{"content": "算波动率", "status": "completed"}]},
+    )
+
+    assert TodoProgressSection().render(request) == "已完成 1/1 条，全部标完了"
+
+
+def test_the_progress_policy_tells_it_that_finishing_is_not_answering() -> None:
+    """**「做完 3/5」推不出「标完最后一条还要再说一段话」** —— 而那正是教师唯一要的东西。"""
+    assert "标完不等于答完" in TodoProgressSection().policy
+
+
+def test_the_progress_section_is_dropped_first_when_over_budget() -> None:
+    """超预算从后往前丢整节，而进度节排在最后 —— 步数与已装的包比它更要紧。"""
+    middleware = TailContextMiddleware(
+        sections=[FixedSection("步数", "已用约 3 轮"), TodoProgressSection()],
+        budget_char=20,
+    )
+    request = a_request(
+        HumanMessage(content="算一下"),
+        _todo_call(),
+        state={TODO_STATE_KEY: TWO_DONE_ONE_DOING},
+    )
+
+    block = middleware.render_block(request)
+
+    assert "已用约 3 轮" in block
+    assert "已完成" not in block

@@ -228,6 +228,24 @@ class InterruptData(BaseModel):
     actions: list[InterruptAction] = Field(description="待确认的调用，按 index 排列")
 
 
+class TodoItem(BaseModel):
+    """任务清单里的一条。"""
+
+    content: str = Field(description="这一步要做什么，中文一句话")
+    status: Literal["pending", "in_progress", "completed"] = Field(description="这一条的进度")
+
+
+class TodoUpdatedData(BaseModel):
+    """`todo.updated` 事件的载荷。
+
+    **每次都是整张清单，不是增量。** 上游那个工具的语义就是整表替换 ——
+    发增量的话前端要自己维护一份合并逻辑，而那份逻辑与真相源不同步时不报错，
+    只是进度显示得不对。重放最后一条本事件就是当前清单，因此清单不进 `runs` 表。
+    """
+
+    todos: list[TodoItem] = Field(description="这一刻的整张清单，按 agent 给的顺序")
+
+
 class SandboxReadyData(BaseModel):
     """`sandbox.ready` 事件的载荷。
 
@@ -344,6 +362,17 @@ class CompactionEvent(EventEnvelope):
     data: CompactionData
 
 
+class TodoUpdatedEvent(EventEnvelope):
+    """agent 改了一次任务清单。
+
+    **`path` 恒为空元组**：清单只装主图（子图再来一张就是两个真相源，
+    前端还要回答「哪张是当前的」）。将来子图也要清单时，前端必须先回答那个问题。
+    """
+
+    type: Literal[EventType.TODO_UPDATED] = EventType.TODO_UPDATED
+    data: TodoUpdatedData
+
+
 class InterruptEvent(EventEnvelope):
     """agent 停在一次敏感调用之前，等教师确认。
 
@@ -367,6 +396,7 @@ type Event = (
     | ReasoningEvent
     | ToolCallEvent
     | ToolResultEvent
+    | TodoUpdatedEvent
     | InterruptEvent
     | CompactionEvent
 )

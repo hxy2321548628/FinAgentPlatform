@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useState } from 'react'
 import type { InterruptAction } from '../../api/events'
 import type { Decision } from '../../api/types'
 import { errorMessage } from '../../api/request'
-import { buildDecisions, createDecisionDrafts, DECISION_LABEL } from '../decisions'
+import { buildDecisions, createDecisionDrafts, DECISION_LABEL, isQuestion, questionText } from '../decisions'
 import type { DecisionDraft } from '../decisions'
 import type { RunViewItem } from '../eventReducer'
 import { MarkdownAnswer } from './MarkdownAnswer'
@@ -23,6 +23,18 @@ type RenderEntry =
   | { kind: 'subagent'; path: string[]; items: Array<{ item: RunViewItem; index: number }> }
 
 const DECISION_TYPES = ['approve', 'reject', 'edit', 'respond'] as const
+
+/**
+ * 一次中断里既可能有审批也可能有提问，标题得说清楚在等什么。
+ *
+ * 全是提问时说「在问你」，全是操作时说「要执行」，混着时两个数都报 ——
+ * 一律说「敏感操作」会让教师以为智能体要动他的文件。
+ */
+function batchTitle(total: number, questions: number): string {
+  if (questions === 0) return `智能体请求执行 ${total} 个敏感操作`
+  if (questions === total) return `智能体在问你 ${total} 个问题`
+  return `智能体在问你 ${questions} 个问题，另有 ${total - questions} 个敏感操作待确认`
+}
 
 function jsonArgs(args: Record<string, unknown>): string {
   return JSON.stringify(args, null, 2)
@@ -146,23 +158,29 @@ function ApprovalBatch({ actions, onApprove }: { actions: InterruptAction[]; onA
     }
   }
 
+  const questions = actions.filter(isQuestion).length
   return <div style={{ marginLeft: 44, padding: 16, border: '1px solid #FDE68A', borderLeft: '4px solid var(--status-warn)', borderRadius: '0 8px 8px 8px', background: 'var(--warn-bg)' }}>
-    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--warn)', marginBottom: 6 }}>智能体请求执行 {actions.length} 个敏感操作</div>
-    <div style={{ fontSize: 12, color: 'var(--warn)', marginBottom: 12 }}>请逐项选择决策，所有操作将一次性提交。</div>
+    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--warn)', marginBottom: 6 }}>{batchTitle(actions.length, questions)}</div>
+    <div style={{ fontSize: 12, color: 'var(--warn)', marginBottom: 12 }}>请逐项处理，所有内容将一次性提交。</div>
     {actions.map(action => {
       const draft = drafts[action.index] ?? { type: null, message: '', args: jsonArgs(action.args) }
+      const asking = isQuestion(action)
       return <fieldset key={action.index} style={{ border: '1px solid #FDE68A', borderRadius: 7, margin: '0 0 10px', padding: 12 }}>
-        <legend style={{ padding: '0 6px', color: 'var(--warn)', fontSize: 12, fontWeight: 600 }}>#{action.index + 1} {action.tool_name}</legend>
-        <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: 'rgba(146,64,14,0.06)', padding: 9, borderRadius: 5, color: 'var(--warn)', fontSize: 11 }}>{jsonArgs(action.args)}</pre>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+        <legend style={{ padding: '0 6px', color: 'var(--warn)', fontSize: 12, fontWeight: 600 }}>#{action.index + 1} {asking ? '智能体的提问' : action.tool_name}</legend>
+        {asking
+          // 提问显示问题原文，不显示参数 JSON —— 教师要读的是那句话，不是一个调用
+          ? <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', padding: '2px 0 10px', color: 'var(--warn)', fontSize: 13, lineHeight: 1.7 }}>{questionText(action)}</div>
+          : <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: 'rgba(146,64,14,0.06)', padding: 9, borderRadius: 5, color: 'var(--warn)', fontSize: 11 }}>{jsonArgs(action.args)}</pre>}
+        {/* 只有一种决策时按钮已经替教师选好了，再摆一排单选按钮纯属多一步 */}
+        {action.allowed_decisions.length > 1 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
           {DECISION_TYPES.filter(type => action.allowed_decisions.includes(type)).map(type => <button key={type} type="button" onClick={() => patchDraft(action.index, { type })} style={{ padding: '6px 11px', border: draft.type === type ? '1px solid var(--action)' : '1px solid #FDE68A', borderRadius: 5, background: draft.type === type ? 'var(--action)' : '#fff', color: draft.type === type ? '#fff' : 'var(--warn)', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }}>{DECISION_LABEL[type]}</button>)}
-        </div>
-        {(draft.type === 'reject' || draft.type === 'respond') && <textarea value={draft.message} onChange={event => patchDraft(action.index, { message: event.target.value })} placeholder="必填：说明理由或告诉智能体如何调整" style={{ width: '100%', minHeight: 64, boxSizing: 'border-box', marginTop: 9, padding: 8, border: '1px solid #FDE68A', borderRadius: 5, font: 'inherit', fontSize: 12 }} />}
+        </div>}
+        {(draft.type === 'reject' || draft.type === 'respond') && <textarea value={draft.message} onChange={event => patchDraft(action.index, { message: event.target.value })} aria-label={asking ? `回答第 ${action.index + 1} 个问题` : undefined} placeholder={asking ? '必填：把你的口径告诉它，它会带着这句话接着跑' : '必填：说明理由或告诉智能体如何调整'} style={{ width: '100%', minHeight: 64, boxSizing: 'border-box', marginTop: 9, padding: 8, border: '1px solid #FDE68A', borderRadius: 5, font: 'inherit', fontSize: 12 }} />}
         {draft.type === 'edit' && <textarea value={draft.args} onChange={event => patchDraft(action.index, { args: event.target.value })} aria-label={`修改${action.tool_name}参数`} style={{ width: '100%', minHeight: 90, boxSizing: 'border-box', marginTop: 9, padding: 8, border: '1px solid #FDE68A', borderRadius: 5, fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }} />}
       </fieldset>
     })}
     {formError && <div role="alert" style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>{formError}</div>}
-    <button type="button" disabled={submitting} onClick={() => void submit()} style={{ padding: '8px 18px', border: 'none', borderRadius: 6, background: 'var(--action)', color: '#fff', cursor: submitting ? 'default' : 'pointer', fontWeight: 600, fontFamily: 'inherit' }}>{submitting ? '正在提交…' : '提交全部决策'}</button>
+    <button type="button" disabled={submitting} onClick={() => void submit()} style={{ padding: '8px 18px', border: 'none', borderRadius: 6, background: 'var(--action)', color: '#fff', cursor: submitting ? 'default' : 'pointer', fontWeight: 600, fontFamily: 'inherit' }}>{submitting ? '正在提交…' : questions === actions.length ? '提交回答' : '提交全部决策'}</button>
   </div>
 }
 
