@@ -451,7 +451,7 @@ async def _cached[Result: "DataclassInstance"](
     """这次调用之前跑过吗？跑过就把当时的结果原样还回去。"""
     if broker.cache is None or not request.checkpoint_ns:
         return None
-    found = await broker.cache.get(thread_id, request.checkpoint_ns)
+    found = await broker.cache.get(thread_id, request.checkpoint_ns, shape.__name__)
     if found is None:
         return None
     logger.info("命中去重表，不进沙箱：thread_id=%s checkpoint_ns=%s", thread_id, request.checkpoint_ns)
@@ -459,10 +459,14 @@ async def _cached[Result: "DataclassInstance"](
 
 
 async def _remember(broker: Broker, thread_id: str, request: ToolRequest, result: "DataclassInstance") -> None:
-    """记下这次调用的结果。**成功与失败一视同仁** —— 只缓存成功等于没解决重放的问题。"""
+    """记下这次调用的结果。**成功与失败一视同仁** —— 只缓存成功等于没解决重放的问题。
+
+    **结果形状跟着进键**：同一个 `checkpoint_ns` 里会有两次不同的写 —— `execute`
+    的输出过大时，卸载中间件在那次调用的上下文里再发一次 `write` 去落盘。
+    """
     if broker.cache is None or not request.checkpoint_ns:
         return
-    await broker.cache.put(thread_id, request.checkpoint_ns, asdict(result))
+    await broker.cache.put(thread_id, request.checkpoint_ns, type(result).__name__, asdict(result))
 
 
 async def _once[Result: "DataclassInstance"](

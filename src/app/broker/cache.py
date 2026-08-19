@@ -8,8 +8,14 @@ pending write，恢复时会整个重跑 —— 于是 `edit_file` 的 `old_stri
 **去重放在 broker 而不是 worker**：broker 是沙箱的唯一入口，而 worker 会崩溃重启 ——
 去重状态放在 worker 侧，正好在最需要它的那一刻（崩溃恢复）跟着进程一起没了。
 
-**去重键是 `(thread_id, checkpoint_ns)`。** `checkpoint_ns` 实测按**工具调用**唯一
+**去重键是 `(thread_id, checkpoint_ns, 结果形状)`。** `checkpoint_ns` 实测按**工具调用**唯一
 （LangGraph 把每轮的每个工具调用扇出成独立 task），且崩溃重放前后一致。
+
+**形状必须进键（2026-08-19 加，被一次真实 500 逼出来的）**：同一个 `checkpoint_ns`
+里会发生**两次不同的写**——`execute` 的输出过大时，卸载中间件在那次工具调用的上下文里
+再发一次 `write` 去落盘。只按前两段做键的话，`write` 会命中 `execute` 的缓存，
+`WriteResult(**执行结果)` 直接抛 TypeError。**而形状恰好相同时更糟**：不报错，
+第二次静默拿到第一次的结果。
 
 > **这个键是框架的编排细节，不是本平台的领域概念。** 若 LangGraph 改变扇出粒度
 > （比如把同一轮的多个调用合成一个 task），同一轮里的两次调用就会撞键 ——
@@ -40,7 +46,7 @@ DEFAULT_MAX_BYTE = 256 * 1024
 
 
 class ToolCache:
-    """按 `(thread_id, checkpoint_ns)` 记住一次写操作的结果。
+    """按 `(thread_id, checkpoint_ns, 结果形状)` 记住一次写操作的结果。
 
     Args:
         client: Redis 客户端。
@@ -67,18 +73,19 @@ class ToolCache:
         """
         await check(self._client)
 
-    async def get(self, thread_id: str, checkpoint_ns: str) -> dict[str, object] | None:
+    async def get(self, thread_id: str, checkpoint_ns: str, shape: str) -> dict[str, object] | None:
         """取这次调用上一次的结果。
 
         Args:
             thread_id: 会话标识。
             checkpoint_ns: LangGraph 给这次工具调用的命名空间。
+            shape: 期望的结果类型名。同一个命名空间里可能有形状不同的两次写。
 
         Returns:
             缓存的结果；没记过则 None。
         """
         try:
-            found = await self._client.get(_key(thread_id, checkpoint_ns))
+            found = await self._client.get(_key(thread_id, checkpoint_ns, shape))
         # **去重表连不上时降级，不把这次工具调用打断。** 它是崩溃路径上的一道保险，
         # 而不是执行的前提 —— 为了保险失灵就让每一次写操作都 500，代价大得多。
         # 但必须吼出来：这段时间里重放是会真的重跑的
@@ -90,12 +97,13 @@ class ToolCache:
         parsed: dict[str, object] = json.loads(found)
         return parsed
 
-    async def put(self, thread_id: str, checkpoint_ns: str, result: dict[str, object]) -> None:
+    async def put(self, thread_id: str, checkpoint_ns: str, shape: str, result: dict[str, object]) -> None:
         """记下这次调用的结果。**成功与失败一视同仁。**
 
         Args:
             thread_id: 会话标识。
             checkpoint_ns: LangGraph 给这次工具调用的命名空间。
+            shape: 结果的类型名，跟着进键。
             result: 工具的返回，原样存。
         """
         payload = json.dumps(result, ensure_ascii=False)
@@ -108,11 +116,11 @@ class ToolCache:
             )
             return
         try:
-            await self._client.set(_key(thread_id, checkpoint_ns), payload, ex=self._ttl)
+            await self._client.set(_key(thread_id, checkpoint_ns, shape), payload, ex=self._ttl)
         # 同上：记不下只意味着这一次调用没有保险，不该让工具调用失败
         except RedisError:
             logger.warning("去重表写不进，这一次不去重：thread_id=%s", thread_id, exc_info=True)
 
 
-def _key(thread_id: str, checkpoint_ns: str) -> str:
-    return f"{KEY_PREFIX}{thread_id}:{checkpoint_ns}"
+def _key(thread_id: str, checkpoint_ns: str, shape: str) -> str:
+    return f"{KEY_PREFIX}{thread_id}:{checkpoint_ns}:{shape}"

@@ -17,6 +17,9 @@ SHORT_TTL_SECOND = 60
 
 NS = "tools:fd422cb9-d8b8-c0ae-510d-64ed2e099a1c"
 
+# 结果形状也是键的一部分：同一次工具调用里可能有两次形状不同的写
+SHAPE = "WriteResult"
+
 # 不会有人监听的端口，连不上是立刻的 ECONNREFUSED
 DEAD_PORT = 1
 
@@ -27,15 +30,15 @@ def cache(live_cache: Redis) -> ToolCache:
 
 
 async def test_a_call_that_never_ran_has_nothing_cached(cache: ToolCache) -> None:
-    assert await cache.get(uuid4().hex, NS) is None
+    assert await cache.get(uuid4().hex, NS, SHAPE) is None
 
 
 async def test_a_recorded_result_comes_back_unchanged(cache: ToolCache) -> None:
     thread_id = uuid4().hex
 
-    await cache.put(thread_id, NS, {"error": None, "path": "/workspace/a.csv"})
+    await cache.put(thread_id, NS, SHAPE, {"error": None, "path": "/workspace/a.csv"})
 
-    assert await cache.get(thread_id, NS) == {"error": None, "path": "/workspace/a.csv"}
+    assert await cache.get(thread_id, NS, SHAPE) == {"error": None, "path": "/workspace/a.csv"}
 
 
 async def test_an_error_result_is_cached_too(cache: ToolCache) -> None:
@@ -46,9 +49,9 @@ async def test_an_error_result_is_cached_too(cache: ToolCache) -> None:
     """
     thread_id = uuid4().hex
 
-    await cache.put(thread_id, NS, {"error": "找不到要替换的串", "path": None})
+    await cache.put(thread_id, NS, SHAPE, {"error": "找不到要替换的串", "path": None})
 
-    assert await cache.get(thread_id, NS) == {"error": "找不到要替换的串", "path": None}
+    assert await cache.get(thread_id, NS, SHAPE) == {"error": "找不到要替换的串", "path": None}
 
 
 async def test_two_calls_in_the_same_round_do_not_collide(cache: ToolCache) -> None:
@@ -61,27 +64,27 @@ async def test_two_calls_in_the_same_round_do_not_collide(cache: ToolCache) -> N
     thread_id = uuid4().hex
     first, second = "tools:fd422cb9", "tools:3ad455cb"
 
-    await cache.put(thread_id, first, {"path": "/workspace/a.txt"})
-    await cache.put(thread_id, second, {"path": "/workspace/b.txt"})
+    await cache.put(thread_id, first, SHAPE, {"path": "/workspace/a.txt"})
+    await cache.put(thread_id, second, SHAPE, {"path": "/workspace/b.txt"})
 
-    assert await cache.get(thread_id, first) == {"path": "/workspace/a.txt"}
-    assert await cache.get(thread_id, second) == {"path": "/workspace/b.txt"}
+    assert await cache.get(thread_id, first, SHAPE) == {"path": "/workspace/a.txt"}
+    assert await cache.get(thread_id, second, SHAPE) == {"path": "/workspace/b.txt"}
 
 
 async def test_two_threads_do_not_collide(cache: ToolCache) -> None:
     """键里带 thread_id：不同会话的 ns 撞上了也不能互相看见对方的结果。"""
-    await cache.put("甲", NS, {"path": "甲的"})
-    await cache.put("乙", NS, {"path": "乙的"})
+    await cache.put("甲", NS, SHAPE, {"path": "甲的"})
+    await cache.put("乙", NS, SHAPE, {"path": "乙的"})
 
-    assert await cache.get("甲", NS) == {"path": "甲的"}
+    assert await cache.get("甲", NS, SHAPE) == {"path": "甲的"}
 
 
 async def test_the_record_expires_by_itself(live_cache: Redis, cache: ToolCache) -> None:
     thread_id = uuid4().hex
 
-    await cache.put(thread_id, NS, {"path": "/workspace/a.csv"})
+    await cache.put(thread_id, NS, SHAPE, {"path": "/workspace/a.csv"})
 
-    assert 0 < await live_cache.ttl(f"{KEY_PREFIX}{thread_id}:{NS}") <= SHORT_TTL_SECOND
+    assert 0 < await live_cache.ttl(f"{KEY_PREFIX}{thread_id}:{NS}:{SHAPE}") <= SHORT_TTL_SECOND
 
 
 async def test_an_oversized_result_is_not_cached(live_cache: Redis) -> None:
@@ -89,9 +92,9 @@ async def test_an_oversized_result_is_not_cached(live_cache: Redis) -> None:
     cache = ToolCache(live_cache, ttl_second=SHORT_TTL_SECOND, max_byte=64)
     thread_id = uuid4().hex
 
-    await cache.put(thread_id, NS, {"output": "长" * 1000})
+    await cache.put(thread_id, NS, SHAPE, {"output": "长" * 1000})
 
-    assert await cache.get(thread_id, NS) is None
+    assert await cache.get(thread_id, NS, SHAPE) is None
 
 
 async def test_an_unreachable_cache_degrades_instead_of_breaking_the_tool() -> None:
@@ -103,7 +106,24 @@ async def test_an_unreachable_cache_degrades_instead_of_breaking_the_tool() -> N
     unreachable = ToolCache(Redis(host="127.0.0.1", port=DEAD_PORT, socket_connect_timeout=1))
 
     with json_log("app.broker.cache") as recorded:
-        assert await unreachable.get("甲", NS) is None
-        await unreachable.put("甲", NS, {"path": "/workspace/a.csv"})
+        assert await unreachable.get("甲", NS, SHAPE) is None
+        await unreachable.put("甲", NS, SHAPE, {"path": "/workspace/a.csv"})
 
     assert [one["level"] for one in recorded] == ["WARNING", "WARNING"]
+
+
+async def test_two_shapes_in_the_same_call_do_not_collide(cache: ToolCache) -> None:
+    """同一次工具调用里的两次写，形状不同就不能撞键。
+
+    **这是 2026-08-19 一次真实 500 逼出来的**：`execute` 的输出过大时，卸载中间件
+    在那次调用的上下文里再发一次 `write` 去落盘 —— 两者共用 `checkpoint_ns`，
+    于是 `WriteResult(**执行结果)` 抛 TypeError，整次分析崩在 `INTERNAL`。
+    **形状恰好相同时更糟**：不报错，第二次静默拿到第一次的结果。
+    """
+    thread_id = uuid4().hex
+
+    await cache.put(thread_id, NS, "ExecuteResponse", {"output": "跑完了", "exit_code": 0})
+    await cache.put(thread_id, NS, "WriteResult", {"error": None, "path": "/workspace/x.txt"})
+
+    assert await cache.get(thread_id, NS, "ExecuteResponse") == {"output": "跑完了", "exit_code": 0}
+    assert await cache.get(thread_id, NS, "WriteResult") == {"error": None, "path": "/workspace/x.txt"}
