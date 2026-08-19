@@ -43,3 +43,25 @@ def test_a_zero_cost_row_is_skipped_instead_of_dividing_by_zero() -> None:
     rows = [row("dead", 0.0), row("dead", 0.0), row("live", 0.10), row("live", 0.12)]
 
     assert _cost_spread(rows) == pytest.approx(0.2)
+
+
+def test_concurrency_defaults_to_one_so_old_rounds_stay_reproducible() -> None:
+    """默认串行。
+
+    **前几轮基线都是串行跑的**，并发会引入资源争抢这一个新的波动源，
+    `latency_second` 首先就不可比了 —— 而 P13⑥ 量的正是同题副本之间的波动。
+    想快要显式要，不能靠默认值悄悄改掉执行方式。
+    """
+    from run_eval import build_parser
+
+    assert build_parser().parse_args([]).concurrency == 1
+
+
+def test_concurrency_is_a_dial_not_a_switch() -> None:
+    """给几就是几 —— 平台侧的每用户并发闸另有配额覆盖，不在这里兜底。
+
+    在这里悄悄夹到 3 的话，跑批会「看着按 10 跑」而实际是 3，**而这不会报错**。
+    """
+    from run_eval import build_parser
+
+    assert build_parser().parse_args(["--concurrency", "10"]).concurrency == 10

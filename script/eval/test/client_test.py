@@ -107,3 +107,23 @@ def test_no_approval_is_sent_before_the_interrupt_event_lands() -> None:
     assert status == "succeeded"
     assert calls["approve"] == 0
     assert approvals == 0
+
+
+DEFAULT_POLL = 5
+
+
+def test_the_poll_interval_can_be_widened_for_concurrent_runs() -> None:
+    """并发跑时必须放慢轮询，否则打的是自己账号的限流。
+
+    **算一遍就知道躲不过**：限流 120 次/分钟、按用户计，而每个等待中的 run
+    每 `poll_second` 秒查一次状态 —— 5 秒 × 10 个并发正好 120 次/分钟，
+    加上提交与取结果必然超。**超了报的是 RATE_LIMITED**，看着像平台出问题，
+    实际是跑批自己把自己打下来的。
+    """
+    import httpx
+
+    from client import PlatformClient
+
+    with httpx.Client() as raw:
+        assert PlatformClient(base_url="http://x", client=raw).poll_second == DEFAULT_POLL
+        assert PlatformClient(base_url="http://x", client=raw, poll_second=20).poll_second == 20

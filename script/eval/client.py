@@ -45,11 +45,15 @@ class PlatformClient:
     Args:
         base_url: 平台地址，指向 nginx 那一层。
         client: 已建好的 httpx 客户端，由调用方负责关闭。
+        poll_second: 等 run 结束时多久查一次状态。**并发跑时必须放大** ——
+            限流是按用户算的 120 次/分钟，5 秒 × 10 个并发正好吃满，
+            再加提交与取结果就会被 RATE_LIMITED 挡下，而那看着像平台故障。
     """
 
-    def __init__(self, *, base_url: str, client: httpx.Client) -> None:
+    def __init__(self, *, base_url: str, client: httpx.Client, poll_second: float = POLL_INTERVAL_SECOND) -> None:
         self._base = base_url.rstrip("/")
         self._client = client
+        self.poll_second = poll_second
 
     def login(self, *, name: str, password: str) -> str:
         """登录并把 cookie 留在客户端里，返回用户标识。
@@ -93,7 +97,7 @@ class PlatformClient:
                 return status, approvals
             if status == "waiting_approval":
                 approvals += int(self._approve_all(run_id))
-            time.sleep(POLL_INTERVAL_SECOND)
+            time.sleep(self.poll_second)
         raise PlatformError(f"run {run_id} 超过 {RUN_TIMEOUT_SECOND} 秒仍未结束")
 
     def _approve_all(self, run_id: str) -> bool:

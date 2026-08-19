@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from client import PlatformClient, PlatformError
+from client import POLL_INTERVAL_SECOND, PlatformClient, PlatformError
 from langfuse import Evaluation, Langfuse
 from metric import evaluate, extract
 
@@ -255,8 +255,8 @@ def _self_check(items: list[Any], *, base_url: str, username: str, password: str
     return 1 if problem else 0
 
 
-def main() -> int:
-    """跑一轮评估，返回进程退出码。"""
+def build_parser() -> argparse.ArgumentParser:
+    """命令行参数。**单独成函数是为了能测** —— 默认值本身就是判据。"""
     parser = argparse.ArgumentParser(description="跑金融分析智能体的评估集")
     parser.add_argument("--repeat", type=int, default=1, help="同题跑几个副本，噪声带要 3")
     parser.add_argument("--limit", type=int, default=0, help="只跑前 N 题，0 表示全跑")
@@ -268,7 +268,19 @@ def main() -> int:
         action="store_true",
         help="只自检不跑分析：数据集读得到吗、题目引用的文件都在吗、登录与建会话通吗",
     )
-    argument = parser.parse_args()
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="同时跑几次分析。默认 1（前几轮基线都是串行跑的，并发会让 latency 不可比）；"
+        "超过账号的并发 run 上限会被 CONCURRENCY_LIMIT 挡回来，那不是提速是制造失败样本",
+    )
+    return parser
+
+
+def main() -> int:
+    """跑一轮评估，返回进程退出码。"""
+    argument = build_parser().parse_args()
 
     username, password = os.environ.get("EVAL_USERNAME", ""), os.environ.get("EVAL_PASSWORD", "")
     if not (username and password):
@@ -297,7 +309,14 @@ def main() -> int:
     record: list[dict[str, Any]] = []
     print(f"{run_name}：{len(items)} 题 × {argument.repeat} 副本 = {len(data)} 次真实分析", flush=True)
     with httpx.Client(timeout=60.0, follow_redirects=True) as http:
-        client = PlatformClient(base_url=argument.base_url, client=http)
+        # **轮询间隔跟着并发走**：限流按用户算 120 次/分钟，间隔不放大的话
+        # 并发到 10 光轮询就吃满，然后被自己的账号限流挡下 —— 报的是 RATE_LIMITED，
+        # 看着像平台出问题
+        client = PlatformClient(
+            base_url=argument.base_url,
+            client=http,
+            poll_second=max(POLL_INTERVAL_SECOND, argument.concurrency * 2),
+        )
         client.login(name=username, password=password)
         result = langfuse.run_experiment(
             name="金融分析智能体评估",
@@ -307,8 +326,9 @@ def main() -> int:
             task=make_task(client, record),
             evaluators=[item_evaluators],
             run_evaluators=[run_evaluators],
-            # **串行**：沙箱池就那么大，并发只会把彼此挤进排队队列
-            max_concurrency=1,
+            # **瓶颈不是沙箱池**（50 个）也不是 worker 并发（20），是**每用户的并发 run 上限**
+            # —— 教师档 3，超了直接 CONCURRENCY_LIMIT。要跑更高得先给这个账号配额覆盖
+            max_concurrency=argument.concurrency,
         )
 
     RESULT_DIR.mkdir(exist_ok=True)
