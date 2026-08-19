@@ -6,6 +6,9 @@
 恢复时就会把 A 的决策套到 B 的调用上，而那种错不报错。
 
 **四种决策是 DeepAgents 侧四条不同的恢复路径**，只验 `approve` 等于没验。
+`edit` 与 `respond` 各有一个必填项：前者缺了没法执行，后者缺了库里那支直接
+`decision["message"]` 抛 KeyError —— 而那时决策早已被接受、run 已经重投，
+炸在恢复那一刻，报错一个字都不指向「少了一句话」。
 
 **这个模块是叶子**：只依赖 pydantic。决策要随任务消息走，而任务消息的定义被配置层
 引用 —— 把这些形状放进带数据库依赖的模块里会兜出一个循环。
@@ -53,7 +56,7 @@ def check(decisions: list[Decision], *, expected: int) -> None:
         expected: 这次中断里待确认的调用数。
 
     Raises:
-        DecisionError: 数量不符、index 重复，或有 index 缺失。
+        DecisionError: 数量不符、index 重复、有 index 缺失，或 edit / respond 缺了各自的必填项。
     """
     if expected == 0:
         message = "这个 run 现在没有待确认的调用"
@@ -70,6 +73,9 @@ def check(decisions: list[Decision], *, expected: int) -> None:
     for one in decisions:
         if one.type is DecisionType.EDIT and one.edited_action is None:
             message = f"index={one.index} 是 edit，但没给 edited_action"
+            raise DecisionError(message)
+        if one.type is DecisionType.RESPOND and not (one.message or "").strip():
+            message = f"index={one.index} 是 respond，但没给要回给 agent 的话"
             raise DecisionError(message)
 
 

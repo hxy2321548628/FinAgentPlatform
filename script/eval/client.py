@@ -20,23 +20,31 @@ POLL_INTERVAL_SECOND = 5
 # 审批闸门：评估集里有题故意去撞它，没人批的话 run 会一直挂着。
 # **决策要覆盖全部待确认调用** —— 只批第一个是 422，而那个红看着像 agent 没做好
 APPROVE = "approve"
+RESPOND = "respond"
 FINAL_STATUS = frozenset({"succeeded", "failed", "cancelled"})
+
+# `respond` 必须带话，平台会挡住不带的（不挡的话炸在恢复那一刻，看着像 agent 出错）。
+# 跑批没有教师坐在屏幕前，只能给一句让它自己定 —— **命中这一句就说明这道题
+# agent 问了问题**，而「问得多不多」正是要量的那个数
+RESPOND_MESSAGE = "按你自己认为合理的口径继续，不必再问。"
 
 
 class PlatformError(RuntimeError):
     """平台接口没按预期响应。"""
 
 
-def _decision_for(action: dict[str, Any]) -> str:
-    """这个调用该回什么决策。
+def _decision_for(action: dict[str, Any]) -> dict[str, Any]:
+    """这个调用该回什么决策，不含 index —— 那个由调用方按平台给的下标补。
 
     **评估一律放行** —— 要测的是 agent 做得对不对，不是教师会不会拦；
-    但工具只允许别的决策时（例如只能改参数）就按它允许的来。
+    但工具只允许别的决策时（例如 `ask_user_question` 只能 `respond`）就按它允许的来，
+    而 `respond` 还必须带上要回的那句话。
     """
     allowed = [str(one) for one in action.get("allowed_decisions") or []]
-    if not allowed or APPROVE in allowed:
-        return APPROVE
-    return allowed[0]
+    kind = APPROVE if not allowed or APPROVE in allowed else allowed[0]
+    if kind == RESPOND:
+        return {"type": kind, "message": RESPOND_MESSAGE}
+    return {"type": kind}
 
 
 class PlatformClient:
@@ -111,7 +119,7 @@ class PlatformClient:
         if not actions:
             return False
         decisions = [
-            {"index": int(one.get("index", position)), "type": _decision_for(one)}
+            {"index": int(one.get("index", position)), **_decision_for(one)}
             for position, one in enumerate(actions)
         ]
         self._post(f"/api/runs/{run_id}/approve", json={"decisions": decisions})

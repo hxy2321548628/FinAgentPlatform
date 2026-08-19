@@ -87,3 +87,24 @@ def test_an_edit_carries_the_edited_action() -> None:
 def test_an_approval_carries_nothing_else() -> None:
     """多塞一个字段可能让框架按别的分支走，approve 就是照原样执行。"""
     assert to_resume([_decision(0)]) == [{"type": "approve"}]
+
+
+def test_a_response_without_a_message_is_refused() -> None:
+    """`respond` 的整个意思就是那句话，缺了它恢复那一刻会 KeyError。
+
+    库里 `_process_decision` 直接取 `decision["message"]`（reject 那支用的是
+    `.get`，因此只有 respond 会炸）。平台放行的代价是 202 之后 run 记成
+    `INTERNAL`，而错误信息一个字都不指向「少了一句话」。
+    """
+    with pytest.raises(DecisionError):
+        check([_decision(0, DecisionType.RESPOND)], expected=1)
+
+
+def test_a_blank_response_message_is_refused() -> None:
+    """空白串同样过不去：它转出去是个空的 ToolMessage，模型收到一句「教师说了：」。"""
+    with pytest.raises(DecisionError):
+        check([_decision(0, DecisionType.RESPOND, message="   ")], expected=1)
+
+
+def test_a_response_with_a_message_passes() -> None:
+    check([_decision(0, DecisionType.RESPOND, message="按等权重算")], expected=1)

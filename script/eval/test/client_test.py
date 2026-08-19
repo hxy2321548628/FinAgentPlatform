@@ -5,7 +5,7 @@
 """
 
 import httpx
-from client import PlatformClient
+from client import RESPOND_MESSAGE, PlatformClient
 
 
 def a_client(handler: object) -> PlatformClient:
@@ -127,3 +127,49 @@ def test_the_poll_interval_can_be_widened_for_concurrent_runs() -> None:
     with httpx.Client() as raw:
         assert PlatformClient(base_url="http://x", client=raw).poll_second == DEFAULT_POLL
         assert PlatformClient(base_url="http://x", client=raw, poll_second=20).poll_second == 20
+
+
+def test_a_question_gets_an_answer_not_a_bare_respond() -> None:
+    """`ask_user_question` 只允许 `respond`，而不带话的 `respond` 平台会挡回来。
+
+    挡不住的话它炸在恢复那一刻、run 记成 `INTERNAL` —— 跑批看到的是一道题
+    莫名其妙地失败，而错误信息一个字都不指向「少了一句话」。
+    """
+    sent: list[dict[str, object]] = []
+    state = {"status": "waiting_approval"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/replay"):
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "1-0",
+                            "event": {
+                                "type": "interrupt",
+                                "data": {
+                                    "actions": [
+                                        {
+                                            "index": 0,
+                                            "tool_name": "ask_user_question",
+                                            "allowed_decisions": ["respond"],
+                                        }
+                                    ]
+                                },
+                            },
+                        }
+                    ]
+                },
+            )
+        if request.url.path.endswith("/approve"):
+            import json
+
+            sent.append(json.loads(request.content))
+            state["status"] = "succeeded"
+            return httpx.Response(202, json={})
+        return httpx.Response(200, json={"status": state["status"]})
+
+    a_client(handler).wait("run-1")
+
+    assert sent == [{"decisions": [{"index": 0, "type": "respond", "message": RESPOND_MESSAGE}]}]
