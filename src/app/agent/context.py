@@ -19,6 +19,8 @@ from deepagents.middleware.summarization import SummarizationMiddleware
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 
+from app.sandbox.path import SANDBOX_ROOT
+
 # 消息历史达到这个规模就折成摘要。
 #
 # **取 4 万的依据**（2026-08-19 首轮评估实测）：十道题里九道的单轮历史在 2k–7k，
@@ -45,6 +47,46 @@ CONTEXT_KEEP_RATIO = 0.2
 CONTEXT_KEEP_FLOOR_TOKEN = 500
 
 
+# 两个中间件把大块内容挪出去时的落点。
+#
+# **必须自己钉死**：框架算落点的办法是「后端是 `CompositeBackend` 就取它的
+# `artifacts_root`，否则按 `/` 算」，而平台的后端实现的是 `SandboxBackendProtocol`，
+# 于是算出 `/large_tool_results` 与 `/conversation_history` —— 平台的路径闸要求
+# 一切在 `/workspace` 下，两处写盘因此全被驳回。
+#
+# **驳回是静默的**（2026-08-19 查出来）：`write` 返回带 error 的结果，卸载那边
+# `if result is None or result.error: return None`，调用方随即原样留下消息，
+# 不抛异常也不记日志。症状是卸载的阈值调到下限也毫无动静、压缩的 `file_path` 恒为空。
+#
+# **点号开头是给教师看的**：这两个目录落在会话的 workspace 里，与 `outputs/` 并列，
+# 点号表示它不是产物、是 agent 自己的暂存
+TOOL_RESULT_DIR = f"{SANDBOX_ROOT}/.large_tool_results"
+HISTORY_DIR = f"{SANDBOX_ROOT}/.conversation_history"
+
+
+def pin_artifact_path(middleware: object, **prefix: str) -> None:
+    """把中间件的产物落点钉到 `/workspace` 下。
+
+    走属性名而不是构造参数，是因为这两个中间件都没有暴露落点的构造参数 ——
+    `artifacts_root` 只有 `CompositeBackend` 认，而平台的后端不是它。
+
+    **不存在的属性名当场抛**：`setattr` 到一个写错或已改名的属性不会报错，
+    只会多挂一个没人读的字段，框架的默认落点原封不动继续用 —— 症状与修复前一模一样。
+
+    Args:
+        middleware: 要改的中间件实例。
+        prefix: 属性名到落点路径的映射。
+
+    Raises:
+        AttributeError: 某个属性名在这个中间件上不存在，多半是上游改名了。
+    """
+    for name, path in prefix.items():
+        if not hasattr(middleware, name):
+            message = f"{type(middleware).__name__} 没有 {name} 这个落点，上游多半改名了"
+            raise AttributeError(message)
+        setattr(middleware, name, path)
+
+
 def create_squeezer(
     model: BaseChatModel,
     backend: BackendProtocol,
@@ -67,7 +109,7 @@ def create_squeezer(
         可直接传进 `create_deep_agent(middleware=...)` 的中间件。
     """
     keep_token = max(int(trigger_token * CONTEXT_KEEP_RATIO), CONTEXT_KEEP_FLOOR_TOKEN)
-    return SummarizationMiddleware(
+    squeezer = SummarizationMiddleware(
         model,
         backend=backend,
         trigger=("tokens", trigger_token),
@@ -77,15 +119,23 @@ def create_squeezer(
         # 而差异不报错，只是某些轮次的消息内容悄悄变了
         truncate_args_settings={"trigger": ("tokens", trigger_token), "keep": ("tokens", keep_token)},
     )
+    pin_artifact_path(
+        squeezer,
+        _history_path_prefix=HISTORY_DIR,
+        _media_prefix=f"{HISTORY_DIR}/media",
+        _large_tool_results_prefix=TOOL_RESULT_DIR,
+    )
+    return squeezer
 
 
 # 单次工具结果超过这个规模就挪到磁盘，模型只看到一句「存在哪儿了」。
 #
-# **取 4000 的依据**（2026-08-19 首轮评估实测，按未命中 token ÷ 工具调用次数粗估）：
-# 十道题里九道每次工具输出在 312–701 token，最贵的一道（把 265 条异常记录逐行打印）
-# 每次约 13856。**框架默认的 20000 正好卡在这两类中间** —— 两边都够不着，
-# 于是那一万四每一轮都重新计费一遍，单题烧掉 12.5 万未命中 token、1.30 元，
-# 是其余各题的 10–20 倍。取正常值上限的约六倍：拦得住异常，碰不着寻常题
+# **取 4000 的依据**：直接量事件流里的工具结果正文，最大 1820 字符（约 455 token），
+# 取它的约九倍 —— 拦得住把整段数据序列打印出来那一类，碰不着寻常题。
+#
+# **别再用「未命中 token ÷ 工具调用次数」去估这个数**：那样估出来是 13856，
+# 高了一个数量级，因为分子里绝大部分是历史累积而不是单次输出。2026-08-19 栽过一次，
+# 而它不报错 —— 阈值定错只会让这一层安静地不干活
 TOOL_RESULT_EVICT_TOKEN = 4_000
 
 
@@ -111,4 +161,10 @@ def create_offloader(
     Returns:
         可直接传进 `create_deep_agent(middleware=...)` 的中间件。
     """
-    return FilesystemMiddleware(backend=backend, tool_token_limit_before_evict=evict_token)
+    offloader = FilesystemMiddleware(backend=backend, tool_token_limit_before_evict=evict_token)
+    pin_artifact_path(
+        offloader,
+        _large_tool_results_prefix=TOOL_RESULT_DIR,
+        _conversation_history_prefix=HISTORY_DIR,
+    )
+    return offloader
