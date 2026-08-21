@@ -4,7 +4,7 @@
 |---|---|
 | 文档状态 | 已落地，随系统演进维护 |
 | 当前版本 | v1.0 |
-| 更新日期 | 2026-08-10 |
+| 更新日期 | 2026-08-21 |
 | 作者 | hxy |
 
 本文只回答三个问题：**平台解决什么问题、系统由哪些部分组成、关键边界在哪里**。运行时契约、数据模型、安全参数和运维步骤不在这里展开；选型理由与放弃的方案由 ADR 记录。
@@ -66,6 +66,7 @@ P0–P4 已于 2026-08-10 全部验收通过。当前状态是“平台链路跑
 | Sandbox | 运行 LLM 生成代码的隔离容器，每个 Thread 按需拥有一个 |
 | HITL | 敏感工具执行前暂停，等待用户批准、拒绝、编辑或回应 |
 | Artifact | 分析生成的图表、表格或报告，留在会话 workspace 的 `outputs/` 下 |
+| Thread memory（P15 目标） | 当前 thread 的 `.memory/` 目录；同一 thread 跨 run 共享，随 workspace purge 删除 |
 
 ---
 
@@ -99,7 +100,7 @@ P0–P4 已于 2026-08-10 全部验收通过。当前状态是“平台链路跑
 ### 2.3 架构原则
 
 - **事件驱动，但不提前分布式化。** 长任务要求异步提交、队列消费和事件订阅；当前规模不要求 K8s、服务网格或分库分表。见 [ADR-0001](./adr/0001-single-host-compose.md)。
-- **持久状态离开进程。** Run 元数据和 checkpoint 在 Postgres，任务与热事件在 Redis；API 与 Worker 因而可以重启和扩副本。**产物是唯一的例外** —— 它留在会话 workspace 的宿主机目录里（`0009` 迁移撤掉对象存储之后），因此产物的下载路径绑在那台机器上。
+- **持久状态离开进程。** Run 元数据和 checkpoint 在 Postgres，任务与热事件在 Redis；API 与 Worker 因而可以重启和扩副本。**产物与 thread-local `.memory` 是文件持久化例外** —— 二者留在会话 workspace 的宿主机目录里（产物在 `0009` 迁移撤掉对象存储后回到这里，记忆由 [ADR-0019](./adr/0019-thread-workspace-memory.md) 定案），因此文件路径绑在这台机器上。
 - **不可信执行面最小化。** 只有 sandbox-broker 持有 `docker.sock`，应用服务不直接执行生成代码。见 [ADR-0004](./adr/0004-sandbox-broker-docker-sock.md)。沙箱自 P12 起可出网装包，隔离因此全靠 gVisor 与资源限额，见 [ADR-0017](./adr/0017-sandbox-network-and-package-install.md)。
 - **契约隔离框架变化。** Worker 把 DeepAgents/LangGraph 事件映射成平台事件，前端不依赖框架内部结构。见 [ADR-0013](./adr/0013-event-anticorruption-layer-v2-stream.md)。
 - **至少一次投递配合幂等。** 队列允许重投；写工具由 broker 按稳定键去重，避免崩溃恢复重复副作用。见 [ADR-0014](./adr/0014-tool-idempotency-key.md)。
@@ -146,7 +147,7 @@ flowchart TB
     SBX -.->|bind mount| BROKER
 ```
 
-> **持久化层只剩两个存储。** MinIO 已于 2026-08-13 撤除 —— 产物存储在 `0009` 迁移就搬回了会话 workspace，此后它只剩 Tempo 与 Loki 两个用户，而那两个服务同日一并撤除（见[运维设计 §8.3](./08operation-design.md)）。
+> **持久化层是 Postgres、Redis 加 thread workspace 文件。** MinIO 已于 2026-08-13 撤除 —— 产物存储在 `0009` 迁移就搬回了会话 workspace，此后它只剩 Tempo 与 Loki 两个用户，而那两个服务同日一并撤除（见[运维设计 §8.3](./08operation-design.md)）。P15 新增的 `.memory` 也在同一 workspace 内，不进入 Postgres 正文表。
 
 ### 3.1 组件职责
 
@@ -155,8 +156,8 @@ flowchart TB
 | Nginx | 静态托管、反向代理、屏蔽内部管理端点、SSE 透传 | 无状态 |
 | API | 登录与授权、业务校验、Run 投递、历史查询、事件回放 | 无状态，可多副本 |
 | Agent Worker | 消费任务、驱动 Agent、调用 LLM、产生平台事件 | 无状态；**当前是单副本**，并发靠进程内的 `WORKER_CONCURRENCY`，进程存活靠看门狗（ADR-0018） |
-| Sandbox Broker | 管理沙箱、文件和写工具去重；唯一接触 Docker 守护进程 | 持有运行期租约与容器视图 |
-| Postgres | 用户、Thread、Run、事件归档、Artifact 元数据和 checkpoint | 核心持久状态 |
+| Sandbox Broker | 管理沙箱、workspace、受保护 `.memory` 和写工具去重；唯一接触 Docker 守护进程 | 持有运行期租约与容器视图 |
+| Postgres | 用户、Thread、Run、事件归档、Artifact 元数据、**P15 目标的**记忆任务/用量账和 checkpoint | 核心可查询持久状态；不存记忆正文 |
 | Redis | Session、任务队列、Run 热事件、取消标志和限流数据 | 可过期的运行期状态；重启会使 Session 失效 |
 | ~~MinIO~~ | ~~分析产物，以及 Tempo/Loki 的对象存储后端~~ 2026-08-13 撤除 | —— |
 | Sandbox | 执行生成代码，工作区通过 bind mount 持久化 | 不可信、可销毁重建 |
@@ -175,8 +176,8 @@ flowchart LR
 - API 是浏览器的唯一后端入口，认证与资源归属校验不下放给前端。
 - Repository 查询默认注入 `user_id`，越权资源与不存在资源统一表现为 404。
 - Worker 不持有 `docker.sock`，不直接管理容器。
-- 沙箱不访问 Postgres、Redis、LLM 或公网；跨边界能力只有 broker 暴露的受限接口。
-- 每个 Thread 的 workspace 独立，目录、容器、配额和产物路径都以 Thread 与用户归属为边界。
+- 沙箱不访问 Postgres、Redis 或 LLM；公网只按 ADR-0017 用于安装 Python 包，跨边界能力仍只有 broker 暴露的受限接口。
+- 每个 Thread 的 workspace 独立，目录、容器、配额、产物与 `.memory` 路径都以 Thread 与用户归属为边界；`.memory` 由 broker 保留目录和专用接口管理。
 
 ---
 
@@ -245,17 +246,18 @@ flowchart LR
     RUN --> EVENT[Run Event]
     RUN --> ARTIFACT[Artifact]
     THREAD --> WORKSPACE[Workspace]
+    WORKSPACE --> MEMORY[.memory memdir]
     THREAD --> CHECKPOINT[LangGraph Checkpoint]
 ```
 
-Postgres 保存可查询的业务事实和 checkpoint，Redis 保存需要低延迟消费或过期的运行期数据。两者的职责不互相替代。**二进制产物不在任何一个存储里** —— 它们留在会话 workspace 的宿主机目录，由 nginx 直发。表结构、配额计量和保留期见[数据设计](./06data-design.md)。
+Postgres 保存可查询的业务事实和 checkpoint，Redis 保存需要低延迟消费或过期的运行期数据；P15 落地后 thread workspace 还保存用户文件、代码、二进制产物和受保护的 `.memory`。三者的职责不互相替代。`.memory` 正文不进 Postgres，且与其他 workspace 字节共用每 thread 5 GB 配额。表结构、配额计量和保留期见[数据设计](./06data-design.md)。
 
 ### 5.2 安全基线
 
 - 身份认证使用 Cookie + Redis Session，角色为 `admin`、`teacher`、`student`。
 - 沙箱使用 Docker + gVisor，rootfs 只读，去除 capabilities，限制 CPU、内存、进程数与临时目录。
-- workspace 使用 XFS project quota，每个 Thread 5 GB；配额设置失败时 fail-closed。
-- 沙箱网络关闭，模型请求只由 Worker 发起。
+- workspace 使用 XFS project quota，每个 Thread 5 GB，包含 `.memory`、快照和整理临时文件；配额设置失败时 fail-closed。
+- 沙箱按 ADR-0017 使用 bridge 出网装包；模型请求仍只由 Worker 发起，沙箱不直连模型 API。
 - 当前内网部署使用 HTTP，这意味着 Session Cookie 不能设置 `Secure`；该风险在现有威胁模型下被明确接受。
 
 威胁、具体参数、部署陷阱和重估条件见[安全设计](./07security-design.md)及对应 ADR。
@@ -304,7 +306,7 @@ XFS `prjquota` 挂载、Broker 重启顺序、持久化目录、备份与监控�
 | 开始承载敏感、涉密或受监管数据 | 脱敏、静态加密、TLS/mTLS、审计与模型出网策略 |
 | 学院提出明确 SLA | Postgres 高可用、备份恢复目标、无停机发布 |
 | 出现高频双向实时交互 | SSE 与 WebSocket 的边界 |
-| workspace 或对象存储增长接近磁盘上限 | 归档、清理与容量扩展策略 |
+| workspace 文件（含 `.memory`）增长接近磁盘上限 | 归档、清理与容量扩展策略 |
 | ~~外部提示词、Skill 或 MCP 进入实施~~ | ~~共享模型、准入审核、凭据注入和工具级计量~~ —— **已于 2026-08-13 触发并重评完毕**，见下 |
 
 > **2026-08-13：最后一行已触发。** [P6 决策文档](../03plan/P6-decision.md) 用 68 条定案把这一行要求重评的四项逐一回答，排成 P6–P10 五期：

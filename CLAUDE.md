@@ -21,8 +21,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `web/` | 前端 React 工程 + 它的 `Dockerfile`（见 [web/CLAUDE.md](web/CLAUDE.md)） |
 | `docker/` | compose、nginx 配置、沙箱镜像 —— **应用与前端的 Dockerfile 不在这里**，跟着源码放在 `src/` 与 `web/` |
 | `script/` | 宿主机部署脚本（gVisor / XFS / 体检 / 单价注册）与回归验收脚本（`script/test/`） |
-| `doc/01design/` | 九份设计文档 + 18 条 ADR |
-| `doc/03plan/` | P0–P11 分期计划与验收记录（[索引](doc/03plan/CLAUDE.md)） |
+| `doc/01design/` | 九份设计文档 + 19 条 ADR |
+| `doc/03plan/` | P0–P15 分期计划与验收记录（[索引](doc/03plan/CLAUDE.md)） |
 | `data/` | postgres / redis / sandbox 三个宿主机 bind mount |
 
 ## 架构
@@ -48,8 +48,8 @@ nginx ──> api ──XADD──> Redis Stream ──XREADGROUP──> worker
 
 三条不可越的边界，改动前先读对应 ADR：
 
-- **api 与 worker 都不挂 `docker.sock`、不挂 workspace 目录**，一切沙箱与文件操作走 broker 的 HTTP（ADR-0004）；
-- **沙箱 `--runtime=runsc`**，2g 内存 / 1 CPU / 128 pids / 5g XFS 配额（ADR-0002、ADR-0015）。网络自 P12 起是 `bridge` 而非 `none` —— agent 要能自己装包，加固清单其余各条一字未动（ADR-0017）；
+- **api 与 worker 都不挂 `docker.sock`、不挂 workspace 目录**，一切沙箱、普通文件与 thread memory 操作走 broker 的 HTTP（ADR-0004、ADR-0019）；
+- **沙箱 `--runtime=runsc`**，2g 内存 / 1 CPU / 128 pids / 5g XFS 配额（含 thread `.memory`，ADR-0002、ADR-0015、ADR-0019）。网络自 P12 起是 `bridge` 而非 `none` —— agent 要能自己装包，加固清单其余各条一字未动（ADR-0017）；
 - **数据库迁移只由 api 容器跑** —— worker 由看门狗管着、出事会自动重启，让它也 upgrade 等于把 DDL 放进一条可能反复重来的路上（ADR-0018）。
 
 ## 命令

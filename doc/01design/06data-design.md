@@ -13,11 +13,12 @@
 
 | 组件 | 用途 | 选它的理由 |
 |---|---|---|
-| **Postgres** | 用户、会话、run 元数据、事件归档，以及 LangGraph checkpoint 表（`AsyncPostgresSaver` 自动建表） | checkpoint 是恢复能力的根基，必须落在有事务保证、可备份的存储上 |
+| **Postgres** | 用户、会话、run 元数据、事件归档、**P15 目标的** `memory_jobs`/`memory_usage`/必要审计元数据，以及 LangGraph checkpoint 表（`AsyncPostgresSaver` 自动建表） | checkpoint 是恢复能力的根基；任务与成本账需要事务和可备份性；不存记忆正文 |
 | **Redis** | 任务队列、事件流、取消标志、分布式限流 | 队列与事件流都要求高频读写 + 可过期，且已因 Streams 而必需，不再引入第二个中间件 |
+| **Thread workspace（P15 目标）** | 用户文件、代码、产物，以及受保护的 `.memory/MEMORY.md` 与逐条 Markdown | `.memory` 是 thread-local 文件真相源，与其他 workspace 字节共用 5 GB XFS project quota；不在 Postgres 复制正文 |
 | ~~**MinIO**~~ | ~~分析产物（图表、Excel、报告）；兼作 Tempo 与 Loki 的对象存储后端（§8.3）~~ | **2026-08-13 撤除。** 两个用途先后消失：产物在 `0009` 迁移搬回了会话 workspace，Tempo 与 Loki 随可观测性同日撤除 —— 一个没有用户的存储只剩运维成本 |
 
-> **产物现在的去处是会话 workspace 的 `outputs/`**，宿主机目录，由 nginx 走 `X-Accel-Redirect` 直发。**代价是它绑在那台机器上**，不再具备「换台机器也拿得到」的性质 —— 单机部署下这一条本来就没有实际收益，但迁移到多机时它会重新变成前提。
+> **产物现在的去处是会话 workspace 的 `outputs/`；P15 的记忆去处是同一 workspace 的 `.memory/`**，二者都由 broker 管理并受 thread 配额约束。产物由 nginx 走 `X-Accel-Redirect` 直发；记忆只经受控 memory API 读写，不进入 Postgres 正文表。
 
 ## 6.2 数据模型草案
 
@@ -110,6 +111,8 @@ erDiagram
 
 LangGraph 的 `checkpoints` / `checkpoint_writes` 表由 `AsyncPostgresSaver` 自建，不在此图中，也**不要手工改动**。
 
+**Thread memory 不在这张 ER 图里**：它是 `/data/sandbox/{thread_id}/.memory/` 下的受保护文件目录，不是一张 `memory_records` 表。`MEMORY.md` 可由目录内活动的 `<slug>.md` 重建；P15 必须用 Postgres 保存按 `thread_id/run_id` 关联的抽取 job、额外模型 usage 和不含正文的审计元数据，正文仍只在 workspace 文件中。
+
 > **`sandboxes` 表大概率永远不建**（2026-08-07）。设计它是为了存容器映射与 `projid`，但 P1 两个用途都用了更简单的方案：容器靠 label 认领（[`sandbox/container.py`](../../app/sandbox/container.py) 的 `running_sandbox`），`projid` 从 `thread_id` 派生而不查表（[ADR-0015](./adr/0015-sandbox-disk-quota-xfs.md) 原写的表映射已被取代）。留在图里是为了说明它为什么不需要，不是待办。
 
 **Session 不落 Postgres** —— 按 §7.2.2 存在 Redis，因此没有 `sessions` 表。
@@ -147,7 +150,7 @@ LangGraph 的 `checkpoints` / `checkpoint_writes` 表由 `AsyncPostgresSaver` �
 
 **4. 删会话是软删除（`threads.deleted_at`）。**（2026-08-11 定案，迁移 `0008_thread_history`）
 
-硬删会撞上 `runs.thread_id` 的外键，而顺着删掉 runs 等于把成本账本挖掉一块 —— `runs` 正是下方生命周期表里明确「不清」的那张。**教师删会话要的是「从我的列表里消失、别再占磁盘」**，两件事分别由这一列和「broker 真删 workspace 目录 + 销毁沙箱」负责，都不需要动 `runs`。
+硬删会撞上 `runs.thread_id` 的外键，而顺着删掉 runs 等于把成本账本挖掉一块 —— `runs` 正是下方生命周期表里明确「不清」的那张。**教师删会话要的是「从我的列表里消失，且在 purge 成功后不再占磁盘」**，前者由 `deleted_at` 负责，后者由 broker 真删 workspace 目录 + 销毁沙箱负责，都不需要动 `runs`；workspace 里的 `.memory` 也随同一条 purge 路径递归删除，不在 Postgres 留一份正文孤儿。purge 失败进入补偿清理和告警，不能把软删响应误报成磁盘已释放。
 
 代价是每条会话查询都要多带一个 `deleted_at IS NULL`。两个过滤条件（归属 + 未删）集中在仓储的一处，各写各的迟早会漏掉一处，而漏掉的症状是「删了还在」。
 
@@ -194,6 +197,7 @@ LangGraph 的 `checkpoints` / `checkpoint_writes` 表由 `AsyncPostgresSaver` �
 | 资源 | 可见范围 | 实现 |
 |---|---|---|
 | 会话 thread、run、事件、产物、上传的数据文件 | **严格私有**，仅所属 `user_id` 可见 | `thread_id` 强绑 `user_id` |
+| Thread `.memory` 记忆目录 | **严格私有**，仅所属 `user_id` 在该 thread 下可见；不同 thread 不继承 | broker 保留目录 + 嵌套 memory API；正文不进 Postgres |
 | 课题组共享的 skill、智能体提示词配置 | **组内可见**。用户可属多个组，可见范围是所有所属组的**并集** | ~~按 `user_groups` 关联表过滤（本期不实现，见 §1.2）~~ → **已于 P7 落地**（2026-08-14），见下 |
 
 > **`user_groups` 建表之后这张表仍然一行未改（2026-08-11）。** 组做的是名册与准入，
@@ -277,7 +281,9 @@ DeepSeek 有 prompt cache，`usage_metadata.input_token_details.cache_read` 直�
 
 ## 6.5 数据生命周期
 
-**workspace 回收已定案（2026-08-07）：P1 不回收，只做可见性；归档删除跟着 MinIO 走 —— 该期次已于 2026-08-08 定在 P4。**
+**workspace 回收已定案（2026-08-07）：P1 不回收，只做可见性；原计划的 MinIO 归档删除随后撤除，当前只在显式 thread purge 时递归删除 workspace。**
+
+P15 的 `.memory` 属于 workspace 生命周期的一部分：其正文、`MEMORY.md`、整理快照和临时文件都计入 thread 的 5 GB XFS project quota；thread 软删后逻辑上不可读，broker purge 成功后与目录一起释放空间。workspace 水位和孤儿清理必须把 `.memory` 一并计算，且已删除 thread 的异步 job 不得重新创建目录。
 
 原先这里写的是「磁盘占用是**历史 thread 总数 × 最多 5GB**，不做会撞墙」。P1 跑完后实测把这个判断校准了：
 
@@ -289,9 +295,9 @@ DeepSeek 有 prompt cache，`usage_metadata.input_token_details.cache_read` 直�
 
 **5GB 是上限不是均值**，所以撞墙由**个别异常会话**推动，而不是由数量累积推动。据此：
 
-- **不做 TTL 删除**。为回收几百 KB 而毁掉教师的图表是坏交易，且删了拉不回来 —— 「归档到 MinIO 后删除本地副本，下次需要时拉回」这条原方案没错，**错的是它的前提眼下不存在**（MinIO 原排 P2，2026-08-07 按 [P2 计划 §2.1](../03plan/P2-plan.md) 改到 P3，**2026-08-08 按 [P3 计划 §7.1](../03plan/P3-plan.md) 定案退回 P4** —— 见下方说明）。
+- **不做 TTL 删除**。为回收几百 KB 而毁掉教师的图表或 thread memory 是坏交易，且删了拉不回来；workspace 只在教师显式删除 thread、broker purge 成功时递归清理。原 MinIO 归档方案的排期变化保留在下方历史说明，不再作为当前存储路径。
 - **做可见性**：[`script/workspace-report.sh`](../../script/workspace-report.sh) 报磁盘水位并点名超过 1GB 的会话，超阈值退出码为 1，可直接挂 cron。它替代不了告警系统（那是 P4），但把「什么时候该管」变成了一个能自动回答的问题。
-- **重新评估的触发条件**：体检脚本连续报红，或单会话占用逼近配额成为常态 —— 届时 MinIO 归档要从 P4 里提前抽出来单做。
+- **重新评估的触发条件**：体检脚本连续报红，或单会话占用逼近配额成为常态 —— 届时另开归档/冷存储 ADR，并重新定义 thread memory 的备份、恢复和删除语义。
 
 > **MinIO 的期次两次改动，2026-08-08 落定在 P4。** P2 那次把它挪出自己身上时顺手指了 P3；写 P3 计划时才发现驱动理由是「租户前缀隔离依赖 P3 的用户模型」—— 那说明它**不能早于** P3，不等于**必须在** P3。而 P3 已有八个步骤，是四期里最大的一期。落回 P4 也与本文 [实施计划基线](../03plan/CLAUDE.md) 的 P4 一行「产物存储完善」一致，两处不再打架。
 
@@ -316,7 +322,8 @@ DeepSeek 有 prompt cache，`usage_metadata.input_token_details.cache_read` 直�
 | 事件（历史） | Postgres `run_events` | **180 天** | 翻半年前的分析是合理需求；再往前没人看，而这是全库最大的表 |
 | 会话 checkpoint | Postgres，LangGraph 自建的三张表 | **180 天** | 判据是**会话最后一次活动**（由 `runs` 反推），不是 checkpoint 自己的时间 —— 那几张表没有时间列 |
 | `runs` | Postgres | **不清** | 它是历史的索引，一行几十字节。清掉等于把目录烧了只留正文 |
-| 分析产物 | MinIO（P4 落地） | **不清** | 图表是教师要的东西本身，删了拉不回来；而量级是 2.5 GB/年（§6.5.1），一年也吃不掉一块盘的零头。**这一行是 P4 补的**，`retention.py` 不碰对象存储 |
+| Thread `.memory` | `/data/sandbox/{thread_id}/.memory/` | **随 thread purge 删除** | `MEMORY.md` 与记录文件是正文真相源；不进 `store.retention.py`，不在 Postgres 留正文 |
+| 分析产物 | thread workspace 的 `outputs/` | **随 thread purge 删除** | 图表是教师要的东西本身；与 `.memory` 一样由 broker 管理，`retention.py` 不碰 workspace 文件 |
 
 两个要点：
 
@@ -327,9 +334,9 @@ DeepSeek 有 prompt cache，`usage_metadata.input_token_details.cache_read` 直�
 
 ### 6.5.1 归档降冷 / 导出（2026-08-08 定案，P4 步骤八）
 
-**定案：降冷不做，导出维持现状（单个产物按 URL 取回），批量导出仍无期次。**
+**定案：降冷不做，导出维持现状（单个 workspace 产物按 URL 取回），批量导出仍无期次。**
 
-**降冷不做，因为没有需要降的量。** MinIO 已经就位（P4 步骤一），本来是这一问的前提；但把实测数字摆出来之后，前提成立了而需求消失了：
+**降冷不做，因为没有需要降的量。** 原先假设由 MinIO 承担冷存储，但该服务已撤除；把实测数字摆出来之后，冷存储需求本身也没有成立：
 
 | 项 | 数 |
 |---|---|
@@ -349,7 +356,7 @@ DeepSeek 有 prompt cache，`usage_metadata.input_token_details.cache_read` 直�
 
 **为什么默认不删。** 这是研究数据。一位教师离职时，他的分析很可能仍属于课题组，甚至正被别人引用；而学生毕业更是常态而非例外。**删除不可逆，保留可逆** —— 在一个一年只涨 2.5 GB 的系统里，把不可逆的操作设成默认值换不到任何东西。停用之后账号登不上（`users.is_active` 在登录时就挡掉），数据仍在原处。
 
-**为什么不做成「一条命令删干净」。** 它跨四处存储，且是一个罕见、后果不可逆的操作 —— 把它压缩成一条命令，收益是省几分钟，代价是**误触一次就没了**。相比之下，让它保持为一份要照着做的清单，天然带来「想一想」和「留个痕」。这与 §7.3 那三条不做成开关是同一条思路：**不给静默的、不可逆的失手留入口。**
+**为什么不做成「一条命令删干净」。** 它跨 Postgres、checkpoint 与 workspace 三处存储，且是一个罕见、后果不可逆的操作 —— 把它压缩成一条命令，收益是省几分钟，代价是**误触一次就没了**。相比之下，让它保持为一份要照着做的清单，天然带来「想一想」和「留个痕」。这与 §7.3 那三条不做成开关是同一条思路：**不给静默的、不可逆的失手留入口。**
 
 一个用户的数据分布在这四处，删除时缺一处就是留了一份孤儿：
 
@@ -357,8 +364,7 @@ DeepSeek 有 prompt cache，`usage_metadata.input_token_details.cache_read` 直�
 |---|---|---|
 | Postgres：`users` / `threads` / `runs` / `run_events` | `users.id` → `threads.user_id` → `runs.thread_id` | 按外键顺序 DELETE；`runs` 与 `run_events` 是量最大的两张 |
 | Postgres：LangGraph checkpoint 三张表 | 按 `thread_id`，**不是按 user** —— 那几张表不认识用户 | 先从 `threads` 取出该用户的全部 `thread_id` |
-| MinIO 产物 | 前缀 `tenant/{user_id}/`，租户隔离就是为此而设（[P4 §8.2](../03plan/P4-plan.md)） | `mc rm --recursive --force local/artifact/tenant/{user_id}/` |
-| 宿主机 workspace | 目录名是 `thread_id`，**同样不认识用户** | 同 checkpoint，先取 `thread_id` 列表 |
+| 宿主机 workspace（含 `outputs/` 与 `.memory`） | 目录名是 `thread_id`，**同样不认识用户** | 同 checkpoint，先取 `thread_id` 列表；broker purge 递归删除整目录，迟到 job 不得重建 |
 
 > **两处「不认识用户」是这张表存在的全部理由。** checkpoint 与 workspace 都按 thread 组织 —— 只删「看得见的那两处」的人会以为清干净了，而磁盘上和 checkpoint 表里还留着全部内容。这件事不写下来，半年后没人记得。
 

@@ -26,6 +26,8 @@ broker 暴露的内网 API：
 | 字节搬运 | `POST /threads/{id}/tool/{upload,download}` | 产物多半是图片，走 base64 |
 | 会话目录 | `POST /threads`<br>`GET /threads/{id}/exists`<br>`POST /threads/{id}/save`<br>`GET /threads/{id}/artifacts[/{path}]` | 建会话、判存在、存上传文件、列与取产物 |
 
+P15 的 `.memory/` 是 broker 管理的保留目录。普通文件工具和 `execute` 对真实 `.memory/` 不可见、不可写删；记忆选择、读取、写入与删除只能走 broker 的受控 memory endpoint，不能绕过 selector、正文预算或准入闸门。容器若需占位，只能挂空的只读遮罩，不能把宿主真实目录暴露给沙箱。
+
 > **本决策于 2026-08-03 按 §5.5 扩展。** 原文写的是「只暴露 `create / exec / destroy` 三个 API」，那是决策作出时的粗粒度描述，已被后续的 [ADR-0016](./0016-sandbox-filesystem-backend.md)（文件操作不进容器）与 [ADR-0014](./0014-tool-idempotency-key.md)（broker 侧去重）细化 —— **过时的是这份 ADR，不是 §5.5**。
 >
 > 扩展到 8 个工具全走 broker 的两条理由（详见 [P1 计划 §2.1](../../03plan/P1-plan.md)）：

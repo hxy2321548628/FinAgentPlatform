@@ -3,7 +3,7 @@
 | 项 | 值 |
 |---|---|
 | 上游 | [总体架构](./01architecture.md) |
-| 相关决策 | [ADR-0005](./adr/0005-task-queue-redis-streams.md) · [ADR-0006](./adr/0006-event-channel-streams-not-pubsub.md) · [ADR-0007](./adr/0007-sse-over-websocket.md) · [ADR-0008](./adr/0008-langgraph-checkpointer.md) · [ADR-0013](./adr/0013-event-anticorruption-layer-v2-stream.md) · [ADR-0014](./adr/0014-tool-idempotency-key.md) |
+| 相关决策 | [ADR-0005](./adr/0005-task-queue-redis-streams.md) · [ADR-0006](./adr/0006-event-channel-streams-not-pubsub.md) · [ADR-0007](./adr/0007-sse-over-websocket.md) · [ADR-0008](./adr/0008-langgraph-checkpointer.md) · [ADR-0013](./adr/0013-event-anticorruption-layer-v2-stream.md) · [ADR-0014](./adr/0014-tool-idempotency-key.md) · [ADR-0019](./adr/0019-thread-workspace-memory.md) |
 
 本文定义 Run 从提交到终止的运行时语义，以及前端、API、Worker 与 Broker 之间的稳定契约。章节继续使用拆分前的 §5.x 编号，便于追溯历史引用。
 
@@ -403,6 +403,10 @@ stateDiagram-v2
 宿主机 /data/sandbox/{thread_id}/
 ```
 
+上图的 bind mount 只表示普通 workspace 文件；P15 的真实 `.memory/` 不随整棵目录暴露给 sandbox，容器内同名位置若保留只能是空的只读遮罩。
+
+P15 落地后，workspace 还包含平台保留的 `.memory/` 子目录：`MEMORY.md` 与逐条 Markdown 由 broker 的 memory service 管理，普通 `/files/*`、通用 backend 和 `execute` 不得绕过准入读写或全量扫描；真实 `.memory` 不挂入 sandbox，必要时仅挂同名空的只读遮罩。thread 软删后拒绝 memory 读写，purge 随 workspace 递归删除；迟到的 RunTask、skill 对齐、抽取 job 和文件请求都必须先查 `deleted_at`、持有 thread 锁并使用不创建目录的查找，不能调用会自动创建目录的 `Workspace.path()`。`.memory` 与 workspace 其他内容共用该 thread 的 5 GB 配额（见 [ADR-0019](./adr/0019-thread-workspace-memory.md)）。
+
 DeepAgents 的文件工具由自实现的 `SandboxBackend` 接到这个 workspace 上：**文件操作由 broker 直接读写宿主机的 bind-mount 目录，只有 `execute` 进容器**（[ADR-0016](./adr/0016-sandbox-filesystem-backend.md)、[智能体设计 §4](./03agent-design.md)）。因此容器是无状态可抛弃的，且上图的回收不影响文件读写。
 
 ## 5.6 Agent 侧的工具接口
@@ -454,7 +458,10 @@ worker ──POST /sandbox/{op} { tool_call_id, ... } ──▶ broker
 | POST | `/threads` | 新建会话 | 201 `{id}` |
 | GET | `/threads/{id}` | 会话详情（含 `agent_config`） | 200 |
 | PATCH | `/threads/{id}` | 改标题 / `agent_config`，两个字段各自可选 | 200 |
-| DELETE | `/threads/{id}` | 删除会话：**软删** + 沙箱与 workspace 目录真删 | 204 |
+| DELETE | `/threads/{id}` | 删除会话：**软删立即阻断读写**；purge 成功后沙箱与 workspace（含 `.memory`）真删，失败进入补偿清理 | 204 |
+| GET | `/threads/{id}/memories` | 当前 thread 的记忆索引（不经过通用 files API） | 200 |
+| GET | `/threads/{id}/memories/{slug}` | 当前 thread 的单条记忆详情 | 200 |
+| DELETE | `/threads/{id}/memories/{slug}` | 物理删除当前 thread 的单条记忆并重建索引 | 204 |
 | GET | `/threads/{id}/runs` | 会话内的执行历史，游标分页 | 200 |
 | GET | `/threads/{id}/files` | 工作目录的结构（扁平条目表，含目录） | 200 |
 | POST | `/threads/{id}/files` | 上传一个数据文件（multipart，字段名 `file`）到 workspace | 201 |
@@ -469,7 +476,7 @@ worker ──POST /sandbox/{op} { tool_call_id, ... } ──▶ broker
 | GET | `/admin/users` | 用户列表（仅 `admin`） | 200 |
 | PATCH | `/admin/users/{id}` | 改角色 / 配额 / 启禁用 | 200 |
 
-**工作目录是文件与产物的唯一存储路径。** 教师上传的数据、agent 写的脚本与交付的图表都在会话的 workspace 里，统一经 `/threads/{id}/files/*` 列出、预览、下载与删除；不再有 `artifacts` 表或对象存储上的第二份身份。
+**工作目录是用户文件、代码、产物与 thread 记忆的唯一文件存储路径。** 教师上传的数据、agent 写的脚本与交付的图表走 `/threads/{id}/files/*`；`.memory` 是平台保留目录，只走上面的嵌套 memories API，不经通用 files API 列出、预览、下载或删除，也不再有记忆正文的 Postgres 第二份身份。
 
 `/threads/{id}/files/raw` 由 api 完成鉴权与路径解析，然后回 `X-Accel-Redirect`，由 nginx 从挂载的 workspace 直发字节；nginx 的目标 location 是 `internal`，外部不能绕过 api 直读。开发机直跑 uvicorn、没有 nginx 时才退回经 broker 边收边发，内存占用与文件大小无关。
 

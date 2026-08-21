@@ -75,7 +75,7 @@ DeepAgents 的事件类型相当特殊：子 agent 嵌套、todo 列表、虚拟
 
 ### 3.5 不引入图表库
 
-沙箱内 matplotlib 出图 → MinIO → 前端拿签名 URL 渲染 `<img>`。前端零图表依赖。若后续需要可交互图表，再单独引入 ECharts 并约定图表 schema，不影响现有结构。
+沙箱内 matplotlib 出图 → thread workspace 的 `outputs/` → 前端经鉴权 URL/X-Accel-Redirect 渲染 `<img>`。前端零图表依赖。若后续需要可交互图表，再单独引入 ECharts 并约定图表 schema，不影响现有结构。
 
 ---
 

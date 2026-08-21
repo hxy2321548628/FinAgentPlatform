@@ -19,6 +19,7 @@
 - 同一 thread 的后续代码调用**复用**该容器
 - idle 30 分钟无调用则回收
 - 下次需要时重建，workspace 文件从卷恢复
+- P15 的 `.memory/` 也属于该 thread workspace：同一 thread 的 run 共享，thread purge 时随目录递归删除
 
 配套要求：文件状态必须留在容器之外的卷里，容器本身无状态可抛弃。
 
@@ -26,8 +27,7 @@
 沙箱容器 /workspace
     ↕ bind mount
 宿主机 /data/sandbox/{thread_id}/
-    ↕ 异步同步
-MinIO tenant/{user_id}/thread/{thread_id}/
+    └── .memory/（broker 受控，真实目录不暴露给 sandbox）
 ```
 
 ## 理由

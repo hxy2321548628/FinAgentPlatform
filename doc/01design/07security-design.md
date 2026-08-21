@@ -3,7 +3,7 @@
 | 项 | 值 |
 |---|---|
 | 上游 | [总体架构](./01architecture.md) |
-| 相关决策 | [ADR-0002](./adr/0002-sandbox-isolation-gvisor.md) · [ADR-0004](./adr/0004-sandbox-broker-docker-sock.md) · [ADR-0010](./adr/0010-self-hosted-accounts-rbac.md) · [ADR-0011](./adr/0011-cookie-session-not-oauth2.md) · [ADR-0012](./adr/0012-plain-http-intranet.md) · [ADR-0015](./adr/0015-sandbox-disk-quota-xfs.md) |
+| 相关决策 | [ADR-0002](./adr/0002-sandbox-isolation-gvisor.md) · [ADR-0004](./adr/0004-sandbox-broker-docker-sock.md) · [ADR-0010](./adr/0010-self-hosted-accounts-rbac.md) · [ADR-0011](./adr/0011-cookie-session-not-oauth2.md) · [ADR-0012](./adr/0012-plain-http-intranet.md) · [ADR-0015](./adr/0015-sandbox-disk-quota-xfs.md) · [ADR-0019](./adr/0019-thread-workspace-memory.md) |
 
 本文从威胁模型出发，定义认证授权、沙箱隔离、数据保护和防滥用措施。章节继续使用拆分前的 §7.x 编号，便于追溯历史引用。
 
@@ -97,6 +97,8 @@ Agent 要写并运行分析代码，内网部署又意味着数据不能交给�
 
 采用 **Docker + gVisor (runsc)**。选型论证（含 Firecracker 的对比与放弃理由）见 [ADR-0002](./adr/0002-sandbox-isolation-gvisor.md)。
 
+P15 目标中的 `.memory` 是 workspace 内的 broker 保留目录，不是普通沙箱文件。真实正文只由 broker memory service 读取和写入；召回选择结果通过受控上下文交给 Agent，沙箱内不得看到真实 `.memory`，否则 `execute` 可以绕过选择器、正文预算和准入闸门。详见 [ADR-0019](./adr/0019-thread-workspace-memory.md)。
+
 ### 7.3.2 安全加固清单
 
 逐条落到容器创建参数：
@@ -160,7 +162,7 @@ Agent 一定会想装包。必须给沙箱配一个内网 pypi 镜像（清华 /
 
 | 目标 | 限额 | 机制 |
 |---|---|---|
-| `/workspace` | **5 GB / thread** | XFS project quota（`projid` 由 `thread_id` 派生，不查表，见 §6.2） |
+| `/workspace` | **5 GB / thread**（含 `.memory`、索引快照和整理临时文件） | XFS project quota（`projid` 由 `thread_id` 派生，不查表，见 §6.2） |
 | `/tmp` | **512 MB** | tmpfs `size=`，计入单沙箱 2GB 内存预算**之内** |
 
 ```bash
@@ -185,7 +187,9 @@ xfs_quota -x -c "limit -p bhard=5g {projid}" /data/sandbox
 
 **`/tmp` 限容比磁盘配额更急**：`--read-only` 使 `/tmp` 只能挂 tmpfs，而 tmpfs 吃的是**宿主机内存**。不限容则一句 `dd` 就能写满内存触发 OOM killer —— 而 [运维设计的部署拓扑与容量输入](./08operation-design.md) 特意留的 4 个沙箱余量防的正是 OOM killer 误杀 Postgres。
 
-**配额不等于总量有界。** 按 §5.5，容器销毁后 workspace 仍留在卷里，故总占用是「历史 thread 数 × 最多 5GB」而非「活跃沙箱数 × 5GB」，worst case 是 TB 级。[运维设计的部署拓扑与容量输入](./08operation-design.md) 的「磁盘充裕」**不解除这个问题**，扩容只是推迟撞墙。原本指望的解法是 §6.5 的归档回收，而**它已于 P4 定案不做** —— 实测典型会话仅 ~350KB、推算 2.5 GB/年，worst case 与实际分布差着四个数量级（§6.5.1）。**因此这一条现在靠的是「实测量级远低于上界」，不是靠机制**，重估触发条件见 §6.5。
+**配额不等于总量有界。** 按 §5.5，容器销毁后 workspace 仍留在卷里，故总占用是「历史 thread 数 × 最多 5GB」而非「活跃沙箱数 × 5GB」，worst case 是 TB 级；P15 的 `.memory`、索引快照和整理临时文件也在这个总量里。[运维设计的部署拓扑与容量输入](./08operation-design.md) 的「磁盘充裕」**不解除这个问题**，扩容只是推迟撞墙。原本指望的解法是 §6.5 的归档回收，而**它已于 P4 定案不做** —— 实测典型会话仅 ~350KB、推算 2.5 GB/年，worst case 与实际分布差着四个数量级（§6.5.1）。**因此这一条现在靠的是「实测量级远低于上界」，不是靠机制**，重估触发条件见 §6.5。
+
+`.memory` 不是安全边界本身：当前 workspace 对沙箱是整体挂载，普通文件工具或 `execute` 若能看到真实目录，就可能绕过选择器和准入。P15 必须由 broker 保留目录、通用 files API 过滤和沙箱空目录遮罩/等价不可见隔离共同封闭这条路径；提示词中的“不要写记忆”不能替代这些控制（见 [ADR-0019](./adr/0019-thread-workspace-memory.md)）。
 
 > **实现提醒**：rootfs 只读使 `pip` 装的包落在 workspace 里，而科学计算栈就要 1–2 GB。建议**把常用栈预装进沙箱镜像**，否则 5GB 里小一半被基础包吃掉，且每个 thread 都要重装一遍。
 
@@ -205,7 +209,7 @@ xfs_quota -x -c "limit -p bhard=5g {projid}" /data/sandbox
 | 项 | 结论 |
 |---|---|
 | 发往 LLM 的数据脱敏 | **不需要**。[总体架构的合规约束](./01architecture.md) 已确认教师数据可送公有云 |
-| MinIO / Postgres 静态加密 | **不需要**。无涉密内容，落盘加密的收益不抵运维复杂度 |
+| workspace（含 `.memory`）/ Postgres 静态加密 | **不需要**。当前威胁模型无涉密内容，落盘加密的收益不抵运维复杂度；若数据分级改变，需连同 ADR-0019 重新评估 |
 | 服务间 mTLS（网关 ↔ worker ↔ broker） | **不需要**。全部在 Docker Compose 内部网络，不暴露到宿主机外 |
 | 传输加密（浏览器 ↔ Nginx） | **不启用**，走 HTTP。理由与代价见 [运维设计的部署拓扑与容量输入](./08operation-design.md) |
 

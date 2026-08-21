@@ -193,7 +193,8 @@ location /api/runs/ {
 
 - **Postgres 定时备份** —— checkpoint 丢失意味着中断的任务无法恢复。这不只是数据备份，也是功能可用性的一部分
 - **Postgres 的数据卷必须落在宿主机的持久化目录，不能用匿名卷** —— 否则 `docker compose down -v` 一次就把 checkpoint 全清了，而那正是 P2 花整期保住的东西。这条在 P2 起 Postgres 的那一刻就要做对，事后迁移数据卷代价高
-- ~~**MinIO 磁盘容量监控**~~ —— MinIO 已于 2026-08-13 撤除。**这条要盯的东西没有消失，只是换了地方**：产物现在只在会话 workspace 里，仍然只增不减、仍然 §6.5 定案不设保留期。盯它的是 [`script/workspace-report.sh`](../../script/workspace-report.sh)（挂 cron，超水位退出码为 1）
+- ~~**MinIO 磁盘容量监控**~~ —— MinIO 已于 2026-08-13 撤除。**这条要盯的东西没有消失，只是换了地方**：产物与 P15 的 thread-local `.memory` 都在会话 workspace 里。[`script/workspace-report.sh`](../../script/workspace-report.sh) 必须统计整个 workspace，明确包含 `.memory` 的索引、正文、整理快照和临时文件；它们与代码、上传文件和产物共用该 thread 的 5 GB XFS 配额。脚本挂 cron，超水位退出码为 1（见 [ADR-0019](./adr/0019-thread-workspace-memory.md)）
+- **已删 thread 的 workspace 要最终清理** —— thread 软删后立即拒绝记忆读写；对 `deleted_at` 超过 grace period 却仍有目录的 thread，清理任务须重试 purge，持续失败时记结构化错误并让 cron 非零退出，供当前巡检或上线后告警通道捕获。迟到的 run、memory job 和文件请求只能做无创建查找，不得在 purge 后重建目录（见 [P15 计划](../03plan/P15-plan.md)）
 - **镜像分发方式** —— 内网可能拉不到 Docker Hub，需要私有 registry 或离线导入。**这一条容易被漏到上线当天才发现**
 - **`/data/sandbox` 所在文件系统须为 XFS 且以 `prjquota` 挂载** —— §7.3.5 的磁盘配额依赖它，[ADR-0015](./adr/0015-sandbox-disk-quota-xfs.md)。挂载选项改动要重启，事后补代价高。**P4 起这已不是加固项而是硬启动依赖**：配额改成 fail-closed 之后，挂载不在时 broker 直接拒绝建会话（`POST /threads` 一律 500）。用 loop 设备造的挂载**重启后不会自动挂回来**
 - **重挂之后必须让 broker 重启一次**（2026-08-10，P4）—— 容器的 bind mount 是在它**启动那一刻**解析的。重启后自动起来的 broker 绑的是「挂载还没回来」时那个被遮住的目录，而 `docker compose up -d` **不会重建它**（服务定义没变，compose 认为无事可做）。**症状与没挂一模一样**：实测宿主机看是 xfs、419 个会话目录，容器里看是 ext4、4 个。之前起来的沙箱容器同样绑着旧目录，一并清掉让 broker 重建

@@ -17,7 +17,7 @@
 
 | 目标 | 限额 | 机制 |
 |---|---|---|
-| `/workspace` | **5 GB / thread** | XFS project quota |
+| `/workspace` | **5 GB / thread**（含 `.memory/`、索引/整理快照与临时文件、代码、上传文件和产物） | XFS project quota |
 | `/tmp` | **512 MB** | tmpfs `size=`，计入单沙箱 2GB 内存预算**之内** |
 
 `projid` 由 sandbox-broker 维护 `thread_id → 数字 id` 的映射（`sandboxes` 表加一列）。
@@ -51,6 +51,7 @@ XFS project quota 是**唯一能对 bind mount 目录做配额、且支持动态
 - **要求承载 `/data/sandbox` 的文件系统是 XFS 且以 `prjquota` 挂载** —— 这是一条部署前提，已写入 §8.5 运维清单。**P4 起它是硬启动依赖**，见下
 - ~~broker 要维护 `projid` 映射，多一份状态~~ **已消除**（2026-08-06 改为派生，见「决策」下的改正）
 - **配额不等于总量有界**：workspace 在容器销毁后仍留在卷里（§5.5），总占用是「历史 thread 数 × 最多 5GB」而非「活跃沙箱数 × 5GB」。原本指望 §6.5 的归档回收，而**它已于 P4 定案不做**（实测 ~350KB/会话，与 5GB 差四个数量级）—— 这一条现在靠实测量级兜着，不靠机制
+- `.memory/`、索引/整理快照和临时文件不设独立容量池，与 thread workspace 的其他字节共用上述 5GB；删除文件或成功 purge workspace 后，相应配额占用才释放
 - 5GB 中 `pip` 装的科学计算栈就占 1–2 GB（rootfs 只读，装不进 site-packages）。建议把常用栈**预装进沙箱镜像**
 
 **2026-08-09（P4）追加的两条，都是实测撞出来的**：

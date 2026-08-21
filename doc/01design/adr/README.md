@@ -30,6 +30,7 @@
 | [0016](./0016-sandbox-filesystem-backend.md) | 自实现 DeepAgents 沙箱后端，不用内置 StateBackend | 已接受 | [运行时设计 §5.5–§5.6](../05runtime-design.md) |
 | [0017](./0017-sandbox-network-and-package-install.md) | 沙箱开放出网，agent 自己装 Python 包 | 已接受 | [安全设计 §7.3.3、§7.3.4](../07security-design.md) |
 | [0018](./0018-single-worker-with-watchdog.md) | worker 降为单副本，进程存活由看门狗兜底 | 已接受 | [运行时设计 §5.3](../05runtime-design.md)、[运维设计 §8.2](../08operation-design.md) |
+| [0019](./0019-thread-workspace-memory.md) | 记忆存放在 thread workspace 的受保护 memdir | 已接受 | [P15 计划](../../03plan/P15-plan.md)、[数据设计 §6.3–§6.5](../06data-design.md)、[安全设计 §7.3.5](../07security-design.md) |
 
 **状态取值**：`提议中` → `已接受` / `已否决` → （后续可能）`已废弃`（被某条新 ADR 取代）
 

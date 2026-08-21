@@ -67,6 +67,8 @@ DeepAgents 官方内置的后端有 `StateBackend` / `FilesystemBackend` / `Loca
 | **继承 `BaseSandbox` 只补 4 个方法** | 省事，但它把 `ls` / `read` / `glob` / `grep` 全转成进容器的 shell 命令，直接推翻本决策「文件操作不依赖容器存活」那条理由。**代价换来的省事不值** —— 七个方法本就是薄封装 |
 | **不用 backend，自定义 4 个工具**（主文档 §5.6 原方案） | 要重写框架的工具描述与配套提示词；失去 `edit_file` / `glob` / `grep`；且 `execute_python(code)` 这种「代码作为参数」的形态不如「先写文件再执行」可复查 —— P3 审批时教师看不到完整脚本 |
 
+> **2026-08-21，P15 的补充定案**：P15 的记忆采用 [ADR-0019](./0019-thread-workspace-memory.md) 的 thread-local `.memory`，继续使用本 ADR 的 broker/workspace 边界，不启用上表预留的 `CompositeBackend`。本 ADR 的七个普通文件方法只适用于普通 workspace 路径；`.memory` 必须由 broker 的专用 memory endpoint 路由。只有将来需要跨 thread 记忆时，才重新评估 `/memories/` → `StoreBackend` 路由。
+
 ## 后果
 
 **正面**：

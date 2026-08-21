@@ -5,7 +5,7 @@
 | 文档定位 | 面向第一次接触本项目的人，半小时建立全景地图 |
 | 事实优先级 | 本文是地图不是细节，具体契约以 `doc/01design/` 与 ADR 为准 |
 | 版本 | v1.0 |
-| 日期 | 2026-08-18 |
+| 日期 | 2026-08-21 |
 | 作者 | hxy |
 
 > **当视频脚本用**：每个「##」小节就是一段 2–4 分钟的口播，按顺序录即可；每节结尾的「本节要点」框就是该段的口播总结句。全文约 35–45 分钟，也可以把第 3、4、7、8 节拆成一个系列。
@@ -145,18 +145,18 @@ worker ──XADD 事件──▶ stream:run:{id} ──XREAD 回放──▶ ap
 
 | 存储 | 装什么 | 特点 |
 |---|---|---|
-| **Postgres** | 用户、会话（thread）、run、事件归档、agent 目录、checkpoint | 可查询的权威业务事实 |
+| **Postgres** | 用户、会话（thread）、run、事件归档、agent 目录、**P15 目标的**记忆任务/用量账、checkpoint | 可查询的权威业务事实；不存 thread memory 正文 |
 | **Redis** | 任务队列、热事件、登录态、限流计数、MCP 熔断计数 | 低延迟、可过期；重启 = 全员重新登录 |
-| **宿主机文件** | 每个 thread 的 workspace 目录（`/data/sandbox/{thread_id}/`） | 二进制产物不落库，nginx 直发 |
+| **宿主机文件** | 每个 thread 的 workspace 目录（`/data/sandbox/{thread_id}/`），**P15 目标含**受保护 `.memory/` | 用户文件、代码、二进制产物和 thread memory 都在这里；memory 与其他字节共用 5 GB 配额 |
 
 四件事值得记住：
 
 1. **事件同步双写**：Redis Stream 存热的（有 MAXLEN 和 TTL），`run_events` 表存历史。异步归档会在「裁剪」与「归档」之间留一个不报错的空白窗口——这是已知取舍。
 2. **checkpoint 表不进迁移**：那几张表由 LangGraph 自己 `setup()` 创建，Alembic 一个脚本都不管它们，改表结构时不要碰。
 3. **thread 与 workspace 的关系**：`threads` 表是「会话存不存在」的权威，workspace 目录只是它的副产品。越权过滤长在表上，不长在文件系统上。
-4. **配额也在这里**：每个 thread 的 workspace 有 5 GB 的 XFS project quota，配额设置失败时 fail-closed——宁可跑不起来，也不放一个没有配额限制的沙箱出来。
+4. **配额也在这里**：P15 落地后每个 thread 的 workspace（包括 `.memory`、索引快照和整理临时文件）有 5 GB 的 XFS project quota，配额设置失败时 fail-closed——宁可跑不起来，也不放一个没有配额限制的沙箱出来。
 
-> **本节要点**：Postgres 存事实与历史，Redis 存热数据与会话，文件只活在 workspace 目录；事件双写，checkpoint 表由框架自管。
+> **本节要点**：Postgres 存事实与历史，Redis 存热数据与会话，用户文件和（P15 落地后的）thread memory 只活在 workspace 目录；事件双写，checkpoint 表由框架自管。删除 thread 的 purge 会递归清理 `.memory`。
 
 ---
 
@@ -204,7 +204,7 @@ worker ──XADD 事件──▶ stream:run:{id} ──XREAD 回放──▶ ap
 
 ## 9. 关键决策一览（ADR 速览）
 
-架构决策记录在 `doc/01design/adr/`，共 18 条。不需要全读，但标注 ★ 的五条建议先读——它们对应代码里最难懂的五处设计：
+架构决策记录在 `doc/01design/adr/`，共 19 条。不需要全读，但标注 ★ 的五条建议先读——它们对应代码里最难懂的五处设计；thread memory 的存储与删除边界见新增的 ADR-0019：
 
 | ADR | 决策 | 一句话结论 |
 |---|---|---|
@@ -226,8 +226,9 @@ worker ──XADD 事件──▶ stream:run:{id} ──XREAD 回放──▶ ap
 | 0016 | Agent 文件系统 | 自实现 Sandbox Backend |
 | 0017 | 沙箱网络 | 开放出网让 agent 自己装包，加固清单不动 |
 | 0018 | worker 副本数 | 降为单副本，沙箱后端改全异步，进程存活靠看门狗 |
+| 0019 | Thread memory | `.memory` 落在对应 workspace，和其他文件共用 5 GB，thread purge 连带删除 |
 
-> **本节要点**：18 条 ADR 记录了每个关键取舍的理由；先读 0002、0004、0008、0013、0014 这五条。
+> **本节要点**：19 条 ADR 记录了每个关键取舍的理由；先读 0002、0004、0008、0013、0014 这五条，记忆落点和配额再看 0019。
 
 ---
 

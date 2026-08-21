@@ -111,6 +111,8 @@
 
 **本期工具集 = DeepAgents 内置的 8 个工具，不自定义新工具。** 工具由 backend 驱动（§4），我们只换后端实现，不换工具层。
 
+`.memory/` 是 broker 管理的保留目录，不属于这 8 个普通文件工具的可见命名空间：broker 对 `ls` / `read_file` / `glob` / `grep` / `write_file` / `edit_file` / `delete` 统一隐藏或拒绝该路径，`execute` 的沙箱挂载也不包含真实 `.memory/`（必要时只放空的只读遮罩）。记忆的选择、读取、写入和删除只能经 broker 的受控 memory endpoint，不能由工具或代码绕过 selector、正文预算和准入规则。
+
 > **2026-08-13：P10 起会多出外部 MCP 工具，但本节的契约一条都不用改。**
 >
 > - **§3.1 那 8 个仍然是全部的内置工具**，MCP 工具是加在它们旁边的，不替换、不包装
@@ -218,9 +220,11 @@ broker              宿主 /data/sandbox/{thread_id}/data.csv   ← 7 个文件�
 沙箱容器            /workspace/data.csv                        ← execute 在这一层执行
 ```
 
+上图的普通文件命名空间不包括真实的 `/workspace/.memory/`；它由 broker memory service 在宿主机侧管理，选中的正文才作为受控上下文交给 agent。`.memory/`、索引/整理快照和临时文件与代码、上传文件、`outputs/` 共同继承该 thread 的 5 GB XFS project quota。
+
 三条由此成立的性质：
 
-1. **`write_file` 写的文件，`execute` 跑的代码能直接 `open()` 读到** —— 二者在同一个命名空间。这正是不能用 `StateBackend` 的原因：那样文件只存在于 LangGraph state 里，沙箱内 `pd.read_csv()` 会 FileNotFound。
+1. **普通 workspace 文件由 `write_file` 写入后，`execute` 跑的代码能直接 `open()` 读到** —— 二者在同一个普通文件命名空间；平台保留的 `.memory` 是明确例外。这正是不能用 `StateBackend` 的原因：那样文件只存在于 LangGraph state 里，沙箱内 `pd.read_csv()` 会 FileNotFound。
 2. **文件工具不需要容器在跑。** §5.5 的沙箱 idle 30 分钟被回收后，翻看历史文件不必冷启动一个容器。
 3. **checkpoint 只存路径与工具调用记录，不存文件内容** —— 这是替换 `StateBackend` 的直接收益，也是 §10.2「checkpoint 表膨胀」风险的主要缓解手段。
 
@@ -231,10 +235,10 @@ broker              宿主 /data/sandbox/{thread_id}/data.csv   ← 7 个文件�
 ```
 execute 执行完 → broker 列出 outputs/ 下本次调用后 mtime 变化的文件
               → 随执行结果一并返回 artifacts[]
-              → worker 上传 MinIO，写 artifacts 表（§6.2）
+              → worker 写 artifacts 表，前端经 workspace/X-Accel-Redirect 取文件（§6.2）
 ```
 
-**为什么不 diff 整个 workspace**：workspace 上限 5GB（§7.3.5），每次 `execute` 全量 stat 太贵；且中间文件（下载的原始数据、临时 pickle）会被误判成产物塞进 MinIO。
+**为什么不 diff 整个 workspace**：workspace 上限 5GB（§7.3.5），每次 `execute` 全量 stat 太贵；且中间文件（下载的原始数据、临时 pickle）会被误判成产物暴露给前端。
 
 **风险与退路**：这依赖 §6 的提示词要求 agent 把图存进该目录，而 LLM 不保证遵守。P0 记录实际遵守率；若不可靠，退到「diff 整个 workspace 但按扩展名白名单过滤」。
 
