@@ -187,6 +187,10 @@ services:
       context: ../src
       dockerfile: Dockerfile
     command: uvicorn app.broker.app:app --host 0.0.0.0 --port 8100
+    # 宿主机上的 `langgraph dev` 需要访问真实 broker；只绑定回环地址，
+    # 不把 broker 暴露给局域网或公网。Compose 内部仍使用 `broker:8100`。
+    ports:
+      - "127.0.0.1:8100:8100"
     env_file:
       - ../.env
     environment:
@@ -221,7 +225,7 @@ services:
     # 默认落在 /dev/null 上：没挂 XFS 的机器本来就不设配额，映射它是无害的空操作
     devices:
       - ${SANDBOX_QUOTA_DEVICE:-/dev/null}:${SANDBOX_QUOTA_DEVICE:-/dev/null}
-    # 不对外暴露端口：只有同一个内部网络里的 api 够得着
+    # 声明容器网络内的端口；宿主机访问由上面的回环 ports 提供。
     expose:
       - "8100"
     # broker 启动时体检 Redis（写操作去重表），连不上就起不来。等它 healthy 再起，

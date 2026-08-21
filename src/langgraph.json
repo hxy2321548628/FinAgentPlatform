@@ -1,0 +1,11 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./dev_graph.py:make_graph"
+  },
+  "env": "../.env",
+  "checkpointer": {
+    "path": "./dev_checkpointer.py:create_checkpointer"
+  },
+  "python_version": "3.13"
+}

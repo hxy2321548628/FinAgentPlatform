@@ -25,6 +25,7 @@ web/coverage/
 data/
 tmp/
 *.log
+.langgraph_api/
 
 # ---- 编辑器与系统 ----
 .vscode/

@@ -109,14 +109,14 @@ class Agent:
 
     Args:
         model: 主模型。
-        checkpointer: 会话状态的持久化。
+        checkpointer: 会话状态的持久化；由 Agent Server 管理时可留空。
     """
 
     def __init__(
         self,
         *,
         model: BaseChatModel,
-        checkpointer: BaseCheckpointSaver[str],
+        checkpointer: BaseCheckpointSaver[str] | None,
         callback: BaseCallbackHandler | None = None,
         subagent_loader: SubagentLoaderProtocol | None = None,
         mcp_loader: McpTargetLoaderProtocol | None = None,
@@ -134,6 +134,21 @@ class Agent:
         self._subagent_loader = subagent_loader
         self._mcp_loader = mcp_loader
         self._mcp_recorder = mcp_recorder
+
+    async def build_graph(
+        self,
+        backend: BackendProtocol,
+        agent_config: AgentConfig | None = None,
+        *,
+        with_mcp: bool = True,
+    ) -> SupportsAgent:
+        """按给定 backend 编译一张图。
+
+        ``langgraph dev`` 的 checkpointer 由 Agent Server 注入，因此开发入口可以把
+        ``checkpointer`` 留空；生产执行仍通过 ``stream``/``resume`` 使用 Postgres
+        checkpointer。
+        """
+        return await self._graph(backend, agent_config, with_mcp=with_mcp)
 
     def stream(
         self,

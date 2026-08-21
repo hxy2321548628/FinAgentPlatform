@@ -29,7 +29,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "debugpy>=1.8.0",
     "httpx>=0.28.1",
+    "langgraph-cli[inmem]>=0.4.0",
     "mypy>=2.3.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
