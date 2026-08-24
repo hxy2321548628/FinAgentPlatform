@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.thread.model import ThreadRecord
+from app.thread.purge import PurgeJob
 from app.thread.repository import ThreadRepository
 from app.user.model import UserRole
 from app.user.repository import User, UserRepository
@@ -39,6 +40,11 @@ async def _row(engine: AsyncEngine, thread_id: str) -> ThreadRecord | None:
     """直接看库里那一行。软删除与硬删的区别只有在这个层面才看得出来。"""
     async with AsyncSession(engine) as session:
         return await session.get(ThreadRecord, UUID(thread_id))
+
+
+async def _pending_purge_for(threads: ThreadRepository, thread_id: str) -> PurgeJob | None:
+    """从 reaper 的全局待办批次里只取当前用例刚建的 thread。"""
+    return next((one for one in await threads.pending_purge() if one.thread_id == thread_id), None)
 
 
 # ------------------------------------------------------------------ 列表
@@ -202,6 +208,31 @@ async def test_a_deleted_thread_keeps_its_row(threads: ThreadRepository, owner: 
     row = await _row(live_engine, created.id)
     assert row is not None
     assert row.deleted_at is not None
+
+
+async def test_deleting_a_thread_enqueues_a_persistent_purge_job(threads: ThreadRepository, owner: User) -> None:
+    created = await threads.create(user_id=owner.id)
+
+    await threads.delete(created.id, user_id=owner.id)
+
+    pending = await _pending_purge_for(threads, created.id)
+    assert pending is not None
+    assert pending.thread_id == created.id
+
+
+async def test_a_failed_purge_stays_pending_until_a_later_success(threads: ThreadRepository, owner: User) -> None:
+    created = await threads.create(user_id=owner.id)
+    await threads.delete(created.id, user_id=owner.id)
+
+    await threads.fail_purge(created.id, "broker 不可达")
+    failed = await _pending_purge_for(threads, created.id)
+    assert failed is not None
+    assert failed.attempts == 1
+    assert failed.last_error == "broker 不可达"
+
+    await threads.complete_purge(created.id)
+
+    assert await _pending_purge_for(threads, created.id) is None
 
 
 async def test_purging_really_removes_the_row(threads: ThreadRepository, owner: User, live_engine: AsyncEngine) -> None:

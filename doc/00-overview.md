@@ -196,7 +196,7 @@ worker ──XADD 事件──▶ stream:run:{id} ──XREAD 回放──▶ ap
 
 **机制六：看门狗盯着事件循环。** 进程崩掉退出，Docker 的 `restart` 会把它拉回来；难办的是**进程还活着但事件循环不转了**——任务照领，然后永远不动，而单副本没有兄弟进程能发现这件事。所以 worker 里有一个守护线程盯着事件循环定期盖的时间戳，60 秒没更新就结束进程，把「卡死」变成「退出」交给 Docker。**为什么不用 healthcheck**：compose 的 `restart` 只认进程退出，判出 unhealthy 并不会重启容器，那是 Swarm 才有的行为。判据是「事件循环还调度得动」而不是「有没有进展」——后者会把每一次正常的几十分钟长分析都误杀。
 
-另外还有两个守护性质的定时任务值得一提：`app/run/reaper.py`（孤儿收割——库里还活着、队列里已经没有它的 run）、`app/run/approval.py`（审批超时清扫），加上 `app/store/retention.py`（保留期清理），都是跑一次即退出的形态。
+另外还有四个守护性质的定时任务：`app/run/reaper.py`（库里还活着、队列里已经没有它的 run）、`app/run/approval.py`（审批超时清扫）、`app/store/retention.py`（保留期清理）与 `app/thread/reaper.py`（软删 thread 的 workspace 持久补偿清理）。四者都是跑一次即退出、可重跑的形态；thread reaper 仍有失败时会非零退出。
 
 > **本节要点**：至少一次投递 + finally ack + checkpoint 续跑 + 幂等键 + 调用级重试 + 看门狗；run 级不自动重试，把决定权交给人。
 

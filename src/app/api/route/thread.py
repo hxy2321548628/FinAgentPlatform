@@ -20,6 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from pydantic import ValidationError
 
 from app.agent.config import effective_config
+from app.agent.user_context import UserContext
 from app.api.error import concurrency_limit, invalid, not_found, quota_exceeded, unauthenticated
 from app.api.platform import Platform, get_platform
 from app.api.schema import (
@@ -39,7 +40,6 @@ from app.preset.reference import ReferenceUnavailableError, resolve_reference
 from app.preset.skill_reference import SkillReferenceError, resolve_skill_references
 from app.preset.subagent_reference import SubagentReferenceError, resolve_subagent_references
 from app.run.approval import DEFAULT_PENDING_LIMIT, pending_count
-from app.sandbox.remote import BrokerError
 from app.thread.repository import Thread
 from cursor import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, CursorError, Page
 
@@ -169,21 +169,24 @@ async def delete_thread(
     「从我的列表里消失、别再占磁盘」，那两件这里都做到了。
 
     **销毁失败仍答 204。** 对教师来说这个会话确实已经删了（列表里没有了），
-    报 500 只会让他再点一次，而第二次得到的是 404。留下的孤儿目录是运维问题，
-    日志里有，磁盘巡检看得见。
+    报 500 只会让他再点一次，而第二次得到的是 404。失败会留在持久清理队列，
+    由 ``app.thread.reaper`` 重试，不能只靠一条容易丢失的日志。
     """
     await require_thread(platform, thread_id, current.user_id)
     await platform.thread.delete(thread_id, user_id=current.user_id)
 
     try:
         await platform.workspace.destroy(thread_id)
-    except BrokerError:
+    except Exception as exc:
+        await platform.thread.fail_purge(thread_id, str(exc)[:2_000])
         logger.error(
-            "会话已删但沙箱与目录没销毁成，留下一个孤儿目录：thread_id=%s user_id=%s",
+            "会话已删但沙箱与目录没销毁成，已留待补偿清理：thread_id=%s user_id=%s",
             thread_id,
             current.user_id,
             exc_info=True,
         )
+    else:
+        await platform.thread.complete_purge(thread_id)
 
 
 @router.post("/{thread_id}/runs", status_code=status.HTTP_202_ACCEPTED)
@@ -205,7 +208,7 @@ async def submit_run(
     提交都慢那么多，而这个端点的全部意义就是立刻返回。
     """
     thread = await require_thread(platform, thread_id, current.user_id)
-    await _require_quota(platform, current.user_id)
+    user_context = await _require_quota(platform, current.user_id)
 
     try:
         effective = effective_config(thread_config=thread.agent_config, override=request.agent_config)
@@ -254,6 +257,7 @@ async def submit_run(
         content=request.content,
         user_id=current.user_id,
         agent_config=resolved,
+        user_context=user_context,
     )
     # 列表按最后活动排序，靠的就是这一下。不推的话，一个用了半年的会话仍旧沉在底下
     await platform.thread.touch(thread_id, user_id=current.user_id)
@@ -266,6 +270,7 @@ async def submit_run(
         id=run.id,
         thread_id=run.thread_id,
         status=run.status,
+        tokens=run.tokens,
         agent_config=run.agent_config.model_dump(exclude_none=True),
     )
 
@@ -332,7 +337,7 @@ def _to_response(thread: Thread, *, live_status: RunStatus | None = None) -> Thr
     )
 
 
-async def _require_quota(platform: Platform, user_id: str) -> None:
+async def _require_quota(platform: Platform, user_id: str) -> UserContext:
     """确认这个用户还有额度可用，没有就 429。
 
     **两道闸的 code 不同**，因为前端要做的事完全不同：配额耗尽该提示明天再来，
@@ -354,14 +359,13 @@ async def _require_quota(platform: Platform, user_id: str) -> None:
 
     # **`None` 是「不限」，不是「上限为 0」** —— 当前只有 admin 这一档，
     # 它是平台的运维出口，被自己的闸门挡住时连「查为什么」也一起做不了了
-    if allowance.token_daily is not None:
-        used = await platform.usage.token_today(user_id)
-        if used >= allowance.token_daily:
-            # **不再 `astimezone()` 一次**：那一步转的是进程时区，容器里就是 UTC，
-            # 于是印出来的「00:00 重置」实际是北京时间早上八点
-            reset = platform.usage.next_reset().strftime("%m-%d %H:%M")
-            logger.info("配额耗尽，拒绝提交：user_id=%s used=%d limit=%d", user_id, used, allowance.token_daily)
-            raise quota_exceeded(f"今日 token 配额已用尽（{used}/{allowance.token_daily}），{reset} 重置")
+    used = await platform.usage.token_today(user_id)
+    if allowance.token_daily is not None and used >= allowance.token_daily:
+        # **不再 `astimezone()` 一次**：那一步转的是进程时区，容器里就是 UTC，
+        # 于是印出来的「00:00 重置」实际是北京时间早上八点
+        reset = platform.usage.next_reset().strftime("%m-%d %H:%M")
+        logger.info("配额耗尽，拒绝提交：user_id=%s used=%d limit=%d", user_id, used, allowance.token_daily)
+        raise quota_exceeded(f"今日 token 配额已用尽（{used}/{allowance.token_daily}），{reset} 重置")
 
     active = await platform.usage.active_run(user_id)
     if active >= allowance.concurrent_run:
@@ -374,6 +378,16 @@ async def _require_quota(platform: Platform, user_id: str) -> None:
     if waiting >= DEFAULT_PENDING_LIMIT:
         logger.info("待审批堆积，拒绝提交：user_id=%s waiting=%d", user_id, waiting)
         raise concurrency_limit(f"还有 {waiting} 个分析在等你确认，先处理掉再提交新的")
+
+    return UserContext(
+        name=user.name,
+        role=user.role,
+        dept=user.dept,
+        token_used_today=used,
+        token_limit_daily=allowance.token_daily,
+        active_runs=active,
+        concurrent_run_limit=allowance.concurrent_run,
+    )
 
 
 async def require_thread(platform: Platform, thread_id: str, user_id: str) -> Thread:

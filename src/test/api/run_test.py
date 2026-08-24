@@ -1,6 +1,7 @@
 import asyncio
 import json
 from functools import partial
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessageChunk
@@ -16,6 +17,7 @@ from app.event.model import (
     RunStatus,
     TokenData,
     TokenEvent,
+    TokenUsage,
 )
 from app.run.log import stream_key
 from test.api.conftest import Agent, drain
@@ -68,6 +70,45 @@ def test_a_finished_run_reports_succeeded(client: TestClient, thread_id: str, ag
         "thread_id": thread_id,
         "status": RunStatus.SUCCEEDED.value,
         "agent_config": {},
+        "tokens": {"input_cache_read": 0, "input_uncached": 0, "output": 0},
+    }
+
+
+def test_get_run_reports_tokens_accumulated_across_approval_legs(
+    client: TestClient,
+    platform: Platform,
+    thread_id: str,
+) -> None:
+    """Replay 只有最后一程事件，终态 GET 必须给出数据库累计真值。"""
+    assert client.portal is not None
+    user_id = str(client.get("/api/auth/me").json()["id"])
+    run_id = uuid4().hex
+    client.portal.call(partial(platform.repository.create, run_id=run_id, thread_id=thread_id, user_id=user_id))
+    client.portal.call(platform.repository.start, run_id)
+    client.portal.call(
+        partial(
+            platform.repository.wait_approval,
+            run_id,
+            tokens=TokenUsage(input_cache_read=2, input_uncached=3, output=5),
+        )
+    )
+    client.portal.call(platform.repository.resume, run_id)
+    client.portal.call(platform.repository.start, run_id)
+    client.portal.call(
+        partial(
+            platform.repository.succeed,
+            run_id,
+            tokens=TokenUsage(input_cache_read=7, input_uncached=11, output=13),
+        )
+    )
+
+    response = client.get(f"/api/runs/{run_id}")
+
+    assert response.status_code == 200
+    assert response.json()["tokens"] == {
+        "input_cache_read": 9,
+        "input_uncached": 14,
+        "output": 18,
     }
 
 

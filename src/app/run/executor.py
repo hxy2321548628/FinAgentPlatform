@@ -19,6 +19,8 @@ from deepagents.backends.protocol import BackendProtocol
 from langgraph.errors import GraphRecursionError
 
 from app.agent.config import AgentConfig, SkillReference
+from app.agent.factory import AgentSnapshot
+from app.agent.user_context import UserContext
 from app.event.mapper import EventMapper, StreamChunk
 from app.event.model import (
     Event,
@@ -44,6 +46,8 @@ from app.event.model import (
     ToolResultEvent,
     now_ms,
 )
+from app.memory.job import MemoryJobPayload, MemoryUsage, MemoryUsageStage
+from app.memory.model import MemorySnapshot, UsageCallbackProtocol
 from app.run.decision import to_resume
 from app.run.log import EventLog, LoggedEvent
 from app.run.repository import Run, RunStart
@@ -69,7 +73,10 @@ class AgentProtocol(Protocol):
         content: str,
         agent_config: AgentConfig,
         *,
+        run_id: str,
         user_id: str | None = None,
+        user_context: UserContext | None = None,
+        selector_usage: UsageCallbackProtocol | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """第一次跑一个提问。
 
@@ -85,15 +92,24 @@ class AgentProtocol(Protocol):
         decisions: list[dict[str, object]],
         agent_config: AgentConfig,
         *,
+        run_id: str,
         user_id: str | None = None,
+        user_context: UserContext | None = None,
+        selector_usage: UsageCallbackProtocol | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """带着教师的决策从中断点接着跑。"""
         ...
 
-    async def pending(
-        self, backend: BackendProtocol, thread_id: str, agent_config: AgentConfig
-    ) -> list[InterruptAction]:
-        """有没有在等人确认。"""
+    async def inspect(
+        self,
+        backend: BackendProtocol,
+        thread_id: str,
+        run_id: str,
+        agent_config: AgentConfig,
+        *,
+        user_context: UserContext | None = None,
+    ) -> AgentSnapshot:
+        """读取中断与成功 outbox 所需的受控消息。"""
         ...
 
 
@@ -132,7 +148,13 @@ class RunRepositoryProtocol(Protocol):
         """标记开跑，并回答这一程是不是第一次开跑。"""
         ...
 
-    async def succeed(self, run_id: str, *, tokens: TokenUsage) -> bool:
+    async def succeed(
+        self,
+        run_id: str,
+        *,
+        tokens: TokenUsage,
+        memory_job: MemoryJobPayload | None = None,
+    ) -> bool:
         """标记跑完，并回答这一次是不是自己写下的终态。"""
         ...
 
@@ -168,6 +190,30 @@ class SkillAlignerProtocol(Protocol):
         ...
 
 
+class ThreadGuardProtocol(Protocol):
+    """执行器在碰 workspace 前对 thread 生命周期的最后一道检查。"""
+
+    async def active(self, thread_id: str, *, user_id: str) -> bool:
+        """Thread 是否仍属于该用户且未软删。"""
+        ...
+
+
+class MemoryUsageRecorderProtocol(Protocol):
+    """Executor 只向记忆账本写 selector 分项。"""
+
+    async def record_usage(self, usage: MemoryUsage) -> None:
+        """按 run/stage 幂等写入一条用量。"""
+        ...
+
+
+class MemoryCostProtocol(Protocol):
+    """把 selector token 按明确模型换算为人民币。"""
+
+    def yuan(self, model: str, tokens: TokenUsage) -> float:
+        """返回这一次调用的成本。"""
+        ...
+
+
 class RunCancelledError(Exception):
     """教师取消了这个 run。
 
@@ -197,8 +243,15 @@ class RunExecutor:
         repository: RunRepositoryProtocol,
         cancel: CancelFlagProtocol,
         skill_aligner: SkillAlignerProtocol,
+        thread_guard: ThreadGuardProtocol | None = None,
         backend_factory: BackendFactory | None = None,
+        memory_usage: MemoryUsageRecorderProtocol | None = None,
+        selector_model_name: str | None = None,
+        selector_cost: MemoryCostProtocol | None = None,
     ) -> None:
+        selector_ledger = (memory_usage, selector_model_name, selector_cost)
+        if any(item is not None for item in selector_ledger) and not all(item is not None for item in selector_ledger):
+            raise ValueError("selector 账本需同时配置仓储、模型名和单价")
         self._pool = pool
         self._backend = backend_factory or RemoteBackendFactory()
         self._log = log
@@ -206,6 +259,10 @@ class RunExecutor:
         self._repository = repository
         self._cancel = cancel
         self._skill_aligner = skill_aligner
+        self._thread_guard = thread_guard
+        self._memory_usage = memory_usage
+        self._selector_model_name = selector_model_name
+        self._selector_cost = selector_cost
 
     async def execute(self, task: RunTask) -> None:
         """跑完一条已经领到手的任务，或者把它停在「等人确认」上。
@@ -232,6 +289,18 @@ class RunExecutor:
             # 而分析照跑不误 —— 那正是「取消没停下来」最典型的形态
             if await self._cancel.is_raised(run.id):
                 logger.info("run 在开跑前已被取消，直接收手")
+                await self._stop(run, TokenUsage())
+                return
+
+            # 删除先软删 DB、再让 broker 清 workspace。队列里的迟到任务仍可能在此后被领到；
+            # 它不能先转成 running、推 run.started，更不能申请沙箱或把目录重新建回来。
+            # 旧版队列消息没有 user_id，只对新消息启用这道 owner-aware 守卫。
+            if (
+                self._thread_guard is not None
+                and user_id is not None
+                and not await self._thread_guard.active(run.thread_id, user_id=user_id)
+            ):
+                logger.info("run 所属会话已删除，不再启动：thread_id=%s", run.thread_id)
                 await self._stop(run, TokenUsage())
                 return
 
@@ -321,7 +390,11 @@ class RunExecutor:
         history = await self._log.read(run.id)
         mapper = EventMapper(run.id, known_tool_paths=_known_tool_paths(history))
 
-        async for ns, mode, payload in self._start(backend, run, task):
+        def selector_usage(usage: TokenUsage) -> None:
+            nonlocal tokens
+            tokens = tokens + usage
+
+        async for ns, mode, payload in self._start(backend, run, task, selector_usage=selector_usage):
             tokens = tokens + _token_usage(mode, payload)
             # **只在 step 边界上查**：`updates` 每个图节点吐一条，一次分析约三十几次，
             # 那是可以干净停下的位置。逐个 token 去查是几千次 Redis 往返，
@@ -335,7 +408,15 @@ class RunExecutor:
         # **流自然结束不等于跑完了**：中断会让执行暂停、流跟着结束，因此要回头查一次
         # 图状态。查状态而不是查流，是因为它两套 stream API 都成立，
         # 不依赖「某个模式会不会吐出中断」这个框架未确认的行为
-        if await self._suspend(backend, run, tokens, task.agent_config):
+        snapshot = await self._agent.inspect(
+            backend,
+            run.thread_id,
+            run.id,
+            task.agent_config,
+            user_context=task.user_context,
+        )
+        await self._record_selector_usage(run, snapshot.memory)
+        if await self._suspend(run, tokens, snapshot.actions):
             return
 
         # 先落库再发终态事件：订阅方收到 run.finished 就会回头查 GET /runs/{id}，
@@ -344,12 +425,58 @@ class RunExecutor:
         # **落库失败就不发事件**：那意味着这个 run 已经有终态了 —— 教师在最后一刻点了
         # 停止，api 抢先写下 cancelled 并推过事件。这时再推一条 run.finished，
         # 前端会把一次被取消的分析显示成正常完成
-        if not await self._repository.succeed(run.id, tokens=tokens):
+        memory_job = None
+        if task.user_id is not None and snapshot.messages:
+            memory_job = MemoryJobPayload(
+                thread_id=run.thread_id,
+                user_id=task.user_id,
+                messages=snapshot.messages,
+            )
+        if not await self._repository.succeed(run.id, tokens=tokens, memory_job=memory_job):
             logger.info("run 已经有终态了，不再推 run.finished")
             return
         await self._emit(RunFinishedEvent(ts=now_ms(), run_id=run.id, path=(), data=RunFinishedData(tokens=tokens)))
 
-    def _start(self, backend: BackendProtocol, run: Run, task: RunTask) -> AsyncIterator[StreamChunk]:
+    async def _record_selector_usage(self, run: Run, snapshot: MemorySnapshot | None) -> None:
+        """把 selector 的可审计分项落账；失败不改写主 run 终态。"""
+        if (
+            snapshot is None
+            or self._memory_usage is None
+            or self._selector_model_name is None
+            or self._selector_cost is None
+        ):
+            return
+        usage = snapshot.selector_usage
+        try:
+            await self._memory_usage.record_usage(
+                MemoryUsage(
+                    run_id=run.id,
+                    thread_id=run.thread_id,
+                    stage=MemoryUsageStage.SELECTOR,
+                    model=self._selector_model_name,
+                    tokens=usage,
+                    cost_yuan=self._selector_cost.yuan(self._selector_model_name, usage),
+                    duration_ms=snapshot.selector_duration_ms,
+                    hit_count=len(snapshot.records),
+                    rejected_count=max(0, len(snapshot.selected_indices) - len(snapshot.records)),
+                    fallback_reason=None if snapshot.fallback is None else snapshot.fallback.value,
+                    included_in_run=True,
+                    selected_slugs=snapshot.selected_slugs,
+                )
+            )
+        except Exception:
+            # 记账与记忆服务同样是附加链路：主分析已经产生了正常结果，
+            # 不能因为这一行审计写失败就对教师改报 INTERNAL。
+            logger.warning("selector 用量落账失败", exc_info=True)
+
+    def _start(
+        self,
+        backend: BackendProtocol,
+        run: Run,
+        task: RunTask,
+        *,
+        selector_usage: UsageCallbackProtocol,
+    ) -> AsyncIterator[StreamChunk]:
         """开跑或续跑。带着决策来的就是续跑，从中断点接着走。"""
         if task.decisions is None:
             return self._agent.stream(
@@ -357,29 +484,33 @@ class RunExecutor:
                 run.thread_id,
                 task.content,
                 task.agent_config,
+                run_id=run.id,
                 user_id=task.user_id,
+                user_context=task.user_context,
+                selector_usage=selector_usage,
             )
         return self._agent.resume(
             backend,
             run.thread_id,
             to_resume(task.decisions),
             task.agent_config,
+            run_id=run.id,
             user_id=task.user_id,
+            user_context=task.user_context,
+            selector_usage=selector_usage,
         )
 
     async def _suspend(
         self,
-        backend: BackendProtocol,
         run: Run,
         tokens: TokenUsage,
-        agent_config: AgentConfig,
+        actions: list[InterruptAction],
     ) -> bool:
         """流结束后查一次中断；有就转 `waiting_approval` 并推 `interrupt`。
 
         Returns:
             是否停在了等人确认上。
         """
-        actions = await self._agent.pending(backend, run.thread_id, agent_config)
         if not actions:
             return False
         if await self._repository.wait_approval(run.id, tokens=tokens):

@@ -5,12 +5,15 @@
 """
 
 import httpx
+import pytest
 from client import RESPOND_MESSAGE, PlatformClient
 
 
 def a_client(handler: object) -> PlatformClient:
     transport = httpx.MockTransport(handler)  # type: ignore[arg-type]
-    return PlatformClient(base_url="http://platform", client=httpx.Client(transport=transport))
+    return PlatformClient(
+        base_url="http://platform", client=httpx.Client(transport=transport)
+    )
 
 
 def test_approval_covers_every_pending_action() -> None:
@@ -30,8 +33,16 @@ def test_approval_covers_every_pending_action() -> None:
                                 "type": "interrupt",
                                 "data": {
                                     "actions": [
-                                        {"index": 0, "tool_name": "delete", "allowed_decisions": ["approve", "reject"]},
-                                        {"index": 1, "tool_name": "delete", "allowed_decisions": ["approve"]},
+                                        {
+                                            "index": 0,
+                                            "tool_name": "delete",
+                                            "allowed_decisions": ["approve", "reject"],
+                                        },
+                                        {
+                                            "index": 1,
+                                            "tool_name": "delete",
+                                            "allowed_decisions": ["approve"],
+                                        },
                                     ]
                                 },
                             },
@@ -51,7 +62,14 @@ def test_approval_covers_every_pending_action() -> None:
 
     assert status == "succeeded"
     assert approvals == 1
-    assert sent == [{"decisions": [{"index": 0, "type": "approve"}, {"index": 1, "type": "approve"}]}]
+    assert sent == [
+        {
+            "decisions": [
+                {"index": 0, "type": "approve"},
+                {"index": 1, "type": "approve"},
+            ]
+        }
+    ]
 
 
 def test_a_tool_that_forbids_approval_gets_what_it_allows() -> None:
@@ -69,7 +87,11 @@ def test_a_tool_that_forbids_approval_gets_what_it_allows() -> None:
                             "id": "1-0",
                             "event": {
                                 "type": "interrupt",
-                                "data": {"actions": [{"index": 0, "allowed_decisions": ["reject"]}]},
+                                "data": {
+                                    "actions": [
+                                        {"index": 0, "allowed_decisions": ["reject"]}
+                                    ]
+                                },
                             },
                         }
                     ]
@@ -100,7 +122,10 @@ def test_no_approval_is_sent_before_the_interrupt_event_lands() -> None:
             return httpx.Response(202, json={})
         calls["poll"] += 1
         # 第二轮轮询就结束，免得测试真的等下去
-        return httpx.Response(200, json={"status": "waiting_approval" if calls["poll"] < 2 else "succeeded"})
+        return httpx.Response(
+            200,
+            json={"status": "waiting_approval" if calls["poll"] < 2 else "succeeded"},
+        )
 
     status, approvals = a_client(handler).wait("run-1")
 
@@ -120,13 +145,14 @@ def test_the_poll_interval_can_be_widened_for_concurrent_runs() -> None:
     加上提交与取结果必然超。**超了报的是 RATE_LIMITED**，看着像平台出问题，
     实际是跑批自己把自己打下来的。
     """
-    import httpx
-
-    from client import PlatformClient
-
     with httpx.Client() as raw:
-        assert PlatformClient(base_url="http://x", client=raw).poll_second == DEFAULT_POLL
-        assert PlatformClient(base_url="http://x", client=raw, poll_second=20).poll_second == 20
+        assert (
+            PlatformClient(base_url="http://x", client=raw).poll_second == DEFAULT_POLL
+        )
+        assert (
+            PlatformClient(base_url="http://x", client=raw, poll_second=20).poll_second
+            == 20
+        )
 
 
 def test_a_question_gets_an_answer_not_a_bare_respond() -> None:
@@ -172,4 +198,51 @@ def test_a_question_gets_an_answer_not_a_bare_respond() -> None:
 
     a_client(handler).wait("run-1")
 
-    assert sent == [{"decisions": [{"index": 0, "type": "respond", "message": RESPOND_MESSAGE}]}]
+    assert sent == [
+        {"decisions": [{"index": 0, "type": "respond", "message": RESPOND_MESSAGE}]}
+    ]
+
+
+def test_memory_usage_waits_for_the_async_job_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run.finished 早于抽取 job，queued/running 时取账会漏掉成本。"""
+    states = iter(("queued", "running", "succeeded"))
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json={
+                "job_status": next(states),
+                "selector": {"model": "aux", "cost_yuan": 0.1},
+                "extractor": None,
+                "consolidator": None,
+            },
+        )
+
+    monkeypatch.setattr("client.time.sleep", lambda _seconds: None)
+
+    result = a_client(handler).wait_memory_usage("run-1")
+
+    assert calls == 3
+    assert result["job_status"] == "succeeded"
+
+
+def test_memory_usage_terminal_failure_is_returned_for_auditing() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "job_status": "failed",
+                "selector": None,
+                "extractor": {"model": "aux", "cost_yuan": 0.2},
+                "consolidator": {"model": "aux", "cost_yuan": 0.0},
+            },
+        )
+
+    result = a_client(handler).wait_memory_usage("run-1")
+
+    assert result["job_status"] == "failed"

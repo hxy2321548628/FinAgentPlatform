@@ -14,6 +14,7 @@ from app.sandbox.workspace import Workspace
 
 # 租约的持有者。生产里取的是 run 标识 —— 崩溃恢复接着跑的是同一个 run
 HOLDER = "run-1"
+TEST_THREAD_IDS = ("thread-1", "thread-2", "thread-3", "thread-4")
 
 
 class FakeContainer:
@@ -87,8 +88,12 @@ def factory() -> Factory:
 
 
 def make_pool(tmp_path: Path, factory: Factory, **override: object) -> SandboxPool:
+    # 池测试聚焦容器调度；thread 身份目录必须由上游先显式创建。
+    workspace = Workspace(root=tmp_path)
+    for thread_id in TEST_THREAD_IDS:
+        workspace.create(thread_id)
     argument: dict[str, object] = {
-        "workspace": Workspace(root=tmp_path),
+        "workspace": workspace,
         "max_container": 2,
         "idle_timeout": 1800.0,
         "queue_timeout": 1.0,
@@ -99,13 +104,25 @@ def make_pool(tmp_path: Path, factory: Factory, **override: object) -> SandboxPo
 
 
 # ------------------------------------------------------------------ 复用
-async def test_acquire_starts_a_container_for_a_new_thread(tmp_path: Path, factory: Factory) -> None:
+async def test_acquire_starts_a_container_for_a_thread_without_one(tmp_path: Path, factory: Factory) -> None:
     pool = make_pool(tmp_path, factory)
 
     container = await pool.acquire("thread-1", holder=HOLDER)
 
     assert container.id == "fake-thread-1"
     assert factory.made[0].start_count == 1
+    await pool.aclose()
+
+
+async def test_acquire_does_not_recreate_a_missing_thread_workspace(tmp_path: Path, factory: Factory) -> None:
+    pool = make_pool(tmp_path, factory)
+    missing = tmp_path / "deleted-thread"
+
+    with pytest.raises(FileNotFoundError, match="会话目录不存在"):
+        await pool.acquire("deleted-thread", holder=HOLDER)
+
+    assert not missing.exists()
+    assert factory.made == []
     await pool.aclose()
 
 

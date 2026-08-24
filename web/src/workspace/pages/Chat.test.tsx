@@ -81,6 +81,9 @@ vi.mock('../components/ChatInput', () => ({
 vi.mock('../components/WorkspaceFiles', () => ({
   WorkspaceFiles: ({ threadId }: { threadId: string }) => <div data-testid="workspace-files" data-thread-id={threadId} />,
 }))
+vi.mock('../components/ThreadMemories', () => ({
+  ThreadMemories: ({ threadId }: { threadId: string }) => <div data-testid="thread-memories" data-thread-id={threadId} />,
+}))
 
 import { Chat } from './Chat'
 
@@ -267,6 +270,20 @@ describe('Chat 工作区面板', () => {
     fireEvent.click(screen.getByRole('button', { name: '展开工作区' }))
     expect(screen.getByTestId('workspace-files')).toBe(workspace)
     expect(content.hidden).toBe(false)
+  })
+
+  it('展开后可从文件切换到当前会话的记忆面板', () => {
+    render(<Chat />)
+
+    fireEvent.click(screen.getByRole('button', { name: '展开工作区' }))
+    expect(screen.getByRole('tab', { name: '文件' }).getAttribute('aria-selected')).toBe('true')
+
+    fireEvent.click(screen.getByRole('tab', { name: '记忆' }))
+
+    expect(screen.getByRole('tab', { name: '记忆' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('tabpanel', { name: '记忆' })).toBeTruthy()
+    expect(screen.getByTestId('thread-memories').getAttribute('data-thread-id')).toBe('thread-1')
+    expect(screen.queryByTestId('workspace-files')).toBeNull()
   })
 
   it('切换会话时清空旧工作区状态并恢复默认折叠', async () => {

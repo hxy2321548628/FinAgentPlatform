@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.sandbox.path import OUTPUT_DIR, PathEscapeError
+from app.sandbox.path import MEMORY_DIR, OUTPUT_DIR, PathEscapeError
 from app.sandbox.quota import QuotaError
 from app.sandbox.workspace import Workspace
 
@@ -51,6 +51,20 @@ def test_path_creates_the_directory_on_demand(space: Workspace, tmp_path: Path) 
 def test_path_rejects_a_thread_id_that_escapes_the_root(space: Workspace) -> None:
     with pytest.raises(PathEscapeError):
         space.path("../elsewhere")
+
+
+def test_lookup_never_creates_an_unknown_thread(space: Workspace, tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        space.lookup("deleted-thread")
+
+    assert not (tmp_path / "deleted-thread").exists()
+
+
+def test_resolve_existing_never_creates_an_unknown_thread(space: Workspace, tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        space.resolve_existing("deleted-thread", "data.csv")
+
+    assert not (tmp_path / "deleted-thread").exists()
 
 
 # ------------------------------------------------------------------ 上传
@@ -293,7 +307,7 @@ def test_without_an_owner_the_directory_is_left_alone(tmp_path: Path, monkeypatc
 # ------------------------------------------------------------------ 删会话
 def test_destroy_removes_the_whole_thread_directory(space: Workspace) -> None:
     """删会话是唯一递归删除的操作 —— 教师点的那一下就是「整个会话都不要了」。"""
-    thread_id = uuid4().hex
+    thread_id = space.create(uuid4().hex)
     space.save(thread_id, "data.csv", b"a,b")
     (space.path(thread_id) / OUTPUT_DIR).mkdir(exist_ok=True)
 
@@ -312,6 +326,8 @@ def test_destroying_a_thread_twice_is_not_an_error(space: Workspace) -> None:
 
 def test_destroying_a_thread_leaves_the_others_alone(space: Workspace) -> None:
     mine, theirs = uuid4().hex, uuid4().hex
+    space.create(mine)
+    space.create(theirs)
     space.save(mine, "mine.csv", b"a")
     space.save(theirs, "theirs.csv", b"b")
 
@@ -364,3 +380,48 @@ def test_workspace_editing_cannot_touch_reserved_skill_directory(space: Workspac
 
     with pytest.raises(PathEscapeError):
         space.write(thread_id, "skill/config.toml", b"x")
+
+
+@pytest.mark.parametrize(
+    ("operation", "relative_path"),
+    [
+        ("write", f"{MEMORY_DIR}/record.md"),
+        ("mkdir", MEMORY_DIR),
+        ("remove", f"{MEMORY_DIR}/record.md"),
+        ("resolve", f"data/../{MEMORY_DIR}/record.md"),
+    ],
+)
+def test_ordinary_workspace_operations_cannot_touch_memory(
+    space: Workspace, operation: str, relative_path: str
+) -> None:
+    thread_id = space.create(uuid4().hex)
+    memory = space.lookup(thread_id) / MEMORY_DIR
+    memory.mkdir()
+    (memory / "record.md").write_text("记忆", encoding="utf-8")
+
+    with pytest.raises(PathEscapeError, match="保留目录"):
+        if operation == "write":
+            space.write(thread_id, relative_path, b"x")
+        elif operation == "mkdir":
+            space.mkdir(thread_id, relative_path)
+        elif operation == "remove":
+            space.remove(thread_id, relative_path)
+        else:
+            space.resolve(thread_id, relative_path)
+
+
+def test_uploading_into_memory_is_rejected(space: Workspace) -> None:
+    thread_id = space.create(uuid4().hex)
+    (space.lookup(thread_id) / MEMORY_DIR).mkdir()
+
+    with pytest.raises(PathEscapeError, match="保留目录"):
+        space.save(thread_id, "record.md", b"x", directory=MEMORY_DIR)
+
+
+def test_uploading_a_file_named_memory_cannot_claim_the_reserved_path(space: Workspace) -> None:
+    thread_id = space.create(uuid4().hex)
+
+    with pytest.raises(PathEscapeError, match="保留目录"):
+        space.save(thread_id, MEMORY_DIR, b"x")
+
+    assert not (space.lookup(thread_id) / MEMORY_DIR).exists()

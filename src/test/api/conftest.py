@@ -31,6 +31,8 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.agent.config import AgentConfig
+from app.agent.factory import AgentSnapshot
+from app.agent.user_context import UserContext
 from app.api.app import create_app
 from app.api.platform import Platform
 from app.auth.password import PasswordHasher
@@ -41,6 +43,9 @@ from app.broker.skill import SkillStore
 from app.event.mapper import StreamChunk
 from app.event.model import InterruptAction
 from app.group.repository import Group, GroupRepository, JoinRequestRepository
+from app.memory.job import MemoryJobRepository
+from app.memory.model import UsageCallbackProtocol
+from app.memory.store import MemoryStore
 from app.preset.mcp import McpRepository
 from app.preset.repository import AgentRepository
 from app.preset.review import ReviewRepository
@@ -57,7 +62,7 @@ from app.run.submitter import RunSubmitter
 from app.sandbox.backend import SandboxBackend
 from app.sandbox.container import CommandResult
 from app.sandbox.pool import PoolStat, QueuePositionCallback
-from app.sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool, RemoteWorkspace
+from app.sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteMemory, RemoteSandboxPool, RemoteWorkspace
 from app.sandbox.workspace import Workspace
 from app.task.queue import TaskQueue
 from app.thread.repository import ThreadRepository
@@ -142,6 +147,7 @@ class Agent:
         self.resumed: list[list[dict[str, object]]] = []
         self.configured: list[AgentConfig] = []
         self.pending_config: list[AgentConfig] = []
+        self.user_contexts: list[UserContext | None] = []
         # 下一次流结束后报告的待确认调用。**用完即清**：续跑那一次不该再停下来
         self.interrupt: list[InterruptAction] = []
         # 卡住不往下走，直到用例放行。**取消那几条用例非它不可**：假 agent 转眼就跑完，
@@ -155,10 +161,15 @@ class Agent:
         content: str,
         agent_config: AgentConfig,
         *,
+        run_id: str,
         user_id: str | None = None,
+        user_context: UserContext | None = None,
+        selector_usage: UsageCallbackProtocol | None = None,
     ) -> AsyncIterator[StreamChunk]:
         self.asked.append(content)
         self.configured.append(agent_config)
+        self.user_contexts.append(user_context)
+        del run_id, user_id, selector_usage
         return self._stream(backend)
 
     def resume(
@@ -168,19 +179,36 @@ class Agent:
         decisions: list[dict[str, object]],
         agent_config: AgentConfig,
         *,
+        run_id: str,
         user_id: str | None = None,
+        user_context: UserContext | None = None,
+        selector_usage: UsageCallbackProtocol | None = None,
     ) -> AsyncIterator[StreamChunk]:
         self.resumed.append(decisions)
         self.configured.append(agent_config)
+        self.user_contexts.append(user_context)
+        del run_id, user_id, selector_usage
         return self._stream(backend)
 
-    async def pending(
-        self, backend: BackendProtocol, thread_id: str, agent_config: AgentConfig
-    ) -> list[InterruptAction]:
+    async def inspect(
+        self,
+        backend: BackendProtocol,
+        thread_id: str,
+        run_id: str,
+        agent_config: AgentConfig,
+        *,
+        user_context: UserContext | None = None,
+    ) -> AgentSnapshot:
         """下一次流结束后要不要停在等人确认上。用完即清 —— 续跑那一次就不该再停。"""
         self.pending_config.append(agent_config)
+        self.user_contexts.append(user_context)
         waiting, self.interrupt = self.interrupt, []
-        return waiting
+        del backend, thread_id, run_id
+        return AgentSnapshot(
+            actions=waiting,
+            messages=[{"role": "user", "content": "问题"}, {"role": "assistant", "content": "答复"}],
+            memory=None,
+        )
 
     def _stream(self, backend: BackendProtocol) -> AsyncIterator[StreamChunk]:
 
@@ -208,6 +236,12 @@ def space(tmp_path: Path) -> Workspace:
 
 
 @pytest.fixture
+def memory_store(space: Workspace) -> MemoryStore:
+    """与 broker 共用同一份 workspace 的 thread 记忆存储。"""
+    return MemoryStore(space)
+
+
+@pytest.fixture
 def log(live_cache: Redis) -> EventLog:
     return EventLog(live_cache)
 
@@ -224,8 +258,15 @@ def file_direct_send() -> bool:
 
 
 @pytest.fixture
-def broker_app(space: Workspace, pool: FakePool, tmp_path: Path) -> FastAPI:
-    return create_broker_app(Broker(workspace=space, pool=pool, skills=SkillStore(tmp_path / "skill")))  # type: ignore[arg-type]
+def broker_app(space: Workspace, pool: FakePool, memory_store: MemoryStore, tmp_path: Path) -> FastAPI:
+    return create_broker_app(
+        Broker(
+            workspace=space,
+            pool=pool,  # type: ignore[arg-type]
+            skills=SkillStore(tmp_path / "skill"),
+            memory=memory_store,
+        )
+    )
 
 
 @pytest.fixture
@@ -289,6 +330,8 @@ def platform(
     thread = ThreadRepository(live_engine)
     return Platform(
         workspace=RemoteWorkspace(connection),
+        memory=RemoteMemory(connection),
+        memory_job=MemoryJobRepository(live_engine),
         log=log,
         submitter=RunSubmitter(repository=repository, queue=queue),
         queue=queue,

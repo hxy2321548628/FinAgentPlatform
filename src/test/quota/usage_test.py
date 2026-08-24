@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.event.model import RunStatus, TokenUsage
+from app.memory.job import MemoryJobRepository, MemoryUsage, MemoryUsageStage
 from app.quota.usage import DEFAULT_RESET_TIMEZONE, RunUsage, day_start, next_reset
 from app.run.repository import RunRepository
 from app.thread.repository import Thread
@@ -71,6 +72,45 @@ async def test_usage_adds_up_across_runs(
     await _finished(repository, owner, owned_thread, CACHED)
 
     assert await usage.token_today(owner.id) == 2 * (CACHED.input_uncached + CACHED.output)
+
+
+async def test_async_memory_usage_is_charged_but_selector_is_not_counted_twice(
+    live_engine: AsyncEngine,
+    usage: RunUsage,
+    repository: RunRepository,
+    owner: User,
+    owned_thread: Thread,
+) -> None:
+    run_id = await _finished(repository, owner, owned_thread, CACHED)
+    memory = MemoryJobRepository(live_engine)
+    extra = TokenUsage(input_cache_read=900, input_uncached=100, output=50)
+    await memory.record_usage(
+        MemoryUsage(
+            run_id=run_id,
+            thread_id=owned_thread.id,
+            stage=MemoryUsageStage.SELECTOR,
+            model="aux",
+            tokens=extra,
+            cost_yuan=0.1,
+            duration_ms=1,
+            included_in_run=True,
+        )
+    )
+    await memory.record_usage(
+        MemoryUsage(
+            run_id=run_id,
+            thread_id=owned_thread.id,
+            stage=MemoryUsageStage.EXTRACTOR,
+            model="aux",
+            tokens=extra,
+            cost_yuan=0.1,
+            duration_ms=1,
+        )
+    )
+
+    assert await usage.token_today(owner.id) == (
+        CACHED.input_uncached + CACHED.output + extra.input_uncached + extra.output
+    )
 
 
 async def test_another_users_burn_is_not_counted(

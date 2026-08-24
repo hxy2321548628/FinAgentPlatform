@@ -216,9 +216,9 @@ class SandboxPool:
             PathEscapeError: thread_id 会让 workspace 落到根目录之外。
             QuotaError: workspace 的磁盘配额没能设上。
         """
-        # 目录留给 Docker 建会是 root 属主，而容器以宿主 uid 跑，写不进去；
-        # 而且配额必须在容器起来之前就位，否则中间那段时间的写入不受任何约束
-        workspace = self._workspace.path(thread_id)
+        # 目录只允许建会话端点创建。软删后的迟到任务必须在这里失败，不能顺手
+        # 复活目录；配额也因此仍只有 Workspace.create 一个设置入口。
+        workspace = self._workspace.lookup(thread_id)
 
         async with self._lock:
             container = await self._take(thread_id, workspace, holder)
@@ -260,8 +260,13 @@ class SandboxPool:
             for thread_id, container_id in (await asyncio.to_thread(running_sandbox)).items():
                 if thread_id in self._slot:
                     continue
-                container = self._factory(thread_id, self._workspace.path(thread_id))
+                workspace = self._workspace.location(thread_id)
+                container = self._factory(thread_id, workspace)
                 container.adopt(container_id)
+                if not workspace.is_dir():
+                    await asyncio.to_thread(container.stop)
+                    logger.warning("发现 workspace 已删除的遗留沙箱，已销毁：thread_id=%s", thread_id)
+                    continue
                 self._slot[thread_id] = _Slot(container=container, last_used=self._now())
                 logger.info("认领重启前的沙箱容器：thread_id=%s container=%s", thread_id, container_id[:12])
 

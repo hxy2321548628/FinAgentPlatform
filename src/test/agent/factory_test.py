@@ -26,8 +26,17 @@ from app.agent.interrupt import ALLOWED_DECISION, DELETE_TOOL, INTERRUPT_ON
 from app.agent.prompt import SYSTEM_PROMPT, compose_prompt
 from app.agent.question import QUESTION_ALLOWED_DECISION, QUESTION_TOOL
 from app.agent.skill import PLATFORM_SKILLS_SYSTEM_PROMPT, ReloadingSkillsMiddleware
+from app.agent.tail import (
+    InstalledPackageSection,
+    StepBudgetSection,
+    SystemReminderSection,
+    TailContextMiddleware,
+    TodoProgressSection,
+    UserContextSection,
+)
 from app.agent.trace import SESSION_KEY, USER_KEY
 from app.event.mapper import StreamChunk
+from app.memory.recall import PLATFORM_RUN_ID_CONFIG_KEY
 from config import Settings
 
 
@@ -135,6 +144,20 @@ async def test_the_thread_id_isolates_conversation_history(
     await drain(runner.stream(FakeBackend(), "thread-42", "一"))  # type: ignore[arg-type]
 
     assert agent.call["config"]["configurable"]["thread_id"] == "thread-42"
+
+
+async def test_platform_run_id_does_not_use_langgraphs_reconnect_key(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    """平台 run id 不得触发 LangGraph 的同 run 流重连语义。"""
+    agent, _ = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    await drain(runner.stream(FakeBackend(), "thread-42", "一", run_id="run-42"))  # type: ignore[arg-type]
+
+    configurable = agent.call["config"]["configurable"]
+    assert configurable[PLATFORM_RUN_ID_CONFIG_KEY] == "run-42"
+    assert "run_id" not in configurable
 
 
 async def test_a_configured_callback_reaches_the_graph_with_the_identity(
@@ -255,6 +278,25 @@ async def test_the_offload_threshold_comes_from_configuration(
 
     keeper = next(one for one in built["middleware"] if one.name == "FilesystemMiddleware")
     assert keeper._tool_token_limit_before_evict == 1234
+
+
+async def test_tail_sections_are_ordered_from_highest_to_lowest_priority(
+    recorded: tuple[RecordingAgent, dict[str, Any]],
+) -> None:
+    """预算从尾部丢节，因此任务进度必须在首位、条件提醒必须在末位。"""
+    _, built = recorded
+    runner = Agent(model=DummyModel(), checkpointer=InMemorySaver())
+
+    await drain(runner.stream(FakeBackend(), "thread-1", "一"))  # type: ignore[arg-type]
+
+    tail = next(one for one in built["middleware"] if isinstance(one, TailContextMiddleware))
+    assert [type(one) for one in tail._sections] == [
+        TodoProgressSection,
+        StepBudgetSection,
+        InstalledPackageSection,
+        UserContextSection,
+        SystemReminderSection,
+    ]
 
 
 async def test_the_recursion_limit_comes_from_configuration(recorded: tuple[RecordingAgent, dict[str, Any]]) -> None:

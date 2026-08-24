@@ -38,6 +38,19 @@ PRICE_UNIT = 1_000_000
 # 空文件不算产物：零字节的图打不开，「存在」与「可用」不是一回事
 MIN_ARTIFACT_BYTE = 1
 
+# P15 的四本账。主模型与三个辅助环节必须分开存，最后只在一个地方相加；
+# 否则 selector 的 usage 合入 run 后，很容易再拿 selector 分项加一遍。
+USAGE_COMPONENTS = ("main", "selector", "extractor", "consolidator")
+USAGE_INTEGER_FIELDS = (
+    "tokens_cache_read",
+    "tokens_uncached",
+    "tokens_output",
+    "duration_ms",
+    "hit_count",
+    "rejected_count",
+)
+USAGE_FLOAT_FIELDS = ("cost_yuan", "latency_second")
+
 
 @dataclass(frozen=True)
 class RunFacts:
@@ -83,7 +96,70 @@ def cost_of(*, cached: int, uncached: int, output: int) -> float:
     Returns:
         人民币金额。
     """
-    return (cached * PRICE_CACHED + uncached * PRICE_UNCACHED + output * PRICE_OUTPUT) / PRICE_UNIT
+    return (
+        cached * PRICE_CACHED + uncached * PRICE_UNCACHED + output * PRICE_OUTPUT
+    ) / PRICE_UNIT
+
+
+def aggregate_usage(entries: list[dict[str, Any] | None]) -> dict[str, Any] | None:
+    """把同一模型环节的多轮账本相加。
+
+    ``None`` 表示账本还没有接入，不等于模型确认没有调用。后者必须由上游显式写一条
+    token、成本和命中数均为 0 的账；这样本地聚合不用猜测远端状态，也不会把缺数据
+    伪装成零费用。
+    """
+    if not entries or any(one is None for one in entries):
+        return None
+    known = [one for one in entries if one is not None]
+    output: dict[str, Any] = {}
+    for field in USAGE_INTEGER_FIELDS:
+        values = [one.get(field) for one in known]
+        output[field] = (
+            sum(int(value) for value in values)
+            if all(
+                isinstance(value, int) and not isinstance(value, bool)
+                for value in values
+            )
+            else None
+        )
+    for field in USAGE_FLOAT_FIELDS:
+        values = [one.get(field) for one in known]
+        output[field] = (
+            sum(float(value) for value in values)
+            if all(
+                isinstance(value, int | float) and not isinstance(value, bool)
+                for value in values
+            )
+            else None
+        )
+    output["models"] = sorted(
+        {
+            str(one["model"]).strip()
+            for one in known
+            if isinstance(one.get("model"), str) and str(one["model"]).strip()
+        }
+    )
+    included = [one.get("included_in_run") for one in known]
+    output["included_in_run"] = (
+        included[0]
+        if included
+        and all(isinstance(value, bool) and value == included[0] for value in included)
+        else None
+    )
+    return output
+
+
+def total_cost_of_usage(entries: list[dict[str, Any] | None]) -> float | None:
+    """汇总四个环节的总成本；任一账本缺失就返回 ``None``（未验）。"""
+    if not entries or any(one is None for one in entries):
+        return None
+    values = [one.get("cost_yuan") for one in entries if one is not None]
+    if not all(
+        isinstance(value, int | float) and not isinstance(value, bool)
+        for value in values
+    ):
+        return None
+    return sum(float(value) for value in values)
 
 
 @dataclass(frozen=True)
@@ -98,7 +174,15 @@ def extract(events: list[dict[str, Any]]) -> RunFacts:
     """把事件流折成一组事实。"""
     answer: list[str] = []
     tokens = {"input_cache_read": 0, "input_uncached": 0, "output": 0}
-    counter = {"compaction": 0, "interrupt": 0, "call": 0, "error": 0, "offload": 0, "question": 0, "todo": 0}
+    counter = {
+        "compaction": 0,
+        "interrupt": 0,
+        "call": 0,
+        "error": 0,
+        "offload": 0,
+        "question": 0,
+        "todo": 0,
+    }
     status, code, installed = "unknown", None, False
     stamp: dict[str, int] = {}
 
@@ -115,7 +199,9 @@ def extract(events: list[dict[str, Any]]) -> RunFacts:
             case "interrupt":
                 counter[kind] += 1
                 counter["question"] += sum(
-                    1 for action in data.get("actions") or [] if action.get("tool_name") == QUESTION_TOOL
+                    1
+                    for action in data.get("actions") or []
+                    if action.get("tool_name") == QUESTION_TOOL
                 )
             case "todo.updated":
                 counter["todo"] += 1
@@ -124,9 +210,13 @@ def extract(events: list[dict[str, Any]]) -> RunFacts:
                 installed = installed or _is_install(data)
             case "tool_result":
                 counter["error"] += int(data.get("status") == "error")
-                counter["offload"] += int(OFFLOAD_MARKER in str(data.get("content", "")))
+                counter["offload"] += int(
+                    OFFLOAD_MARKER in str(data.get("content", ""))
+                )
             case "run.finished" | "run.cancelled":
-                tokens.update({k: int(v) for k, v in (data.get("tokens") or {}).items()})
+                tokens.update(
+                    {k: int(v) for k, v in (data.get("tokens") or {}).items()}
+                )
                 status = "succeeded" if kind == "run.finished" else "cancelled"
             case "run.failed":
                 status, code = "failed", str(data.get("code", "")) or None
@@ -160,7 +250,11 @@ def extract(events: list[dict[str, Any]]) -> RunFacts:
 
 
 def evaluate(
-    expected: dict[str, Any], *, answer: str, files: list[dict[str, Any]], status: str = "succeeded"
+    expected: dict[str, Any],
+    *,
+    answer: str,
+    files: list[dict[str, Any]],
+    status: str = "succeeded",
 ) -> Verdict:
     """按题目自带的判据判一道题，失败时说清卡在哪一条。"""
     missing = [
@@ -170,8 +264,12 @@ def evaluate(
             _check_absent(expected.get("workspace_absent"), files),
             _check_numbers(expected.get("answer_numbers"), answer),
             _check_ranges(expected.get("answer_number_range"), answer),
-            _check_keywords(expected.get("answer_must_include_all"), answer, every=True),
-            _check_keywords(expected.get("answer_must_include_any"), answer, every=False),
+            _check_keywords(
+                expected.get("answer_must_include_all"), answer, every=True
+            ),
+            _check_keywords(
+                expected.get("answer_must_include_any"), answer, every=False
+            ),
             _check_pattern(expected.get("answer_must_match"), answer),
             _check_status(expected.get("run_status"), status),
         )
@@ -229,7 +327,9 @@ def _check_numbers(wanted: list[dict[str, Any]] | None, answer: str) -> str:
         str(one.get("label", one.get("value")))
         for one in wanted
         if not any(
-            abs(value - float(one["value"])) <= abs(float(one["value"])) * float(one["rel_tol"]) for value in found
+            abs(value - float(one["value"]))
+            <= abs(float(one["value"])) * float(one["rel_tol"])
+            for value in found
         )
     ]
     return f"答复里没有这些数：{'、'.join(missing)}" if missing else ""
@@ -252,7 +352,9 @@ def _check_keywords(wanted: list[str] | None, answer: str, *, every: bool) -> st
         return ""
     hit = [one for one in wanted if one in answer]
     if every and len(hit) != len(wanted):
-        return f"答复里缺这些说法：{'、'.join(one for one in wanted if one not in answer)}"
+        return (
+            f"答复里缺这些说法：{'、'.join(one for one in wanted if one not in answer)}"
+        )
     if not every and not hit:
         return f"答复里一个都没提到：{'、'.join(wanted)}"
     return ""

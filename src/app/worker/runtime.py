@@ -9,6 +9,7 @@ import logging
 import os
 import socket
 from dataclasses import dataclass
+from typing import cast
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -16,6 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.agent.circuit import McpCircuit
 from app.agent.factory import Agent, create_model
 from app.agent.trace import create_callback
+from app.memory.consolidator import MemoryConsolidator
+from app.memory.extractor import MemoryExtractor
+from app.memory.job import MemoryJobRepository
+from app.memory.model import SelectorModelProtocol
+from app.memory.pricing import ModelTokenPrice, TokenPrice
+from app.memory.worker import MemoryJobWorker, MemoryWorkerLoop
 from app.preset.mcp import McpRepository, McpTargetLoader
 from app.preset.repository import AgentRepository
 from app.preset.skill_remote import RemoteSkillStore
@@ -24,10 +31,11 @@ from app.run.cancel import CancelFlag
 from app.run.executor import RunExecutor
 from app.run.log import EventLog
 from app.run.repository import RunRepository
-from app.sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteSandboxPool
+from app.sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteMemory, RemoteSandboxPool
 from app.store import postgres, redis
 from app.store.checkpoint import CheckpointPool, open_checkpoint
 from app.task.queue import TaskQueue
+from app.thread.repository import ThreadRepository
 from app.worker.loop import Worker
 from config import Settings
 
@@ -49,6 +57,7 @@ class WorkerRuntime:
     """worker 持有的运行时。"""
 
     worker: Worker
+    memory_loop: MemoryWorkerLoop
     queue: TaskQueue
     engine: AsyncEngine
     cache: Redis
@@ -89,6 +98,21 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
     mcp_catalog = McpRepository(engine)
     connection = BrokerConnection(base_url=settings.broker_url)
     backend_factory = RemoteBackendFactory(base_url=settings.broker_url)
+    thread = ThreadRepository(engine)
+    auxiliary_model = cast(
+        SelectorModelProtocol,
+        create_model(settings, model_name=settings.model_aux),
+    )
+    memory_service = RemoteMemory(connection)
+    memory_repository = MemoryJobRepository(engine)
+    memory_price = ModelTokenPrice(
+        model=settings.model_aux,
+        price=TokenPrice(
+            cached=settings.model_aux_price_cached,
+            uncached=settings.model_aux_price_input,
+            output=settings.model_aux_price_output,
+        ),
+    )
     executor = RunExecutor(
         pool=RemoteSandboxPool(connection),
         log=EventLog(cache, archive=EventArchive(engine)),
@@ -105,11 +129,33 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
             recursion_limit=settings.agent_recursion_limit,
             context_trigger_token=settings.agent_context_trigger_token,
             tool_result_evict_token=settings.agent_tool_result_evict_token,
+            memory_service=memory_service,
+            selector_model=auxiliary_model,
         ),
         repository=RunRepository(engine),
         cancel=CancelFlag(cache),
         skill_aligner=RemoteSkillStore(connection),
+        thread_guard=thread,
         backend_factory=backend_factory,
+        memory_usage=memory_repository,
+        selector_model_name=settings.model_aux,
+        selector_cost=memory_price,
+    )
+    memory_worker = MemoryJobWorker(
+        repository=memory_repository,
+        thread_guard=thread,
+        storage=memory_service,
+        extractor=MemoryExtractor(model=auxiliary_model),
+        consolidator=MemoryConsolidator(model=auxiliary_model),
+        model_name=settings.model_aux,
+        cost=memory_price,
+        max_attempts=settings.memory_job_max_attempts,
+    )
+    memory_loop = MemoryWorkerLoop(
+        runner=memory_worker,
+        poll_second=settings.memory_worker_poll_second,
+        stale_repository=memory_repository,
+        stale_second=settings.memory_job_stale_second,
     )
     queue = TaskQueue(
         cache,
@@ -123,6 +169,7 @@ async def build_worker(settings: Settings) -> WorkerRuntime:
             concurrency=settings.worker_concurrency,
             heartbeat_second=settings.worker_heartbeat_second,
         ),
+        memory_loop=memory_loop,
         queue=queue,
         engine=engine,
         cache=cache,

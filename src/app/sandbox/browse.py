@@ -21,6 +21,8 @@ from datetime import UTC, datetime
 from itertools import islice
 from pathlib import Path
 
+from app.sandbox.path import MEMORY_DIR, is_memory_path
+
 logger = logging.getLogger(__name__)
 
 # 猜不出扩展名时的类型。工作目录里多半是图与 csv，但也可能是 Excel、pickle 或别的什么
@@ -91,9 +93,12 @@ def tree(root: Path, *, limit: int = MAX_ENTRY) -> Tree:
     Returns:
         按路径排序的条目，以及有没有被截断。
     """
+    if root.name == MEMORY_DIR:
+        return Tree(entries=[], truncated=False)
+
     # 先过滤再截断：符号链接不该占掉名额。`rglob` 本身不跟随链接目录（3.13 起的默认），
     # 这里再挡一次链接文件本身
-    walking = (path for path in root.rglob("*") if not path.is_symlink())
+    walking = (path for path in root.rglob("*") if not path.is_symlink() and not is_memory_path(root, path))
     found = list(islice(walking, limit + 1))
     entries = [one for one in (_describe(root, path) for path in found[:limit]) if one is not None]
     entries.sort(key=lambda one: one.path)

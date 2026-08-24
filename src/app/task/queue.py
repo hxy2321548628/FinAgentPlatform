@@ -20,6 +20,7 @@ from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
 from app.agent.config import AgentConfig
+from app.agent.user_context import UserContext
 from app.run.decision import Decision
 from app.store.redis import StreamEntry
 
@@ -84,6 +85,10 @@ class RunTask(BaseModel):
     # worker 不拿它做任何判断（授权在提交那一刻就做完了），只把它带进日志 ——
     # 少了它，「这个用户今天的执行日志」在 worker 那一侧一条都过滤不出来
     user_id: str | None = Field(default=None, description="提交的人，只用于日志归集")
+    user_context: UserContext | None = Field(
+        default=None,
+        description="提交时冻结的脱敏用户信息；旧任务没有这一项",
+    )
     agent_config: AgentConfig = Field(
         default_factory=AgentConfig,
         description="这一次 run 实际生效的配置快照",

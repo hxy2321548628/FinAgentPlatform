@@ -7,13 +7,23 @@
     PYTHONPATH=script/eval src/.venv/bin/python -m pytest script/eval
 """
 
-from compare import cost_of_record, spread
+from compare import NOISE_BAND, batch_total, cost_of_record, spread
 from metric import cost_of
 
 
 def test_a_new_record_uses_its_own_cost_field() -> None:
     """记录里带了 `cost_yuan` 就用它，不要拿 token 再算一遍。"""
     assert cost_of_record({"cost_yuan": 0.5, "tokens_uncached": 999_999}) == 0.5
+
+
+def test_a_p15_record_prefers_the_complete_total_cost() -> None:
+    """P15 的总额包含三类辅助模型，不能退回只看主 run。"""
+    assert cost_of_record({"cost_yuan": 0.5, "cost_yuan_total": 0.8}) == 0.8
+
+
+def test_an_explicitly_incomplete_total_is_unverified() -> None:
+    """新结果明确写了 ``None``，说明辅助账还没收齐，不能拿主模型成本冒充总额。"""
+    assert cost_of_record({"cost_yuan": 0.5, "cost_yuan_total": None}) is None
 
 
 def test_an_old_record_is_recomputed_from_its_token_counts() -> None:
@@ -41,3 +51,15 @@ def test_spread_is_relative_not_absolute() -> None:
     """各题绝对成本差二十倍，按绝对值排的话便宜题翻一倍永远排不上号。"""
     assert spread([0.1, 0.2]) == 1.0
     assert spread([1.0, 2.0]) == 1.0
+
+
+def test_p13_final_noise_band_is_frozen() -> None:
+    """P15 的成本回归线使用 P13 最终三副本观测 43.3%，不是首轮的 32.6%。"""
+    assert NOISE_BAND == 0.433
+
+
+def test_batch_total_sums_every_replicate() -> None:
+    """批次总额是所有真实分析之和，不能把每题中位数之和叫作 30 次总额。"""
+    costs = {"E01": [0.1, 0.2, 0.3], "E02": [1.0, 1.1, 1.2]}
+
+    assert batch_total(costs) == 3.9

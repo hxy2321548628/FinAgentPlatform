@@ -204,7 +204,7 @@ location /api/runs/ {
 - **沙箱镜像须预装中文字体，容器须设 `HOME` 与 `MPLCONFIGDIR`** —— 见 §7.3.5 的预装清单。漏掉不会报错，只会让 agent 白跑几轮、并把告警混进执行结果
 - **Redis 重启 = 全员重新登录**（2026-08-08，P3）—— session 存在 Redis（§7.2.2）。这不是故障，但运维要事先知道，否则一次例行重启会变成一片「怎么突然要重新登录」的报障
 - **首个管理员由 `.env` 的 `ADMIN_NAME` / `ADMIN_PASSWORD` 在空库时建一次**（2026-08-08，P3）—— 之后再启动都不看它。**改过管理员口令之后不要把 `.env` 里那两项删掉再重建库**，那会让空库判定再次成立。凭据会出现在进程环境里（`docker inspect` 看得到），这是 §7.1 接受过的同一类判断
-- **三个 cron 任务**（前两个 2026-08-08 P3，第三个 2026-08-09）—— `python -m store.retention`（事件与 checkpoint 的保留期，§6.5）、`python -m run.approval`（挂超过 24 小时的待审批转 `cancelled`，§5.4）、`python -m run.reaper`（库里还活着、队列里已没有的 run 转 `failed` 且 `retryable`）。三个都可重跑
+- **四个 cron 任务**（P15 新增第四个）—— `python -m store.retention`（事件与 checkpoint 的保留期，§6.5）、`python -m run.approval`（挂超过 24 小时的待审批转 `cancelled`，§5.4）、`python -m run.reaper`（库里还活着、队列里已没有的 run 转 `failed` 且 `retryable`）、`python -m app.thread.reaper`（重试软删 thread 的 workspace purge）。四个都可重跑；thread reaper 仍有失败时非零退出
 - **收割器补的是崩溃恢复盖不住的那一半**（2026-08-09）—— worker 挂了靠 Redis 的 pending 列表接管（§5.3），但 ack 写在 worker 主循环的 `finally` 里、无条件执行，而执行器起跑阶段有几处调用落在它自己那圈 `try/except` 之外。那几处抛异常时消息被 ack 而状态没写终态，**此后没有任何东西会再碰这个 run**。判据是「队列里还有没有它」而不是「跑了多久」—— 后者会误杀一次正常的长分析。**收割成 `failed` 而不是重投**：收割器与 worker 是两个各跑各的进程，重投一条 worker 其实还认领得回来的消息，第二份的 `start()` 会撞上 `running → running` 拿到 `RESUMED` 而照跑不误，同一个 run 并发跑两遍、共用一个沙箱、写同一份 checkpoint
 
 ---

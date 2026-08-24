@@ -2,8 +2,8 @@
 
 | 项 | 值 |
 |---|---|
-| 文档状态 | **计划已写，尚未开发**（2026-08-21） |
-| 当前版本 | v0.2 |
+| 文档状态 | **开发完成；付费质量评估与真 XFS `ENOSPC` 未验**（2026-08-21） |
+| 当前版本 | v0.4 |
 | 作者 | hxy |
 | 日期 | 2026-08-21 |
 | 上游文档 | [P13-decision.md](./P13-decision.md)（v0.8，A3–A6）· [P14-plan.md](./P14-plan.md)（已完成，给出的新基线） |
@@ -18,6 +18,8 @@
 
 | 版本 | 日期 | 修改人 | 说明 |
 |---|---|---|---|
+| v0.4 | 2026-08-21 | Codex | 最终审查补齐普通文件/工具与 purge 的生命周期锁；用确定性竞态红测证明且修复“迟到写复活 workspace”，并闭合 execute 取消与文件流 fd 释放路径 |
+| v0.3 | 2026-08-21 | Codex | 完成 thread 私有记忆、召回/抽取/整理、用户上下文、成本账本、purge 补偿、教师管理入口与 pairwise 尺子；双端门禁、可执行的免费回归、真 Docker 遮罩与记忆页真浏览器走查均绿，10×3 付费评估明确记“未验” |
 | v0.2 | 2026-08-21 | Claude | 根据 P15 定案修正文档漂移：记忆改为 thread workspace 内的 `.memory/`，随 thread 清理并计入 5 GB 配额；跨 thread 的 user/global memory 延后，不再把 Postgres 当记忆正文真相源 |
 | v0.1 | 2026-08-21 | Claude | 初稿。冻结 P14 基线，确定记忆隔离与 memdir 流程，并把提示词、用户信息、system-reminder 排成可逐项量化的步骤 |
 
@@ -274,10 +276,37 @@ P15 会同时改 worker/agent、API/迁移与少量前端，但收尾仍要跑 `
 
 | 步骤 | 日期 | 结果 |
 |---|---|---|
-| 一至十二 | — | ⏳ 尚未开始 |
+| **一** pairwise 尺子 | 2026-08-21 | ✅ 代码与确定性测试完成。只接受 `baseline/candidate/tie`，A/B 与 B/A 不一致或任一方非法一律记 tie；按 item + replica 稳定配对，保留多轮完整题面、双向原始证据、rubric 版本与基线 SHA。未发起付费 judge，故 pairwise 实测噪声仍未验 |
+| **二** 定案与红测 | 2026-08-21 | ✅ 固定 thread scope、最多 5 条、正文 20,000 字符、整理阈值 10/最多 20 条、总 soft cap 1 MiB、单条正文 100,000 字符与索引 64 KiB；各项均有先红后绿的边界测试 |
+| **三至四** 存储、隔离、purge 与教师入口 | 2026-08-21 | ✅ `.memory` 成为 broker 保留目录；通用文件 API/模型工具均拒绝或隐藏，真 Docker 沙箱用空的只读 tmpfs 遮罩。Workspace 读路径不再隐式建目录；purge 与沙箱、skill、memory、普通文件及 10 个 Agent 工具共用 thread lock，迟到写复活、execute 取消穿透和文件流 fd 泄漏均有先红后绿的回归。迟到 RunTask 守卫、软删除 purge 待办与 reaper 共同防止复活。教师端列表→详情→确认删除→空态已真浏览器走通，删除后 broker 404 |
+| **五至八** 召回、outbox、抽取与整理 | 2026-08-21 | ✅ selector 严格 JSON + 超时/非法输出关键词回退；每个平台 run 只选一次，HITL 恢复复用快照、新 run 重选。成功终态与 `memory_jobs` 同事务；准入过滤、敏感信息拒绝、CAS 整理、回滚、最多三次重试、stale job 回收和已删 thread 丢弃均完成 |
+| **九至十一** 用户上下文、reminder 与提示词 | 2026-08-21 | ✅ 提交时冻结脱敏 `UserContext`，审批重投仍用原快照；尾部块按任务进度→步数→已安装包→用户信息→reminder 的优先级整节丢弃，不超 1200 字符。仅修改角色/分析段，环境契约有逐字节回归保护 |
+| **十二** 总门禁与质量结论 | 2026-08-21 | ✅ 开发门禁完成；⚠️ 付费质量结论未验。根 `make` 后端 1627/前端 293 全过，评估脚本 74 测试全过；免费部署回归 43 过、25 未验。未运行六阶段和最终组合的 10×3 付费评估，不宣称质量改进或成本无回归 |
 
-收尾时至少补三项：
+### 8.1 落地结果
 
-- pairwise 是否比绝对分更有分辨力；若仍无分辨力，哪一组确定性判据承担最终结论；
-- P14 基线 4.1403 元与最终组合的主 run/记忆额外成本、43.3% 噪声带判断；
-- 同 thread 跨 run 命中、不同 thread 不召回、thread 删除后不召回且配额释放、current_task 不落盘、敏感信息拒绝、合并回滚和所有未验项的原始证据位置。
+- **真相源与隔离。** 记忆正文只在 thread workspace 的 `.memory/*.md`，`MEMORY.md` 可由正文重建；Postgres 只存 outbox、用量和 purge 待办。写入/整理在同 thread 锁中进行，临时文件仍在 `.memory` 内，因此与工作文件共用 XFS project quota。
+- **生命周期。** 创建与查找 workspace 已拆开；沙箱获取、skill 对齐、memory 原语、普通文件与 Agent 工具都和 purge 共用 thread 生命周期锁。请求取消后底层 execute 会结束后才释锁，下载则在锁内打开 fd，purge unlink 后仍可完整读取。删除 thread 时同事务建立 `thread_purge_jobs`，首次清理失败由 `app.thread.reaper` 反复补偿；迟到 run 在发出 `run.started` 前就被丢弃。
+- **运行链与账本。** selector 的费用计入主 run，extractor/consolidator 另列；`included_in_run` 防双计。`GET /api/runs/{run_id}/memory-usage` 返回三分项、选中 slug、命中/拒绝数、回退原因与 job 状态；明确零账保留，缺账不伪造。
+- **教师产品面。** 聊天页工作区新增“文件 / 记忆”页签，记忆页只提供所属 thread 的查看与物理删除，不暴露宿主路径、用户 ID、模型原始候选或过滤日志。
+
+### 8.2 门禁与原始证据
+
+| 入口 | 结果 | 说明 |
+|---|---|---|
+| `make` | ✅ | Ruff/format、mypy、Oxlint、TypeScript 全绿；后端 **1627 passed**，前端 **293 passed** |
+| 重建后 `alembic current` | ✅ | API 容器已在 **`0017_memory (head)`**，六个服务均在运行；worker 未执行 DDL |
+| `PYTHONPATH=script/eval ... pytest script/eval -q` | ✅ | **74 passed**；包含 pairwise 双向/严格 parser/多轮题面、四分项费用、缺账未验、批次记忆率聚合与 Langfuse 4xx/5xx 可读失败 |
+| 真 Docker `.memory` 遮罩探针 | ✅ | **1 passed**；宿主真正文在容器内不可见，空目录不可写 |
+| P15⑨ 真浏览器走查 | ✅ | 临时 thread 中列表、类型/更新时间、正文、二次确认和删除后空态均可见；broker 回读 **404**，thread 清理 **204** 且 workspace 已移除 |
+| `run_eval.py --dry-run --repeat 3 --concurrency 4` | ⚠️ | 未调用模型；在读 Langfuse 数据集时上游返回 **HTTP 502，空响应体**，因而未走到 10 题文件/平台链自检。runner 现已给中文错误与退出码 2，不再泄出 SDK traceback |
+| `SKIP_LLM=1 SKIP_HOSTILE=1 bash script/test/verify.sh` | ⚠️ | **43 过、25 未验、0 未过**；脚本按“有未验不宣称通过”的规则退出 2。可执行的隔离、并发、恢复、文件、配额、Playwright、外部 MCP 等历史判据全过 |
+
+### 8.3 未验项（不以单测冒充）
+
+- **P15⑤ 的真 XFS `ENOSPC`。** soft cap、CAS、并发写、marker 前回滚和 marker 后收尾均已验；本轮使用 `SKIP_HOSTILE=1`，没有把宿主 thread project quota 真正写满，该分支记未验。
+- **P15⑩–⑫ 付费评估。** 未运行 pairwise 重复判分探针、六阶段逐项 10×3 或 `p15-final` 10×3，因此召回准确率/污染率、pairwise 胜率、噪声、四分项真成本与质量改进均未下结论。
+
+### 8.4 成本判定边界
+
+P14 冻结基线仍是 `script/eval/result/p14-baseline.json`，SHA256 为 `a5b78a53ffe28bfc8a2e15982afac1b70b0afb891fbd3020d8338df45fb301fd`，30 次分析合计 **4.140294 元**。按 43.3% 噪声带，P15 最终组合总成本的回归上限为 **5.933041 元**。本轮没有 P15 付费结果，所以主模型/selector/extractor/consolidator 真成本与是否超限均记“未验”，不用单测中的零账推断“无回归”。

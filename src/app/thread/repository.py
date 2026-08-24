@@ -13,6 +13,9 @@
 `_visible` 一处，各写各的迟早会漏掉一处，而漏掉的症状是「删了还在」。
 """
 
+from __future__ import annotations
+
+import builtins
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -25,6 +28,7 @@ from sqlmodel import col, select, tuple_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.thread.model import ThreadRecord
+from app.thread.purge import PurgeJob, ThreadPurgeRecord
 from cursor import DEFAULT_PAGE_SIZE, Page, decode, encode, split
 
 logger = logging.getLogger(__name__)
@@ -88,6 +92,10 @@ class ThreadRepository:
         """
         record = await self._find(thread_id, user_id=user_id)
         return None if record is None else _to_thread(record)
+
+    async def active(self, thread_id: str, *, user_id: str) -> bool:
+        """供 worker 在申请 workspace 前确认 thread 仍存在且未软删。"""
+        return await self.get(thread_id, user_id=user_id) is not None
 
     async def list(
         self,
@@ -201,10 +209,59 @@ class ThreadRepository:
             record = await self._find(thread_id, user_id=user_id, session=session)
             if record is None:
                 return False
-            record.deleted_at = datetime.now(UTC)
+            now = datetime.now(UTC)
+            record.deleted_at = now
             session.add(record)
+            session.add(ThreadPurgeRecord(thread_id=record.id, requested_at=now))
             await session.commit()
         return True
+
+    async def pending_purge(self, *, limit: int = 100) -> builtins.list[PurgeJob]:
+        """列出软删后尚未完成的 workspace 物理清理任务。"""
+        async with AsyncSession(self._engine) as session:
+            found = await session.exec(
+                select(ThreadPurgeRecord)
+                .where(col(ThreadPurgeRecord.completed_at).is_(None))
+                .order_by(col(ThreadPurgeRecord.requested_at))
+                .limit(limit)
+            )
+        return [
+            PurgeJob(
+                thread_id=one.thread_id.hex,
+                requested_at=one.requested_at,
+                attempts=one.attempts,
+                last_error=one.last_error,
+            )
+            for one in found.all()
+        ]
+
+    async def fail_purge(self, thread_id: str, error: str) -> None:
+        """记下一次物理清理失败，保留给 reaper 重试。"""
+        identifier = _parse(thread_id)
+        if identifier is None:
+            return
+        async with AsyncSession(self._engine) as session:
+            record = await session.get(ThreadPurgeRecord, identifier)
+            if record is None or record.completed_at is not None:
+                return
+            record.attempts += 1
+            record.last_error = error
+            session.add(record)
+            await session.commit()
+
+    async def complete_purge(self, thread_id: str) -> None:
+        """标记 workspace 已真正删除，不再进入补偿扫描。"""
+        identifier = _parse(thread_id)
+        if identifier is None:
+            return
+        async with AsyncSession(self._engine) as session:
+            record = await session.get(ThreadPurgeRecord, identifier)
+            if record is None or record.completed_at is not None:
+                return
+            record.completed_at = datetime.now(UTC)
+            record.last_error = None
+            session.add(record)
+            await session.commit()
 
     async def purge(self, thread_id: str, *, user_id: str) -> None:
         """把一行真的删掉。

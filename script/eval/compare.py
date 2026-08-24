@@ -18,13 +18,21 @@ from metric import cost_of
 
 # 成本相对极差超过这个数才算「超出噪声带」。
 #
-# **取 0.326 的依据**：P13⑥ 首轮三副本实测，未命中 token 的相对极差中位数就是 32.6%。
+# **取 0.433 的依据**：P13⑥ 最终三副本观测冻结的成本相对极差是 43.3%。
 # 比这个小的差异说不清是改进还是抖动
-NOISE_BAND = 0.326
+NOISE_BAND = 0.433
 
 
-def cost_of_record(one: dict[str, object]) -> float:
-    """一条记录的成本，老记录没有这个字段就按 token 复算。"""
+def cost_of_record(one: dict[str, object]) -> float | None:
+    """一条记录的总成本；老记录没有 P15 字段时沿用原口径。
+
+    P15 结果显式带 ``cost_yuan_total=None`` 表示辅助账未收齐，不能回退到
+    ``cost_yuan`` 把主模型成本冒充总成本。真正的旧结果没有这个键，才兼容读取
+    ``cost_yuan`` 或按 token 复算。
+    """
+    if "cost_yuan_total" in one:
+        total = one.get("cost_yuan_total")
+        return float(total) if isinstance(total, int | float) else None
     if isinstance(one.get("cost_yuan"), int | float):
         return float(one["cost_yuan"])
     return cost_of(
@@ -34,16 +42,28 @@ def cost_of_record(one: dict[str, object]) -> float:
     )
 
 
-def summarize(path: Path) -> tuple[str, dict[str, list[float]], dict[str, list[dict[str, object]]]]:
+def summarize(
+    path: Path,
+) -> tuple[str, dict[str, list[float]], dict[str, list[dict[str, object]]]]:
     """读一轮结果，按题聚成成本列表。"""
     data = json.loads(path.read_text())
     cost: dict[str, list[float]] = defaultdict(list)
     rows: dict[str, list[dict[str, object]]] = defaultdict(list)
     for one in data["items"]:
         key = str(one["item_id"]).replace("zuel-eval-v1-", "")
-        cost[key].append(cost_of_record(one))
+        value = cost_of_record(one)
+        if value is None:
+            raise ValueError(
+                f"{path} 的 {one['item_id']} 总成本未验（辅助 usage/cost 未收齐）"
+            )
+        cost[key].append(value)
         rows[key].append(one)
     return str(data["run_name"]), dict(cost), dict(rows)
+
+
+def batch_total(cost: dict[str, list[float]]) -> float:
+    """一批真实分析的总成本，包含每道题的每个副本。"""
+    return sum(sum(values) for values in cost.values())
 
 
 def spread(values: list[float]) -> float | None:
@@ -54,12 +74,20 @@ def spread(values: list[float]) -> float | None:
 
 
 def main(paths: list[Path]) -> int:
-    rounds = [summarize(one) for one in paths]
+    try:
+        rounds = [summarize(one) for one in paths]
+    except ValueError as error:
+        print(f"成本未验：{error}", file=sys.stderr)
+        return 2
     names = [one[0] for one in rounds]
     questions = sorted({key for _, cost, _ in rounds for key in cost})
 
     print("每题成本（元，多副本取中位数）\n")
-    header = f"{'题':<28}" + "".join(f"{one[:18]:>20}" for one in names) + f"{'末轮 vs 首轮':>16}"
+    header = (
+        f"{'题':<28}"
+        + "".join(f"{one[:18]:>20}" for one in names)
+        + f"{'末轮 vs 首轮':>16}"
+    )
     print(header)
     print("-" * len(header))
     for key in questions:
@@ -67,14 +95,21 @@ def main(paths: list[Path]) -> int:
         for _, cost, _ in rounds:
             values = cost.get(key)
             cells.append(statistics.median(values) if values else None)
-        line = f"{key:<28}" + "".join(f"{'—':>20}" if one is None else f"{one:>20.4f}" for one in cells)
+        line = f"{key:<28}" + "".join(
+            f"{'—':>20}" if one is None else f"{one:>20.4f}" for one in cells
+        )
         first, last = cells[0], cells[-1]
         change = f"{(last - first) / first:+.0%}" if first and last else "—"
         print(line + f"{change:>16}")
 
-    total = [sum(statistics.median(v) for v in cost.values()) for _, cost, _ in rounds]
+    total = [batch_total(cost) for _, cost, _ in rounds]
     print("-" * len(header))
-    print(f"{'合计':<28}" + "".join(f"{one:>20.4f}" for one in total) + f"{(total[-1] - total[0]) / total[0]:+15.0%}")
+    change = f"{(total[-1] - total[0]) / total[0]:+15.0%}" if total[0] else f"{'—':>15}"
+    print(
+        f"{'批次总额（全部副本）':<28}"
+        + "".join(f"{one:>20.4f}" for one in total)
+        + change
+    )
 
     print("\n噪声带（同题副本的成本相对极差）\n")
     for name, cost, _ in rounds:
@@ -82,7 +117,9 @@ def main(paths: list[Path]) -> int:
         if not spreads:
             print(f"  {name}：单副本，算不出极差")
             continue
-        print(f"  {name}：中位数 {statistics.median(spreads):.1%}，最大 {max(spreads):.1%}（{len(spreads)} 题有多副本）")
+        print(
+            f"  {name}：中位数 {statistics.median(spreads):.1%}，最大 {max(spreads):.1%}（{len(spreads)} 题有多副本）"
+        )
 
     print(f"\n超出噪声带（±{NOISE_BAND:.0%}）的题，末轮 vs 首轮\n")
     _, first_cost, _ = rounds[0]
@@ -91,11 +128,16 @@ def main(paths: list[Path]) -> int:
     for key in questions:
         if key not in first_cost or key not in last_cost:
             continue
-        before, after = statistics.median(first_cost[key]), statistics.median(last_cost[key])
+        before, after = (
+            statistics.median(first_cost[key]),
+            statistics.median(last_cost[key]),
+        )
         delta = (after - before) / before
         if abs(delta) > NOISE_BAND:
             moved = True
-            print(f"  {key:<28}{before:.4f} → {after:.4f}  {delta:+.0%}  {'变好' if delta < 0 else '变差'}")
+            print(
+                f"  {key:<28}{before:.4f} → {after:.4f}  {delta:+.0%}  {'变好' if delta < 0 else '变差'}"
+            )
     if not moved:
         print("  一题都没有 —— 全部落在噪声带里")
 
@@ -104,7 +146,9 @@ def main(paths: list[Path]) -> int:
     for field in ("offload_count", "compaction_count", "interrupt_count"):
         counted = [int(r.get(field) or 0) for rows in last_rows.values() for r in rows]
         hit = sum(1 for one in counted if one > 0)
-        print(f"  {field:<20}合计 {sum(counted):>4} 次，{hit}/{len(counted)} 次分析触发过")
+        print(
+            f"  {field:<20}合计 {sum(counted):>4} 次，{hit}/{len(counted)} 次分析触发过"
+        )
     return 0
 
 

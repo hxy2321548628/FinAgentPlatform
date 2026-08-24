@@ -5,14 +5,18 @@ agent 生成的内容影响之后，能做的最多是发几个 HTTP 请求过�
 别的会话的文件 —— 这正是把它拆出来的全部意义。
 """
 
+import asyncio
 import logging
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Annotated
 
 from fastapi import Depends, Request
 
 from app.broker.cache import ToolCache
 from app.broker.skill import SkillStore
+from app.memory.store import MemoryStore
 from app.sandbox.backend import SandboxBackend
 from app.sandbox.container import CommandResult, ContainerError
 from app.sandbox.pool import SandboxPool
@@ -52,6 +56,22 @@ class AbsentContainer:
         raise ContainerError(message)
 
 
+class ThreadOperationLocks:
+    """串行化同 thread 内会跨 ``await`` 的 broker 生命周期与物理操作。"""
+
+    def __init__(self) -> None:
+        self._guard = asyncio.Lock()
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    @asynccontextmanager
+    async def hold(self, thread_id: str) -> AsyncIterator[None]:
+        """取得指定 thread 的异步锁。"""
+        async with self._guard:
+            lock = self._locks.setdefault(thread_id, asyncio.Lock())
+        async with lock:
+            yield
+
+
 @dataclass(frozen=True)
 class Broker:
     """broker 持有的运行时。"""
@@ -62,6 +82,12 @@ class Broker:
     # 写操作的去重表。**可以没有** —— 没配 Redis 时去重整个关掉，
     # 那只是回到没有它的从前，而不是让 broker 起不来
     cache: ToolCache | None = None
+    memory: MemoryStore | None = None
+    _thread_locks: ThreadOperationLocks = field(default_factory=ThreadOperationLocks, repr=False, compare=False)
+
+    def thread_lock(self, thread_id: str) -> AbstractAsyncContextManager[None]:
+        """取得能跨 ``await`` 持有的 thread 锁上下文。"""
+        return self._thread_locks.hold(thread_id)
 
     def backend(self, thread_id: str) -> SandboxBackend:
         """给一个 thread 组一个 backend。
@@ -76,7 +102,7 @@ class Broker:
             该会话的文件空间与执行环境。
         """
         return SandboxBackend(
-            workspace=self.workspace.path(thread_id),
+            workspace=self.workspace.lookup(thread_id),
             container=self.pool.current(thread_id) or AbsentContainer(),
         )
 
@@ -112,6 +138,7 @@ def build_broker(settings: Settings) -> Broker:
         pool=pool,
         skills=SkillStore(settings.skill_root),
         cache=ToolCache(redis.create_client(settings.redis_url)),
+        memory=MemoryStore(workspace, max_byte=settings.memory_max_byte),
     )
 
 

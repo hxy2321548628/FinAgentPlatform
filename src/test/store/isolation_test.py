@@ -43,6 +43,11 @@ SYSTEM_METHOD = {
     # **它与成本看板的 per-user token 不是一回事**：那个带用户名，因此挡在管理员
     # 身份后面（`report/usage.py` 是账本，不在这份清单管的仓储里）
     (RunRepository, "live_count"),
+    # workspace 物理清理由 thread reaper 跨用户扫描软删除队列。后两个方法
+    # 只按这条系统任务已绑定的 thread id 写失败/完成终态，不服务用户请求。
+    (ThreadRepository, "pending_purge"),
+    (ThreadRepository, "fail_purge"),
+    (ThreadRepository, "complete_purge"),
 }
 
 

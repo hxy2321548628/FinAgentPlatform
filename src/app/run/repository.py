@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import Column, Enum, Index, func, text, update
 from sqlalchemy.dialects.postgresql import JSONB
@@ -21,7 +21,9 @@ from sqlmodel import Field, SQLModel, col, select, tuple_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.agent.config import AgentConfig
+from app.agent.user_context import UserContext
 from app.event.model import RunErrorCode, RunStatus, TokenUsage
+from app.memory.job import MemoryJobPayload, MemoryJobRecord, MemoryJobStatus
 from cursor import DEFAULT_PAGE_SIZE, Page, decode, encode, split
 
 logger = logging.getLogger(__name__)
@@ -87,7 +89,9 @@ class Run:
     id: str
     thread_id: str
     status: RunStatus
+    tokens: TokenUsage = field(default_factory=TokenUsage)
     agent_config: AgentConfig = field(default_factory=AgentConfig)
+    user_context: UserContext | None = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +136,8 @@ class RunRecord(SQLModel, table=True):
     content: str | None = Field(default=None)
     # 这次 run 实际生效的配置快照。P6 之前的历史行为 NULL，读时当默认配置。
     agent_config: dict[str, object] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    # API 提交时冻结的脱敏用户信息。旧行为空，审批续跑仍按原样带回，不临时重查。
+    user_context: dict[str, object] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     # P2 之前建的行在这一列上是空的：那批 run 没有真实归属，编一个 owner 只会造假数据。
     # 空值因此是遗留而不是 bug，见 migration/version/0003_user_thread.py
     user_id: UUID | None = Field(default=None, foreign_key="users.id")
@@ -153,7 +159,13 @@ class RunRecord(SQLModel, table=True):
             id=self.id.hex,
             thread_id=self.thread_id.hex,
             status=self.status,
+            tokens=TokenUsage(
+                input_cache_read=self.tokens_cache_read,
+                input_uncached=self.tokens_uncached,
+                output=self.tokens_output,
+            ),
             agent_config=AgentConfig.model_validate({} if self.agent_config is None else self.agent_config),
+            user_context=None if self.user_context is None else UserContext.model_validate(self.user_context),
         )
 
     def to_detail(self) -> RunDetail:
@@ -194,6 +206,7 @@ class RunRepository:
         user_id: str,
         content: str | None = None,
         agent_config: dict[str, object] | None = None,
+        user_context: dict[str, object] | None = None,
     ) -> None:
         """记下一个刚提交、还没开跑的 run。
 
@@ -208,6 +221,7 @@ class RunRepository:
             content: 教师的问题。不给就是「没记下来」，与本版之前那批 run 同义 ——
                 那样的 run 在会话历史里只有 agent 那一半。
             agent_config: 这次 run 实际生效的配置快照。
+            user_context: 提交时冻结的脱敏用户信息。
         """
         record = RunRecord(
             id=UUID(run_id),
@@ -215,6 +229,7 @@ class RunRepository:
             user_id=UUID(user_id),
             content=content,
             agent_config=agent_config,
+            user_context=user_context,
             status=RunStatus.QUEUED,
             started_at=datetime.now(UTC),
         )
@@ -342,19 +357,49 @@ class RunRepository:
             return RunStart.RESUMED
         return RunStart.REFUSED
 
-    async def succeed(self, run_id: str, *, tokens: TokenUsage) -> bool:
+    async def succeed(
+        self,
+        run_id: str,
+        *,
+        tokens: TokenUsage,
+        memory_job: MemoryJobPayload | None = None,
+    ) -> bool:
         """标记跑完，并记下这一次的 token 消耗。
 
         Returns:
             这一次调用是否真的写下了终态。
         """
-        return await self._finalize(
-            run_id,
-            status=RunStatus.SUCCEEDED,
-            tokens_cache_read=tokens.input_cache_read,
-            tokens_uncached=tokens.input_uncached,
-            tokens_output=tokens.output,
+        identifier = _parse(run_id)
+        if identifier is None:
+            return False
+        statement = (
+            update(RunRecord)
+            .where(col(RunRecord.id) == identifier, col(RunRecord.status).in_(CANCELLABLE_STATUS))
+            .values(
+                status=RunStatus.SUCCEEDED,
+                tokens_cache_read=col(RunRecord.tokens_cache_read) + tokens.input_cache_read,
+                tokens_uncached=col(RunRecord.tokens_uncached) + tokens.input_uncached,
+                tokens_output=col(RunRecord.tokens_output) + tokens.output,
+                ended_at=datetime.now(UTC),
+            )
         )
+        async with AsyncSession(self._engine) as session:
+            result = await session.exec(statement)
+            changed = bool(result.rowcount)
+            if changed and memory_job is not None:
+                session.add(
+                    MemoryJobRecord(
+                        id=uuid4(),
+                        run_id=identifier,
+                        thread_id=UUID(memory_job.thread_id),
+                        user_id=UUID(memory_job.user_id),
+                        status=MemoryJobStatus.QUEUED,
+                        snapshot=memory_job.messages,
+                        created_at=datetime.now(UTC),
+                    )
+                )
+            await session.commit()
+        return changed
 
     async def fail(self, run_id: str, *, code: RunErrorCode, message: str) -> bool:
         """标记失败，并记下原因。
@@ -379,9 +424,9 @@ class RunRepository:
         change: dict[str, object] = {"status": RunStatus.CANCELLED}
         if tokens is not None:
             change |= {
-                "tokens_cache_read": tokens.input_cache_read,
-                "tokens_uncached": tokens.input_uncached,
-                "tokens_output": tokens.output,
+                "tokens_cache_read": col(RunRecord.tokens_cache_read) + tokens.input_cache_read,
+                "tokens_uncached": col(RunRecord.tokens_uncached) + tokens.input_uncached,
+                "tokens_output": col(RunRecord.tokens_output) + tokens.output,
             }
         return await self._finalize(run_id, **change)
 
@@ -401,9 +446,9 @@ class RunRepository:
         return await self._transit(
             run_id,
             status=RunStatus.WAITING_APPROVAL,
-            tokens_cache_read=tokens.input_cache_read,
-            tokens_uncached=tokens.input_uncached,
-            tokens_output=tokens.output,
+            tokens_cache_read=col(RunRecord.tokens_cache_read) + tokens.input_cache_read,
+            tokens_uncached=col(RunRecord.tokens_uncached) + tokens.input_uncached,
+            tokens_output=col(RunRecord.tokens_output) + tokens.output,
         )
 
     async def resume(self, run_id: str) -> bool:

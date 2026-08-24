@@ -28,11 +28,13 @@ from config import StoreSettings
 # 七行都绑同一个名字 `app`，只有最后一行是 pyflakes 眼里那个「未使用」的绑定 ——
 
 import app.group.model  # isort:skip
+import app.memory.job  # isort:skip
 import app.preset.mcp  # isort:skip
 import app.preset.model  # isort:skip
 import app.preset.skill  # isort:skip
 import app.run.repository  # isort:skip
 import app.thread.model  # isort:skip
+import app.thread.purge  # isort:skip
 import app.user.model  # noqa: F401  isort:skip
 
 config = context.config

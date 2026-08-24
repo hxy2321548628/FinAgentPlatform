@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Callable, Sequence
+from datetime import UTC, datetime
 from io import StringIO
 from uuid import uuid4
 
@@ -19,6 +20,8 @@ from langgraph.errors import GraphRecursionError
 from redis.asyncio import Redis
 
 from app.agent.config import AgentConfig, SkillReference
+from app.agent.factory import AgentSnapshot
+from app.agent.user_context import UserContext
 from app.event.mapper import StreamChunk
 from app.event.model import (
     EventType,
@@ -33,6 +36,15 @@ from app.event.model import (
     ToolResultData,
     ToolResultEvent,
 )
+from app.memory.job import MemoryJobPayload, MemoryUsage, MemoryUsageStage
+from app.memory.model import (
+    MemoryRecord,
+    MemorySnapshot,
+    MemoryType,
+    SelectionFallback,
+    UsageCallbackProtocol,
+)
+from app.memory.pricing import ModelTokenPrice, TokenPrice
 from app.run.decision import Decision, DecisionType
 from app.run.executor import RunExecutor, _known_tool_paths, _pending_action_path
 from app.run.log import EventLog, LoggedEvent
@@ -40,6 +52,7 @@ from app.run.repository import RunStart
 from app.sandbox.pool import SandboxQueueTimeoutError
 from app.sandbox.remote import AsyncQueuePositionCallback
 from app.task.queue import RunTask
+from app.user.model import UserRole
 from log import JsonFormatter
 
 THREAD = "thread-1"
@@ -87,6 +100,7 @@ class FakeRepository:
         self.status: dict[str, RunStatus] = {}
         self.tokens: dict[str, TokenUsage] = {}
         self.error: dict[str, tuple[RunErrorCode, str]] = {}
+        self.memory_job: dict[str, MemoryJobPayload] = {}
 
     async def start(self, run_id: str) -> RunStart:
         """两步条件更新的替身：`queued`（含没建过行）是第一次，其余可改的是续跑。"""
@@ -96,11 +110,19 @@ class FakeRepository:
         self.status[run_id] = RunStatus.RUNNING
         return RunStart.FIRST if first else RunStart.RESUMED
 
-    async def succeed(self, run_id: str, *, tokens: TokenUsage) -> bool:
+    async def succeed(
+        self,
+        run_id: str,
+        *,
+        tokens: TokenUsage,
+        memory_job: MemoryJobPayload | None = None,
+    ) -> bool:
         if not self._open(run_id):
             return False
-        self.tokens[run_id] = tokens
+        self.tokens[run_id] = self.tokens.get(run_id, TokenUsage()) + tokens
         self.status[run_id] = RunStatus.SUCCEEDED
+        if memory_job is not None:
+            self.memory_job[run_id] = memory_job
         return True
 
     async def fail(self, run_id: str, *, code: RunErrorCode, message: str) -> bool:
@@ -114,14 +136,14 @@ class FakeRepository:
         if not self._open(run_id):
             return False
         if tokens is not None:
-            self.tokens[run_id] = tokens
+            self.tokens[run_id] = self.tokens.get(run_id, TokenUsage()) + tokens
         self.status[run_id] = RunStatus.CANCELLED
         return True
 
     async def wait_approval(self, run_id: str, *, tokens: TokenUsage) -> bool:
         if not self._open(run_id):
             return False
-        self.tokens[run_id] = tokens
+        self.tokens[run_id] = self.tokens.get(run_id, TokenUsage()) + tokens
         self.status[run_id] = RunStatus.WAITING_APPROVAL
         return True
 
@@ -161,6 +183,18 @@ class FakeSkillAligner:
         self.calls.append((thread_id, list(references)))
 
 
+class FakeThreadGuard:
+    """模拟在任务排队期间已被软删的 thread。"""
+
+    def __init__(self, active: bool) -> None:
+        self._active = active
+        self.checked: list[tuple[str, str]] = []
+
+    async def active(self, thread_id: str, *, user_id: str) -> bool:
+        self.checked.append((thread_id, user_id))
+        return self._active
+
+
 class FakeAgent:
     """按给定的 chunk 流回放，并能在流结束后报告一个待确认的调用。"""
 
@@ -173,8 +207,12 @@ class FakeAgent:
         # 每次开跑收到的 user_id。**追踪那一侧靠它把花费归到人头上**，
         # 丢了不会报错，只会让账上多一堆没有主人的调用
         self.attributed: list[str | None] = []
+        self.user_contexts: list[UserContext | None] = []
+        self.inspected_user_contexts: list[UserContext | None] = []
         # 下一次流结束后要报告的待确认调用。**用完即清** —— 续跑那一次不该再停下来
         self.interrupt: list[InterruptAction] = []
+        self.selector_tokens = TokenUsage()
+        self.memory_snapshot: MemorySnapshot | None = None
 
     def stream(
         self,
@@ -183,11 +221,18 @@ class FakeAgent:
         content: str,
         agent_config: AgentConfig,
         *,
+        run_id: str,
         user_id: str | None = None,
+        user_context: UserContext | None = None,
+        selector_usage: UsageCallbackProtocol | None = None,
     ) -> AsyncIterator[StreamChunk]:
         self.asked.append(content)
         self.configured.append(agent_config)
         self.attributed.append(user_id)
+        self.user_contexts.append(user_context)
+        if selector_usage is not None:
+            selector_usage(self.selector_tokens)
+        del run_id
         return self._runner(backend, thread_id, content)
 
     def resume(
@@ -197,19 +242,51 @@ class FakeAgent:
         decisions: list[dict[str, object]],
         agent_config: AgentConfig,
         *,
+        run_id: str,
         user_id: str | None = None,
+        user_context: UserContext | None = None,
+        selector_usage: UsageCallbackProtocol | None = None,
     ) -> AsyncIterator[StreamChunk]:
         self.resumed.append(decisions)
         self.configured.append(agent_config)
         self.attributed.append(user_id)
+        self.user_contexts.append(user_context)
+        if selector_usage is not None:
+            selector_usage(self.selector_tokens)
+        del run_id
         return self._runner(backend, thread_id, "")
 
-    async def pending(
-        self, backend: BackendProtocol, thread_id: str, agent_config: AgentConfig
-    ) -> list[InterruptAction]:
+    async def inspect(
+        self,
+        backend: BackendProtocol,
+        thread_id: str,
+        run_id: str,
+        agent_config: AgentConfig,
+        *,
+        user_context: UserContext | None = None,
+    ) -> AgentSnapshot:
         self.pending_config.append(agent_config)
+        self.inspected_user_contexts.append(user_context)
         waiting, self.interrupt = self.interrupt, []
-        return waiting
+        memory = self.memory_snapshot
+        if memory is not None:
+            memory = memory.model_copy(update={"run_id": run_id, "thread_id": thread_id})
+        del backend
+        return AgentSnapshot(
+            actions=waiting,
+            messages=[{"role": "user", "content": "问题"}, {"role": "assistant", "content": "答复"}],
+            memory=memory,
+        )
+
+
+class FakeMemoryUsageRepository:
+    """记住 selector 分项账，不依赖真 Postgres。"""
+
+    def __init__(self) -> None:
+        self.items: list[MemoryUsage] = []
+
+    async def record_usage(self, usage: MemoryUsage) -> None:
+        self.items.append(usage)
 
 
 type AgentRunner = Callable[[BackendProtocol, str, str], AsyncIterator[StreamChunk]]
@@ -258,6 +335,7 @@ def a_task(
     user_id: str | None = USER,
     *,
     skills: list[SkillReference] | None = None,
+    user_context: UserContext | None = None,
 ) -> RunTask:
     """一条队列里领到的任务。真实的 run id 就是 uuid4().hex。"""
     return RunTask(
@@ -265,6 +343,7 @@ def a_task(
         thread_id=thread_id,
         content=content,
         user_id=user_id,
+        user_context=user_context,
         agent_config=AgentConfig(skills=skills),
     )
 
@@ -283,6 +362,9 @@ def make_executor_with(
     cancel: FakeCancelFlag | None = None,
     agent: FakeAgent | None = None,
     skill_aligner: FakeSkillAligner | None = None,
+    memory_usage: FakeMemoryUsageRepository | None = None,
+    selector_model_name: str | None = None,
+    selector_cost: ModelTokenPrice | None = None,
 ) -> tuple[RunExecutor, FakeRepository]:
     repository = FakeRepository()
     executor = RunExecutor(
@@ -292,6 +374,9 @@ def make_executor_with(
         repository=repository,
         cancel=cancel or FakeCancelFlag(),
         skill_aligner=skill_aligner or FakeSkillAligner(),
+        memory_usage=memory_usage,
+        selector_model_name=selector_model_name,
+        selector_cost=selector_cost,
     )
     return executor, repository
 
@@ -343,6 +428,47 @@ async def test_an_anonymous_run_is_attributed_to_nobody(pool: FakePool, log: Eve
     await executor.execute(a_task(user_id=None))
 
     assert agent.attributed == [None]
+
+
+async def test_frozen_user_context_reaches_stream_and_inspection(pool: FakePool, log: EventLog) -> None:
+    agent = FakeAgent(_quiet_runner)
+    context = UserContext(
+        name="张老师",
+        role=UserRole.TEACHER,
+        dept="金融学院",
+        token_used_today=123,
+        token_limit_daily=50_000,
+        active_runs=1,
+        concurrent_run_limit=3,
+    )
+    executor, _ = make_executor_with(pool, log, _quiet_runner, agent=agent)
+
+    await executor.execute(a_task(user_context=context))
+
+    assert agent.user_contexts == [context]
+    assert agent.inspected_user_contexts == [context]
+
+
+async def test_a_late_task_for_a_deleted_thread_never_acquires_a_sandbox(pool: FakePool, log: EventLog) -> None:
+    repository = FakeRepository()
+    guard = FakeThreadGuard(active=False)
+    executor = RunExecutor(
+        pool=pool,
+        log=log,
+        agent=FakeAgent(_quiet_runner),
+        repository=repository,
+        cancel=FakeCancelFlag(),
+        skill_aligner=FakeSkillAligner(),
+        thread_guard=guard,
+    )
+    task = a_task()
+
+    await executor.execute(task)
+
+    assert guard.checked == [(task.thread_id, USER)]
+    assert pool.acquired == []
+    assert repository.status[task.run_id] is RunStatus.CANCELLED
+    assert await types_of(log, task.run_id) == ["run.cancelled"]
 
 
 # ------------------------------------------------------------------ 事件序列
@@ -439,6 +565,93 @@ async def test_tokens_are_zero_when_the_model_reports_no_usage(pool: FakePool, l
     await executor.execute(run)
 
     assert await tokens_of(log, run.run_id) == TokenUsage()
+
+
+async def test_selector_usage_is_in_run_tokens_and_has_a_separate_audit(pool: FakePool, log: EventLog) -> None:
+    """Selector 前置调用合入 run，但仍保留模型、耗时与降级原因分项。"""
+    agent = FakeAgent(_quiet_runner)
+    usage = TokenUsage(input_cache_read=2, input_uncached=25, output=5)
+    agent.selector_tokens = usage
+    agent.memory_snapshot = MemorySnapshot(
+        run_id="pending",
+        thread_id="pending",
+        records=(
+            MemoryRecord(
+                slug="preference-tabs",
+                name="制表符偏好",
+                description="教师偏好制表符",
+                type=MemoryType.USER,
+                updated_at=datetime.now(UTC),
+                body="使用制表符缩进。",
+            ),
+        ),
+        selected_indices=(0, 1),
+        selected_slugs=("preference-tabs", "dropped-by-budget"),
+        fallback=SelectionFallback.INVALID_OUTPUT,
+        selector_usage=usage,
+        selector_duration_ms=17,
+    )
+    memory_usage = FakeMemoryUsageRepository()
+    price = ModelTokenPrice(model="aux-model", price=TokenPrice(cached=1.0, uncached=2.0, output=3.0))
+    executor, repository = make_executor_with(
+        pool,
+        log,
+        _quiet_runner,
+        agent=agent,
+        memory_usage=memory_usage,
+        selector_model_name="aux-model",
+        selector_cost=price,
+    )
+    run = a_task()
+
+    await executor.execute(run)
+
+    assert repository.tokens[run.run_id] == usage
+    assert memory_usage.items == [
+        MemoryUsage(
+            run_id=run.run_id,
+            thread_id=run.thread_id,
+            stage=MemoryUsageStage.SELECTOR,
+            model="aux-model",
+            tokens=usage,
+            cost_yuan=price.yuan("aux-model", usage),
+            duration_ms=17,
+            hit_count=1,
+            rejected_count=1,
+            fallback_reason=SelectionFallback.INVALID_OUTPUT.value,
+            included_in_run=True,
+            selected_slugs=("preference-tabs", "dropped-by-budget"),
+        )
+    ]
+
+
+async def test_selector_service_failure_is_audited_before_approval(pool: FakePool, log: EventLog) -> None:
+    """记忆服务降级不是主 run 失败，即使挂起审批也要先把零账落下。"""
+    agent = FakeAgent(_quiet_runner)
+    agent.interrupt = _interrupt()
+    agent.memory_snapshot = MemorySnapshot(
+        run_id="pending",
+        thread_id="pending",
+        fallback=SelectionFallback.SERVICE_ERROR,
+    )
+    memory_usage = FakeMemoryUsageRepository()
+    price = ModelTokenPrice(model="aux-model", price=TokenPrice(cached=1.0, uncached=2.0, output=3.0))
+    executor, repository = make_executor_with(
+        pool,
+        log,
+        _quiet_runner,
+        agent=agent,
+        memory_usage=memory_usage,
+        selector_model_name="aux-model",
+        selector_cost=price,
+    )
+    run = a_task()
+
+    await executor.execute(run)
+
+    assert repository.status[run.run_id] is RunStatus.WAITING_APPROVAL
+    assert memory_usage.items[0].fallback_reason == SelectionFallback.SERVICE_ERROR.value
+    assert memory_usage.items[0].cost_yuan == 0.0
 
 
 # ------------------------------------------------------------------ 排障日志

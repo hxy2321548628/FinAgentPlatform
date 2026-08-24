@@ -17,12 +17,30 @@ import contextlib
 import logging
 import signal
 
-from app.worker.runtime import build_worker
+from app.worker.runtime import WorkerRuntime, build_worker
 from app.worker.watchdog import Watchdog
 from config import get_settings
 from log import configure
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_workers(runtime: WorkerRuntime) -> None:
+    """并行驱动主 run 与 memory outbox 两条常驻循环。"""
+    main_task = asyncio.create_task(runtime.worker.run())
+    memory_task = asyncio.create_task(runtime.memory_loop.run())
+    try:
+        await asyncio.gather(main_task, memory_task)
+    except BaseException:
+        await _stop_workers(runtime)
+        await asyncio.gather(main_task, memory_task, return_exceptions=True)
+        raise
+
+
+async def _stop_workers(runtime: WorkerRuntime) -> None:
+    """向两条循环发出同一次优雅停机请求。"""
+    runtime.memory_loop.stop()
+    await runtime.worker.stop()
 
 
 async def serve() -> None:
@@ -34,9 +52,9 @@ async def serve() -> None:
     watchdog.watch()
     loop = asyncio.get_running_loop()
     for name in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(name, lambda: asyncio.create_task(runtime.worker.stop()))
+        loop.add_signal_handler(name, lambda: asyncio.create_task(_stop_workers(runtime)))
     try:
-        await runtime.worker.run()
+        await _run_workers(runtime)
     finally:
         # 先撤看门狗再收尾：归还连接与等 run 结束的这段没人盖时间戳
         watchdog.stop()

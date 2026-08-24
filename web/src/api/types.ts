@@ -331,6 +331,25 @@ export interface ThreadDetail extends ThreadSummary {
   agent_config: AgentConfig
 }
 
+export type MemoryType = 'user' | 'feedback' | 'project' | 'reference'
+
+/** 教师可管理的 thread 私有记忆短索引，不含宿主路径与模型审计。 */
+export interface MemorySummary {
+  slug: string
+  name: string
+  description: string
+  type: MemoryType
+  updated_at: string
+}
+
+export interface MemoryDetail extends MemorySummary {
+  content: string
+}
+
+export interface MemoryListResponse {
+  items: MemorySummary[]
+}
+
 export interface CursorPage<T> {
   items: T[]
   next_cursor: string | null

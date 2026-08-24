@@ -4,6 +4,7 @@ import pytest
 
 from app.sandbox.backend import SandboxBackend
 from app.sandbox.container import CommandResult, ContainerError
+from app.sandbox.path import MEMORY_DIR
 
 # 判据的最小刻度。写成常量是为了让「差一纳秒」这件事在测试里看得见
 NANOSECOND = 1
@@ -170,6 +171,55 @@ def test_every_file_method_rejects_escape_without_raising(backend: SandboxBacken
     assert backend.grep("x", escape).error is not None
     assert backend.upload_files([(escape, b"x")])[0].error is not None
     assert backend.download_files([escape])[0].error is not None
+
+
+def test_memory_is_hidden_from_workspace_listing(backend: SandboxBackend, workspace: Path) -> None:
+    (workspace / MEMORY_DIR / ".stage").mkdir(parents=True)
+    (workspace / MEMORY_DIR / ".stage" / "record.md").write_text("记忆", encoding="utf-8")
+    (workspace / "data.csv").write_text("x", encoding="utf-8")
+
+    result = backend.ls("/workspace")
+
+    assert result.entries is not None
+    assert [entry["path"] for entry in result.entries] == ["/workspace/data.csv"]
+
+
+def test_memory_is_hidden_from_workspace_glob_and_grep(backend: SandboxBackend, workspace: Path) -> None:
+    (workspace / MEMORY_DIR).mkdir()
+    (workspace / MEMORY_DIR / "record.md").write_text("唯一的秘密词", encoding="utf-8")
+
+    globbed = backend.glob("**/*")
+    grepped = backend.grep("唯一的秘密词")
+
+    assert globbed.matches is not None
+    assert all(MEMORY_DIR not in match["path"] for match in globbed.matches)
+    assert grepped.matches in (None, [])
+
+
+def test_every_file_method_rejects_memory_without_raising(backend: SandboxBackend, workspace: Path) -> None:
+    memory = workspace / MEMORY_DIR
+    memory.mkdir()
+    (memory / "record.md").write_text("记忆", encoding="utf-8")
+    path = f"/workspace/{MEMORY_DIR}/record.md"
+
+    assert backend.read(path).error is not None
+    assert backend.write(path, "x").error is not None
+    assert backend.edit(path, "记", "x").error is not None
+    assert backend.delete(path).error is not None
+    assert backend.ls(f"/workspace/{MEMORY_DIR}").error is not None
+    assert backend.glob("*.md", f"/workspace/{MEMORY_DIR}").error is not None
+    assert backend.grep("记忆", f"/workspace/{MEMORY_DIR}").error is not None
+    assert backend.upload_files([(path, b"x")])[0].error is not None
+    assert backend.download_files([path])[0].error is not None
+
+
+def test_a_symlink_alias_to_memory_is_rejected(backend: SandboxBackend, workspace: Path) -> None:
+    memory = workspace / MEMORY_DIR
+    memory.mkdir()
+    (memory / "record.md").write_text("记忆", encoding="utf-8")
+    (workspace / "alias").symlink_to(memory, target_is_directory=True)
+
+    assert backend.read("/workspace/alias/record.md").error is not None
 
 
 # ------------------------------------------------------ 工具自身的失败也要返回

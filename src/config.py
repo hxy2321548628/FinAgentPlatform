@@ -11,6 +11,8 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.auth.session import DEFAULT_TTL_SECOND as DEFAULT_SESSION_TTL_SECOND
+from app.memory.store import DEFAULT_MEMORY_MAX_BYTE
+from app.memory.worker import DEFAULT_MAX_ATTEMPTS, DEFAULT_POLL_SECOND, DEFAULT_STALE_SECOND
 from app.quota.policy import (
     DEFAULT_CONCURRENT_RUN,
     DEFAULT_OUTPUT_WEIGHT,
@@ -159,6 +161,21 @@ class Settings(StoreSettings):
         default="deepseek-v4-flash",
         description="辅助模型，承担意图分类等轻量调用",
     )
+    model_aux_price_input: float = Field(
+        default=3.0,
+        ge=0,
+        description="辅助模型每百万未命中 input token 的人民币单价，用于 P15 记忆分项账",
+    )
+    model_aux_price_cached: float = Field(
+        default=0.1,
+        ge=0,
+        description="辅助模型每百万 cache 命中 token 的人民币单价，用于 P15 记忆分项账",
+    )
+    model_aux_price_output: float = Field(
+        default=9.0,
+        ge=0,
+        description="辅助模型每百万 output token 的人民币单价，用于 P15 记忆分项账",
+    )
     # **可配是为了验收**：撞上限记成哪个错误码，只有把它调到极小值才验得出来。
     # 默认值的由来见 app.agent.factory
     agent_recursion_limit: int = Field(
@@ -281,6 +298,21 @@ class Settings(StoreSettings):
         gt=0,
         description="任务消息闲置多久后允许重新认领，毫秒。崩溃恢复的延迟上限就是它",
     )
+    memory_worker_poll_second: float = Field(
+        default=DEFAULT_POLL_SECOND,
+        gt=0,
+        description="memory outbox 暂无任务时的轮询间隔，秒",
+    )
+    memory_job_max_attempts: int = Field(
+        default=DEFAULT_MAX_ATTEMPTS,
+        gt=0,
+        description="一条 memory job 含首次执行在内的最大尝试次数",
+    )
+    memory_job_stale_second: float = Field(
+        default=DEFAULT_STALE_SECOND,
+        gt=0,
+        description="memory job 保持 running 多久视为崩溃遗留，秒",
+    )
 
     sandbox_image: str = Field(
         default=DEFAULT_IMAGE,
@@ -290,6 +322,11 @@ class Settings(StoreSettings):
         # 生产挂在 /data/sandbox 下，但开发机上没有那个目录，默认值放仓库内才能开箱即跑
         default=REPO_ROOT / "data" / "sandbox",
         description="各会话 workspace 的宿主机根目录",
+    )
+    memory_max_byte: int = Field(
+        default=DEFAULT_MEMORY_MAX_BYTE,
+        gt=0,
+        description="单个 thread 活动记忆文件与索引的 UTF-8 序列化 soft cap（字节）",
     )
     skill_root: Path = Field(
         default=REPO_ROOT / "data" / "skill",

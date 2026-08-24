@@ -23,6 +23,10 @@ OUTPUT_DIR = "outputs"
 # 平台物化 Skill 的保留目录，用户上传不能写入；对齐流程仍允许 agent 在运行中修改。
 SKILL_DIR = "skill"
 
+# thread 记忆的宿主机真实目录。只有 broker memory service 可以读写，
+# 普通文件工具、教师工作台与沙箱 execute 都不得触达。
+MEMORY_DIR = ".memory"
+
 
 class PathEscapeError(ValueError):
     """路径不在 `/workspace` 下。
@@ -90,3 +94,29 @@ def thread_workspace(root: Path, thread_id: str) -> Path:
         message = f"thread_id 越出了 workspace 根目录：{thread_id!r}"
         raise PathEscapeError(message)
     return resolved
+
+
+def is_memory_path(root: Path, target: Path) -> bool:
+    """判断目标是否是 workspace 根下的受保护记忆目录。
+
+    同时检查字面路径和解析符号链接后的路径：只检查前者会让
+    ``alias -> .memory`` 绕过保护。
+
+    Args:
+        root: thread workspace 根目录。
+        target: 待检查的宿主机路径。
+
+    Returns:
+        目标是 ``.memory`` 或其子项时为真。
+    """
+    workspace = root.resolve()
+    try:
+        lexical = target.absolute().relative_to(workspace)
+    except ValueError:
+        lexical = None
+    if lexical is not None and lexical.parts and lexical.parts[0] == MEMORY_DIR:
+        return True
+
+    memory = (workspace / MEMORY_DIR).resolve()
+    resolved = target.resolve()
+    return resolved == memory or memory in resolved.parents

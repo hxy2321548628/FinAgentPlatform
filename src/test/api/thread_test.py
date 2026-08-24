@@ -1,6 +1,7 @@
 from functools import partial
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.platform import Platform
@@ -279,6 +280,30 @@ def test_deleting_a_thread_removes_its_workspace(client: TestClient, thread_id: 
     client.delete(f"/api/threads/{thread_id}")
 
     assert space.exists(thread_id) is False
+
+
+def test_a_workspace_destroy_failure_keeps_a_persistent_retry_job(
+    client: TestClient,
+    thread_id: str,
+    platform: Platform,
+    space: Workspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """非预期的 broker 异常也不能丢待办，或把已软删会话误报成未删。"""
+
+    async def fail_destroy(_thread_id: str) -> None:
+        raise RuntimeError("模拟销毁尾声异常")
+
+    monkeypatch.setattr(platform.workspace, "destroy", fail_destroy)
+
+    response = client.delete(f"/api/threads/{thread_id}")
+
+    assert response.status_code == 204
+    assert client.get(f"/api/threads/{thread_id}").status_code == 404
+    assert space.exists(thread_id) is True
+    assert client.portal is not None
+    pending = [one for one in client.portal.call(platform.thread.pending_purge) if one.thread_id == thread_id]
+    assert [(one.thread_id, one.attempts, one.last_error) for one in pending] == [(thread_id, 1, "模拟销毁尾声异常")]
 
 
 def test_deleting_a_thread_destroys_its_sandbox(

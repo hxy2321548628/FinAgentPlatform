@@ -12,6 +12,7 @@ broker 那边，这里只有到它的一条 HTTP 连接。
 """
 
 from dataclasses import dataclass
+from typing import Protocol
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -23,6 +24,8 @@ from app.agent.factory import create_model
 from app.auth.password import PasswordHasher
 from app.auth.session import SessionStore
 from app.group.repository import GroupRepository, JoinRequestRepository
+from app.memory.job import MemoryJobRepository
+from app.memory.model import MemoryRecord, MemoryServiceProtocol
 from app.preset.mcp import McpRepository
 from app.preset.repository import AgentRepository
 from app.preset.review import ReviewRepository
@@ -36,7 +39,7 @@ from app.run.cancel import CancelFlag
 from app.run.log import EventLog
 from app.run.repository import RunRepository
 from app.run.submitter import RunSubmitter
-from app.sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteWorkspace
+from app.sandbox.remote import BrokerConnection, RemoteBackendFactory, RemoteMemory, RemoteWorkspace
 from app.store import postgres, redis
 from app.task.queue import TaskQueue
 from app.thread.repository import ThreadRepository
@@ -53,11 +56,27 @@ PRODUCER_NAME = "api"
 LANGFUSE_TIMEOUT = 15.0
 
 
+class ManagedMemoryProtocol(MemoryServiceProtocol, Protocol):
+    """API 除召回读取外还需要的教师管理能力。"""
+
+    async def detail(self, thread_id: str, slug: str) -> MemoryRecord:
+        """读取一条记忆正文。"""
+        ...
+
+    async def delete(self, thread_id: str, slug: str) -> None:
+        """物理删除一条记忆。"""
+        ...
+
+
 @dataclass(frozen=True)
 class Platform:
     """网关持有的运行时。"""
 
     workspace: RemoteWorkspace
+    # 记忆正文只在 broker；API 只持有远程协议，不获得宿主机路径。
+    memory: ManagedMemoryProtocol
+    # 记忆任务状态与三个模型环节的 run 级账本，供只读评测端点回查。
+    memory_job: MemoryJobRepository
     log: EventLog
     submitter: RunSubmitter
     # 投递用的是 `submitter`，这里单独摆出来只为一件事：抓取指标时要看队列积压。
@@ -141,6 +160,8 @@ async def build_platform(settings: Settings) -> Platform:
     )
     return Platform(
         workspace=RemoteWorkspace(connection),
+        memory=RemoteMemory(connection),
+        memory_job=MemoryJobRepository(engine),
         # 网关只读事件，不写。给它归档是为了让「Stream 里已经没有的那段历史」也读得到
         log=EventLog(cache, archive=EventArchive(engine)),
         submitter=RunSubmitter(repository=repository, queue=queue),

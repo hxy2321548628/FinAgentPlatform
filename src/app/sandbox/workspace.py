@@ -11,10 +11,13 @@ api 侧判断会话存不存在一律查表，不再调它。
 
 import logging
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from shutil import rmtree
+from threading import Lock, RLock
 
-from app.sandbox.path import SKILL_DIR, PathEscapeError, thread_workspace
+from app.sandbox.path import MEMORY_DIR, SKILL_DIR, PathEscapeError, is_memory_path, thread_workspace
 from app.sandbox.quota import NoQuota, QuotaProtocol
 
 logger = logging.getLogger(__name__)
@@ -65,6 +68,8 @@ class Workspace:
         self._root = root
         self._quota = quota or NoQuota()
         self._owner = owner
+        self._lock_guard = Lock()
+        self._thread_locks: dict[str, RLock] = {}
 
     def create(self, thread_id: str) -> str:
         """给一个已经存在的会话开出它的目录。
@@ -84,6 +89,28 @@ class Workspace:
         """
         self.path(thread_id)
         return thread_id
+
+    @contextmanager
+    def thread_lock(self, thread_id: str) -> Iterator[None]:
+        """串行化同一 thread 的 workspace 与 memory 操作。
+
+        锁只住当前 broker 进程内的同一 thread；外层锁不串行化磁盘操作，
+        仅用于安全取得细粒度的可重入锁。
+
+        Args:
+            thread_id: 会话标识。
+
+        Yields:
+            持有该 thread 锁的上下文。
+
+        Raises:
+            PathEscapeError: 标识会让目录落到根目录之外。
+        """
+        thread_workspace(self._root, thread_id)
+        with self._lock_guard:
+            lock = self._thread_locks.setdefault(thread_id, RLock())
+        with lock:
+            yield
 
     def exists(self, thread_id: str) -> bool:
         """会话是否存在。
@@ -114,14 +141,38 @@ class Workspace:
             PathEscapeError: 标识会让目录落到根目录之外。
             QuotaError: 配额没能设上。
         """
-        workspace = thread_workspace(self._root, thread_id)
-        if workspace.is_dir():
+        with self.thread_lock(thread_id):
+            workspace = thread_workspace(self._root, thread_id)
+            if workspace.is_dir():
+                return workspace
+
+            workspace.mkdir(parents=True, exist_ok=True)
+            self._hand_over(workspace)
+            self._quota.assign(thread_id, workspace)
             return workspace
 
-        workspace.mkdir(parents=True, exist_ok=True)
-        self._hand_over(workspace)
-        self._quota.assign(thread_id, workspace)
-        return workspace
+    def lookup(self, thread_id: str) -> Path:
+        """查找已有会话目录，绝不在读路径上创建它。
+
+        Args:
+            thread_id: 会话标识。
+
+        Returns:
+            已存在的宿主机会话目录。
+
+        Raises:
+            PathEscapeError: 标识会让目录落到根目录之外。
+            FileNotFoundError: 会话目录不存在。
+        """
+        with self.thread_lock(thread_id):
+            workspace = thread_workspace(self._root, thread_id)
+            if not workspace.is_dir():
+                raise FileNotFoundError(f"会话目录不存在：{thread_id!r}")
+            return workspace
+
+    def location(self, thread_id: str) -> Path:
+        """解析会话目录位置，不创建也不要求它存在。"""
+        return thread_workspace(self._root, thread_id)
 
     def _hand_over(self, workspace: Path) -> None:
         """把新建的目录交给沙箱要用的那个用户。
@@ -163,20 +214,23 @@ class Workspace:
             message = f"文件名不可用：{filename!r}"
             raise PathEscapeError(message)
 
-        workspace = self.path(thread_id).resolve()
-        parent = self.resolve(thread_id, directory) if directory else workspace
-        relative_parent = parent.relative_to(workspace)
-        if relative_parent.parts and relative_parent.parts[0] == SKILL_DIR:
-            message = f"不能上传到平台保留目录：{directory!r}"
-            raise PathEscapeError(message)
+        with self.thread_lock(thread_id):
+            workspace = self.lookup(thread_id).resolve()
+            parent = self.resolve(thread_id, directory) if directory else workspace
+            relative_parent = parent.relative_to(workspace)
+            if relative_parent.parts and relative_parent.parts[0] in {SKILL_DIR, MEMORY_DIR}:
+                message = f"不能上传到平台保留目录：{directory!r}"
+                raise PathEscapeError(message)
 
-        if not parent.is_dir():
-            message = f"目标目录不存在：{directory!r}"
-            raise PathEscapeError(message)
+            if not parent.is_dir():
+                message = f"目标目录不存在：{directory!r}"
+                raise PathEscapeError(message)
 
-        target = parent / name
-        target.write_bytes(content)
-        return target
+            target = parent / name
+            if is_memory_path(workspace, target):
+                raise PathEscapeError("不能操作平台保留目录")
+            target.write_bytes(content)
+            return target
 
     def write(self, thread_id: str, relative_path: str, content: bytes) -> Path:
         """覆盖会话目录里的一个文件。
@@ -184,33 +238,35 @@ class Workspace:
         父目录必须已经存在；目录创建单独走 ``mkdir``，避免 broker 创建出的
         目录与沙箱运行用户产生属主不一致。
         """
-        target = self.resolve(thread_id, relative_path)
-        self._check_user_path(thread_id, target)
-        if target.is_dir():
-            raise IsADirectoryError(f"这是一个目录，不能写：{relative_path!r}")
-        if not target.parent.is_dir():
-            raise PathEscapeError(f"目标目录不存在：{relative_path!r}")
-        target.write_bytes(content)
-        return target
+        with self.thread_lock(thread_id):
+            target = self.resolve(thread_id, relative_path)
+            self._check_user_path(thread_id, target)
+            if target.is_dir():
+                raise IsADirectoryError(f"这是一个目录，不能写：{relative_path!r}")
+            if not target.parent.is_dir():
+                raise PathEscapeError(f"目标目录不存在：{relative_path!r}")
+            target.write_bytes(content)
+            return target
 
     def mkdir(self, thread_id: str, relative_path: str) -> Path:
         """在会话目录里创建一个目录。
 
         只创建一层，父目录必须存在，且不允许触碰平台保留目录。
         """
-        target = self.resolve(thread_id, relative_path)
-        self._check_user_path(thread_id, target)
-        if not relative_path or target == self.path(thread_id).resolve():
-            raise PathEscapeError("目录名不可用")
-        if not target.parent.is_dir():
-            raise PathEscapeError(f"父目录不存在：{relative_path!r}")
-        target.mkdir()
-        return target
+        with self.thread_lock(thread_id):
+            target = self.resolve(thread_id, relative_path)
+            self._check_user_path(thread_id, target)
+            if not relative_path or target == self.lookup(thread_id).resolve():
+                raise PathEscapeError("目录名不可用")
+            if not target.parent.is_dir():
+                raise PathEscapeError(f"父目录不存在：{relative_path!r}")
+            target.mkdir()
+            return target
 
     def _check_user_path(self, thread_id: str, target: Path) -> None:
-        workspace = self.path(thread_id).resolve()
+        workspace = self.lookup(thread_id).resolve()
         relative = target.relative_to(workspace)
-        if relative.parts and relative.parts[0] == SKILL_DIR:
+        if relative.parts and relative.parts[0] in {SKILL_DIR, MEMORY_DIR}:
             raise PathEscapeError("不能操作平台保留目录")
 
     def remove(self, thread_id: str, relative_path: str) -> None:
@@ -232,11 +288,12 @@ class Workspace:
             FileNotFoundError: 文件不在。
             IsADirectoryError: 指向的是目录。
         """
-        target = self.resolve(thread_id, relative_path)
-        if target.is_dir():
-            message = f"这是一个目录，不能删：{relative_path!r}"
-            raise IsADirectoryError(message)
-        target.unlink()
+        with self.thread_lock(thread_id):
+            target = self.resolve(thread_id, relative_path)
+            if target.is_dir():
+                message = f"这是一个目录，不能删：{relative_path!r}"
+                raise IsADirectoryError(message)
+            target.unlink()
 
     def destroy(self, thread_id: str) -> None:
         """删掉一个会话的整个目录。
@@ -258,13 +315,14 @@ class Workspace:
         """
         # 走 thread_workspace 而不是 self.path：后者不存在时会把目录建出来，
         # 而这里正要删掉它
-        target = thread_workspace(self._root, thread_id)
-        if not target.is_dir():
-            return
-        # XFS 的 project 配额记录留着不清：projid 由 thread_id 确定性派生，
-        # 而 uuid 不会重来一次，因此那条记录既不会被复用也不会挡住谁。清它要多跑一次
-        # xfs_quota，而那条路上的每一次失败都只往 stderr 打一句然后退出 0
-        rmtree(target)
+        with self.thread_lock(thread_id):
+            target = thread_workspace(self._root, thread_id)
+            if not target.is_dir():
+                return
+            # XFS 的 project 配额记录留着不清：projid 由 thread_id 确定性派生，
+            # 而 uuid 不会重来一次，因此那条记录既不会被复用也不会挡住谁。清它要多跑一次
+            # xfs_quota，而那条路上的每一次失败都只往 stderr 打一句然后退出 0
+            rmtree(target)
 
     def resolve(self, thread_id: str, relative_path: str) -> Path:
         """定位会话目录下的一个路径。
@@ -279,4 +337,27 @@ class Workspace:
         Raises:
             PathEscapeError: 路径指向会话目录之外。
         """
-        return _within(self.path(thread_id).resolve(), relative_path, scope="会话目录")
+        target = self.resolve_existing(thread_id, relative_path)
+        if is_memory_path(self.lookup(thread_id), target):
+            raise PathEscapeError("不能操作平台保留目录")
+        return target
+
+    def resolve_existing(self, thread_id: str, relative_path: str) -> Path:
+        """在已存在的会话目录下解析路径，不创建目录。
+
+        这是 broker 内部服务用的底层定位方法，因此只做越界防护；
+        普通文件入口应使用会额外拒绝 ``.memory`` 的 ``resolve``。
+
+        Args:
+            thread_id: 会话标识。
+            relative_path: 相对会话根的路径。
+
+        Returns:
+            宿主机上的路径，目标本身可能不存在。
+
+        Raises:
+            FileNotFoundError: 会话目录不存在。
+            PathEscapeError: 路径指向会话目录之外。
+        """
+        with self.thread_lock(thread_id):
+            return _within(self.lookup(thread_id).resolve(), relative_path, scope="会话目录")

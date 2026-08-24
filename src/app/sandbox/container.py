@@ -12,7 +12,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Protocol
 
-from app.sandbox.path import SANDBOX_ROOT
+from app.sandbox.path import MEMORY_DIR, SANDBOX_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ DEFAULT_MEMORY = "2g"
 DEFAULT_CPUS = "1"
 DEFAULT_PIDS_LIMIT = 128
 DEFAULT_TMP_SIZE = "512m"
+MEMORY_MASK_SIZE = "64k"
 
 # 沙箱共同的父 cgroup。**总量只能设在这里** —— 每个沙箱的 `--memory` 是各自独立的
 # 天花板，20 个 2g 加起来 40g，没有任何东西拦着它们同时吃到，撑爆的是宿主机物理内存。
@@ -249,9 +250,10 @@ class DockerContainer:
         if self._container_id is not None:
             return
 
-        # bind-mount 的目标必须先存在：留给 Docker 创建会是 root 属主，
-        # 而容器以宿主 uid 运行，写不进去
-        self._workspace.mkdir(parents=True, exist_ok=True)
+        # 只有 Workspace.create 能创建会话目录。迟到任务若在 thread purge 后进到这里，
+        # 必须失败而不是让 Docker 以 root 属主复活目录。
+        if not self._workspace.is_dir():
+            raise ContainerError(f"workspace 目录不存在：{self._workspace}")
         limit = self._hardening
         output = _run_docker(
             [
@@ -289,6 +291,10 @@ class DockerContainer:
                 limit.user or f"{os.getuid()}:{os.getgid()}",
                 "-v",
                 f"{self._workspace}:{SANDBOX_ROOT}",
+                # 整个 workspace 的 bind mount 里真实存在 .memory；在子路径叠加空 tmpfs，
+                # 使 execute 即便猜到路径也只看到不可写的空目录。
+                "--tmpfs",
+                f"{SANDBOX_ROOT}/{MEMORY_DIR}:ro,noexec,nosuid,size={MEMORY_MASK_SIZE},mode=0555",
                 "-w",
                 SANDBOX_ROOT,
                 "-e",

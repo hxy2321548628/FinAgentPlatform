@@ -16,8 +16,10 @@ from app.agent.config import (
     SkillReference,
     SubagentReference,
 )
-from app.event.model import Event, RunErrorCode, RunStatus
+from app.event.model import Event, RunErrorCode, RunStatus, TokenUsage
 from app.group.model import JoinRequestStatus
+from app.memory.job import MemoryJobStatus
+from app.memory.model import MemoryType
 from app.preset.mcp import McpStatus, McpTransport
 from app.preset.model import ResourceKind, ReviewStatus, VersionStatus, Visibility
 from app.preset.repository import AgentSource
@@ -326,6 +328,28 @@ class ThreadPageResponse(BaseModel):
     )
 
 
+class MemorySummaryResponse(BaseModel):
+    """教师可审计的一条 thread 记忆，不含正文。"""
+
+    slug: str = Field(min_length=1, description="thread 内稳定的记忆标识")
+    name: str = Field(min_length=1, description="给教师阅读的名称")
+    description: str = Field(min_length=1, description="记忆的短描述")
+    type: MemoryType = Field(description="记忆的业务类型")
+    updated_at: datetime = Field(description="最后更新时间，UTC")
+
+
+class MemoryDetailResponse(MemorySummaryResponse):
+    """教师查看的一条完整 thread 记忆。"""
+
+    content: str = Field(min_length=1, description="Markdown 正文")
+
+
+class MemoryListResponse(BaseModel):
+    """当前 thread 的全部记忆短索引。"""
+
+    items: list[MemorySummaryResponse] = Field(description="按 broker 返回的稳定顺序排列")
+
+
 class UpdateThreadRequest(BaseModel):
     """改一个会话。
 
@@ -453,7 +477,33 @@ class RunResponse(BaseModel):
     id: str = Field(min_length=1, description="run 标识")
     thread_id: str = Field(min_length=1, description="所属会话")
     status: RunStatus = Field(description="当前状态")
+    tokens: TokenUsage = Field(description="数据库累计的全部已执行程模型用量")
     agent_config: dict[str, object] = Field(description="这一次 run 实际生效的配置快照")
+
+
+class MemoryUsageResponse(BaseModel):
+    """一个记忆模型环节的 run 级持久化账。"""
+
+    model: str = Field(min_length=1, description="实际调用或显式跳过时归属的模型")
+    tokens_cache_read: int = Field(ge=0, description="命中 prompt cache 的 input token")
+    tokens_uncached: int = Field(ge=0, description="未命中 cache 的 input token")
+    tokens_output: int = Field(ge=0, description="output token")
+    cost_yuan: float = Field(ge=0, description="该环节累计费用，人民币元")
+    duration_ms: int = Field(ge=0, description="该环节累计耗时，毫秒")
+    hit_count: int = Field(ge=0, description="该环节命中或产出的记录数")
+    rejected_count: int = Field(ge=0, description="该环节拒绝或被预算裁掉的记录数")
+    fallback_reason: str | None = Field(default=None, description="回退或显式跳过原因")
+    included_in_run: bool = Field(description="token 是否已经合入主 run 的终态用量")
+    selected_slugs: list[str] = Field(description="选择器预算前选中的 slug；其他环节为空列表")
+
+
+class RunMemoryUsageResponse(BaseModel):
+    """评测读取的一条 run 记忆任务状态与三个分项账。"""
+
+    job_status: MemoryJobStatus | None = Field(default=None, description="抽取任务状态；没有 outbox 时为空")
+    selector: MemoryUsageResponse | None = Field(default=None, description="选择器账；缺记录时为空而非零")
+    extractor: MemoryUsageResponse | None = Field(default=None, description="抽取器账；缺记录时为空而非零")
+    consolidator: MemoryUsageResponse | None = Field(default=None, description="整理器账；缺记录时为空而非零")
 
 
 class CreateAgentRequest(BaseModel):

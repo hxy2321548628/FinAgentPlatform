@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.sandbox.browse import preview, tree
+from app.sandbox.path import MEMORY_DIR
 
 
 def paths(root: Path) -> list[str]:
@@ -91,6 +92,22 @@ def test_a_tree_within_the_limit_is_not_truncated(tmp_path: Path) -> None:
 
 def test_an_empty_workspace_gives_an_empty_tree(tmp_path: Path) -> None:
     assert paths(tmp_path) == []
+
+
+def test_memory_and_transaction_directories_are_hidden_from_the_tree(tmp_path: Path) -> None:
+    (tmp_path / MEMORY_DIR / ".stage").mkdir(parents=True)
+    (tmp_path / MEMORY_DIR / ".stage" / "record.md").write_text("记忆", encoding="utf-8")
+    (tmp_path / "data.csv").write_text("x", encoding="utf-8")
+
+    assert paths(tmp_path) == ["data.csv"]
+
+
+def test_memory_cannot_be_used_as_the_tree_root(tmp_path: Path) -> None:
+    memory = tmp_path / MEMORY_DIR
+    memory.mkdir()
+    (memory / "record.md").write_text("记忆", encoding="utf-8")
+
+    assert paths(memory) == []
 
 
 # ------------------------------------------------------------------ 预览

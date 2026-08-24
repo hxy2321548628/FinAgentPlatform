@@ -8,8 +8,9 @@
 # **与 workspace-report.sh 不是一回事**：那个体检的是「占用在往哪儿走」，管的是
 # 有主的会话，而架构 §6.5 明确本期不回收它们 —— 删掉教师就再也拉不回来。
 # 这里删的是**没有任何会话指向的目录**：前端列不出来、教师点不开、broker 也不会再碰。
-# 它们的来源是测试与验收脚本（那些直接建 workspace，不走建会话的接口），
-# 以及销毁失败留下的残骸（见 api/route/thread.py 里 204 那段说明）。
+# 它们的来源是测试与验收脚本（那些直接建 workspace，不走建会话的接口）。
+# 已软删 thread 仍有数据库行，不属于本脚本的“无主目录”；它的持久补偿待办由
+# ``cd src && uv run python -m app.thread.reaper`` 重试。
 #
 # **判据是「库里没有」而不是「目录是空的」**：空目录里也可能是一个刚建好还没写东西的
 # 真会话，而有内容的孤儿反倒是测试留下的大头。
@@ -38,7 +39,7 @@ DB_NAME="$(sed -n 's/^POSTGRES_DB=//p' "$REPO_ROOT/.env")"
 
 # **查库失败必须中止，不能当成「库里没有」** —— 那会把所有目录都判成孤儿，
 # 一次误删就是全部教师的数据。软删的会话也算「有主」：它的目录本就该在删会话时
-# 一并销毁了，这里还查得到说明销毁失败，那是要人去看的故障，不是垃圾
+# 一并销毁了，这里还查得到说明它属于 thread reaper 的持久待办，不是无主垃圾
 log "查库里的会话清单"
 KNOWN="$(docker compose -f "$COMPOSE_FILE" exec -T postgres \
     psql -U "$DB_USER" -d "$DB_NAME" -t -A -c "SELECT replace(id::text,'-','') FROM threads;" 2>/dev/null)" \

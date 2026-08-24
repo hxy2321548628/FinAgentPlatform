@@ -111,6 +111,53 @@ def test_an_approval_resume_uses_the_original_run_snapshot(client: TestClient, a
     assert [one.model_dump(exclude_none=True) for one in agent.configured] == [original, original]
 
 
+def test_an_approval_resume_reuses_the_deidentified_user_snapshot(
+    client: TestClient,
+    agent: Agent,
+    platform: Platform,
+    thread_id: str,
+) -> None:
+    """用户信息是提交时快照；审批后不重查名册，也不带邮箱或 ID。"""
+    assert client.portal is not None
+    me = client.get("/api/auth/me").json()
+    client.portal.call(
+        partial(
+            platform.user.update_profile,
+            me["id"],
+            dept="金融工程系",
+            quota_tokens_daily=4_321,
+            quota_concurrent_runs=2,
+        )
+    )
+    run_id = _interrupted(client, agent, thread_id)
+    client.portal.call(
+        partial(
+            platform.user.update_profile,
+            me["id"],
+            dept="审批前刚改的院系",
+            quota_tokens_daily=9_999,
+        )
+    )
+
+    client.post(f"/api/runs/{run_id}/approve", json={"decisions": [{"index": 0, "type": "approve"}]})
+    _settle(client, run_id, RunStatus.SUCCEEDED)
+
+    snapshots = [one.model_dump(mode="json") for one in agent.user_contexts if one is not None]
+    assert len(snapshots) == 4
+    assert snapshots == [snapshots[0]] * 4
+    assert snapshots[0] == {
+        "name": me["name"],
+        "role": "teacher",
+        "dept": "金融工程系",
+        "token_used_today": 0,
+        "token_limit_daily": 4_321,
+        "active_runs": 0,
+        "concurrent_run_limit": 2,
+    }
+    assert "email" not in snapshots[0]
+    assert "id" not in snapshots[0]
+
+
 def test_a_missing_index_is_a_validation_error(client: TestClient, agent: Agent, thread_id: str) -> None:
     """两个待确认的调用只回一个决策 —— 恢复时会把 A 的决策套到 B 的调用上。"""
     agent.interrupt = [

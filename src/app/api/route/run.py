@@ -8,7 +8,14 @@ from fastapi.responses import StreamingResponse
 
 from app.api.error import invalid, not_found
 from app.api.platform import Platform, get_platform
-from app.api.schema import ApproveRequest, ReplayedEvent, RunReplayResponse, RunResponse
+from app.api.schema import (
+    ApproveRequest,
+    MemoryUsageResponse,
+    ReplayedEvent,
+    RunMemoryUsageResponse,
+    RunReplayResponse,
+    RunResponse,
+)
 from app.api.security import CurrentUser
 from app.api.sse import heartbeat_stream
 from app.event.model import (
@@ -19,6 +26,7 @@ from app.event.model import (
     RunStatus,
     now_ms,
 )
+from app.memory.job import MemoryUsage, MemoryUsageStage
 from app.run.decision import DecisionError, check
 from app.run.log import InvalidEventIdError, parse_event_id
 from app.run.replay import collapse
@@ -56,7 +64,26 @@ async def get_run(
         id=run.id,
         thread_id=run.thread_id,
         status=run.status,
+        tokens=run.tokens,
         agent_config=run.agent_config.model_dump(exclude_none=True),
+    )
+
+
+@router.get("/{run_id}/memory-usage")
+async def get_memory_usage(
+    run_id: str,
+    current: CurrentUser,
+    platform: Annotated[Platform, Depends(get_platform)],
+) -> RunMemoryUsageResponse:
+    """读取当前用户一条 run 的记忆任务状态与三个分项账。"""
+    await _require_run(platform, run_id, current.user_id)
+    job_status = await platform.memory_job.status_for_run(run_id)
+    usages = await platform.memory_job.usage_for_run(run_id)
+    return RunMemoryUsageResponse(
+        job_status=job_status,
+        selector=_usage(usages.get(MemoryUsageStage.SELECTOR)),
+        extractor=_usage(usages.get(MemoryUsageStage.EXTRACTOR)),
+        consolidator=_usage(usages.get(MemoryUsageStage.CONSOLIDATOR)),
     )
 
 
@@ -153,6 +180,7 @@ async def cancel_run(
         id=current_run.id,
         thread_id=current_run.thread_id,
         status=current_run.status,
+        tokens=current_run.tokens,
         agent_config=current_run.agent_config.model_dump(exclude_none=True),
     )
 
@@ -191,12 +219,14 @@ async def approve_run(
             user_id=current.user_id,
             decisions=request.decisions,
             agent_config=run.agent_config,
+            user_context=run.user_context,
         )
 
     return RunResponse(
         id=run_id,
         thread_id=run.thread_id,
         status=RunStatus.QUEUED,
+        tokens=run.tokens,
         agent_config=run.agent_config.model_dump(exclude_none=True),
     )
 
@@ -220,6 +250,25 @@ async def _require_run(platform: Platform, run_id: str, user_id: str) -> Run:
         message = f"run 不存在：{run_id}"
         raise not_found(message)
     return run
+
+
+def _usage(usage: MemoryUsage | None) -> MemoryUsageResponse | None:
+    """把持久化分项账投影成不含内部关联标识的 HTTP 形状。"""
+    if usage is None:
+        return None
+    return MemoryUsageResponse(
+        model=usage.model,
+        tokens_cache_read=usage.tokens.input_cache_read,
+        tokens_uncached=usage.tokens.input_uncached,
+        tokens_output=usage.tokens.output,
+        cost_yuan=usage.cost_yuan,
+        duration_ms=usage.duration_ms,
+        hit_count=usage.hit_count,
+        rejected_count=usage.rejected_count,
+        fallback_reason=usage.fallback_reason,
+        included_in_run=usage.included_in_run,
+        selected_slugs=list(usage.selected_slugs),
+    )
 
 
 def _cursor(last_event_id: str | None) -> str | None:

@@ -15,6 +15,7 @@ import { TodoList } from '../components/TodoList'
 import { ArtifactStrip } from '../components/ArtifactStrip'
 import { ChatInput } from '../components/ChatInput'
 import { WorkspaceFiles } from '../components/WorkspaceFiles'
+import { ThreadMemories } from '../components/ThreadMemories'
 import { Logo } from '../../components/Logo'
 
 const LIVE_STATUS: readonly RunStatus[] = ['queued', 'running', 'waiting_approval']
@@ -118,6 +119,7 @@ export function Chat() {
   const queryClient = useQueryClient()
   const [panelVisible, setPanelVisible] = useState(false)
   const [panelMountedThread, setPanelMountedThread] = useState<string | null>(null)
+  const [panelView, setPanelView] = useState<'files' | 'memories'>('files')
   const [panelWidth, setPanelWidth] = useState(FILES_PANEL_INITIAL_WIDTH)
   const [panelResizing, setPanelResizing] = useState(false)
   const chatRoot = useRef<HTMLDivElement>(null)
@@ -191,6 +193,7 @@ export function Chat() {
     panelThread.current = threadId
     setPanelVisible(false)
     setPanelMountedThread(null)
+    setPanelView('files')
     setPanelResizing(false)
     setPanelWidth(FILES_PANEL_INITIAL_WIDTH)
     panelWidthRef.current = FILES_PANEL_INITIAL_WIDTH
@@ -342,7 +345,23 @@ export function Chat() {
         </button>
         {panelMountedThread === threadId && (
           <div className="chat-files-content" hidden={!panelVisible}>
-            <WorkspaceFiles threadId={threadId} title={thread.data?.title || '新分析'} compact />
+            <div className="chat-workspace-tabs" role="tablist" aria-label="会话工作区视图">
+              <button id="chat-files-tab" type="button" role="tab" aria-controls="chat-files-tabpanel" aria-selected={panelView === 'files'} onClick={() => setPanelView('files')}>文件</button>
+              <button id="chat-memories-tab" type="button" role="tab" aria-controls="chat-memories-tabpanel" aria-selected={panelView === 'memories'} onClick={() => setPanelView('memories')}>记忆</button>
+            </div>
+            <div
+              id={panelView === 'files' ? 'chat-files-tabpanel' : 'chat-memories-tabpanel'}
+              className="chat-workspace-view"
+              role="tabpanel"
+              aria-labelledby={panelView === 'files' ? 'chat-files-tab' : 'chat-memories-tab'}
+              hidden={!panelVisible}
+            >
+              {panelView === 'files' ? (
+                <WorkspaceFiles threadId={threadId} title={thread.data?.title || '新分析'} compact />
+              ) : (
+                <ThreadMemories threadId={threadId} />
+              )}
+            </div>
           </div>
         )}
       </aside>

@@ -143,6 +143,7 @@
       },
       "metadata": {
         "probe": "multi_turn",
+        "memory_expected_keywords": ["zuel-"],
         "note": "跨轮约束用文件名判，客观且与画得好不好无关。"
       }
     },

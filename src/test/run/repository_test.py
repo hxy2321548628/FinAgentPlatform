@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.agent.config import AgentConfig
 from app.event.model import RunErrorCode, RunStatus, TokenUsage
+from app.memory.job import MemoryJobPayload
 from app.run.repository import RunRepository, RunStart
 from app.thread.repository import Thread
 from app.user.model import UserRole
@@ -313,6 +314,63 @@ async def test_only_one_of_two_racing_finalizers_wins(repository: RunRepository,
     assert succeeded is False
 
 
+async def test_succeed_and_memory_job_are_committed_once_in_the_same_transition(
+    repository: RunRepository,
+    submitted: str,
+    owner: User,
+    owned_thread: Thread,
+    live_engine: AsyncEngine,
+) -> None:
+    """只有真正写下 succeeded 的那一次能产生一条 outbox。"""
+    payload = MemoryJobPayload(
+        thread_id=owned_thread.id,
+        user_id=owner.id,
+        messages=[
+            {"role": "user", "content": "我偏好用中位数"},
+            {"role": "assistant", "content": "已按中位数分析"},
+        ],
+    )
+
+    assert await repository.succeed(submitted, tokens=TokenUsage(), memory_job=payload) is True
+    assert await repository.succeed(submitted, tokens=TokenUsage(), memory_job=payload) is False
+
+    async with live_engine.connect() as connection:
+        found = await connection.execute(
+            text("SELECT run_id, thread_id, user_id, status, snapshot FROM memory_jobs WHERE run_id = :run_id"),
+            {"run_id": submitted},
+        )
+        rows = found.mappings().all()
+    assert len(rows) == 1
+    assert str(rows[0]["thread_id"]).replace("-", "") == owned_thread.id
+    assert str(rows[0]["user_id"]).replace("-", "") == owner.id
+    assert rows[0]["status"] == "queued"
+    assert rows[0]["snapshot"] == payload.messages
+
+
+async def test_a_failed_run_never_creates_a_memory_job(
+    repository: RunRepository,
+    submitted: str,
+    owner: User,
+    owned_thread: Thread,
+    live_engine: AsyncEngine,
+) -> None:
+    payload = MemoryJobPayload(
+        thread_id=owned_thread.id,
+        user_id=owner.id,
+        messages=[{"role": "user", "content": "这是临时任务"}],
+    )
+    await repository.fail(submitted, code=RunErrorCode.INTERNAL, message="失败")
+
+    assert await repository.succeed(submitted, tokens=TokenUsage(), memory_job=payload) is False
+
+    async with live_engine.connect() as connection:
+        found = await connection.execute(
+            text("SELECT count(*) FROM memory_jobs WHERE run_id = :run_id"),
+            {"run_id": submitted},
+        )
+    assert found.scalar_one() == 0
+
+
 async def test_a_cancelled_run_is_no_longer_unfinished(repository: RunRepository, submitted: str) -> None:
     """崩溃恢复不该把已经取消的 run 捞回来重跑。"""
     await repository.cancel(submitted)
@@ -400,6 +458,31 @@ async def test_the_history_carries_the_token_cost(
     page = await repository.list_by_thread(owned_thread.id, user_id=owner.id)
 
     assert page.items[0].tokens == TokenUsage(input_cache_read=7, input_uncached=11, output=13)
+
+
+async def test_approval_resume_keeps_tokens_from_every_leg(
+    repository: RunRepository,
+    submitted: str,
+    owner: User,
+    owned_thread: Thread,
+) -> None:
+    """同一 run 挂起再续跑时，前一程的 selector/主模型费用不能被终态覆盖。"""
+    await repository.start(submitted)
+    await repository.wait_approval(
+        submitted,
+        tokens=TokenUsage(input_cache_read=2, input_uncached=3, output=5),
+    )
+    await repository.resume(submitted)
+    await repository.start(submitted)
+    await repository.succeed(
+        submitted,
+        tokens=TokenUsage(input_cache_read=7, input_uncached=11, output=13),
+    )
+
+    page = await repository.list_by_thread(owned_thread.id, user_id=owner.id)
+    found = next(item for item in page.items if item.id == submitted)
+
+    assert found.tokens == TokenUsage(input_cache_read=9, input_uncached=14, output=18)
 
 
 async def test_another_users_thread_has_no_history(

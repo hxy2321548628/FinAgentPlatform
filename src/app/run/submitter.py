@@ -10,6 +10,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from app.agent.config import AgentConfig
+from app.agent.user_context import UserContext
 from app.event.model import RunStatus
 from app.run.decision import Decision
 from app.run.repository import Run
@@ -33,6 +34,7 @@ class RunCreatorProtocol(Protocol):
         user_id: str,
         content: str | None = None,
         agent_config: dict[str, object] | None = None,
+        user_context: dict[str, object] | None = None,
     ) -> None:
         """记下一个刚提交的 run。"""
         ...
@@ -57,6 +59,7 @@ class RunSubmitter:
         content: str,
         user_id: str,
         agent_config: AgentConfig,
+        user_context: UserContext | None = None,
     ) -> Run:
         """接下一次提问并立刻返回，执行由 worker 进行。
 
@@ -72,13 +75,20 @@ class RunSubmitter:
             content: 教师的问题。
             user_id: 提交的人。
             agent_config: 这一轮实际生效的配置，引用已解析。
+            user_context: 提交时冻结的脱敏用户信息。
 
         Returns:
             状态为 `queued` 的 run 记录，`id` 用于订阅事件与查询状态。
         """
         effective = agent_config
         snapshot = effective.model_dump(exclude_none=True)
-        run = Run(id=uuid4().hex, thread_id=thread_id, status=RunStatus.QUEUED, agent_config=effective)
+        run = Run(
+            id=uuid4().hex,
+            thread_id=thread_id,
+            status=RunStatus.QUEUED,
+            agent_config=effective,
+            user_context=user_context,
+        )
         # 执行搬到 worker 之后，api 进程里关于一个 run 就只剩这一段。不绑身份的话，
         # 「按 run_id 把一次 run 的日志过滤出来」在 api 侧恒为空
         with run_context(run_id=run.id, thread_id=run.thread_id, user_id=user_id):
@@ -90,6 +100,7 @@ class RunSubmitter:
                 user_id=user_id,
                 content=content,
                 agent_config=snapshot,
+                user_context=None if user_context is None else user_context.model_dump(mode="json"),
             )
             await self._queue.publish(
                 RunTask(
@@ -97,6 +108,7 @@ class RunSubmitter:
                     thread_id=run.thread_id,
                     content=content,
                     user_id=user_id,
+                    user_context=user_context,
                     agent_config=effective,
                 )
             )
@@ -111,6 +123,7 @@ class RunSubmitter:
         user_id: str,
         decisions: list[Decision],
         agent_config: AgentConfig,
+        user_context: UserContext | None = None,
     ) -> None:
         """审批之后把同一个 run 重新投一次。
 
@@ -126,6 +139,7 @@ class RunSubmitter:
             user_id: 审批的人。
             decisions: 已经校验过的决策。
             agent_config: 原 run 提交时落下的配置快照。
+            user_context: 原 run 提交时落下的脱敏用户快照。
         """
         with run_context(run_id=run_id, thread_id=thread_id, user_id=user_id):
             await self._queue.publish(
@@ -133,6 +147,7 @@ class RunSubmitter:
                     run_id=run_id,
                     thread_id=thread_id,
                     user_id=user_id,
+                    user_context=user_context,
                     decisions=decisions,
                     agent_config=agent_config,
                 )

@@ -11,10 +11,11 @@ api 仍能读写任意会话的文件，边界就只剩一半 —— 而 P3 的�
 import asyncio
 import base64
 import logging
-from collections.abc import AsyncIterator, Callable
+import os
+from collections.abc import AsyncIterator, Callable, Generator
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, BinaryIO
 
 from deepagents.backends.protocol import (
     DeleteResult,
@@ -27,8 +28,9 @@ from deepagents.backends.protocol import (
     WriteResult,
 )
 from fastapi import APIRouter, HTTPException, Query, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from starlette.types import Receive, Scope, Send
 
 from app.broker.runtime import Broker, BrokerDep
 from app.broker.schema import (
@@ -48,6 +50,15 @@ from app.broker.schema import (
     GlobRequest,
     GrepRequest,
     LsRequest,
+    MemoryCatalogItemResponse,
+    MemoryCatalogResponse,
+    MemoryDetailResponse,
+    MemoryExportResponse,
+    MemoryReadRequest,
+    MemoryReadResponse,
+    MemoryReplaceRequest,
+    MemoryReplaceResponse,
+    MemoryWriteRequest,
     PoolStatResponse,
     PreviewResponse,
     QueuedData,
@@ -71,6 +82,14 @@ from app.broker.schema import (
 from app.broker.skill import SkillFile as StoredSkillFile
 from app.broker.skill import SkillReference
 from app.event.model import RunErrorCode
+from app.memory.store import (
+    MemoryCapacityError,
+    MemoryStore,
+    MemoryStoreError,
+    MemoryVersionConflictError,
+)
+from app.memory.store import MemoryRecord as StoredMemoryRecord
+from app.sandbox.backend import SandboxBackend
 from app.sandbox.browse import DEFAULT_PREVIEW_LINE, MAX_ENTRY, guess_mime, preview, tree
 from app.sandbox.path import PathEscapeError
 from app.sandbox.pool import SandboxQueueTimeoutError
@@ -86,6 +105,7 @@ skill_router = APIRouter(prefix="/skill", tags=["app.broker.skill"])
 stat_router = APIRouter(tags=["broker-stat"])
 
 SSE_MEDIA_TYPE = "text/event-stream"
+FILE_STREAM_CHUNK_BYTE = 64 * 1024
 
 
 # ------------------------------------------------------------------ 池的占用
@@ -155,8 +175,8 @@ async def align_skills(thread_id: str, request: AlignSkillsRequest, broker: Brok
         SkillReference(skill_id=one.skill_id, version=one.version, name=one.name) for one in request.skills
     )
     try:
-        workspace = broker.workspace.path(thread_id)
-        await asyncio.to_thread(broker.skills.align, workspace, references)
+        async with broker.thread_lock(thread_id):
+            await asyncio.to_thread(_align_skills, broker, thread_id, references)
     except PathEscapeError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except FileNotFoundError as exc:
@@ -199,9 +219,10 @@ async def destroy_thread(thread_id: str, broker: BrokerDep) -> None:
     删一个已经删过的、或者根本没建过目录的会话不是错误 —— api 那边的行已经没了，
     这里再报 404 只会让一次正常的删除看起来失败了。
     """
-    await broker.pool.discard(thread_id)
     try:
-        broker.workspace.destroy(thread_id)
+        async with broker.thread_lock(thread_id):
+            await broker.pool.discard(thread_id)
+            broker.workspace.destroy(thread_id)
     except PathEscapeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -213,14 +234,123 @@ async def save_file(thread_id: str, request: SaveRequest, broker: BrokerDep) -> 
     文件名与目标目录都来自 HTTP 请求，属于不可信输入，越界防护在 `Workspace` 里。
     """
     try:
-        saved = broker.workspace.save(thread_id, request.filename, request.content, directory=request.directory)
+        async with broker.thread_lock(thread_id):
+            saved = await asyncio.to_thread(
+                broker.workspace.save,
+                thread_id,
+                request.filename,
+                request.content,
+                directory=request.directory,
+            )
+            relative = saved.relative_to(broker.workspace.lookup(thread_id)).as_posix()
     except PathEscapeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return SaveResponse(
         filename=saved.name,
         size=len(request.content),
-        path=saved.relative_to(broker.workspace.path(thread_id)).as_posix(),
+        path=relative,
     )
+
+
+# ------------------------------------------------------------------ Thread 记忆
+@router.get("/{thread_id}/memory")
+async def memory_catalog(thread_id: str, broker: BrokerDep) -> MemoryCatalogResponse:
+    """列出 thread 记忆的短索引，不读取正文。"""
+    async with broker.thread_lock(thread_id):
+        records = _memory_call(lambda: _memory_of(broker).list(thread_id))
+    return MemoryCatalogResponse(items=[_memory_catalog_item(record) for record in records])
+
+
+@router.post("/{thread_id}/memory/read")
+async def read_memories(
+    thread_id: str,
+    request: MemoryReadRequest,
+    broker: BrokerDep,
+) -> MemoryReadResponse:
+    """只批量读取 selector 选中的最多五条正文。"""
+    store = _memory_of(broker)
+    async with broker.thread_lock(thread_id):
+        records = _memory_call(lambda: [store.read(thread_id, slug) for slug in request.slugs])
+    return MemoryReadResponse(items=[_memory_detail(record) for record in records])
+
+
+@router.post("/{thread_id}/memory/export")
+async def export_memories(thread_id: str, broker: BrokerDep) -> MemoryExportResponse:
+    """给 memory job 导出同一版本的全量正文。"""
+    async with broker.thread_lock(thread_id):
+        snapshot = _memory_call(lambda: _memory_of(broker).export(thread_id))
+    return MemoryExportResponse(
+        items=[_memory_detail(record) for record in snapshot.records],
+        version=snapshot.version,
+    )
+
+
+@router.put("/{thread_id}/memory")
+async def replace_memories(
+    thread_id: str,
+    request: MemoryReplaceRequest,
+    broker: BrokerDep,
+) -> MemoryReplaceResponse:
+    """以可选 CAS 版本全量原子替换活动记忆集。"""
+    records = tuple(
+        StoredMemoryRecord(
+            slug=item.slug,
+            name=item.name,
+            description=item.description,
+            type=item.type,
+            content=item.content,
+            updated_at=item.updated_at,
+        )
+        for item in request.items
+    )
+    async with broker.thread_lock(thread_id):
+        snapshot = _memory_call(
+            lambda: _memory_of(broker).replace(
+                thread_id,
+                records,
+                expected_version=request.expected_version,
+            )
+        )
+    return MemoryReplaceResponse(version=snapshot.version)
+
+
+@router.get("/{thread_id}/memory/{slug}")
+async def memory_detail(thread_id: str, slug: str, broker: BrokerDep) -> MemoryDetailResponse:
+    """读取一条记忆正文。"""
+    async with broker.thread_lock(thread_id):
+        record = _memory_call(lambda: _memory_of(broker).read(thread_id, slug))
+    return _memory_detail(record)
+
+
+@router.put("/{thread_id}/memory/{slug}")
+async def write_memory(
+    thread_id: str,
+    slug: str,
+    request: MemoryWriteRequest,
+    broker: BrokerDep,
+) -> MemoryDetailResponse:
+    """经受控端点写入记忆并重建索引。"""
+    store = _memory_of(broker)
+    record = StoredMemoryRecord(
+        slug=slug,
+        name=request.name,
+        description=request.description,
+        type=request.type,
+        content=request.content,
+    )
+    async with broker.thread_lock(thread_id):
+        _memory_call(lambda: store.write(thread_id, record))
+        written = _memory_call(lambda: store.read(thread_id, slug))
+    return _memory_detail(written)
+
+
+@router.delete("/{thread_id}/memory/{slug}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_memory(thread_id: str, slug: str, broker: BrokerDep) -> None:
+    """物理删除一条记忆并重建索引。"""
+    async with broker.thread_lock(thread_id):
+        _memory_call(lambda: _memory_of(broker).delete(thread_id, slug))
 
 
 # ------------------------------------------------------------------ 工作目录的浏览
@@ -236,7 +366,8 @@ async def write_workspace_file(
 ) -> None:
     """覆盖工作目录中的一个文件。"""
     try:
-        await asyncio.to_thread(broker.workspace.write, thread_id, request.path, request.content)
+        async with broker.thread_lock(thread_id):
+            await asyncio.to_thread(broker.workspace.write, thread_id, request.path, request.content)
     except PathEscapeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except FileNotFoundError as exc:
@@ -253,7 +384,8 @@ async def create_workspace_directory(
 ) -> None:
     """创建工作目录中的一个目录。"""
     try:
-        await asyncio.to_thread(broker.workspace.mkdir, thread_id, request.path)
+        async with broker.thread_lock(thread_id):
+            await asyncio.to_thread(broker.workspace.mkdir, thread_id, request.path)
     except PathEscapeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except FileExistsError as exc:
@@ -272,8 +404,9 @@ async def workspace_tree(
 
     遍历是同步的，丢进线程池免得占住事件循环 —— broker 同时还挂着申请沙箱的长连接。
     """
-    root = _workspace_of(broker, thread_id)
-    found = await asyncio.to_thread(tree, root, limit=limit)
+    async with broker.thread_lock(thread_id):
+        root = _workspace_of(broker, thread_id)
+        found = await asyncio.to_thread(tree, root, limit=limit)
     return TreeResponse(entries=[TreeEntryItem(**asdict(one)) for one in found.entries], truncated=found.truncated)
 
 
@@ -286,8 +419,9 @@ async def workspace_preview(
     limit: Annotated[int, Query(ge=1, description="最多给多少行")] = DEFAULT_PREVIEW_LINE,
 ) -> PreviewResponse:
     """把一个文件的开头一截当文本读出来。"""
-    target = _file_at(broker, thread_id, path)
-    found = await asyncio.to_thread(preview, target, offset=offset, limit=limit)
+    async with broker.thread_lock(thread_id):
+        target = _file_at(broker, thread_id, path)
+        found = await asyncio.to_thread(preview, target, offset=offset, limit=limit)
     return PreviewResponse(**asdict(found))
 
 
@@ -303,10 +437,11 @@ async def workspace_stat(
     自己不碰字节。越界判定仍然只在这一侧做 —— 回的是规范化之后的路径，
     下游不必、也不该再解析一遍那个不可信的原串。
     """
-    root = broker.workspace.path(thread_id).resolve()
-    target = _file_at(broker, thread_id, path)
-    relative = target.relative_to(root).as_posix()
-    return FileStatResponse(path=relative, size=target.stat().st_size, mime=guess_mime(relative))
+    async with broker.thread_lock(thread_id):
+        root = _workspace_of(broker, thread_id).resolve()
+        target = _file_at(broker, thread_id, path)
+        relative = target.relative_to(root).as_posix()
+        return FileStatResponse(path=relative, size=target.stat().st_size, mime=guess_mime(relative))
 
 
 @router.get("/{thread_id}/workspace/file")
@@ -314,9 +449,17 @@ async def workspace_file(
     thread_id: str,
     broker: BrokerDep,
     path: Annotated[str, Query(min_length=1, description="相对会话根的路径")],
-) -> FileResponse:
+) -> StreamingResponse:
     """取回工作目录里一个文件的原始字节。"""
-    return FileResponse(_file_at(broker, thread_id, path), media_type=guess_mime(path))
+    async with broker.thread_lock(thread_id):
+        target = _file_at(broker, thread_id, path)
+        opened = target.open("rb")
+        try:
+            size = os.fstat(opened.fileno()).st_size
+        except OSError:
+            opened.close()
+            raise
+    return _OpenedFileResponse(opened, media_type=guess_mime(path), size=size)
 
 
 @router.delete("/{thread_id}/workspace/file", status_code=status.HTTP_204_NO_CONTENT)
@@ -327,11 +470,93 @@ async def delete_workspace_file(
 ) -> None:
     """删掉工作目录里的一个文件。目录删不了。"""
     try:
-        broker.workspace.remove(thread_id, path)
+        async with broker.thread_lock(thread_id):
+            await asyncio.to_thread(broker.workspace.remove, thread_id, path)
     except (PathEscapeError, FileNotFoundError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except IsADirectoryError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+def _file_chunks(opened: BinaryIO) -> Generator[bytes]:
+    """从已打开的文件描述符分块读，避免 purge 后再按路径打开。"""
+    try:
+        while chunk := opened.read(FILE_STREAM_CHUNK_BYTE):
+            yield chunk
+    finally:
+        opened.close()
+
+
+class _OpenedFileResponse(StreamingResponse):
+    """无论断连发生在响应头还是正文阶段，都关闭已打开的文件。"""
+
+    def __init__(self, opened: BinaryIO, *, media_type: str, size: int) -> None:
+        self._opened = opened
+        super().__init__(
+            _file_chunks(opened),
+            media_type=media_type,
+            headers={"content-length": str(size)},
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._opened.close()
+
+
+def _align_skills(broker: Broker, thread_id: str, references: tuple[SkillReference, ...]) -> None:
+    """在同一 thread 锁内查找 workspace 并全量对齐 Skill。"""
+    with broker.workspace.thread_lock(thread_id):
+        broker.skills.align(broker.workspace.lookup(thread_id), references)
+
+
+def _memory_of(broker: Broker) -> MemoryStore:
+    """取 broker 的记忆存储；生产装配不允许缺席。"""
+    if broker.memory is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="broker 未装配记忆存储")
+    return broker.memory
+
+
+def _memory_call[Result](operation: Callable[[], Result]) -> Result:
+    """统一把 memdir 的本地错误翻译成 HTTP 边界。"""
+    try:
+        return operation()
+    except (FileNotFoundError, PathEscapeError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except MemoryVersionConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except MemoryCapacityError as exc:
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)) from exc
+    except MemoryStoreError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+def _memory_catalog_item(record: StoredMemoryRecord) -> MemoryCatalogItemResponse:
+    """把物理记录投影成不含正文的索引项。"""
+    if record.updated_at is None:
+        raise RuntimeError("已落盘记忆缺少更新时间")
+    return MemoryCatalogItemResponse(
+        slug=record.slug,
+        name=record.name,
+        description=record.description,
+        type=record.type,
+        updated_at=record.updated_at,
+    )
+
+
+def _memory_detail(record: StoredMemoryRecord) -> MemoryDetailResponse:
+    """把物理记录投影成 HTTP 正文形状。"""
+    catalog = _memory_catalog_item(record)
+    return MemoryDetailResponse(**catalog.model_dump(), content=record.content)
+
+
+def _backend_of(broker: Broker, thread_id: str) -> SandboxBackend:
+    """组装已存在 workspace 的工具 backend，缺目录统一为 404。"""
+    try:
+        return broker.backend(thread_id)
+    except (FileNotFoundError, PathEscapeError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 def _workspace_of(broker: Broker, thread_id: str) -> Path:
@@ -341,8 +566,8 @@ def _workspace_of(broker: Broker, thread_id: str) -> Path:
         HTTPException: 标识不能作为目录名。
     """
     try:
-        return broker.workspace.path(thread_id)
-    except PathEscapeError as exc:
+        return broker.workspace.lookup(thread_id)
+    except (FileNotFoundError, PathEscapeError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
@@ -357,7 +582,7 @@ def _file_at(broker: Broker, thread_id: str, path: str) -> Path:
     """
     try:
         target = broker.workspace.resolve(thread_id, path)
-    except PathEscapeError as exc:
+    except (FileNotFoundError, PathEscapeError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     if target.is_dir():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"这是一个目录：{path}")
@@ -395,6 +620,13 @@ async def _acquire_stream(thread_id: str, broker: Broker, holder: str) -> AsyncI
     塞，由这里在「队列有新排位」与「申请已完成」之间取先到的那个。两边都是真正的
     等待，不轮询。
     """
+    async with broker.thread_lock(thread_id):
+        async for frame in _acquire_stream_locked(thread_id, broker, holder):
+            yield frame
+
+
+async def _acquire_stream_locked(thread_id: str, broker: Broker, holder: str) -> AsyncIterator[str]:
+    """在 async thread lock 已持有时驱动一次完整申请。"""
     seat: asyncio.Queue[int] = asyncio.Queue()
     acquiring = asyncio.create_task(broker.pool.acquire(thread_id, holder=holder, on_queued=seat.put_nowait))
     waiting: asyncio.Task[int] | None = None
@@ -485,29 +717,48 @@ async def _once[Result: "DataclassInstance"](
     return result
 
 
+async def _to_thread_until_complete[Result](run: Callable[[], Result]) -> Result:
+    """请求被取消后仍等线程结束，让外层生命周期锁不提前释放。"""
+    running = asyncio.create_task(asyncio.to_thread(run))
+    cancelled = False
+    while not running.done():
+        try:
+            await asyncio.shield(running)
+        except asyncio.CancelledError:
+            cancelled = True
+    result = running.result()
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
+
+
 # ------------------------------------------------------------------ 八个工具
 @router.post("/{thread_id}/tool/ls")
 async def tool_ls(thread_id: str, request: LsRequest, broker: BrokerDep) -> LsResult:
     """列出目录内容。"""
-    return broker.backend(thread_id).ls(request.path)
+    async with broker.thread_lock(thread_id):
+        return _backend_of(broker, thread_id).ls(request.path)
 
 
 @router.post("/{thread_id}/tool/read")
 async def tool_read(thread_id: str, request: ReadRequest, broker: BrokerDep) -> ReadResult:
     """读取文件的一段。"""
-    return broker.backend(thread_id).read(request.file_path, request.offset, request.limit)
+    async with broker.thread_lock(thread_id):
+        return _backend_of(broker, thread_id).read(request.file_path, request.offset, request.limit)
 
 
 @router.post("/{thread_id}/tool/write")
 async def tool_write(thread_id: str, request: WriteRequest, broker: BrokerDep) -> WriteResult:
     """写入文件，已存在则覆盖。"""
-    return await _once(
-        broker,
-        thread_id,
-        request,
-        WriteResult,
-        lambda: broker.backend(thread_id).write(request.file_path, request.content),
-    )
+    async with broker.thread_lock(thread_id):
+        backend = _backend_of(broker, thread_id)
+        return await _once(
+            broker,
+            thread_id,
+            request,
+            WriteResult,
+            lambda: backend.write(request.file_path, request.content),
+        )
 
 
 @router.post("/{thread_id}/tool/edit")
@@ -517,35 +768,42 @@ async def tool_edit(thread_id: str, request: EditRequest, broker: BrokerDep) -> 
     **重放时 `old_string` 已经不在了**，会返回一个首次执行时没有的错误 ——
     这正是要去重的那一类。
     """
-    return await _once(
-        broker,
-        thread_id,
-        request,
-        EditResult,
-        lambda: broker.backend(thread_id).edit(
-            request.file_path, request.old_string, request.new_string, request.replace_all
-        ),
-    )
+    async with broker.thread_lock(thread_id):
+        backend = _backend_of(broker, thread_id)
+        return await _once(
+            broker,
+            thread_id,
+            request,
+            EditResult,
+            lambda: backend.edit(request.file_path, request.old_string, request.new_string, request.replace_all),
+        )
 
 
 @router.post("/{thread_id}/tool/delete")
 async def tool_delete(thread_id: str, request: DeleteRequest, broker: BrokerDep) -> DeleteResult:
     """删除文件。**重放时文件已经没了**，同上。"""
-    return await _once(
-        broker, thread_id, request, DeleteResult, lambda: broker.backend(thread_id).delete(request.file_path)
-    )
+    async with broker.thread_lock(thread_id):
+        backend = _backend_of(broker, thread_id)
+        return await _once(broker, thread_id, request, DeleteResult, lambda: backend.delete(request.file_path))
 
 
 @router.post("/{thread_id}/tool/glob")
 async def tool_glob(thread_id: str, request: GlobRequest, broker: BrokerDep) -> GlobResult:
     """按通配符找文件。"""
-    return broker.backend(thread_id).glob(request.pattern, request.path)
+    async with broker.thread_lock(thread_id):
+        return _backend_of(broker, thread_id).glob(request.pattern, request.path)
 
 
 @router.post("/{thread_id}/tool/grep")
 async def tool_grep(thread_id: str, request: GrepRequest, broker: BrokerDep) -> GrepResult:
     """在文件内容里找字面串。"""
-    return broker.backend(thread_id).grep(request.pattern, request.path, request.glob, max_count=request.max_count)
+    async with broker.thread_lock(thread_id):
+        return _backend_of(broker, thread_id).grep(
+            request.pattern,
+            request.path,
+            request.glob,
+            max_count=request.max_count,
+        )
 
 
 @router.post("/{thread_id}/tool/execute")
@@ -557,26 +815,29 @@ async def tool_execute(thread_id: str, request: ExecuteRequest, broker: BrokerDe
     **这是最需要去重的一个**：代码由 LLM 生成，可能追加写、累加计数、删文件 ——
     重放一次就多做一遍。
     """
-    cached = await _cached(broker, thread_id, request, ExecuteResponse)
-    if cached is not None:
-        return cached
-    backend = broker.backend(thread_id)
-    result = await asyncio.to_thread(backend.execute, request.command, timeout=request.timeout)
-    await _remember(broker, thread_id, request, result)
-    return result
+    async with broker.thread_lock(thread_id):
+        backend = _backend_of(broker, thread_id)
+        cached = await _cached(broker, thread_id, request, ExecuteResponse)
+        if cached is not None:
+            return cached
+        result = await _to_thread_until_complete(lambda: backend.execute(request.command, timeout=request.timeout))
+        await _remember(broker, thread_id, request, result)
+        return result
 
 
 @router.post("/{thread_id}/tool/upload")
 async def tool_upload(thread_id: str, request: UploadRequest, broker: BrokerDep) -> UploadResponse:
     """批量把字节写进 workspace。批量操作允许部分成功。"""
-    written = broker.backend(thread_id).upload_files([(one.path, one.content) for one in request.files])
-    return UploadResponse(files=[FileResult(path=one.path, error=one.error) for one in written])
+    async with broker.thread_lock(thread_id):
+        written = _backend_of(broker, thread_id).upload_files([(one.path, one.content) for one in request.files])
+        return UploadResponse(files=[FileResult(path=one.path, error=one.error) for one in written])
 
 
 @router.post("/{thread_id}/tool/download")
 async def tool_download(thread_id: str, request: DownloadRequest, broker: BrokerDep) -> DownloadResponse:
     """批量从 workspace 取字节。批量操作允许部分成功。"""
-    found = broker.backend(thread_id).download_files(request.paths)
-    return DownloadResponse(
-        files=[DownloadItem(path=one.path, content=_encode(one.content), error=one.error) for one in found]
-    )
+    async with broker.thread_lock(thread_id):
+        found = _backend_of(broker, thread_id).download_files(request.paths)
+        return DownloadResponse(
+            files=[DownloadItem(path=one.path, content=_encode(one.content), error=one.error) for one in found]
+        )

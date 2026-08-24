@@ -37,6 +37,9 @@ PLATFORM_TABLE = (
     "resource_groups",
     "skills",
     "skill_versions",
+    "memory_jobs",
+    "memory_usage",
+    "thread_purge_jobs",
 )
 
 # 建用户模型之前的那一版。已有的 runs 行就是在这一版上写下的
@@ -781,3 +784,30 @@ def test_catalog_lifecycle_migration_keeps_existing_resources_enabled(scratch: s
 
     assert not expected_columns & _column(scratch, "agents")
     assert not expected_columns & _column(scratch, "skills")
+
+
+def test_memory_usage_selected_slugs_is_additive_defaulted_and_reversible(scratch: str) -> None:
+    """选择结果必须可审计；旧写入者不传该列时不得产生 NULL。"""
+    _upgrade(scratch, "0016_catalog_lifecycle")
+    user_id, thread_id, run_id = uuid4().hex, uuid4().hex, uuid4().hex
+    with _connect(scratch) as connection:
+        _insert_user(connection, user_id)
+        _insert_thread(connection, thread_id, user_id)
+        _insert_run(connection, run_id, thread_id)
+
+    _upgrade(scratch, "head")
+
+    assert "selected_slugs" in _column(scratch, "memory_usage")
+    with _connect(scratch) as connection:
+        connection.execute(
+            "INSERT INTO memory_usage (id, run_id, thread_id, stage, model, created_at)"
+            " VALUES (%s, %s, %s, 'selector', 'selector-model', %s)",
+            (uuid4().hex, run_id, thread_id, datetime.now(UTC)),
+        )
+        selected = connection.execute("SELECT selected_slugs FROM memory_usage WHERE run_id = %s", (run_id,)).fetchone()
+    assert selected == ([],)
+
+    _downgrade(scratch, "0016_catalog_lifecycle")
+
+    assert not {"memory_jobs", "memory_usage", "thread_purge_jobs"} & _table(scratch)
+    assert "user_context" not in _column(scratch, "runs")

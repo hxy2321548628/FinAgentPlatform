@@ -16,12 +16,14 @@ import httpx
 
 # 一次分析最长等多久。真实分析实测几分钟，大数据那题会更久
 RUN_TIMEOUT_SECOND = 1800
+MEMORY_JOB_TIMEOUT_SECOND = 300
 POLL_INTERVAL_SECOND = 5
 # 审批闸门：评估集里有题故意去撞它，没人批的话 run 会一直挂着。
 # **决策要覆盖全部待确认调用** —— 只批第一个是 422，而那个红看着像 agent 没做好
 APPROVE = "approve"
 RESPOND = "respond"
 FINAL_STATUS = frozenset({"succeeded", "failed", "cancelled"})
+MEMORY_JOB_FINAL_STATUS = frozenset({"succeeded", "failed", "discarded"})
 
 # `respond` 必须带话，平台会挡住不带的（不挡的话炸在恢复那一刻，看着像 agent 出错）。
 # 跑批没有教师坐在屏幕前，只能给一句让它自己定 —— **命中这一句就说明这道题
@@ -58,7 +60,13 @@ class PlatformClient:
             再加提交与取结果就会被 RATE_LIMITED 挡下，而那看着像平台故障。
     """
 
-    def __init__(self, *, base_url: str, client: httpx.Client, poll_second: float = POLL_INTERVAL_SECOND) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        client: httpx.Client,
+        poll_second: float = POLL_INTERVAL_SECOND,
+    ) -> None:
         self._base = base_url.rstrip("/")
         self._client = client
         self.poll_second = poll_second
@@ -84,11 +92,17 @@ class PlatformClient:
                 files={"file": (path.name, handle)},
             )
         if response.is_error:
-            raise PlatformError(f"上传 {path.name} 失败：{response.status_code} {response.text[:200]}")
+            raise PlatformError(
+                f"上传 {path.name} 失败：{response.status_code} {response.text[:200]}"
+            )
 
     def submit(self, thread_id: str, question: str) -> str:
         """提交一次分析，返回 run 标识。"""
-        return str(self._post(f"/api/threads/{thread_id}/runs", json={"content": question})["id"])
+        return str(
+            self._post(f"/api/threads/{thread_id}/runs", json={"content": question})[
+                "id"
+            ]
+        )
 
     def wait(self, run_id: str) -> tuple[str, int]:
         """等到 run 进终态，**中途停在审批上就批准**。
@@ -100,13 +114,17 @@ class PlatformClient:
         approvals = 0
         deadline = time.monotonic() + RUN_TIMEOUT_SECOND
         while time.monotonic() < deadline:
-            status = str(self._get(f"/api/runs/{run_id}")["status"])
+            status = str(self.run(run_id)["status"])
             if status in FINAL_STATUS:
                 return status, approvals
             if status == "waiting_approval":
                 approvals += int(self._approve_all(run_id))
             time.sleep(self.poll_second)
         raise PlatformError(f"run {run_id} 超过 {RUN_TIMEOUT_SECOND} 秒仍未结束")
+
+    def run(self, run_id: str) -> dict[str, Any]:
+        """取回 run 终态及数据库中累计的 token 用量。"""
+        return self._get(f"/api/runs/{run_id}")
 
     def _approve_all(self, run_id: str) -> bool:
         """批准这一次中断里的**每一个**待确认调用，返回是否真的批了。
@@ -137,18 +155,46 @@ class PlatformClient:
         items = self._get(f"/api/runs/{run_id}/replay")["items"]
         return [one["event"] for one in items]
 
+    def memory_usage(self, run_id: str) -> dict[str, Any]:
+        """取回当前记忆 job 状态与三段账本，不做等待。"""
+        return self._get(f"/api/runs/{run_id}/memory-usage")
+
+    def wait_memory_usage(self, run_id: str) -> dict[str, Any]:
+        """等成功 run 的异步抽取 job 进入终态后再取完整账。"""
+        deadline = time.monotonic() + MEMORY_JOB_TIMEOUT_SECOND
+        while time.monotonic() < deadline:
+            usage = self.memory_usage(run_id)
+            if usage.get("job_status") in MEMORY_JOB_FINAL_STATUS:
+                return usage
+            time.sleep(self.poll_second)
+        raise PlatformError(
+            f"run {run_id} 的记忆 job 超过 {MEMORY_JOB_TIMEOUT_SECOND} 秒仍未结束"
+        )
+
     def files(self, thread_id: str) -> list[dict[str, Any]]:
         """列出会话工作目录下的全部文件与目录。"""
         return list(self._get(f"/api/threads/{thread_id}/files")["entries"])
 
+    def memories(self, thread_id: str) -> list[dict[str, Any]]:
+        """列出教师在当前 thread 可见的记忆摘要。"""
+        return list(self._get(f"/api/threads/{thread_id}/memories")["items"])
+
+    def memory(self, thread_id: str, slug: str) -> dict[str, Any]:
+        """读取一条教师可见的记忆正文。"""
+        return self._get(f"/api/threads/{thread_id}/memories/{slug}")
+
     def _get(self, path: str) -> dict[str, Any]:
         response = self._client.get(f"{self._base}{path}")
         if response.is_error:
-            raise PlatformError(f"GET {path} → {response.status_code} {response.text[:200]}")
+            raise PlatformError(
+                f"GET {path} → {response.status_code} {response.text[:200]}"
+            )
         return dict(response.json())
 
     def _post(self, path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
         response = self._client.post(f"{self._base}{path}", json=json)
         if response.is_error:
-            raise PlatformError(f"POST {path} → {response.status_code} {response.text[:200]}")
+            raise PlatformError(
+                f"POST {path} → {response.status_code} {response.text[:200]}"
+            )
         return dict(response.json()) if response.content else {}

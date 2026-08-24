@@ -15,7 +15,7 @@ agent 侧一行不用改，换掉的只是 backend 的实现。
 import base64
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from types import TracebackType
@@ -39,8 +39,16 @@ from deepagents.backends.protocol import (
     WriteResult,
 )
 from langgraph.config import get_config
+from pydantic import ValidationError
 
 from app.event.model import RunErrorCode
+from app.memory.model import MemoryCatalogEntry, MemoryRecord, MemoryServiceProtocol
+from app.memory.store import (
+    MemoryCapacityError,
+    MemoryStoreSnapshot,
+    MemoryVersionConflictError,
+)
+from app.memory.store import MemoryRecord as StoredMemoryRecord
 from app.sandbox.browse import DEFAULT_MIME, Entry, Preview, Tree
 from app.sandbox.path import PathEscapeError
 from app.sandbox.pool import SandboxQueueTimeoutError
@@ -373,6 +381,113 @@ class BrokerConnection:
     ) -> None:
         """离开上下文时关掉连接。"""
         await self.aclose()
+
+
+class RemoteMemory(MemoryServiceProtocol):
+    """Thread 记忆的 broker HTTP 客户端。
+
+    Args:
+        connection: 到 broker 的共享连接。
+    """
+
+    def __init__(self, connection: BrokerConnection) -> None:
+        self._connection = connection
+
+    async def catalog(self, thread_id: str) -> Sequence[MemoryCatalogEntry]:
+        """读取不含正文的短索引。"""
+        result = await self._call("GET", f"/threads/{thread_id}/memory")
+        return [_memory_catalog(item) for item in _memory_items(result)]
+
+    async def read(self, thread_id: str, slugs: tuple[str, ...]) -> Sequence[MemoryRecord]:
+        """按选中顺序批量读取最多五条正文。"""
+        if len(slugs) > 5:
+            raise ValueError("一次最多读取 5 条记忆")
+        result = await self._call("POST", f"/threads/{thread_id}/memory/read", json={"slugs": list(slugs)})
+        return [_memory_record(item) for item in _memory_items(result)]
+
+    async def detail(self, thread_id: str, slug: str) -> MemoryRecord:
+        """读取一条完整记忆。"""
+        result = await self._call("GET", f"/threads/{thread_id}/memory/{slug}")
+        return _memory_record(result)
+
+    async def export(self, thread_id: str) -> MemoryStoreSnapshot:
+        """导出 memory job 所需的全量正文及 CAS 版本。"""
+        result = await self._call("POST", f"/threads/{thread_id}/memory/export")
+        version = result.get("version")
+        if not isinstance(version, str):
+            raise BrokerError("broker 记忆快照缺少 version")
+        records = tuple(_stored_memory_record(item) for item in _memory_items(result))
+        return MemoryStoreSnapshot(records=records, version=version)
+
+    async def list(self, thread_id: str) -> Sequence[StoredMemoryRecord]:
+        """兼容 memory worker 的全量正文读取边界。"""
+        return (await self.export(thread_id)).records
+
+    async def write(self, thread_id: str, record: StoredMemoryRecord) -> MemoryRecord:
+        """经 broker 受控端点写入记忆。"""
+        result = await self._call(
+            "PUT",
+            f"/threads/{thread_id}/memory/{record.slug}",
+            json={
+                "name": record.name,
+                "description": record.description,
+                "type": record.type,
+                "content": record.content,
+            },
+        )
+        return _memory_record(result)
+
+    async def delete(self, thread_id: str, slug: str) -> None:
+        """物理删除一条记忆。"""
+        await self._call("DELETE", f"/threads/{thread_id}/memory/{slug}")
+
+    async def replace(
+        self,
+        thread_id: str,
+        records: tuple[StoredMemoryRecord, ...],
+        *,
+        expected_version: str | None = None,
+    ) -> None:
+        """在 broker 内全量原子替换，并可用版本阻止并发覆盖。"""
+        items = [
+            {
+                "slug": record.slug,
+                "name": record.name,
+                "description": record.description,
+                "type": record.type,
+                "content": record.content,
+                "updated_at": record.updated_at.isoformat() if record.updated_at is not None else None,
+            }
+            for record in records
+        ]
+        await self._call(
+            "PUT",
+            f"/threads/{thread_id}/memory",
+            json={"items": items, "expected_version": expected_version},
+        )
+
+    async def _call(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+        """调用记忆端点，保留 404/400 的本地语义。"""
+        try:
+            response = await self._connection.raw.request(method, path, **kwargs)  # type: ignore[arg-type]
+        except httpx.HTTPError as exc:
+            raise _fail(exc) from exc
+        if response.status_code == httpx.codes.NOT_FOUND:
+            raise FileMissingError(path)
+        if response.status_code == httpx.codes.CONFLICT:
+            raise MemoryVersionConflictError(response.text[:200])
+        if response.status_code == httpx.codes.REQUEST_ENTITY_TOO_LARGE:
+            raise MemoryCapacityError(response.text[:200])
+        if response.status_code in {httpx.codes.BAD_REQUEST, httpx.codes.UNPROCESSABLE_ENTITY}:
+            raise ValueError(response.text[:200])
+        if response.is_error:
+            raise BrokerError(f"broker 返回 {response.status_code}：{response.text[:200]}")
+        if not response.content:
+            return {}
+        parsed: object = response.json()
+        if not isinstance(parsed, dict):
+            raise BrokerError("broker 记忆响应不是 JSON 对象")
+        return parsed
 
 
 class RemoteWorkspace:
@@ -757,6 +872,47 @@ def _decode(content: object) -> bytes | None:
 def _files_of(result: dict[str, object]) -> list[dict[str, str]]:
     found = result.get("files", [])
     return found if isinstance(found, list) else []
+
+
+def _memory_items(result: dict[str, object]) -> list[object]:
+    """取记忆响应的 items 列表。"""
+    found = result.get("items")
+    if not isinstance(found, list):
+        raise BrokerError("broker 记忆响应缺少 items 列表")
+    return found
+
+
+def _memory_catalog(item: object) -> MemoryCatalogEntry:
+    """把 broker 的短索引项校验为领域模型。"""
+    try:
+        return MemoryCatalogEntry.model_validate(item)
+    except ValidationError as exc:
+        raise BrokerError("broker 记忆索引响应形状错误") from exc
+
+
+def _memory_record(item: object) -> MemoryRecord:
+    """把 HTTP 的 ``content`` 正文转成领域模型的 ``body``。"""
+    if not isinstance(item, dict):
+        raise BrokerError("broker 记忆详情响应不是 JSON 对象")
+    payload = dict(item)
+    payload["body"] = payload.pop("content", None)
+    try:
+        return MemoryRecord.model_validate(payload)
+    except ValidationError as exc:
+        raise BrokerError("broker 记忆详情响应形状错误") from exc
+
+
+def _stored_memory_record(item: object) -> StoredMemoryRecord:
+    """把全量 HTTP 正文转成 memory worker 使用的物理记录形状。"""
+    record = _memory_record(item)
+    return StoredMemoryRecord(
+        slug=record.slug,
+        name=record.name,
+        description=record.description,
+        type=record.type.value,
+        content=record.body,
+        updated_at=record.updated_at,
+    )
 
 
 def _to_entry(item: object) -> Entry:

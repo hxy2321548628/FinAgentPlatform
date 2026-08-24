@@ -28,6 +28,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.event.model import RunStatus
+from app.memory.job import MemoryUsageRecord
 from app.run.repository import RunRecord
 
 # 占着并发名额的状态。**`waiting_approval` 不在其中**（等步骤五落地）：
@@ -93,7 +94,20 @@ class RunUsage:
                     col(RunRecord.started_at) >= since,
                 )
             )
-            return int(found.one())
+            memory_equivalent = (
+                col(MemoryUsageRecord.tokens_uncached) + col(MemoryUsageRecord.tokens_output) * self._output_weight
+            )
+            memory = await session.exec(
+                select(func.coalesce(func.sum(memory_equivalent), 0))
+                .select_from(MemoryUsageRecord)
+                .join(RunRecord, col(RunRecord.id) == col(MemoryUsageRecord.run_id))
+                .where(
+                    col(RunRecord.user_id) == owner,
+                    col(MemoryUsageRecord.created_at) >= since,
+                    col(MemoryUsageRecord.included_in_run).is_(False),
+                )
+            )
+            return int(found.one()) + int(memory.one())
 
     def next_reset(self, now: datetime | None = None) -> datetime:
         """配额下一次重置的时刻，**已经是提示语该显示的那个时区**。

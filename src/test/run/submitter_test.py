@@ -11,10 +11,12 @@ import pytest
 from redis.asyncio import Redis
 
 from app.agent.config import AgentConfig
+from app.agent.user_context import UserContext
 from app.event.model import RunStatus
 from app.run.decision import Decision, DecisionType
 from app.run.submitter import RunSubmitter
 from app.task.queue import TaskQueue
+from app.user.model import UserRole
 from test.conftest import json_log
 
 CONSUMER = "submitter-test"
@@ -25,6 +27,18 @@ SUBMITTER_LOGGER = "app.run.submitter"
 USER_ID = uuid4().hex
 
 
+def a_user_context() -> UserContext:
+    return UserContext(
+        name="张老师",
+        role=UserRole.TEACHER,
+        dept="金融学院",
+        token_used_today=123,
+        token_limit_daily=50_000,
+        active_runs=1,
+        concurrent_run_limit=3,
+    )
+
+
 class RecordingRepository:
     """记下建过哪些行，并能在建行时回头看队列里有没有东西。"""
 
@@ -33,6 +47,7 @@ class RecordingRepository:
         self.created: list[tuple[str, str, str]] = []
         self.content: list[str | None] = []
         self.agent_config: list[dict[str, object] | None] = []
+        self.user_context: list[dict[str, object] | None] = []
         self.queued_when_created: list[int] = []
 
     async def create(
@@ -43,10 +58,12 @@ class RecordingRepository:
         user_id: str,
         content: str | None = None,
         agent_config: dict[str, object] | None = None,
+        user_context: dict[str, object] | None = None,
     ) -> None:
         self.created.append((run_id, thread_id, user_id))
         self.content.append(content)
         self.agent_config.append(agent_config)
+        self.user_context.append(user_context)
         self.queued_when_created.append(await self._queue.pending_count())
 
 
@@ -140,6 +157,29 @@ async def test_the_snapshot_is_exactly_what_the_caller_handed_in(queue: TaskQueu
     assert delivery.task.agent_config == resolved
 
 
+async def test_safe_user_context_is_frozen_in_row_and_task(queue: TaskQueue) -> None:
+    repository = RecordingRepository(queue)
+    submitter = RunSubmitter(repository=repository, queue=queue)
+    context = a_user_context()
+
+    run = await submitter.submit(
+        thread_id=uuid4().hex,
+        content="一",
+        user_id=USER_ID,
+        agent_config=AgentConfig(),
+        user_context=context,
+    )
+
+    delivery = await queue.reserve()
+    assert delivery is not None
+    assert run.user_context == context
+    assert delivery.task.user_context == context
+    assert repository.user_context == [context.model_dump(mode="json")]
+    serialized = str(repository.user_context[0])
+    assert "email" not in serialized
+    assert USER_ID not in serialized
+
+
 async def test_an_unreferenced_run_carries_no_extra_key(queue: TaskQueue) -> None:
     """不选 agent 时快照里一个键都不多 —— 历史判据断言的正是「快照 == 当时那份配置」。"""
     repository = RecordingRepository(queue)
@@ -153,6 +193,7 @@ async def test_an_unreferenced_run_carries_no_extra_key(queue: TaskQueue) -> Non
 async def test_an_approval_resubmission_carries_the_original_snapshot(queue: TaskQueue) -> None:
     submitter = RunSubmitter(repository=RecordingRepository(queue), queue=queue)
     config = AgentConfig(system_prompt="这是原 run 的快照")
+    context = a_user_context()
 
     await submitter.resubmit(
         run_id=uuid4().hex,
@@ -160,11 +201,13 @@ async def test_an_approval_resubmission_carries_the_original_snapshot(queue: Tas
         user_id=USER_ID,
         decisions=[Decision(index=0, type=DecisionType.APPROVE)],
         agent_config=config,
+        user_context=context,
     )
 
     delivery = await queue.reserve()
     assert delivery is not None
     assert delivery.task.agent_config == config
+    assert delivery.task.user_context == context
 
 
 async def test_the_submission_log_carries_the_run_identity(queue: TaskQueue) -> None:

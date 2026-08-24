@@ -29,7 +29,7 @@ from app.sandbox.container import (
     Hardening,
     running_sandbox,
 )
-from app.sandbox.path import OUTPUT_DIR
+from app.sandbox.path import MEMORY_DIR, OUTPUT_DIR
 
 # 装包用例的探针包：不在预装栈里、无依赖、几十 KB。选大包会把用例拖成分钟级
 _PROBE_PACKAGE = "wcwidth"
@@ -224,15 +224,14 @@ def test_stop_is_idempotent(workspace: Path) -> None:
     assert not container.started
 
 
-def test_workspace_is_created_when_missing(tmp_path: Path) -> None:
-    """目录留给 Docker 创建会是 root 属主，容器以宿主 uid 运行就写不进去。"""
+def test_workspace_is_not_recreated_when_missing(tmp_path: Path) -> None:
+    """Thread purge 后的迟到任务不得让 Docker 复活 workspace。"""
     absent = tmp_path / "not-yet" / "thread-1"
 
-    with DockerContainer(thread_id="test-thread", workspace=absent) as container:
-        result = container.exec("touch probe && echo ok", timeout=10)
+    with pytest.raises(ContainerError, match="workspace 目录不存在"):
+        DockerContainer(thread_id="test-thread", workspace=absent).start()
 
-    assert result.output.strip() == "ok"
-    assert (absent / "probe").exists()
+    assert not absent.exists()
 
 
 # ------------------------------------------------ backend 与容器的跨层验证
@@ -309,6 +308,21 @@ def test_workspace_stays_writable_under_a_read_only_rootfs(shared: DockerContain
     result = shared.exec("touch /workspace/probe && echo ok", timeout=10)
 
     assert result.output.strip() == "ok"
+
+
+def test_real_memory_is_hidden_behind_an_empty_read_only_directory(workspace: Path) -> None:
+    memory = workspace / MEMORY_DIR
+    memory.mkdir()
+    secret = memory / "record.md"
+    secret.write_text("真实记忆", encoding="utf-8")
+
+    with DockerContainer(thread_id="test-thread", workspace=workspace) as container:
+        listed = container.exec("find /workspace/.memory -mindepth 1 -maxdepth 1 -print", timeout=10)
+        written = container.exec("touch /workspace/.memory/escaped.md", timeout=10)
+
+    assert listed.output == ""
+    assert written.exit_code != 0
+    assert secret.read_text(encoding="utf-8") == "真实记忆"
 
 
 def test_tmp_is_writable_but_not_executable(shared: DockerContainer) -> None:

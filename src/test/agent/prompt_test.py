@@ -4,10 +4,14 @@
 而那种失败不会让任何测试变红 —— 只会表现成 token 账单变高。
 """
 
+import hashlib
+
 from app.agent.config import AgentConfig
 from app.agent.prompt import ANALYSIS_SEGMENT, ENVIRONMENT_SEGMENT, ROLE_SEGMENT, SYSTEM_PROMPT, compose_prompt
 from app.agent.question import QUESTION_TOOL
 from app.sandbox.path import OUTPUT_DIR, SANDBOX_ROOT
+
+ENVIRONMENT_SEGMENT_SHA256 = "0e11117e93bb9bc89bd020868edf8001b13e596456b530462c1387278c39411b"
 
 
 def test_the_prompt_names_the_working_directory() -> None:
@@ -102,3 +106,27 @@ def test_the_environment_contract_is_always_last() -> None:
 
     assert prompt.index(custom) < prompt.index(ANALYSIS_SEGMENT) < prompt.index(ENVIRONMENT_SEGMENT)
     assert prompt.endswith(ENVIRONMENT_SEGMENT)
+
+
+def test_the_environment_contract_stays_byte_for_byte_identical() -> None:
+    """P15 只允许调角色与分析表达；工作目录、工具和交付约定一个字节都不能漂移。"""
+    assert hashlib.sha256(ENVIRONMENT_SEGMENT.encode()).hexdigest() == ENVIRONMENT_SEGMENT_SHA256
+
+
+def test_the_analysis_prompt_handles_absent_fields_without_inventing_data() -> None:
+    assert "字段不存在" in ANALYSIS_SEGMENT
+    assert "限制" in ANALYSIS_SEGMENT
+    assert "不要编造" in ANALYSIS_SEGMENT
+
+
+def test_the_analysis_prompt_asks_only_for_genuinely_ambiguous_methodology() -> None:
+    assert "多个合理口径" in ANALYSIS_SEGMENT
+    assert "数据无法判定" in ANALYSIS_SEGMENT
+    assert "ask_user_question" in ANALYSIS_SEGMENT
+
+
+def test_the_analysis_prompt_separates_evidence_from_conclusions() -> None:
+    assert "证据" in ANALYSIS_SEGMENT
+    assert "结论" in ANALYSIS_SEGMENT
+    assert "异常值" in ANALYSIS_SEGMENT
+    assert "缺失值" in ANALYSIS_SEGMENT

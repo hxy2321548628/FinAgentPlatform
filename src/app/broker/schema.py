@@ -244,6 +244,75 @@ class WorkspaceCreateDirectoryRequest(BaseModel):
     path: str = Field(min_length=1, description="相对会话根的目录路径")
 
 
+class MemoryWriteRequest(BaseModel):
+    """写入一条 thread 记忆。slug 由 URL 路径给出。"""
+
+    name: str = Field(description="记忆名称")
+    description: str = Field(description="选择器使用的短描述")
+    type: str = Field(description="user/feedback/project/reference")
+    content: str = Field(description="Markdown 正文")
+
+
+class MemoryReadRequest(BaseModel):
+    """批量读取选中的记忆正文。"""
+
+    slugs: list[str] = Field(max_length=5, description="最多五个已选中 slug")
+
+
+class MemoryReplaceItem(MemoryWriteRequest):
+    """全量替换中的一条完整记忆。"""
+
+    slug: str = Field(description="thread 内稳定的记忆标识")
+    updated_at: datetime | None = Field(default=None, description="沿用旧记录时保留的更新时间")
+
+
+class MemoryReplaceRequest(BaseModel):
+    """全量原子替换活动记忆集。"""
+
+    items: list[MemoryReplaceItem]
+    expected_version: str | None = Field(default=None, description="可选的乐观并发版本")
+
+
+class MemoryCatalogItemResponse(BaseModel):
+    """短索引中一条不含正文的记忆。"""
+
+    slug: str
+    name: str
+    description: str
+    type: str
+    updated_at: datetime
+
+
+class MemoryDetailResponse(MemoryCatalogItemResponse):
+    """一条已选中的完整记忆。"""
+
+    content: str
+
+
+class MemoryCatalogResponse(BaseModel):
+    """Thread 的记忆短索引。"""
+
+    items: list[MemoryCatalogItemResponse]
+
+
+class MemoryReadResponse(BaseModel):
+    """批量读取的完整记忆。"""
+
+    items: list[MemoryDetailResponse]
+
+
+class MemoryExportResponse(MemoryReadResponse):
+    """供 memory job 使用的全量正文快照。"""
+
+    version: str
+
+
+class MemoryReplaceResponse(BaseModel):
+    """全量替换成功后的新版本。"""
+
+    version: str
+
+
 class SaveResponse(BaseModel):
     """落盘结果。"""
 
