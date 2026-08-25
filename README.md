@@ -200,7 +200,7 @@ SKIP_LLM=1 SKIP_HOSTILE=1 bash script/test/verify.sh
 
 ## 许可证
 
-本项目采用 [GNU General Public License v3.0](LICENSE)（GPL-3.0）授权。
+本项目采用 [MIT License](LICENSE) 授权。
 
 ## 部署范围
 
