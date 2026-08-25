@@ -13,13 +13,29 @@
 
 ## 界面预览
 
-以下截图来自本地运行实例 `http://127.0.0.1/`，展示平台首页、研究范式和技术底座页面。
+以下截图来自本地运行实例 `http://127.0.0.1/`，采用 1920×1080 桌面视口截取。点击缩略图可查看原图。
 
-<p align="center">
-  <img src="assets/screenshots/home.jpg" alt="平台首页" width="32%">
-  <img src="assets/screenshots/scenarios.jpg" alt="研究范式页面" width="32%">
-  <img src="assets/screenshots/capabilities.jpg" alt="技术底座页面" width="32%">
-</p>
+### 公开站点
+
+| 平台首页 | 研究范式 |
+| :---: | :---: |
+| [![平台首页](assets/screenshots/home.jpg)](assets/screenshots/home.jpg) | [![研究范式](assets/screenshots/scenarios.jpg)](assets/screenshots/scenarios.jpg) |
+| 技术底座 | 数据要素 |
+| [![技术底座](assets/screenshots/capabilities.jpg)](assets/screenshots/capabilities.jpg) | [![数据要素](assets/screenshots/data-assets.jpg)](assets/screenshots/data-assets.jpg) |
+
+### 教师工作台
+
+| 工作台总览 | 分析对话 |
+| :---: | :---: |
+| [![工作台总览](assets/screenshots/workspace-overview.jpg)](assets/screenshots/workspace-overview.jpg) | [![分析对话](assets/screenshots/workspace-chat.jpg)](assets/screenshots/workspace-chat.jpg) |
+| 我的智能体 | 我的 Skills |
+| [![我的智能体](assets/screenshots/workspace-my-agents.jpg)](assets/screenshots/workspace-my-agents.jpg) | [![我的 Skills](assets/screenshots/workspace-my-skills.jpg)](assets/screenshots/workspace-my-skills.jpg) |
+
+### 管理后台
+
+| Skill 审核 | 系统状态 |
+| :---: | :---: |
+| [![Skill 审核](assets/screenshots/admin-skills.jpg)](assets/screenshots/admin-skills.jpg) | [![系统状态](assets/screenshots/admin-system.jpg)](assets/screenshots/admin-system.jpg) |
 
 ## 架构概览
 
