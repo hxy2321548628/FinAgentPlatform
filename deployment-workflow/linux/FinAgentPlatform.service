@@ -1,0 +1,17 @@
+[Unit]
+Description=FinAgentPlatform application stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/finagent/sandbox
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash /opt/finagent/current/linux/control.sh start
+ExecStop=/bin/bash /opt/finagent/current/linux/control.sh stop
+TimeoutStartSec=600
+TimeoutStopSec=2000
+
+[Install]
+WantedBy=multi-user.target

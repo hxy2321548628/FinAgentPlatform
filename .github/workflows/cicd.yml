@@ -1,0 +1,93 @@
+name: CICD
+on:
+  push:
+    branches: [CICD]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      with_images:
+        description: 构建包含 Linux 镜像的发布包
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: zuel
+          POSTGRES_PASSWORD: zuel
+          POSTGRES_DB: zuel
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U zuel -d zuel"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - name: 启用锁定版本的 pnpm
+        run: corepack enable
+      - name: 固定业务 main 提交并检出到临时目录
+        id: source
+        run: |
+          sha=$(git rev-parse origin/main)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          git worktree add --detach "$RUNNER_TEMP/business-main" "$sha"
+      - name: 安装锁定依赖并运行统一门禁
+        working-directory: ${{ runner.temp }}/business-main
+        run: |
+          make sync-locked
+          make all
+      - name: 验证 main 分支归档和源码过滤
+        run: python3 -m unittest discover -s deployment-workflow/test -p '*_test.py'
+      - name: 检查部署 shell 语法
+        run: |
+          for script in deployment-workflow/linux/*.sh; do bash -n "$script"; done
+  package:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: 生成源码发布包
+        if: ${{ !inputs.with_images }}
+        run: python deployment-workflow/package.py --ref "$SOURCE_SHA"
+        env:
+          SOURCE_SHA: ${{ needs.check.outputs.source_sha }}
+      - name: 生成 Linux 镜像发布包
+        if: ${{ inputs.with_images }}
+        run: python deployment-workflow/package.py --ref "$SOURCE_SHA" --with-images
+        env:
+          SOURCE_SHA: ${{ needs.check.outputs.source_sha }}
+      - name: 校验发布包
+        run: python deployment-workflow/verify-package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FinAgentPlatform-release
+          path: deployment-workflow/dist/*
+          retention-days: 14
