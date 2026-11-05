@@ -21,7 +21,8 @@ RUN pnpm install --frozen-lockfile
 COPY . ./
 RUN pnpm build
 
-FROM nginx:1.27-alpine
+# 修复 CVE-2026-42945，并纳入后续稳定分支安全补丁；升级后须重建镜像和容器。
+FROM nginx:1.30.6-alpine
 
 # 站点根，nginx.conf 里 `location /` 的 root 指的就是这里
 COPY --from=build /web/dist /usr/share/nginx/html
