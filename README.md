@@ -172,6 +172,16 @@ make remount              # 重启机器后重新挂载 XFS 并恢复 broker/ngi
 
 重启宿主机后，若 workspace 使用脚本创建的 XFS loop 文件系统，应先执行 `make remount`，不要只重启容器。该命令会重新解析当前 quota 设备并清理旧的动态沙箱容器。
 
+### Nginx 安全更新与发布包
+
+`web/Dockerfile` 使用 `nginx:1.30.6-alpine`，该版本已修复 CVE-2026-42945；`docker/nginx.conf` 的 `server_tokens off` 隐藏响应中的版本号。隐藏版本号不替代升级，也不能证明所有漏洞均已修复。后续发布前应查看 [Nginx 安全公告](https://nginx.org/en/security_advisories.html)，按需更新基础镜像。
+
+使用发布包和 `docker/release.yml` 的环境，发布时必须从包含上述修复的源码构建完整的前端/Nginx 镜像，并确保新发布包的 `release.yml` 引用该镜像，且包含更新后的 `docker/nginx.conf`。只更新源码或重启旧容器不会升级镜像；生成新发布目录时，也不能依赖旧目录内的手工修改。升级时应保留前端静态文件、原配置和旧镜像以便验证与回滚。
+
+已运行环境可先用 `docker compose ... config --images` 核对最终镜像，再用 `docker exec <nginx容器> nginx -v`、`nginx -t` 和 `curl -I` 检查版本、配置与响应头；还需检查首页、API、SSE、深链接及授权文件下载，并对实际外网入口复扫。替换 bind mount 的配置文件（例如使用 `sed -i`）后应重建容器，使挂载指向新文件，再检查 `nginx -T` 和响应头。
+
+生产环境曾因无法访问 Docker Hub 导入离线镜像，并临时使用 Compose 覆盖文件。生成下一份发布包时应将修复纳入正式镜像和配置，不能假定临时覆盖文件会自动随发布包生效。
+
 ## 回归验收
 
 真实验收要求六个服务已经启动，并且会重启或停止部分服务；不要与其他用户共用这套环境：
