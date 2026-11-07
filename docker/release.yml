@@ -1,0 +1,35 @@
+{
+  "services": {
+    "api": {
+      "restart": "on-failure",
+      "image": "finagent/backend:tushare-token-20261107",
+      "environment": {
+        "SANDBOX_IMAGE": "finagent/sandbox:20261012T170515472932Z"
+      }
+    },
+    "worker": {
+      "restart": "on-failure",
+      "image": "finagent/backend:tushare-token-20261107",
+      "environment": {
+        "SANDBOX_IMAGE": "finagent/sandbox:20261012T170515472932Z"
+      }
+    },
+    "broker": {
+      "restart": "on-failure",
+      "image": "finagent/backend:20261012T170515472932Z",
+      "environment": {
+        "SANDBOX_IMAGE": "finagent/sandbox:20261012T170515472932Z"
+      }
+    },
+    "nginx": {
+      "restart": "on-failure",
+      "image": "finagent/web:nginx-1.30.6-fix-20261107"
+    },
+    "postgres": {
+      "restart": "on-failure"
+    },
+    "redis": {
+      "restart": "on-failure"
+    }
+  }
+}
