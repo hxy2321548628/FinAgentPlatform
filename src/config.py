@@ -223,7 +223,7 @@ class Settings(StoreSettings):
     mcp_credentials: dict[str, str] = Field(
         default_factory=dict,
         description="MCP 凭据表。JSON 对象，键是 mcp_servers.credential_key，"
-        "值是整个 Authorization 头的内容（形如 `Bearer xxx`）",
+        "值通常是整个 Authorization 头（形如 `Bearer xxx`）；Tushare MCP 填原始 token",
     )
 
     # 空库时用一次，之后再启动都不看它 —— 否则运维改过口令，一次重启就改回去了

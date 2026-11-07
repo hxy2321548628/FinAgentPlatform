@@ -15,6 +15,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 
+from app.agent.mcp_auth import redact_token
+
 DEFAULT_LEVEL = "INFO"
 
 # uvicorn 自带 handler 输出人类可读的文本行。不摘掉的话，这几行会夹在 JSON 行中间，
@@ -41,13 +43,13 @@ class JsonFormatter(logging.Formatter):
             "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": redact_token(record.getMessage()),
         }
 
         line.update(context())
 
         if record.exc_info is not None:
-            line["exception"] = self.formatException(record.exc_info)
+            line["exception"] = redact_token(self.formatException(record.exc_info))
 
         # 中文转成 \uXXXX 之后连 grep 都用不了，而日志首先是给人看的
         return json.dumps(line, ensure_ascii=False, default=str)

@@ -27,6 +27,9 @@ tmp/
 *.log
 .langgraph_api/
 
+# 离线导入的 Nginx 镜像包保留在本机，不进入源码仓库。
+nginx-*.tar
+
 # ---- 编辑器与系统 ----
 .vscode/
 .idea/

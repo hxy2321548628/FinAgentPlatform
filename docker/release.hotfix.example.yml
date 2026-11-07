@@ -1,0 +1,10 @@
+# 学院服务器本次热修复的镜像覆盖示例，镜像需已构建或导入本机。
+# 叠加在 compose.yml 和正式 release.yml 后使用；不是通用的新机器部署清单。
+# 生成下一份正式发布包时应从修复后的源码重建镜像，并更新正式 release.yml。
+services:
+  api:
+    image: finagent/backend:tushare-token-20261107
+  worker:
+    image: finagent/backend:tushare-token-20261107
+  nginx:
+    image: finagent/web:nginx-1.30.6-fix-20261107

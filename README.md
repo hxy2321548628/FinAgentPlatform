@@ -162,6 +162,10 @@ uv run mypy
 
 ## 部署运维命令
 
+新增 MCP、配置共享 Token、迁移已有 Tushare 服务，见 [MCP 接入与共享凭据配置](docker/MCP_CREDENTIALS.md)。密钥保留在服务器环境配置，仓库只提交配置格式和接入代码。
+
+本次两台服务器的镜像标签、Nginx 验证、备份和后续发布要求，见 [2026-11-07 部署修复记录](docker/HOTFIX_20261107.md)。
+
 ```bash
 make ps                    # 查看服务和 quota 设备状态
 make logs S=worker        # 跟随指定服务日志

@@ -35,6 +35,7 @@ from langchain_mcp_adapters.interceptors import MCPToolCallRequest, MCPToolCallR
 from langchain_mcp_adapters.sessions import Connection, SSEConnection, StreamableHttpConnection
 
 from app.agent.config import McpReference
+from app.agent.mcp_auth import connection_auth
 
 logger = logging.getLogger(__name__)
 
@@ -214,17 +215,17 @@ def _connection(target: McpTarget) -> Connection:
     connection 上的两个超时字段也设成平台的值 —— 双保险。**但它们管不住一个 hang 住
     的服务**，真正掐断的是外层的 `asyncio.timeout`。
     """
-    headers = None if target.credential is None else {"Authorization": target.credential}
+    url, headers = connection_auth(target.url, target.credential)
     if target.transport == "sse":
         return SSEConnection(
-            url=target.url,
+            url=url,
             transport="sse",
             headers=headers,
             timeout=MCP_CONNECT_TIMEOUT,
             sse_read_timeout=MCP_CONNECT_TIMEOUT,
         )
     return StreamableHttpConnection(
-        url=target.url,
+        url=url,
         transport="streamable_http",
         headers=headers,
         timeout=MCP_CONNECT_TIMEOUT,
